@@ -7,6 +7,8 @@ import styles from './page.module.css'
 interface ImportStats {
   conversations: number
   messages: number
+  remediations: number
+  reports: number
   neo4jNodes: number
   neo4jRelationships: number
   artifacts: number
@@ -179,6 +181,8 @@ export function ImportModal({ isOpen, userId, onClose, onSuccess }: ImportModalP
             }}>
               <span>Conversations: {result.stats.conversations}</span>
               <span>Messages: {result.stats.messages}</span>
+              <span>Remediations: {result.stats.remediations}</span>
+              <span>Reports: {result.stats.reports}</span>
               <span>Graph Nodes: {result.stats.neo4jNodes}</span>
               <span>Relationships: {result.stats.neo4jRelationships}</span>
               <span>Artifacts: {result.stats.artifacts}</span>

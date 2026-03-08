@@ -83,6 +83,12 @@
 
 /* ── Chain row: 80% + 20% ── */
 
+.sankeyRow {
+  display: grid;
+  grid-template-columns: 6fr 4fr;
+  gap: var(--space-4);
+}
+
 .chainRow {
   display: grid;
   grid-template-columns: 4fr 1fr;
@@ -124,6 +130,9 @@
   .chainRow {
     grid-template-columns: 3fr 1fr;
   }
+  .sankeyRow {
+    grid-template-columns: 1fr 1fr;
+  }
   .surfaceStats {
     grid-template-columns: repeat(3, 1fr);
   }
@@ -142,6 +151,7 @@
   .grid4,
   .exploitRow,
   .chainRow,
+  .sankeyRow,
   .secretsGrid,
   .surfaceStats {
     grid-template-columns: 1fr;

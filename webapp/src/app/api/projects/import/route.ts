@@ -3,10 +3,13 @@ import prisma from '@/lib/prisma'
 import { getSession } from '@/app/api/graph/neo4j'
 import JSZip from 'jszip'
 import { randomUUID } from 'crypto'
+import { writeFileSync, mkdirSync, existsSync } from 'fs'
+import path from 'path'
 
 export const maxDuration = 300
 
 const RECON_ORCHESTRATOR_URL = process.env.RECON_ORCHESTRATOR_URL || 'http://localhost:8010'
+const REPORT_OUTPUT_PATH = process.env.REPORT_OUTPUT_PATH || '/data/reports'
 
 
 
@@ -19,6 +22,7 @@ interface Manifest {
     conversations: number
     chatMessages: number
     remediations?: number
+    reports?: number
     neo4jNodes: number
     neo4jRelationships: number
     artifacts: number
@@ -195,6 +199,7 @@ export async function POST(request: NextRequest) {
       conversations: 0,
       messages: 0,
       remediations: 0,
+      reports: 0,
       neo4jNodes: 0,
       neo4jRelationships: 0,
       artifacts: 0,
@@ -267,6 +272,44 @@ export async function POST(request: NextRequest) {
           await prisma.remediation.createMany({ data: chunk })
         }
         stats.remediations = remediationBatch.length
+      }
+    }
+
+    // Import reports (metadata + HTML files)
+    const reportsFile = zip.file('reports/reports.json')
+    if (reportsFile) {
+      const reportMeta: Array<{
+        title: string; filename: string; fileSize: number; format: string
+        metrics: object; hasNarratives: boolean; createdAt: string
+      }> = JSON.parse(await reportsFile.async('text'))
+
+      if (reportMeta.length > 0) {
+        if (!existsSync(REPORT_OUTPUT_PATH)) {
+          mkdirSync(REPORT_OUTPUT_PATH, { recursive: true })
+        }
+
+        for (const rm of reportMeta) {
+          const htmlFile = zip.file(`reports/${rm.filename}`)
+          if (!htmlFile) continue
+
+          const htmlContent = await htmlFile.async('nodebuffer')
+          const filePath = path.join(REPORT_OUTPUT_PATH, rm.filename)
+          writeFileSync(filePath, htmlContent)
+
+          await prisma.report.create({
+            data: {
+              projectId: newProject.id,
+              title: rm.title,
+              filename: rm.filename,
+              filePath,
+              fileSize: htmlContent.length,
+              format: rm.format || 'html',
+              metrics: (rm.metrics ?? {}) as object,
+              hasNarratives: rm.hasNarratives ?? false,
+            },
+          })
+          stats.reports++
+        }
       }
     }
 

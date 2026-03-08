@@ -1513,12 +1513,25 @@ export function AIAssistantDrawer({
     let lastTodoList: TodoItem[] = []
     let lastApprovalRequest: any = null
     let lastQuestionRequest: any = null
+    let lastRenderedPhase: string = ''
     // Track whether the agent did actual WORK after the last approval/question.
     // assistant_message doesn't count (it's the phase transition description that
     // arrives alongside the approval_request). Only thinking/tool_start indicate
     // the user already responded and the agent continued.
     let hasWorkAfterApproval = false
     let hasWorkAfterQuestion = false
+
+    // Count tool_complete per tool_name so we can pair them with tool_start.
+    // Only unpaired tool_start (no remaining tool_complete) creates a fallback card.
+    const toolCompleteCounts = new Map<string, number>()
+    for (const msg of full.messages) {
+      if (msg.type === 'tool_complete') {
+        const name = (msg.data as any).tool_name || ''
+        toolCompleteCounts.set(name, (toolCompleteCounts.get(name) || 0) + 1)
+      }
+    }
+    // Clone so we can decrement as we consume tool_start entries
+    const remainingCompletes = new Map(toolCompleteCounts)
 
     const restored: ChatItem[] = full.messages.map((msg: { id: string; type: string; data: unknown; createdAt: string }) => {
       const data = msg.data as any
@@ -1553,8 +1566,24 @@ export function AIAssistantDrawer({
           updated_todo_list: [],
         } as ThinkingItem
       } else if (msg.type === 'tool_start') {
-        // Skip tool_start — full data is in tool_complete
-        return null
+        // If a matching tool_complete exists, skip — full data comes from tool_complete
+        const toolName = data.tool_name || ''
+        const remaining = remainingCompletes.get(toolName) || 0
+        if (remaining > 0) {
+          remainingCompletes.set(toolName, remaining - 1)
+          return null
+        }
+        // No matching tool_complete — tool was still running or never completed.
+        // Show it as a running/incomplete tool card so it's not invisible.
+        return {
+          type: 'tool_execution',
+          id: msg.id,
+          timestamp: new Date(msg.createdAt),
+          tool_name: data.tool_name || '',
+          tool_args: data.tool_args || {},
+          status: 'running',
+          output_chunks: [],
+        } as ToolExecutionItem
       } else if (msg.type === 'tool_complete') {
         // Reconstruct full ToolExecutionItem with raw output and tool_args
         const rawOutput = data.raw_output || ''
@@ -1609,12 +1638,34 @@ export function AIAssistantDrawer({
         lastTodoList = data.todo_list || []
         return null
       } else if (msg.type === 'phase_update') {
-        // Phase updates are metadata, not chat items
+        // Only render when phase actually changes (avoid duplicate "Phase: informational" noise)
+        const phase = data.current_phase || 'unknown'
+        if (phase !== lastRenderedPhase) {
+          lastRenderedPhase = phase
+          return {
+            id: msg.id,
+            role: 'assistant',
+            content: `**Phase:** ${phase}` + (data.iteration_count ? ` — Step ${data.iteration_count}` : ''),
+            phase,
+            timestamp: new Date(msg.createdAt),
+          } as Message
+        }
         return null
       } else if (msg.type === 'approval_request') {
         lastApprovalRequest = data
         hasWorkAfterApproval = false
-        return null
+        // Render as an assistant message so it appears in timeline and markdown
+        const parts = [`**Phase Transition Request:** ${data.from_phase || '?'} → ${data.to_phase || '?'}`]
+        if (data.reason) parts.push(`\n**Reason:** ${data.reason}`)
+        if (data.planned_actions?.length) parts.push(`\n**Planned Actions:**\n${data.planned_actions.map((a: string) => `- ${a}`).join('\n')}`)
+        if (data.risks?.length) parts.push(`\n**Risks:**\n${data.risks.map((r: string) => `- ${r}`).join('\n')}`)
+        return {
+          id: msg.id,
+          role: 'assistant',
+          content: parts.join('\n'),
+          phase: data.from_phase,
+          timestamp: new Date(msg.createdAt),
+        } as Message
       } else if (msg.type === 'approval_response') {
         // User's approval decision — render as a user message
         lastApprovalRequest = null
@@ -1633,7 +1684,17 @@ export function AIAssistantDrawer({
       } else if (msg.type === 'question_request') {
         lastQuestionRequest = data
         hasWorkAfterQuestion = false
-        return null
+        // Render as an assistant message so it appears in timeline and markdown
+        const qParts = [`**Agent Question:** ${data.question || ''}`]
+        if (data.context) qParts.push(`\n> ${data.context}`)
+        if (data.options?.length) qParts.push(`\n**Options:**\n${data.options.map((o: string) => `- ${o}`).join('\n')}`)
+        return {
+          id: msg.id,
+          role: 'assistant',
+          content: qParts.join('\n'),
+          phase: data.phase,
+          timestamp: new Date(msg.createdAt),
+        } as Message
       } else if (msg.type === 'answer_response') {
         // User's answer to agent question — render as a user message
         lastQuestionRequest = null

@@ -3,7 +3,7 @@
 import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Crosshair, FolderOpen, Shield, CircleHelp, TrendingUp } from 'lucide-react'
+import { Crosshair, FolderOpen, Shield, CircleHelp, TrendingUp, FileText } from 'lucide-react'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { ProjectSelector } from './ProjectSelector'
 import { UserSelector } from './UserSelector'
@@ -13,6 +13,7 @@ const coreNav = [
   { label: 'Red Zone', href: '/graph', icon: <Crosshair size={14} /> },
   { label: 'CypherFix', href: '/cypherfix', icon: <Shield size={14} /> },
   { label: 'Insights', href: '/insights', icon: <TrendingUp size={14} /> },
+  { label: 'Reports', href: '/reports', icon: <FileText size={14} /> },
 ]
 
 export function GlobalHeader() {

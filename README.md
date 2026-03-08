@@ -12,7 +12,7 @@
 <br/>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/v2.2.0-release-2E8B57?style=for-the-badge" alt="Version 2.2.0"/>
+  <img src="https://img.shields.io/badge/v2.3.0-release-2E8B57?style=for-the-badge" alt="Version 2.3.0"/>
   <img src="https://img.shields.io/badge/WARNING-SECURITY%20TOOL-B22222?style=for-the-badge" alt="Security Tool Warning"/>
   <img src="https://img.shields.io/badge/LICENSE-MIT-4169A1?style=for-the-badge" alt="MIT License"/>
   <br/>
@@ -36,6 +36,7 @@
   <img src="https://img.shields.io/badge/SQLMap-Injection-C0392B?style=for-the-badge" alt="SQLMap"/>
   <img src="https://img.shields.io/badge/Hydra-Brute%20Force-E67E22?style=for-the-badge" alt="Hydra Brute Force"/>
   <img src="https://img.shields.io/badge/CypherFix-Auto%20Remediation-00B894?style=for-the-badge" alt="CypherFix Auto Remediation"/>
+  <img src="https://img.shields.io/badge/AI-PENTEST%20REPORTS-8B5CF6?style=for-the-badge" alt="AI Pentest Reports"/>
   <img src="https://img.shields.io/badge/RoE-Guardrails-3B82F6?style=for-the-badge" alt="RoE Guardrails"/>
   <br/>
   <a href="https://github.com/samugit83/redamon/wiki"><img src="https://img.shields.io/badge/📖_WIKI-FULL%20DOCUMENTATION-1A73E8?style=for-the-badge" alt="Wiki Documentation"/></a>
@@ -74,7 +75,7 @@ We maintain a public **[Project Board](https://github.com/users/samugit83/projec
 
 | Feature | Status | Issue |
 |---------|--------|-------|
-| AI-Generated Pentest Reports | Partial | [#37](https://github.com/samugit83/redamon/issues/37) |
+| AI-Generated Pentest Reports | **Done** | [#37](https://github.com/samugit83/redamon/issues/37) |
 | Continuous Attack Surface Monitoring | New | [#38](https://github.com/samugit83/redamon/issues/38) |
 | Attack Path Kill Chain Visualization | Partial | [#39](https://github.com/samugit83/redamon/issues/39) |
 | Cloud Security Assessment | Partial | [#40](https://github.com/samugit83/redamon/issues/40) |
@@ -253,6 +254,7 @@ No rebuild needed — just restart.
   - [Project Settings](#project-settings)
   - [Rules of Engagement (RoE)](#rules-of-engagement-roe)
   - [Insights Dashboard](#insights-dashboard)
+  - [Pentest Reports](#pentest-reports)
 - [System Architecture](#system-architecture)
   - [High-Level Architecture](#high-level-architecture)
   - [Data Flow Pipeline](#data-flow-pipeline)
@@ -989,13 +991,22 @@ RedAmon supports uploading a **Rules of Engagement** document (PDF, TXT, MD, or 
 | **Communication** | Status update frequency, critical finding notification, incident procedure |
 | **Compliance** | Frameworks (PCI-DSS, HIPAA, SOC2, GDPR, ISO27001), third-party providers |
 
-### Insights Dashboard
+### Insights — Security Analytics Dashboard
 
-The Insights page provides a real-time analytics dashboard for each project, covering attack chains, exploit successes, vulnerability severity, attack surface composition, and agent activity. All data is pulled directly from the Neo4j graph and presented through interactive charts and tables.
+The Insights page (`/insights`) is a real-time analytics dashboard with 30+ interactive charts organized into 4 sections. All data is pulled directly from the Neo4j graph and PostgreSQL, giving a comprehensive view of the security posture for each project.
 
 <p align="center">
   <img src="assets/insights.gif" alt="RedAmon Insights Dashboard" width="100%"/>
 </p>
+
+| Section | Charts & Metrics |
+|---------|-----------------|
+| **Attack Chains & Exploits** | Chain success rate, finding types, targets attacked, phase progression, exploit successes, GVM exploits, top findings table, chain decisions, failures |
+| **Attack Surface** | Subdomains, endpoints, certificates, IPs, CDN coverage, ASN diversity, services pie, port distribution, technology treemap, DNS records, security headers, endpoint categories, parameter analysis, IP concentration |
+| **Vulnerabilities & CVE Intelligence** | Severity donuts (vulns + CVEs), CVSS histogram, vulnerability source breakdown, findings by source/category, CWE breakdown, vulnerable targets, tech-to-CVE mapping, CAPEC attack patterns, confirmed exploits, GVM remediation status, CISA KEV gauge |
+| **Graph Overview & Activity** | Node type distribution, connected nodes, remediation timeline, agent activity, remediation status |
+
+Every chart updates automatically when new data is ingested from reconnaissance, vulnerability scanning, or agent exploitation sessions.
 
 ### Target Guardrail
 
@@ -1007,6 +1018,29 @@ RedAmon includes an LLM-based guardrail that prevents targeting unauthorized dom
 For IP mode, public IPs are resolved via reverse DNS before evaluation. Private/RFC1918 IPs are auto-allowed.
 
 > **Important disclaimer:** The guardrail system is provided as a built-in safety layer to prevent accidental targeting of well-known websites and services that users almost certainly do not own (e.g., government domains, major tech platforms, financial institutions, social media networks). **Any modification, bypass, or removal of the guardrail code is done entirely at the user's own risk and sole responsibility.** The maintainers of RedAmon accept no liability for unauthorized scanning resulting from tampering with these protections.
+
+### Pentest Reports
+
+RedAmon generates professional, client-ready penetration testing reports as self-contained HTML files. Reports compile all reconnaissance data, vulnerability findings, CVE intelligence, attack chain results, and remediation recommendations into an 11-section document ready for delivery.
+
+When an AI model is configured, six report sections receive **LLM-generated narratives**: an executive summary (8-12 paragraphs), scope analysis, risk interpretation, findings context, attack surface analysis, and an exhaustive prioritized remediation triage. If no LLM is available, the report is still generated with all data tables, charts, and metrics.
+
+| Section | Content |
+|---------|---------|
+| **Cover Page** | Project name, target domain, date, risk score badge, client info, confidentiality classification |
+| **Executive Summary** | Risk metrics cards, LLM narrative briefing covering vulnerability landscape, exploitation results, and business impact |
+| **Scope & Methodology** | Target domain, IPs, subdomains, endpoints, RoE details (if configured) |
+| **Risk Summary** | SVG security posture radar (6-axis), CVSS histogram, severity distribution, remediation status |
+| **Findings** | Remediation items grouped by severity with status badges, affected assets, and evidence |
+| **Other Vulnerability Details** | Raw scan output from Nuclei, GVM, and AI agent grouped by source |
+| **Attack Surface** | Technologies, security headers gap analysis, injectable parameters, services, ports, CDN coverage |
+| **CVE Intelligence** | CISA KEV callout, CVE table, CWE breakdown, attack flow chains (Tech → CVE → CWE → CAPEC), confirmed exploits |
+| **Recommendations** | Prioritized remediation guidance with LLM-generated 5-tier triage (emergency to strategic) |
+| **Appendix** | Graph node distribution, assessment tools, severity definitions |
+
+Reports support **download** (saves HTML locally), **open in new tab** (browser viewing), and **print/PDF export** (`Ctrl+P`). They are included in project export/import ZIP archives.
+
+> **[Download an example report (HTML)](https://raw.githubusercontent.com/wiki/samugit83/redamon/docs/Pentest%20Report%20%E2%80%94%20devergolabs.com.html)** — Full pentest report generated from a live assessment. See the **[Pentest Reports wiki page](https://github.com/samugit83/redamon/wiki/20.-Pentest-Reports)** for detailed documentation.
 
 ---
 

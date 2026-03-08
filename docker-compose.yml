@@ -414,10 +414,12 @@ services:
       RECON_OUTPUT_PATH: /data/recon-output
       GVM_OUTPUT_PATH: /data/gvm-output
       GITHUB_HUNT_OUTPUT_PATH: /data/github-hunt-output
+      REPORT_OUTPUT_PATH: /data/reports
     volumes:
       - ./recon/output:/data/recon-output:ro
       - ./gvm_scan/output:/data/gvm-output:ro
       - ./github_secret_hunt/output:/data/github-hunt-output:ro
+      - report_data:/data/reports
     depends_on:
       postgres:
         condition: service_healthy
@@ -454,6 +456,7 @@ networks:
 volumes:
   postgres_data:
   neo4j_data:
+  report_data:
   neo4j_logs:
   neo4j_import:
   neo4j_plugins:

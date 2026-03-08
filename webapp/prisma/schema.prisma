@@ -365,6 +365,7 @@ model Project {
   roeNotes                    String   @default("") @map("roe_notes") @db.Text
 
   remediations                      Remediation[]
+  reports                           Report[]
 
   @@map("projects")
 }
@@ -453,4 +454,21 @@ model Remediation {
   @@index([projectId, severity])
   @@index([projectId, priority])
   @@map("remediations")
+}
+
+model Report {
+  id            String   @id @default(cuid())
+  projectId     String   @map("project_id")
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title         String
+  filename      String
+  filePath      String   @map("file_path")
+  fileSize      Int      @map("file_size")
+  format        String   @default("html")
+  metrics       Json     @default("{}")
+  hasNarratives Boolean  @default(false) @map("has_narratives")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([projectId, createdAt])
+  @@map("reports")
 }

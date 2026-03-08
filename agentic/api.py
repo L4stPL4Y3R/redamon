@@ -321,6 +321,54 @@ async def parse_roe_document(body: RoeParseRequest):
         )
 
 
+# =============================================================================
+# REPORT SUMMARIZER — LLM-generated narratives for pentest report sections
+# =============================================================================
+
+class ReportSummarizeRequest(BaseModel):
+    """Request model for report narrative generation."""
+    data: dict
+    model: str | None = None
+
+
+@app.post("/api/report/summarize", tags=["Report"])
+async def summarize_report(body: ReportSummarizeRequest):
+    """Generate LLM narrative summaries for pentest report sections."""
+    from report_summarizer import generate_report_narratives
+    from project_settings import DEFAULT_AGENT_SETTINGS
+    from orchestrator_helpers.llm_setup import setup_llm
+
+    if not orchestrator or not orchestrator._initialized:
+        return JSONResponse(content={"error": "Agent not initialized"}, status_code=503)
+
+    requested_model = body.model or DEFAULT_AGENT_SETTINGS['OPENAI_MODEL']
+    try:
+        llm = setup_llm(
+            requested_model,
+            openai_api_key=orchestrator.openai_api_key,
+            anthropic_api_key=orchestrator.anthropic_api_key,
+            openrouter_api_key=orchestrator.openrouter_api_key,
+            openai_compat_api_key=orchestrator.openai_compat_api_key,
+            openai_compat_base_url=orchestrator.openai_compat_base_url,
+            aws_access_key_id=orchestrator.aws_access_key_id,
+            aws_secret_access_key=orchestrator.aws_secret_access_key,
+            aws_region=orchestrator.aws_region,
+        )
+    except Exception as e:
+        logger.error(f"Report summarizer: failed to set up LLM ({requested_model}): {e}")
+        return JSONResponse(content={"error": f"LLM not available for model {requested_model}"}, status_code=503)
+
+    try:
+        narratives = await generate_report_narratives(llm, body.data)
+        return narratives
+    except Exception as e:
+        logger.error(f"Report summarizer error: {e}")
+        return JSONResponse(
+            content={"error": f"Failed to generate report narratives: {str(e)}"},
+            status_code=500,
+        )
+
+
 @app.post("/emergency-stop-all", tags=["System"])
 async def emergency_stop_all():
     """Emergency stop: cancel every running agent task immediately."""

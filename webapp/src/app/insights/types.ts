@@ -134,6 +134,7 @@ export interface AttackChainsData {
     family: string | null; cveIds: string[]
   }[]
   targetsAttacked: { targetHost: string; targetType: string | null; attackCount: number; successCount: number }[]
+  attackFlowRows: { target: string; tool: string; findingType: string; severity: string }[]
 }
 
 export interface PipelineStatusData {

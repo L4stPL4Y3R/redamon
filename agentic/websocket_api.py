@@ -303,6 +303,14 @@ class StreamingCallback:
         self._response_sent = False
         # Accumulate tool output per tool_name so tool_complete includes raw output
         self._tool_context: dict = {}  # tool_name -> {"args": dict, "chunks": list[str]}
+        # Deduplication tracking for streaming events — survives checkpoint reloads
+        # unlike state-dict markers which are lost on astream resume
+        self._emitted_approval_key: str | None = None
+        self._emitted_question_key: str | None = None
+        self._emitted_thinking_ids: set = set()
+        self._emitted_tool_start_ids: set = set()
+        self._emitted_tool_complete_ids: set = set()
+        self._emitted_tool_output_ids: set = set()
         # Ordered persistence queue — messages are saved one-at-a-time in FIFO order
         self._persist_queue: asyncio.Queue = asyncio.Queue()
         self._persist_worker_task: Optional[asyncio.Task] = None
@@ -440,14 +448,14 @@ class StreamingCallback:
 
     async def on_approval_request(self, approval_request: dict):
         """Called when agent requests phase transition approval"""
-        # Deduplication is handled by orchestrator using _emitted_approval marker in state
+        # Deduplication is handled by emit_streaming_events via callback._emitted_approval_key
         await self.connection.send_message(MessageType.APPROVAL_REQUEST, approval_request)
         self._persist("approval_request", approval_request)
         logger.info(f"Approval request sent to session {self.connection.session_id}")
 
     async def on_question_request(self, question_request: dict):
         """Called when agent asks user a question"""
-        # Deduplication is handled by orchestrator using _emitted_question marker in state
+        # Deduplication is handled by emit_streaming_events via callback._emitted_question_key
         await self.connection.send_message(MessageType.QUESTION_REQUEST, question_request)
         self._persist("question_request", question_request)
         logger.info(f"Question request sent to session {self.connection.session_id}")

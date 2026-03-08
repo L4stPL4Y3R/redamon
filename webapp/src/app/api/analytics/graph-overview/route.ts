@@ -63,12 +63,20 @@ export async function GET(request: NextRequest) {
       ? { baseUrls: toNum(epRec.get('baseUrls')), endpoints: toNum(epRec.get('endpoints')), parameters: toNum(epRec.get('parameters')) }
       : { baseUrls: 0, endpoints: 0, parameters: 0 }
 
-    // Q5: Certificate health
+    // Q5: Certificate health — match both BaseURL and IP certificate paths,
+    // cast string not_after to datetime for correct comparison
     const certResult = await session.run(
-      `OPTIONAL MATCH (:BaseURL {project_id: $pid})-[:HAS_CERTIFICATE]->(c:Certificate)
+      `MATCH (c:Certificate {project_id: $pid})
+       WHERE (:BaseURL {project_id: $pid})-[:HAS_CERTIFICATE]->(c)
+          OR (:IP {project_id: $pid})-[:HAS_CERTIFICATE]->(c)
+       WITH DISTINCT c,
+            CASE WHEN c.not_after IS NOT NULL
+                 THEN datetime(replace(c.not_after, 'Z', '+00:00'))
+                 ELSE null END AS expiry
        RETURN count(c) AS total,
-              count(CASE WHEN c.not_after < datetime() THEN 1 END) AS expired,
-              count(CASE WHEN c.not_after >= datetime() AND c.not_after < datetime() + duration('P30D') THEN 1 END) AS expiringSoon`,
+              count(CASE WHEN expiry IS NOT NULL AND expiry < datetime() THEN 1 END) AS expired,
+              count(CASE WHEN expiry IS NOT NULL AND expiry >= datetime()
+                              AND expiry < datetime() + duration('P30D') THEN 1 END) AS expiringSoon`,
       { pid: projectId }
     )
     const certRec = certResult.records[0]

@@ -212,6 +212,37 @@ export async function GET(request: NextRequest) {
         successCount: toNum(r.get('successCount')),
       }))
 
+    // Q13: Attack execution flow — Target → Tool → FindingType → Severity
+    // Returns individual rows for Sankey visualization of real attack paths
+    const flowResult = await session.run(
+      `MATCH (s:ChainStep {project_id: $pid})-[:PRODUCED]->(f:ChainFinding)
+       WHERE s.tool_name IS NOT NULL
+       OPTIONAL MATCH (s)-[:STEP_TARGETED]->(target)
+       WHERE target:IP OR target:Subdomain
+       WITH COALESCE(
+         CASE WHEN target:IP THEN target.address ELSE target.name END,
+         f.target_host,
+         'unknown'
+       ) AS target,
+       s.tool_name AS tool,
+       f.finding_type AS findingType,
+       f.severity AS severity
+       RETURN target, tool, findingType, severity
+       UNION ALL
+       MATCH (ex:ExploitGvm {project_id: $pid})
+       RETURN COALESCE(ex.target_ip, 'unknown') AS target,
+              'openvas' AS tool,
+              'exploit_success' AS findingType,
+              'critical' AS severity`,
+      { pid: projectId }
+    )
+    const attackFlowRows = flowResult.records.map(r => ({
+      target: (r.get('target') as string) || 'unknown',
+      tool: (r.get('tool') as string) || 'unknown',
+      findingType: (r.get('findingType') as string) || 'unknown',
+      severity: (r.get('severity') as string) || 'unknown',
+    }))
+
     return NextResponse.json({
       chains,
       chainToolUsage,
@@ -225,6 +256,7 @@ export async function GET(request: NextRequest) {
       decisions,
       gvmExploits,
       targetsAttacked,
+      attackFlowRows,
     })
   } catch (error) {
     console.error('Analytics attack-chains error:', error)

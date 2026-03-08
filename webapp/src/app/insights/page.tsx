@@ -54,6 +54,15 @@ import { ChainFailuresBar } from './components/ChainFailuresBar'
 import { ChainDecisionsPie } from './components/ChainDecisionsPie'
 import { TargetsAttackedBar } from './components/TargetsAttackedBar'
 import { TopFindingsTable } from './components/TopFindingsTable'
+import { SecurityPostureRadar } from './components/SecurityPostureRadar'
+import { RiskScoreGauge } from './components/RiskScoreGauge'
+import { AttackKillChainFunnel } from './components/AttackKillChainFunnel'
+import { CvssExploitScatter } from './components/CvssExploitScatter'
+import { VulnCategoryRose } from './components/VulnCategoryRose'
+import { TopVulnTechBubble } from './components/TopVulnTechBubble'
+import { AttackFlowSankey } from './components/AttackFlowSankey'
+import { AttackChainSankey } from './components/AttackChainSankey'
+import { VulnAccumulationArea } from './components/VulnAccumulationArea'
 import { formatNumber } from './utils/formatters'
 import styles from './page.module.css'
 
@@ -119,6 +128,16 @@ export default function InsightsPage() {
       {/* KPI Cards + Pipeline Status */}
       <KPICards items={kpis} isLoading={graphOverview.isLoading} pipeline={pipeline.data} sessions={sessions.data} />
 
+      {/* Executive Summary */}
+      <div className={styles.section}>
+        <div className={styles.sectionTitle}>Executive Summary</div>
+        <div className={styles.grid3}>
+          <SecurityPostureRadar graphData={graphOverview.data} vulnData={vulns.data} surfaceData={surface.data} exploitSuccessCount={attackChains.data?.exploitSuccesses?.length || 0} chainFindingsCount={attackChains.data?.findingsByType?.reduce((s: number, d: { count: number }) => s + d.count, 0) || 0} isLoading={graphOverview.isLoading || vulns.isLoading || surface.isLoading || attackChains.isLoading} />
+          <RiskScoreGauge vulnData={vulns.data} surfaceData={surface.data} graphData={graphOverview.data} exploitSuccessCount={attackChains.data?.exploitSuccesses?.length || 0} chainFindingsBySeverity={attackChains.data?.findingsBySeverity} isLoading={vulns.isLoading || surface.isLoading || graphOverview.isLoading || attackChains.isLoading} />
+          <AttackKillChainFunnel data={attackChains.data?.phaseProgression} isLoading={attackChains.isLoading} />
+        </div>
+      </div>
+
       {/* Attack Chains & Exploits */}
       <div className={styles.section}>
         <div className={styles.sectionTitle}>Attack Chains & Exploits</div>
@@ -142,6 +161,10 @@ export default function InsightsPage() {
         )}
         <div className={styles.gridFull}>
           <TopFindingsTable data={attackChains.data?.topFindings} isLoading={attackChains.isLoading} />
+        </div>
+        <div className={styles.sankeyRow}>
+          <AttackFlowSankey data={vulns.data?.cveChains} isLoading={vulns.isLoading} />
+          <AttackChainSankey data={attackChains.data?.attackFlowRows} isLoading={attackChains.isLoading} />
         </div>
         <div className={styles.chainRow}>
           <AttackChainCards
@@ -213,6 +236,8 @@ export default function InsightsPage() {
         </div>
       </div>
 
+
+
       {/* Vulnerabilities & CVE Intelligence */}
       <div className={styles.section}>
         <div className={styles.sectionTitle}>Vulnerabilities & CVE Intelligence</div>
@@ -231,6 +256,11 @@ export default function InsightsPage() {
         <div className={styles.grid2}>
           <TechCveBar data={vulns.data?.cveChains} isLoading={vulns.isLoading} />
           <AttackPatternsBar data={vulns.data?.cveChains} isLoading={vulns.isLoading} />
+        </div>
+        <div className={styles.grid3}>
+          <CvssExploitScatter cveChains={vulns.data?.cveChains} exploits={vulns.data?.exploits} isLoading={vulns.isLoading} />
+          <VulnCategoryRose data={vulns.data?.findings} isLoading={vulns.isLoading} />
+          <TopVulnTechBubble data={vulns.data?.cveChains} isLoading={vulns.isLoading} />
         </div>
         {/* Conditional row: Exploits + GVM Remediation + CISA KEV */}
         {((vulns.data?.exploits?.length ?? 0) > 0 || (vulns.data?.gvmRemediation?.length ?? 0) > 0) && (
@@ -275,6 +305,9 @@ export default function InsightsPage() {
             data={activity.data?.remediations.byStatus}
             isLoading={activity.isLoading}
           />
+        </div>
+        <div className={styles.gridFull}>
+          <VulnAccumulationArea data={activity.data?.timeline.remediations} isLoading={activity.isLoading} />
         </div>
       </div>
 
