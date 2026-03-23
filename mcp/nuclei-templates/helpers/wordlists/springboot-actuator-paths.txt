@@ -1,0 +1,294 @@
+# Spring Boot Actuator - Comprehensive Path Wordlist
+# Author: Shafranpackeer (https://github.com/Shafranpackeer)
+# Description: All known actuator paths with bypass variations
+# Usage: ffuf -u https://target.com/FUZZ -w springboot-actuator-paths.txt
+
+# ============================================
+# STANDARD ACTUATOR PATHS (Spring Boot 2.x+)
+# ============================================
+actuator
+actuator/
+actuator/health
+actuator/health/
+actuator/info
+actuator/info/
+actuator/env
+actuator/env/
+actuator/beans
+actuator/beans/
+actuator/mappings
+actuator/mappings/
+actuator/metrics
+actuator/metrics/
+actuator/configprops
+actuator/configprops/
+actuator/heapdump
+actuator/heapdump/
+actuator/threaddump
+actuator/threaddump/
+actuator/loggers
+actuator/loggers/
+actuator/logfile
+actuator/logfile/
+actuator/httptrace
+actuator/httptrace/
+actuator/httpexchanges
+actuator/httpexchanges/
+actuator/auditevents
+actuator/auditevents/
+actuator/scheduledtasks
+actuator/scheduledtasks/
+actuator/caches
+actuator/caches/
+actuator/conditions
+actuator/conditions/
+actuator/flyway
+actuator/flyway/
+actuator/liquibase
+actuator/liquibase/
+actuator/sessions
+actuator/sessions/
+actuator/shutdown
+actuator/shutdown/
+actuator/refresh
+actuator/refresh/
+actuator/restart
+actuator/restart/
+actuator/jolokia
+actuator/jolokia/
+actuator/jolokia/list
+actuator/prometheus
+actuator/prometheus/
+actuator/startup
+actuator/startup/
+actuator/quartz
+actuator/quartz/
+actuator/integrationgraph
+actuator/integrationgraph/
+actuator/gateway
+actuator/gateway/
+actuator/gateway/routes
+actuator/gateway/globalfilters
+actuator/gateway/routefilters
+
+# ============================================
+# SPRING BOOT 1.x PATHS (root level)
+# ============================================
+health
+info
+env
+beans
+mappings
+metrics
+configprops
+heapdump
+threaddump
+dump
+trace
+loggers
+logfile
+auditevents
+autoconfig
+shutdown
+refresh
+restart
+jolokia
+jolokia/list
+
+# ============================================
+# ALTERNATE BASE PATHS
+# ============================================
+manage/health
+manage/env
+manage/heapdump
+manage/mappings
+manage/beans
+manage/jolokia
+management/health
+management/env
+management/heapdump
+management/mappings
+management/beans
+management/jolokia
+admin/health
+admin/env
+admin/heapdump
+admin/actuator
+admin/actuator/health
+monitor/health
+monitor/env
+monitor/heapdump
+monitor/actuator
+mgmt/health
+mgmt/env
+mgmt/heapdump
+mgmt/actuator
+status/health
+api/actuator
+api/actuator/health
+api/actuator/env
+api/actuator/heapdump
+api/health
+api/env
+v1/actuator
+v1/actuator/health
+v2/actuator
+v2/actuator/health
+internal/actuator
+internal/actuator/health
+internal/actuator/env
+private/actuator
+private/actuator/health
+system/actuator
+system/actuator/health
+app/actuator
+service/actuator
+message-api/actuator/health
+message-api/actuator/env
+
+# ============================================
+# GATEWAY PATHS
+# ============================================
+gateway/routes
+gateway/actuator/health
+gateway/actuator/routes
+actuator/gateway
+actuator/gateway/routes
+actuator/gateway/globalfilters
+actuator/gateway/routefilters
+
+# ============================================
+# SEMICOLON BYPASS (Spring parser quirk)
+# ============================================
+actuator;/health
+actuator;/env
+actuator;/heapdump
+actuator;/mappings
+actuator;/beans
+actuator;/jolokia
+actuator;/configprops
+actuator;/gateway/routes
+;/actuator/health
+;/actuator/env
+;/actuator/heapdump
+actuator;.json/health
+actuator;.json/env
+actuator;whatever/health
+
+# ============================================
+# URL ENCODING BYPASSES
+# ============================================
+%61ctuator/health
+%61ctuator/env
+%61ctuator/heapdump
+a%63tuator/health
+a%63tuator/env
+a%63tuator/heapdump
+ac%74uator/health
+ac%74uator/env
+ac%74uator/heapdump
+act%75ator/health
+act%75ator/env
+act%75ator/heapdump
+actu%61tor/health
+actu%61tor/env
+actu%61tor/heapdump
+actua%74or/health
+actua%74or/env
+actua%74or/heapdump
+actuat%6For/health
+actuat%6For/env
+actuat%6For/heapdump
+actuato%72/health
+actuato%72/env
+actuato%72/heapdump
+%61%63%74%75%61%74%6F%72/health
+%61%63%74%75%61%74%6F%72/env
+%61%63%74%75%61%74%6F%72/heapdump
+actuator/%68eapdump
+actuator/h%65apdump
+actuator/he%61pdump
+actuator/hea%70dump
+actuator/%65nv
+actuator/e%6Ev
+
+# ============================================
+# HASH/FRAGMENT BYPASS
+# ============================================
+actuator/health%23
+actuator/env%23
+actuator/heapdump%23
+actuator/mappings%23
+actuator/beans%23
+actuator/jolokia%23
+actuator%23/health
+
+# ============================================
+# PATH TRAVERSAL VARIATIONS
+# ============================================
+//actuator/health
+//actuator/env
+//actuator/heapdump
+/./actuator/health
+/./actuator/env
+/./actuator/heapdump
+actuator//health
+actuator//env
+actuator//heapdump
+actuator/./health
+actuator/./env
+actuator/./heapdump
+actuator/health/
+actuator/env/
+actuator/heapdump/
+actuator/health/..
+actuator/health/../health
+
+# ============================================
+# CASE VARIATIONS
+# ============================================
+Actuator/health
+ACTUATOR/health
+actuator/Health
+actuator/HEALTH
+actuator/ENV
+actuator/Heapdump
+
+# ============================================
+# FILE EXTENSION BYPASS
+# ============================================
+actuator/health.json
+actuator/env.json
+actuator/heapdump.json
+actuator.json/health
+actuator.json/env
+actuator/health.html
+actuator/env.html
+
+# ============================================
+# TAB CHARACTER BYPASS
+# ============================================
+actuator%09/health
+actuator%09/env
+actuator%09/heapdump
+%09actuator/health
+%09actuator/env
+
+# ============================================
+# H2 CONSOLE PATHS
+# ============================================
+h2-console
+h2-console/
+h2-console/login.jsp
+h2
+h2/
+database
+db
+console
+
+# ============================================
+# LOGVIEW PATHS (CVE-2021-21234)
+# ============================================
+manage/log/view
+log/view
+actuator/log/view
