@@ -243,7 +243,7 @@ docker compose --profile tools down --rmi local --volumes --remove-orphans  # Fu
 </td>
 <td>
   <h3>Want to see RedAmon think like a real pentester?</h3>
-  <p>Explore real attack sessions -- every step, every pivot, every exploit -- across 15 vulnerability categories on a live target. Full session logs, decoded walkthroughs, and video recordings showing the agent autonomously compromising a multi-service server from scratch.</p>
+  <p>Explore real-time live attack sessions -- every step, every pivot, every exploit -- across 15 vulnerability categories on a live target. Full session logs, decoded walkthroughs, and video recordings showing the agent autonomously compromising a multi-service server from scratch.</p>
   <a href="https://github.com/samugit83/redamon/wiki/RedAmon-HackLab"><b>Explore the HackLab &rarr;</b></a>
   &nbsp;&nbsp;|&nbsp;&nbsp;
   <a href="https://github.com/samugit83/redamon/wiki/RedAmon-HackLab#community-sessions"><b>Submit your own session &rarr;</b></a>
