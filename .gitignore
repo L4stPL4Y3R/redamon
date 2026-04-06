@@ -155,3 +155,6 @@ TODO.INTERNAL.md
 
 # Claude Code config
 .claude/
+
+# Benchmark data
+bmark/

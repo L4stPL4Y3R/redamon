@@ -890,19 +890,46 @@ def format_objective_history(objective_history: List[dict]) -> str:
     return "\n".join(lines)
 
 
+def _group_trace_by_iteration(execution_trace: List[dict]) -> List[dict]:
+    """Group execution_trace entries by iteration number.
+
+    Returns a list of iteration groups, each containing:
+      - iteration, phase: from the first entry
+      - tools: list of individual tool entries
+      - output_analysis: the shared analysis (taken once)
+      - is_wave: True if multiple tools ran in this iteration
+    """
+    from collections import OrderedDict
+    groups: OrderedDict[int, dict] = OrderedDict()
+    for entry in execution_trace:
+        it = entry.get("iteration", 0)
+        if it not in groups:
+            groups[it] = {
+                "iteration": it,
+                "phase": entry.get("phase", "?"),
+                "tools": [],
+                "output_analysis": entry.get("output_analysis", ""),
+            }
+        groups[it]["tools"].append(entry)
+    result = list(groups.values())
+    for g in result:
+        g["is_wave"] = len(g["tools"]) > 1
+    return result
+
+
 def format_chain_context(
     chain_findings: List[dict],
     chain_failures: List[dict],
     chain_decisions: List[dict],
     execution_trace: List[dict],
-    recent_count: int = 5,
+    recent_iterations: int = 20,
 ) -> str:
     """Format attack chain memory for the LLM system prompt.
 
-    Replaces ``format_execution_trace()`` as the primary context injected
-    into the think node.  Puts findings/failures/decisions up front so
-    the LLM gets instant signal, followed by only the last *recent_count*
-    steps in compact form.  Scales O(findings+failures+decisions+N).
+    Groups tool calls by iteration -- a wave of parallel tools = 1 step.
+    Shows the last *recent_iterations* steps with wave tools collapsed
+    into a compact summary.  Findings/failures/decisions are listed up
+    front for instant signal.
     """
     if not execution_trace and not chain_findings and not chain_failures:
         return "No steps executed yet."
@@ -946,50 +973,124 @@ def format_chain_context(
             lines.append(f"  [step {step}] {dtype}: {from_s} → {to_s} ({by} {approved})")
         lines.append("")
 
-    # ── Recent Steps (last N) ───────────────────────────
+    # ── Recent Steps (grouped by iteration) ─────────────
     if execution_trace:
-        recent = execution_trace[-recent_count:]
-        if len(execution_trace) > recent_count:
-            lines.append(f"── Recent Steps (last {recent_count} of {len(execution_trace)}) ──")
+        iter_groups = _group_trace_by_iteration(execution_trace)
+        total_iterations = len(iter_groups)
+        total_tools = len(execution_trace)
+
+        recent = iter_groups[-recent_iterations:]
+        if total_iterations > recent_iterations:
+            lines.append(
+                f"── Recent Steps (last {len(recent)} of {total_iterations} "
+                f"iterations, {total_tools} tool calls) ──"
+            )
         else:
-            lines.append(f"── Steps ({len(execution_trace)} total) ──────────────────")
+            lines.append(
+                f"── Steps ({total_iterations} iterations, "
+                f"{total_tools} tool calls) ──"
+            )
 
-        for step in recent:
-            it = step.get("iteration", "?")
-            phase = step.get("phase", "?")
-            tool = step.get("tool_name") or "none"
-            args = step.get("tool_args") or {}
-            success = step.get("success", True)
-            err = step.get("error_message") or ""
-            thought = step.get("thought", "")
-            output = step.get("tool_output", "")
-            analysis = step.get("output_analysis", "")
+        for idx, group in enumerate(recent):
+            it = group["iteration"]
+            phase = group["phase"]
+            tools = group["tools"]
+            is_wave = group["is_wave"]
+            analysis = group["output_analysis"]
+            is_last = idx == len(recent) - 1
 
-            # Compact header
-            lines.append(f"  Step {it} [{phase}]: {tool}")
-            # Thought (truncated)
-            if thought:
-                lines.append(f"    Thought: {thought[:500]}")
-            # Args (truncated)
-            if args and tool != "none":
-                args_str = str(args)
-                lines.append(f"    Args: {args_str[:300]}")
-            # Result line
-            if success:
-                out_preview = (analysis or output or "")[:500]
-                if out_preview:
-                    lines.append(f"    OK | {out_preview}")
-                else:
-                    lines.append(f"    OK")
+            if is_wave:
+                # ── Wave: collapse tools into compact summary ──
+                tool_counts: dict = {}
+                ok_count = 0
+                fail_count = 0
+                failed_tools: list = []
+                tool_args_list: list = []
+                for t in tools:
+                    tname = t.get("tool_name") or "unknown"
+                    tool_counts[tname] = tool_counts.get(tname, 0) + 1
+                    if t.get("success", True):
+                        ok_count += 1
+                    else:
+                        fail_count += 1
+                        failed_tools.append(
+                            f"{tname}: {(t.get('error_message') or '')[:100]}"
+                        )
+                    targs = t.get("tool_args") or {}
+                    if targs:
+                        tool_args_list.append(
+                            f"    - {tname}: {str(targs)[:200]}"
+                        )
+
+                tool_summary = ", ".join(
+                    f"{cnt} {name}" for name, cnt in tool_counts.items()
+                )
+                status = f"{ok_count} OK" + (
+                    f", {fail_count} FAILED" if fail_count else ""
+                )
+                lines.append(
+                    f"  Step {it} [{phase}] Wave [{tool_summary}] ({status})"
+                )
+
+                # Rationale (from plan_rationale or first tool thought)
+                first_thought = tools[0].get("thought") or ""
+                if first_thought.startswith("[Wave] "):
+                    first_thought = first_thought[7:]
+                plan_reasoning = tools[0].get("reasoning") or ""
+                rationale = plan_reasoning or first_thought
+                if rationale:
+                    lines.append(f"    Rationale: {rationale[:400]}")
+
+                # Individual tool args (compact, one line each)
+                if tool_args_list:
+                    lines.append("    Tools:")
+                    for arg_line in tool_args_list:
+                        lines.append(arg_line)
+
+                # Failures
+                for ft in failed_tools:
+                    lines.append(f"    FAILED | {ft}")
+
+                # Analysis (once, not repeated per tool)
+                if analysis:
+                    lines.append(f"    Analysis: {analysis[:600]}")
+
             else:
-                lines.append(f"    FAILED | {err[:300]}")
-            # Full output for the very last step (most relevant)
-            if step is recent[-1] and output:
-                max_out = 5000
-                if len(output) > max_out:
-                    lines.append(f"    Output (last step, truncated):\n{output[:max_out]}...")
+                # ── Single tool ──
+                tool_entry = tools[0]
+                tool = tool_entry.get("tool_name") or "none"
+                args = tool_entry.get("tool_args") or {}
+                success = tool_entry.get("success", True)
+                err = tool_entry.get("error_message") or ""
+                thought = tool_entry.get("thought", "")
+                output = tool_entry.get("tool_output", "")
+
+                lines.append(f"  Step {it} [{phase}]: {tool}")
+                if thought:
+                    lines.append(f"    Thought: {thought[:500]}")
+                if args and tool != "none":
+                    lines.append(f"    Args: {str(args)[:300]}")
+                if success:
+                    out_preview = (analysis or output or "")[:500]
+                    if out_preview:
+                        lines.append(f"    OK | {out_preview}")
+                    else:
+                        lines.append(f"    OK")
                 else:
-                    lines.append(f"    Output (last step):\n{output}")
+                    lines.append(f"    FAILED | {err[:300]}")
+
+            # Full output for the very last iteration's last tool
+            if is_last:
+                last_output = tools[-1].get("tool_output", "")
+                if last_output:
+                    max_out = 5000
+                    if len(last_output) > max_out:
+                        lines.append(
+                            f"    Output (last tool):\n{last_output[:max_out]}..."
+                        )
+                    else:
+                        lines.append(f"    Output (last tool):\n{last_output}")
+
         lines.append("")
 
     return "\n".join(lines)
