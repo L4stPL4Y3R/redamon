@@ -747,7 +747,7 @@ export function ProjectForm({
         targetDomain={formData.targetDomain || ''}
         subdomainPrefixes={formData.subdomainList as string[] || []}
         isStarting={isPartialReconStarting}
-        userId={userId}
+        userId={userId ?? undefined}
       />
 
       {/* Guardrail block modal */}

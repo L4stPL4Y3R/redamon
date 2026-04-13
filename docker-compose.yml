@@ -185,7 +185,7 @@ services:
         condition: service_completed_successfully
 
   gvm-ospd:
-    image: registry.community.greenbone.net/community/ospd-openvas:22.7.1
+    image: registry.community.greenbone.net/community/ospd-openvas:stable
     container_name: redamon-gvm-ospd
     restart: on-failure
     hostname: ospd-openvas.local

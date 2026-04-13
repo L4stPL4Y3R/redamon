@@ -9,6 +9,7 @@ import subprocess
 import ssl
 import time
 import urllib.request
+import uuid
 from typing import Dict, List, Tuple
 from urllib.parse import urlparse
 
@@ -27,10 +28,15 @@ def run_katana_crawler(
     allowed_hosts: set,
     custom_headers: List[str],
     exclude_patterns: List[str],
-    use_proxy: bool = False
+    use_proxy: bool = False,
+    parallelism: int = 5,
+    concurrency: int = 10,
 ) -> Tuple[List[str], Dict[str, str]]:
     """
     Run Katana crawler to discover all endpoints.
+
+    Uses a single Katana process with -list flag to crawl all target URLs,
+    with -p (parallelism) and -c (concurrency) for parallel crawling.
 
     Scope is automatically enforced: Katana uses FQDN scope to stay on the
     target hostname during crawl, and output is post-filtered against the
@@ -52,6 +58,8 @@ def run_katana_crawler(
         custom_headers: Custom headers to send
         exclude_patterns: URL patterns to exclude
         use_proxy: Whether to use Tor proxy
+        parallelism: Number of target URLs to crawl simultaneously (-p flag)
+        concurrency: Number of concurrent fetchers per target (-c flag)
 
     Returns:
         Tuple of (discovered_urls, url_to_response_body)
@@ -66,6 +74,8 @@ def run_katana_crawler(
     print(f"[*][Katana] Max URLs: {max_urls}")
     print(f"[*][Katana] Rate limit: {rate_limit} req/s")
     print(f"[*][Katana] Crawl duration: {crawl_duration}")
+    print(f"[*][Katana] Parallelism: {parallelism} (concurrent targets)")
+    print(f"[*][Katana] Concurrency: {concurrency} (fetchers per target)")
     print(f"[*][Katana] Params only: {params_only}")
     print(f"[*][Katana] Allowed hosts: {len(allowed_hosts)} ({', '.join(sorted(allowed_hosts)[:5])}{'...' if len(allowed_hosts) > 5 else ''})")
 
@@ -73,11 +83,22 @@ def run_katana_crawler(
     filtered_out_of_scope = 0
     external_domain_entries = []  # Collect out-of-scope domains for situational awareness
 
-    for base_url in target_urls:
-        if not base_url.startswith(('http://', 'https://')):
-            continue
+    # Filter to valid HTTP(S) URLs
+    valid_urls = [u for u in target_urls if u.startswith(('http://', 'https://'))]
+    if not valid_urls:
+        print("[!][Katana] No valid HTTP(S) URLs to crawl")
+        return [], {"external_domains": []}
 
-        # Build Katana command
+    print(f"[*][Katana] Target URLs: {len(valid_urls)}")
+
+    # Write all target URLs to a temp file for Katana's -list flag
+    url_file = f"/tmp/katana_targets_{uuid.uuid4().hex[:8]}.txt"
+
+    try:
+        with open(url_file, 'w') as f:
+            f.write('\n'.join(valid_urls))
+
+        # Build single Katana command with -list
         cmd = ["docker", "run", "--rm"]
 
         if use_proxy:
@@ -87,14 +108,16 @@ def run_katana_crawler(
 
         cmd.extend([
             docker_image,
-            "-u", base_url,
+            "-list", url_file,
             "-d", str(depth),
             "-silent",
             "-nc",
             "-rl", str(rate_limit),
+            "-p", str(parallelism),
+            "-c", str(concurrency),
             "-timeout", "30",
             "-crawl-duration", crawl_duration,
-            # Use FQDN scope: restricts crawl to exact hostname of seed URL
+            # Use FQDN scope: restricts crawl to exact hostnames of seed URLs
             # This prevents crawling parent domains (e.g. sub.example.com won't
             # crawl example.com). Post-hoc filtering provides additional safety.
             "-fs", "fqdn",
@@ -132,13 +155,13 @@ def run_katana_crawler(
                 while True:
                     # Check overall deadline
                     if time.time() > deadline:
-                        print(f"[!][Katana] Overall timeout for {base_url}")
+                        print(f"[!][Katana] Overall timeout reached")
                         process.kill()
                         break
 
                     # Check idle timeout (no output for too long)
                     if time.time() - last_output_time > idle_timeout:
-                        print(f"[!][Katana] Idle timeout ({idle_timeout}s with no output) for {base_url}")
+                        print(f"[!][Katana] Idle timeout ({idle_timeout}s with no output)")
                         process.kill()
                         break
 
@@ -151,7 +174,7 @@ def run_katana_crawler(
                         continue
 
                     line = process.stdout.readline()
-                    if not line:  # EOF — process finished
+                    if not line:  # EOF -- process finished
                         break
 
                     last_output_time = time.time()
@@ -199,10 +222,15 @@ def run_katana_crawler(
                 process.wait()
 
         except Exception as e:
-            print(f"[!][Katana] Error for {base_url}: {e}")
+            print(f"[!][Katana] Error: {e}")
 
-        if len(discovered_urls) >= max_urls:
-            break
+    finally:
+        # Clean up temp file
+        try:
+            import os
+            os.unlink(url_file)
+        except OSError:
+            pass
 
     urls_list = sorted(list(discovered_urls))
     print(f"[+][Katana] Discovered {len(urls_list)} URLs")

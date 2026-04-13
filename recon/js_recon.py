@@ -287,22 +287,25 @@ def _run_analysis(js_files: list, settings: dict) -> dict:
         if settings.get('JS_RECON_REGEX_PATTERNS', True):
             def run_patterns():
                 all_findings = []
+                total_filtered = {'low_entropy': 0, 'base64_blob': 0, 'binary_context': 0, 'repetitive': 0, 'url_whitelist': 0}
                 for js_file in js_files:
                     try:
-                        findings = scan_js_content(
+                        findings, file_filtered = scan_js_content(
                             js_file['content'], js_file['url'],
                             custom_patterns=custom_patterns,
                             min_confidence=min_confidence,
                         )
                         all_findings.extend(findings)
+                        for k, v in file_filtered.items():
+                            total_filtered[k] = total_filtered.get(k, 0) + v
                     except Exception as e:
                         print(f"[!][JsRecon] Pattern scan failed for {js_file.get('url', '?')}: {e}")
-                return all_findings
+                return all_findings, total_filtered
             futures['patterns'] = executor.submit(run_patterns)
 
         # 2. Source map discovery
         if settings.get('JS_RECON_SOURCE_MAPS', True):
-            scan_func = lambda content, url: scan_js_content(content, url, min_confidence=min_confidence)
+            scan_func = lambda content, url: scan_js_content(content, url, min_confidence=min_confidence)[0]
             futures['sourcemaps'] = executor.submit(
                 discover_and_analyze_sourcemaps, js_files, settings, scan_func
             )
@@ -352,6 +355,9 @@ def _run_analysis(js_files: list, settings: dict) -> dict:
                 result = future.result(timeout=settings.get('JS_RECON_TIMEOUT', 900))
 
                 if name == 'patterns':
+                    # Unpack tuple: (findings, filtered_stats)
+                    result, filtered_stats = result
+                    results['_filtered_stats'] = filtered_stats
                     # Separate secrets from info findings (emails, IPs, UUIDs)
                     for finding in result:
                         cat = finding.get('category', '')
@@ -448,6 +454,16 @@ def _validate_secrets(secrets: list, settings: dict) -> list:
             secret['validation'] = {'status': 'unvalidated'}
         elif result.get('error') == 'incomplete_credentials':
             secret['validation'] = {'status': 'incomplete', 'info': result.get('info', '')}
+        elif result.get('error') == 'format_only':
+            secret['validation'] = {'status': 'format_validated', 'info': result.get('info', '')}
+        elif result.get('error') == 'format_invalid':
+            invalid_count += 1
+            secret['validation'] = {
+                'status': 'invalid',
+                'valid': False,
+                'info': result.get('info', ''),
+                'error': 'format_invalid',
+            }
         elif result.get('valid'):
             validated_count += 1
             secret['validation'] = {
@@ -522,7 +538,7 @@ def _build_summary(results: dict) -> dict:
     secrets = results.get('secrets', [])
     severity_counts = {}
     type_counts = {}
-    validated = {'live': 0, 'invalid': 0, 'unvalidated': 0}
+    validated = {'live': 0, 'invalid': 0, 'unvalidated': 0, 'format_validated': 0, 'incomplete': 0}
 
     for s in secrets:
         sev = s.get('severity', 'info')
@@ -534,13 +550,21 @@ def _build_summary(results: dict) -> dict:
             validated['live'] += 1
         elif vstatus == 'invalid':
             validated['invalid'] += 1
+        elif vstatus == 'format_validated':
+            validated['format_validated'] += 1
+        elif vstatus == 'incomplete':
+            validated['incomplete'] += 1
         else:
             validated['unvalidated'] += 1
+
+    filtered_stats = results.get('_filtered_stats', {})
 
     return {
         'secrets_by_severity': severity_counts,
         'secrets_by_type': type_counts,
         'validated_keys': validated,
+        'false_positives_filtered': filtered_stats,
+        'false_positives_filtered_total': sum(filtered_stats.values()),
         'dependency_confusion_count': len(results.get('dependencies', [])),
         'source_maps_exposed': len([sm for sm in results.get('source_maps', []) if sm.get('accessible')]),
         'endpoints_discovered': len(results.get('endpoints', [])),
@@ -617,12 +641,19 @@ def run_js_recon(combined_result: dict, settings: dict) -> dict:
         # 3. Run all analysis modules
         results = _run_analysis(js_files, settings)
 
-        # 4. Validate secrets
+        # 4. Log false-positive filter stats
+        filtered_stats = results.get('_filtered_stats', {})
+        total_filtered = sum(filtered_stats.values())
+        if total_filtered:
+            parts = ', '.join(f"{k}={v}" for k, v in filtered_stats.items() if v)
+            print(f"[+][JsRecon] Filtered {total_filtered} false positives: {parts}")
+
+        # 5. Validate secrets
         if results.get('secrets'):
             print(f"[*][JsRecon] Validating {len(results['secrets'])} discovered secrets...")
             results['secrets'] = _validate_secrets(results['secrets'], settings)
 
-        # 5. Subdomain feedback loop
+        # 6. Subdomain feedback loop
         root_domain = combined_result.get('domain', '')
         known_subs = set()
         for sub in combined_result.get('dns', {}).get('subdomains', []):

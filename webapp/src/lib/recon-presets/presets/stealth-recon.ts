@@ -79,6 +79,8 @@ Red team operators performing authorized reconnaissance against targets with act
     // --- WHOIS & DNS ---
     whoisEnabled: true,
     dnsEnabled: true,
+    dnsMaxWorkers: 5,
+    dnsRecordParallelism: false,
 
     // --- Port Scanning: Naabu PASSIVE ONLY (InternetDB) ---
     naabuEnabled: true,
@@ -119,6 +121,8 @@ Red team operators performing authorized reconnaissance against targets with act
     katanaMaxUrls: 50,
     katanaRateLimit: 2,
     katanaJsCrawl: false,
+    katanaParallelism: 1,
+    katanaConcurrency: 1,
 
     // --- DISABLE Hakrawler ---
     hakrawlerEnabled: false,
@@ -133,10 +137,12 @@ Red team operators performing authorized reconnaissance against targets with act
     gauVerifyUrls: false,
     gauDetectMethods: false,
     gauFilterDeadEndpoints: false,
+    gauWorkers: 1,
 
     // --- ParamSpider: passive Wayback parameter mining ---
     paramspiderEnabled: true,
     paramspiderTimeout: 180,
+    paramspiderWorkers: 1,
 
     // --- jsluice: light extraction ---
     jsluiceEnabled: true,
@@ -190,6 +196,7 @@ Red team operators performing authorized reconnaissance against targets with act
     shodanReverseDns: true,
     shodanDomainDns: true,
     shodanPassiveCves: true,
+    shodanWorkers: 1,
 
     urlscanEnabled: true,
     urlscanMaxResults: 1000,

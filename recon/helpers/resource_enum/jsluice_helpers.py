@@ -14,6 +14,47 @@ import urllib.request
 from pathlib import Path
 from typing import Dict, List, Tuple
 from urllib.parse import urlparse, urljoin
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+
+def _extract_urls_for_base(base_url, file_entries, concurrency, timeout, allowed_hosts):
+    """Extract URLs from JS files for a single base URL."""
+    extracted_urls = []
+    external_domains = []
+    filepaths = [fp for _, fp in file_entries]
+    extracted = _run_jsluice_urls(filepaths, base_url, concurrency, timeout)
+    for entry in extracted:
+        raw_url = entry.get("url", "")
+        if not raw_url:
+            continue
+
+        resolved = _resolve_url(raw_url, base_url)
+        if not resolved:
+            continue
+
+        try:
+            parsed = urlparse(resolved)
+            host = parsed.hostname or ''
+            if host and allowed_hosts and host not in allowed_hosts:
+                external_domains.append({
+                    "domain": host, "source": "jsluice", "url": resolved,
+                })
+                continue
+        except Exception:
+            continue
+
+        extracted_urls.append(resolved)
+
+    return extracted_urls, external_domains
+
+
+def _extract_secrets_for_base(base_url, file_entries, concurrency, timeout):
+    """Extract secrets from JS files for a single base URL."""
+    filepaths = [fp for _, fp in file_entries]
+    secrets = _run_jsluice_secrets(filepaths, concurrency, timeout)
+    for secret in secrets:
+        secret["base_url"] = base_url
+    return secrets
 
 
 def run_jsluice_analysis(
@@ -23,7 +64,8 @@ def run_jsluice_analysis(
     extract_urls: bool,
     extract_secrets: bool,
     concurrency: int,
-    allowed_hosts: set,
+    parallelism: int = 3,
+    allowed_hosts: set = None,
     use_proxy: bool = False
 ) -> Dict:
     """
@@ -84,46 +126,40 @@ def run_jsluice_analysis(
         external_domains = []
 
         if extract_urls:
-            for base_url, file_entries in files_by_base.items():
-                filepaths = [fp for _, fp in file_entries]
-                extracted = _run_jsluice_urls(
-                    filepaths, base_url, concurrency, timeout
-                )
-                for entry in extracted:
-                    raw_url = entry.get("url", "")
-                    if not raw_url:
-                        continue
-
-                    resolved = _resolve_url(raw_url, base_url)
-                    if not resolved:
-                        continue
-
+            max_workers = min(parallelism, len(files_by_base))
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {
+                    executor.submit(_extract_urls_for_base, base_url, file_entries, concurrency, timeout, allowed_hosts): base_url
+                    for base_url, file_entries in files_by_base.items()
+                }
+                for future in as_completed(futures):
                     try:
-                        parsed = urlparse(resolved)
-                        host = parsed.hostname or ''
-                        if host and allowed_hosts and host not in allowed_hosts:
-                            external_domains.append({
-                                "domain": host, "source": "jsluice", "url": resolved,
-                            })
-                            continue
-                    except Exception:
-                        continue
-
-                    all_extracted_urls.append(resolved)
+                        urls, externals = future.result()
+                        all_extracted_urls.extend(urls)
+                        external_domains.extend(externals)
+                    except Exception as e:
+                        print(f"[!][jsluice] Error: {e}")
 
             print(f"[+][jsluice] Extracted {len(all_extracted_urls)} in-scope URLs from JS")
             if external_domains:
                 print(f"[+][jsluice] Filtered {len(external_domains)} out-of-scope URLs")
 
         if extract_secrets:
-            for base_url, file_entries in files_by_base.items():
-                filepaths = [fp for _, fp in file_entries]
-                secrets = _run_jsluice_secrets(filepaths, concurrency, timeout)
-                for secret in secrets:
-                    secret["base_url"] = base_url
-                    filename = secret.get("filename", "")
-                    secret["source_url"] = filepath_to_source_url.get(filename, "")
-                all_secrets.extend(secrets)
+            max_workers = min(parallelism, len(files_by_base))
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {
+                    executor.submit(_extract_secrets_for_base, base_url, file_entries, concurrency, timeout): base_url
+                    for base_url, file_entries in files_by_base.items()
+                }
+                for future in as_completed(futures):
+                    try:
+                        secrets = future.result()
+                        for secret in secrets:
+                            filename = secret.get("filename", "")
+                            secret["source_url"] = filepath_to_source_url.get(filename, "")
+                        all_secrets.extend(secrets)
+                    except Exception as e:
+                        print(f"[!][jsluice] Error: {e}")
 
             if all_secrets:
                 print(f"[+][jsluice] Found {len(all_secrets)} potential secrets in JS files")

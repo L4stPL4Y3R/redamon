@@ -194,6 +194,21 @@ export function FfufSection({ data, updateField, projectId, mode, onRun }: FfufS
 
               <div className={styles.fieldRow}>
                 <div className={styles.fieldGroup}>
+                  <label className={styles.fieldLabel}>Parallelism</label>
+                  <input
+                    type="number"
+                    className="textInput"
+                    value={data.ffufParallelism ?? 3}
+                    onChange={(e) => updateField('ffufParallelism', parseInt(e.target.value) || 3)}
+                    min={1}
+                    max={10}
+                  />
+                  <span className={styles.fieldHint}>Number of targets to fuzz in parallel</span>
+                </div>
+              </div>
+
+              <div className={styles.fieldRow}>
+                <div className={styles.fieldGroup}>
                   <label className={styles.fieldLabel}>Request Timeout (s)</label>
                   <input
                     type="number"

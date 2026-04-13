@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.9.2] - 2026-04-13
+
+### Added
+
+- **Per-tool parallelism settings** -- new configurable parallelism/concurrency controls for FFuf, Hakrawler, Katana, Jsluice, Kiterunner, GAU, ParamSpider, and Shodan. Each tool can now process multiple targets concurrently via ThreadPoolExecutor. New Prisma fields, project settings, and frontend controls added across the board
+- **DNS parallelism** -- DNS resolution now queries all 7 record types concurrently per host (configurable via `dnsMaxWorkers` and `dnsRecordParallelism` project settings)
+- **JS Recon false-positive filters** -- Shannon entropy checks, base64 blob detection, binary/font context filtering, repetitive pattern detection, and URL whitelisting to reduce noise from embedded fonts, minified bundles, and documentation URLs. Filter stats are tracked and reported in the summary
+- **JS Recon validation improvements** -- new `format_validated` and `format_invalid` validation statuses for secrets that can only be format-checked (e.g. Twilio SID). Summary now tracks `format_validated` and `incomplete` counts
+- **Dockerfile retry helper** -- all `curl`, `wget`, `go install`, and `git clone` commands in agentic, kali-sandbox, and recon Dockerfiles now use a `retry` wrapper (5 attempts with exponential backoff) to handle transient network failures during builds
+
+### Fixed
+
+- **GVM ospd-openvas image tag** -- changed from pinned `22.7.1` (removed from Greenbone registry) to `stable`, fixing GVM install failures reported in #92
+- **JS Recon regex precision** -- tightened patterns for AWS Secret Key, Twilio API Key/SID, Twitter Bearer Token, and database URIs with word boundaries and stricter prefix matching to reduce false positives
+- **Minified JS context extraction** -- context snippets for findings in minified single-line JS files now extract chars around the match position instead of returning the entire line
+
+---
+
 ## [3.9.1] - 2026-04-13
 
 ### Added

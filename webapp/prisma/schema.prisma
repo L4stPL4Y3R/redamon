@@ -151,6 +151,8 @@ model Project {
   whoisMaxRetries             Int      @default(6) @map("whois_max_retries")
   dnsEnabled                  Boolean  @default(true) @map("dns_enabled")
   dnsMaxRetries               Int      @default(3) @map("dns_max_retries")
+  dnsMaxWorkers               Int      @default(50) @map("dns_max_workers")
+  dnsRecordParallelism        Boolean  @default(true) @map("dns_record_parallelism")
 
   // ========== GITHUB SECRET HUNT ==========
   githubTargetOrg             String   @default("") @map("github_target_org")
@@ -290,6 +292,8 @@ model Project {
   katanaExcludePatterns       String[] @default([]) @map("katana_exclude_patterns")
   katanaScope                 String   @default("dn") @map("katana_scope")
   katanaCustomHeaders         String[] @default([]) @map("katana_custom_headers")
+  katanaParallelism           Int      @default(5) @map("katana_parallelism")
+  katanaConcurrency           Int      @default(10) @map("katana_concurrency")
 
   // ========== HAKRAWLER WEB CRAWLER ==========
   hakrawlerEnabled            Boolean  @default(true) @map("hakrawler_enabled")
@@ -301,6 +305,7 @@ model Project {
   hakrawlerIncludeSubs        Boolean  @default(true) @map("hakrawler_include_subs")
   hakrawlerInsecure           Boolean  @default(true) @map("hakrawler_insecure")
   hakrawlerCustomHeaders      String[] @default([]) @map("hakrawler_custom_headers")
+  hakrawlerParallelism        Int      @default(4) @map("hakrawler_parallelism")
 
   // ========== JSLUICE JS ANALYZER ==========
   jsluiceEnabled              Boolean  @default(true) @map("jsluice_enabled")
@@ -309,6 +314,7 @@ model Project {
   jsluiceExtractUrls          Boolean  @default(true) @map("jsluice_extract_urls")
   jsluiceExtractSecrets       Boolean  @default(true) @map("jsluice_extract_secrets")
   jsluiceConcurrency          Int      @default(5) @map("jsluice_concurrency")
+  jsluiceParallelism          Int      @default(3) @map("jsluice_parallelism")
 
   // ========== JS RECON SCANNER ==========
   jsReconEnabled              Boolean  @default(false) @map("js_recon_enabled")
@@ -354,6 +360,7 @@ model Project {
   ffufFollowRedirects         Boolean  @default(false) @map("ffuf_follow_redirects")
   ffufCustomHeaders           String[] @default([]) @map("ffuf_custom_headers")
   ffufSmartFuzz               Boolean  @default(true) @map("ffuf_smart_fuzz")
+  ffufParallelism             Int      @default(3) @map("ffuf_parallelism")
 
   // ========== ARJUN PARAMETER DISCOVERY ==========
   arjunEnabled                Boolean  @default(true) @map("arjun_enabled")
@@ -390,11 +397,13 @@ model Project {
   gauMethodDetectRateLimit    Int      @default(50) @map("gau_method_detect_rate_limit")
   gauMethodDetectThreads      Int      @default(25) @map("gau_method_detect_threads")
   gauFilterDeadEndpoints      Boolean  @default(true) @map("gau_filter_dead_endpoints")
+  gauWorkers                  Int      @default(10) @map("gau_workers")
 
   // ========== PARAMSPIDER PASSIVE PARAMETER DISCOVERY ==========
   paramspiderEnabled          Boolean  @default(false) @map("paramspider_enabled")
   paramspiderPlaceholder      String   @default("FUZZ") @map("paramspider_placeholder")
   paramspiderTimeout          Int      @default(120) @map("paramspider_timeout")
+  paramspiderWorkers          Int      @default(5) @map("paramspider_workers")
 
   // ========== KITERUNNER API DISCOVERY ==========
   kiterunnerEnabled           Boolean  @default(false) @map("kiterunner_enabled")
@@ -414,6 +423,7 @@ model Project {
   kiterunnerMethodDetectTimeout Int    @default(5) @map("kiterunner_method_detect_timeout")
   kiterunnerMethodDetectRateLimit Int  @default(50) @map("kiterunner_method_detect_rate_limit")
   kiterunnerMethodDetectThreads Int    @default(25) @map("kiterunner_method_detect_threads")
+  kiterunnerParallelism       Int      @default(2) @map("kiterunner_parallelism")
 
   // ========== CVE LOOKUP ==========
   cveLookupEnabled            Boolean  @default(true) @map("cve_lookup_enabled")
@@ -521,6 +531,7 @@ model Project {
   shodanReverseDns                      Boolean  @default(true)  @map("shodan_reverse_dns")
   shodanDomainDns                       Boolean  @default(false) @map("shodan_domain_dns")
   shodanPassiveCves                     Boolean  @default(true)  @map("shodan_passive_cves")
+  shodanWorkers                         Int      @default(5) @map("shodan_workers")
 
   // URLScan.io Passive Enrichment
   urlscanEnabled                        Boolean  @default(true)  @map("urlscan_enabled")

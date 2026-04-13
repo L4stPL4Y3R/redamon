@@ -9,6 +9,7 @@ Superset of github_secret_hunt SECRET_PATTERNS with 30+ JS-specific additions.
 
 import re
 import json
+import math
 import hashlib
 from typing import Optional
 
@@ -17,7 +18,7 @@ from typing import Optional
 _RAW_PATTERNS = [
     # ========== CLOUD CREDENTIALS (Critical) ==========
     ("AWS Access Key ID", r"AKIA[0-9A-Z]{16}", "critical", "high", "cloud", "validate_aws"),
-    ("AWS Secret Key", r"(?i)aws(.{0,20})?['\"][0-9a-zA-Z/+]{40}['\"]", "critical", "high", "cloud", "validate_aws"),
+    ("AWS Secret Key", r"(?i)aws(?:_secret|_key|secret_key|_access).{0,10}['\"][0-9a-zA-Z/+]{40}['\"]", "critical", "high", "cloud", "validate_aws"),
     ("AWS MWS Key", r"amzn\.mws\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", "critical", "high", "cloud", None),
     ("GCP API Key", r"AIza[0-9A-Za-z\-_]{35}", "critical", "high", "cloud", "validate_google_maps"),
     ("GCP OAuth Client", r"[0-9]+-[0-9A-Za-z_]{32}\.apps\.googleusercontent\.com", "high", "high", "cloud", None),
@@ -56,8 +57,8 @@ _RAW_PATTERNS = [
     ("Slack Webhook", r"https://hooks\.slack\.com/services/T[A-Z0-9]+/B[A-Z0-9]+/[a-zA-Z0-9]+", "high", "high", "auth", None),
     ("Discord Bot Token", r"[MN][A-Za-z\d]{23,}\.[\w-]{6}\.[\w-]{27}", "high", "high", "auth", "validate_discord"),
     ("Discord Webhook", r"https://discord(?:app)?\.com/api/webhooks/[0-9]+/[A-Za-z0-9_-]+", "high", "high", "auth", None),
-    ("Twilio API Key", r"SK[0-9a-fA-F]{32}", "high", "high", "auth", "validate_twilio"),
-    ("Twilio Account SID", r"AC[a-zA-Z0-9]{32}", "medium", "high", "auth", None),
+    ("Twilio API Key", r"\bSK[0-9a-fA-F]{32}\b", "high", "high", "auth", "validate_twilio"),
+    ("Twilio Account SID", r"\bAC[0-9a-f]{32}\b", "medium", "high", "auth", "validate_twilio_format"),
     ("SendGrid API Key", r"SG\.[a-zA-Z0-9]{22}\.[a-zA-Z0-9\-_]{43}", "high", "high", "auth", "validate_sendgrid"),
     ("Mailgun API Key", r"key-[0-9a-zA-Z]{32}", "high", "high", "auth", "validate_mailgun"),
     ("Mailchimp API Key", r"[0-9a-f]{32}-us[0-9]{1,2}", "high", "high", "auth", "validate_mailchimp"),
@@ -99,10 +100,10 @@ _RAW_PATTERNS = [
     ("OpenSSH Private Key", r"-----BEGIN OPENSSH PRIVATE KEY-----", "critical", "high", "secret", None),
     ("PGP Private Key", r"-----BEGIN PGP PRIVATE KEY BLOCK-----", "critical", "high", "secret", None),
     ("Generic Private Key", r"-----BEGIN PRIVATE KEY-----", "critical", "high", "secret", None),
-    ("MongoDB URI", r"mongodb(?:\+srv)?://[^\s'\"]+", "high", "high", "secret", None),
-    ("PostgreSQL URI", r"postgres(?:ql)?://[^\s'\"]+", "high", "high", "secret", None),
-    ("MySQL URI", r"mysql://[^\s'\"]+", "high", "high", "secret", None),
-    ("Redis URL", r"redis://[^\s'\"]+", "high", "high", "secret", None),
+    ("MongoDB URI", r"\bmongodb(?:\+srv)?://[^\s'\"]+", "high", "high", "secret", None),
+    ("PostgreSQL URI", r"\bpostgres(?:ql)?://[^\s'\"]+", "high", "high", "secret", None),
+    ("MySQL URI", r"\bmysql://[^\s'\"]+", "high", "high", "secret", None),
+    ("Redis URL", r"\bredis://[^\s'\"]+", "high", "high", "secret", None),
     ("NPM Token", r"(?i)//registry\.npmjs\.org/:_authToken=[0-9a-f-]{36}", "high", "high", "secret", None),
     ("PyPI Token", r"pypi-AgEIcHlwaS5vcmc[A-Za-z0-9-_]{50,}", "high", "high", "secret", None),
     ("Docker Hub Token", r"dckr_pat_[A-Za-z0-9_-]{27}", "high", "high", "secret", None),
@@ -110,7 +111,7 @@ _RAW_PATTERNS = [
     ("Generic Secret", r"(?i)(secret|password|passwd|pwd)[\"']?\s*[:=]\s*[\"'][^\"']{8,}[\"']", "medium", "low", "secret", None),
     ("Generic Token", r"(?i)(access[_-]?token|auth[_-]?token)[\"']?\s*[:=]\s*[\"']?[a-zA-Z0-9_\-]{16,}[\"']?", "medium", "low", "secret", None),
     ("Hardcoded Password", r"(?i)(password|passwd|pwd)\s*=\s*[\"'][^\"']{4,}[\"']", "medium", "low", "secret", None),
-    ("Twitter Bearer Token", r"AAAAAAAAAAAAAAAAAAAAAA[0-9A-Za-z%]+", "high", "high", "auth", None),
+    ("Twitter Bearer Token", r"(?<![A-Za-z0-9+/=])AAAAAAAAAAAAAAAAAAAAAA[0-9A-Za-z%]{30,}(?![A-Za-z0-9+/=])", "high", "medium", "auth", "validate_twitter_format"),
     ("Facebook Access Token", r"EAACEdEose0cBA[0-9A-Za-z]+", "high", "high", "auth", None),
 
     # ========== INFRASTRUCTURE (Medium) ==========
@@ -196,12 +197,85 @@ def _is_false_positive_email(email: str) -> bool:
     return domain in _EMAIL_FILTER_DOMAINS
 
 
+# ---------------------------------------------------------------------------
+# False-positive filters for embedded binary / font / base64 data
+# ---------------------------------------------------------------------------
+
+def _shannon_entropy(text: str) -> float:
+    """Calculate Shannon entropy. Real secrets > 3.5, binary junk < 3.0."""
+    if not text:
+        return 0.0
+    freq: dict[str, int] = {}
+    for c in text:
+        freq[c] = freq.get(c, 0) + 1
+    length = len(text)
+    return -sum((count / length) * math.log2(count / length) for count in freq.values())
+
+
+_BASE64_CHARS = set('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=')
+
+
+def _is_inside_base64_blob(line: str, start: int, end: int, threshold: int = 200) -> bool:
+    """Check if match sits inside a continuous base64-like run > threshold chars."""
+    left = start
+    while left > 0 and line[left - 1] in _BASE64_CHARS:
+        left -= 1
+    right = end
+    while right < len(line) and line[right] in _BASE64_CHARS:
+        right += 1
+    return (right - left) > threshold
+
+
+_BINARY_CONTEXT_RE = re.compile(
+    r'glyf|loca|hhea|hmtx|GSUB|cmap|IcoMoon|woff|font-face|@font-face|'
+    r'data:application/font|data:font/|base64,|opentype|truetype|'
+    r'data:application/x-font|\.eot|\.ttf|\.woff|FontFace|fontFamily',
+    re.IGNORECASE,
+)
+
+
+def _has_binary_context(context: str) -> bool:
+    """Check if surrounding code contains font/binary data indicators."""
+    return bool(_BINARY_CONTEXT_RE.search(context))
+
+
+def _has_repetitive_pattern(text: str) -> bool:
+    """Detect strings with suspiciously repetitive chars (e.g., 'AAAAAA...')."""
+    if len(text) < 16:
+        return False
+    freq: dict[str, int] = {}
+    for c in text:
+        freq[c] = freq.get(c, 0) + 1
+    max_freq = max(freq.values())
+    if max_freq / len(text) > 0.4:
+        return True
+    # Check for runs of 6+ identical characters
+    for i in range(len(text) - 5):
+        if len(set(text[i:i + 6])) == 1:
+            return True
+    return False
+
+
+_STAGING_URL_WHITELIST = {
+    'developer.mozilla.org', 'docs.microsoft.com', 'learn.microsoft.com',
+    'w3.org', 'stackoverflow.com', 'github.com', 'devdocs.io',
+    'developer.apple.com', 'developers.google.com', 'reactjs.org',
+    'nodejs.org', 'npmjs.com', 'pypi.org',
+}
+
+
+def _is_whitelisted_staging_url(matched_text: str) -> bool:
+    """Filter known non-interesting domains from Internal/Staging URL pattern."""
+    lower = matched_text.lower()
+    return any(domain in lower for domain in _STAGING_URL_WHITELIST)
+
+
 def scan_js_content(
     content: str,
     source_url: str,
     custom_patterns: Optional[list] = None,
     min_confidence: str = 'low',
-) -> list:
+) -> tuple[list, dict]:
     """
     Scan JavaScript content for secrets using hardcoded + optional custom patterns.
 
@@ -212,12 +286,25 @@ def scan_js_content(
         min_confidence: Minimum confidence level to include ('low', 'medium', 'high')
 
     Returns:
-        List of finding dicts with: id, name, matched_text, severity, confidence,
+        Tuple of (findings list, filtered_counts dict).
+        Each finding dict has: id, name, matched_text, severity, confidence,
         category, line_number, source_url, validator_ref
     """
     findings = []
     seen_hashes = set()
     min_conf_val = CONFIDENCE_ORDER.get(min_confidence, 1)
+    filtered_counts = {
+        'low_entropy': 0,
+        'base64_blob': 0,
+        'binary_context': 0,
+        'repetitive': 0,
+        'url_whitelist': 0,
+    }
+
+    # Categories where false-positive filters apply
+    _FP_FILTER_CATEGORIES = {'auth', 'cloud', 'payment', 'secret', 'js_service'}
+    # Patterns that rely on structural prefixes, not randomness -- skip entropy check
+    _SKIP_ENTROPY_KEYWORDS = ('Private Key', 'URL', 'URI', 'DSN', 'Header')
 
     # Merge custom patterns if provided
     patterns = list(JS_SECRET_PATTERNS)
@@ -254,6 +341,34 @@ def scan_js_content(
                 if pattern['name'] == 'Email Address' and _is_false_positive_email(matched_text):
                     continue
 
+                # Skip whitelisted staging URLs
+                if pattern['name'] == 'Internal/Staging URL' and _is_whitelisted_staging_url(matched_text):
+                    filtered_counts['url_whitelist'] += 1
+                    continue
+
+                # --- False-positive filters for embedded binary/font data ---
+                # Only apply to secret-type categories, not infrastructure/info
+                if pattern['category'] in _FP_FILTER_CATEGORIES:
+                    skip_entropy = any(kw in pattern['name'] for kw in _SKIP_ENTROPY_KEYWORDS)
+                    if not skip_entropy and len(matched_text) >= 16 and _shannon_entropy(matched_text) < 3.0:
+                        filtered_counts['low_entropy'] += 1
+                        continue
+                    if _is_inside_base64_blob(line, match.start(), match.end()):
+                        filtered_counts['base64_blob'] += 1
+                        continue
+                    # Binary context check: only check same line to avoid
+                    # false-filtering real secrets near font declarations
+                    if len(lines) <= 3 and len(line) > 1000:
+                        nearby = line[max(0, match.start() - 300):min(len(line), match.end() + 300)]
+                    else:
+                        nearby = line
+                    if _has_binary_context(nearby):
+                        filtered_counts['binary_context'] += 1
+                        continue
+                    if _has_repetitive_pattern(matched_text):
+                        filtered_counts['repetitive'] += 1
+                        continue
+
                 # Deduplicate by content hash
                 finding_id = _make_finding_id(pattern['name'], matched_text, source_url)
                 if finding_id in seen_hashes:
@@ -269,9 +384,16 @@ def scan_js_content(
                     redacted = '***'
 
                 # Extract context (surrounding code)
-                ctx_start = max(0, line_num - 2)
-                ctx_end = min(len(lines), line_num + 1)
-                context = '\n'.join(lines[ctx_start:ctx_end])
+                if len(lines) <= 3 and len(line) > 1000:
+                    # Minified JS: extract chars around match position
+                    ctx_start_char = max(0, match.start() - 150)
+                    ctx_end_char = min(len(line), match.end() + 150)
+                    context = line[ctx_start_char:ctx_end_char]
+                else:
+                    # Multi-line JS: extract surrounding lines
+                    ctx_start = max(0, line_num - 2)
+                    ctx_end = min(len(lines), line_num + 1)
+                    context = '\n'.join(lines[ctx_start:ctx_end])
 
                 findings.append({
                     'id': finding_id,
@@ -288,7 +410,7 @@ def scan_js_content(
                     'detection_method': 'regex',
                 })
 
-    return findings
+    return findings, filtered_counts
 
 
 def scan_dev_comments(content: str, source_url: str) -> list:

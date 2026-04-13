@@ -85,11 +85,15 @@ RUN apt-get install -y --fix-missing \
     # Clean up
     && rm -rf /var/lib/apt/lists/*
 
+# Retry helper for transient network failures (git clone, curl, go install, etc.)
+RUN printf '#!/bin/sh\nmax=5; n=0; until "$@"; do n=$((n+1)); [ $n -ge $max ] && exit 1; echo "Retry $n/$max ..."; sleep $((n*5)); done\n' \
+    > /usr/local/bin/retry && chmod +x /usr/local/bin/retry
+
 # Install Go (required for naabu and nuclei)
 # Handle ARM64 (Apple Silicon) vs AMD64 automatically
 RUN ARCH=$(dpkg --print-architecture) && \
     if [ "$ARCH" = "arm64" ]; then GO_ARCH="arm64"; else GO_ARCH="amd64"; fi && \
-    wget -q https://go.dev/dl/go1.25.7.linux-${GO_ARCH}.tar.gz && \
+    retry wget -q https://go.dev/dl/go1.25.7.linux-${GO_ARCH}.tar.gz && \
     tar -C /usr/local -xzf go1.25.7.linux-${GO_ARCH}.tar.gz && \
     rm go1.25.7.linux-${GO_ARCH}.tar.gz
 
@@ -102,39 +106,39 @@ ENV GOPATH="/root/go"
 # Source: https://github.com/projectdiscovery/interactsh (MIT)
 # Source: https://github.com/projectdiscovery/subfinder (MIT)
 # Source: https://github.com/projectdiscovery/katana (MIT)
-RUN go install -v github.com/projectdiscovery/naabu/v2/cmd/naabu@latest \
-    && go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest \
-    && go install -v github.com/projectdiscovery/interactsh/cmd/interactsh-client@latest \
-    && go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest \
-    && go install -v github.com/projectdiscovery/katana/cmd/katana@latest
+RUN retry go install -v github.com/projectdiscovery/naabu/v2/cmd/naabu@latest \
+    && retry go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest \
+    && retry go install -v github.com/projectdiscovery/interactsh/cmd/interactsh-client@latest \
+    && retry go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest \
+    && retry go install -v github.com/projectdiscovery/katana/cmd/katana@latest
 
 # Install API security testing tools (Go-based)
 # Source: https://github.com/ffuf/ffuf (MIT) - Fast web fuzzer
 # Source: https://github.com/projectdiscovery/httpx (MIT) - HTTP toolkit
 # Source: https://github.com/hahwul/dalfox (MIT) - XSS vulnerability scanner
 # Source: https://github.com/projectdiscovery/dnsx (MIT) - Fast DNS toolkit
-RUN go install -v github.com/ffuf/ffuf/v2@latest \
-    && go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest \
-    && go install -v github.com/hahwul/dalfox/v2@latest \
-    && go install -v github.com/projectdiscovery/dnsx/cmd/dnsx@latest
+RUN retry go install -v github.com/ffuf/ffuf/v2@latest \
+    && retry go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest \
+    && retry go install -v github.com/hahwul/dalfox/v2@latest \
+    && retry go install -v github.com/projectdiscovery/dnsx/cmd/dnsx@latest
 
 # Install jsluice -- JavaScript static analyzer for hidden endpoints and secrets
 # Source: https://github.com/BishopFox/jsluice (MIT)
 # Requires CGO for tree-sitter bindings; gcc already installed above
-RUN CGO_ENABLED=1 go install -v github.com/BishopFox/jsluice/cmd/jsluice@latest
+RUN CGO_ENABLED=1 retry go install -v github.com/BishopFox/jsluice/cmd/jsluice@latest
 
 # Install gitleaks -- git repository secret scanner (API keys, passwords, tokens)
 # Source: https://github.com/gitleaks/gitleaks (MIT)
 # Note: Go module path uses old org (zricethezav), not new org (gitleaks) -- known issue #1839
-RUN go install -v github.com/zricethezav/gitleaks/v8@latest
+RUN retry go install -v github.com/zricethezav/gitleaks/v8@latest
 
 # Install OWASP Amass (subdomain enumeration & network mapping)
 # Source: https://github.com/owasp-amass/amass (Apache-2.0)
-RUN go install -v github.com/owasp-amass/amass/v4/...@master
+RUN retry go install -v github.com/owasp-amass/amass/v4/...@master
 
 # Install GAU (GetAllUrls) -- passive URL discovery from web archives
 # Source: https://github.com/lc/gau (MIT)
-RUN go install -v github.com/lc/gau/v2/cmd/gau@latest
+RUN retry go install -v github.com/lc/gau/v2/cmd/gau@latest
 
 # Update nuclei templates
 RUN nuclei -update-templates || true
@@ -151,13 +155,13 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt
 # jwt_tool - JWT exploitation toolkit (alg:none, key confusion, cracking)
 # Source: https://github.com/ticarpi/jwt_tool (GPL-3.0)
 RUN pip install --no-cache-dir pycryptodomex termcolor ratelimit \
-    && git clone --depth 1 https://github.com/ticarpi/jwt_tool.git /opt/jwt_tool \
+    && retry git clone --depth 1 https://github.com/ticarpi/jwt_tool.git /opt/jwt_tool \
     && chmod +x /opt/jwt_tool/jwt_tool.py \
     && ln -s /opt/jwt_tool/jwt_tool.py /usr/local/bin/jwt_tool
 
 # graphql-cop - GraphQL security auditor
 # Source: https://github.com/dolevf/graphql-cop (BSD-3-Clause)
-RUN git clone --depth 1 https://github.com/dolevf/graphql-cop.git /opt/graphql-cop \
+RUN retry git clone --depth 1 https://github.com/dolevf/graphql-cop.git /opt/graphql-cop \
     && pip install --no-cache-dir -r /opt/graphql-cop/requirements.txt \
     && chmod +x /opt/graphql-cop/graphql-cop.py \
     && ln -s /opt/graphql-cop/graphql-cop.py /usr/local/bin/graphql-cop
@@ -166,7 +170,7 @@ RUN git clone --depth 1 https://github.com/dolevf/graphql-cop.git /opt/graphql-c
 # Source: https://github.com/swisskyrepo/GraphQLmap (MIT)
 # Note: Install via setup.py to get the 'graphqlmap' command. Skip readline
 # from requirements.txt as it fails on Python 3.13 (Linux Python has readline built-in)
-RUN git clone --depth 1 https://github.com/swisskyrepo/GraphQLmap.git /opt/graphqlmap \
+RUN retry git clone --depth 1 https://github.com/swisskyrepo/GraphQLmap.git /opt/graphqlmap \
     && cd /opt/graphqlmap \
     && pip install --no-cache-dir requests \
     && pip install --no-cache-dir -e .
@@ -179,16 +183,16 @@ RUN pip install --no-cache-dir playwright \
 
 # Install SecLists wordlists for ffuf/gobuster directory fuzzing
 RUN mkdir -p /usr/share/seclists/Discovery/Web-Content && \
-    curl -sL https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/common.txt \
+    retry curl -sL https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/common.txt \
         -o /usr/share/seclists/Discovery/Web-Content/common.txt && \
-    curl -sL https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/raft-medium-directories.txt \
+    retry curl -sL https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/raft-medium-directories.txt \
         -o /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt && \
-    curl -sL https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/big.txt \
+    retry curl -sL https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/big.txt \
         -o /usr/share/seclists/Discovery/Web-Content/big.txt
 
 # ParamSpider — passive URL parameter discovery from Wayback Machine
 # Source: https://github.com/devanshbatham/ParamSpider (MIT)
-RUN pip install --no-cache-dir git+https://github.com/devanshbatham/ParamSpider.git
+RUN retry pip install --no-cache-dir git+https://github.com/devanshbatham/ParamSpider.git
 
 # AD/post-exploitation Python tools
 # hashID: hash type identification (MD5, NTLM, bcrypt, etc) — unmaintained since 2015 but functional
@@ -199,7 +203,7 @@ RUN pip install --no-cache-dir hashID bloodhound certipy-ad ldapdomaindump
 
 # SSTImap — Server-Side Template Injection detection & exploitation
 # Source: https://github.com/vladko312/SSTImap (MIT)
-RUN git clone --depth 1 https://github.com/vladko312/SSTImap.git /opt/sstimap \
+RUN retry git clone --depth 1 https://github.com/vladko312/SSTImap.git /opt/sstimap \
     && pip install --no-cache-dir -r /opt/sstimap/requirements.txt \
     && chmod +x /opt/sstimap/sstimap.py \
     && ln -s /opt/sstimap/sstimap.py /usr/local/bin/sstimap
@@ -221,14 +225,14 @@ WORKDIR /opt/mcp_servers
 
 # Install ngrok (for optional single-port TCP tunneling of reverse shells)
 RUN ARCH=$(dpkg --print-architecture) && \
-    curl -sSLf "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-${ARCH}.tgz" \
+    retry curl -sSLf "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-${ARCH}.tgz" \
     | tar -xz -C /usr/local/bin \
     || echo "WARNING: ngrok download failed (CDN may be down), skipping"
 
 # Install chisel (for optional multi-port TCP tunneling — reverse shells + web delivery)
 RUN CHISEL_VERSION="1.11.4" && \
     ARCH=$(dpkg --print-architecture) && \
-    curl -sSL "https://github.com/jpillora/chisel/releases/download/v${CHISEL_VERSION}/chisel_${CHISEL_VERSION}_linux_${ARCH}.gz" \
+    retry curl -sSL "https://github.com/jpillora/chisel/releases/download/v${CHISEL_VERSION}/chisel_${CHISEL_VERSION}_linux_${ARCH}.gz" \
     | gunzip > /usr/local/bin/chisel && \
     chmod +x /usr/local/bin/chisel
 

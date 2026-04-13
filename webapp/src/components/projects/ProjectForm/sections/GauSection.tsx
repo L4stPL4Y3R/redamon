@@ -135,6 +135,21 @@ export function GauSection({ data, updateField, onRun }: GauSectionProps) {
                   <span className={styles.fieldHint}>Parallel fetch threads</span>
                 </div>
                 <div className={styles.fieldGroup}>
+                  <label className={styles.fieldLabel}>Workers</label>
+                  <input
+                    type="number"
+                    className="textInput"
+                    value={data.gauWorkers ?? 10}
+                    onChange={(e) => updateField('gauWorkers', parseInt(e.target.value) || 10)}
+                    min={1}
+                    max={20}
+                  />
+                  <span className={styles.fieldHint}>Parallel domain query workers</span>
+                </div>
+              </div>
+
+              <div className={styles.fieldRow}>
+                <div className={styles.fieldGroup}>
                   <label className={styles.fieldLabel}>Year Range</label>
                   <input
                     type="text"

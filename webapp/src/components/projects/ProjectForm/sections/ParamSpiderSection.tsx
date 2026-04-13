@@ -88,6 +88,21 @@ export function ParamSpiderSection({ data, updateField, onRun }: ParamSpiderSect
                   <span className={styles.fieldHint}>Per-domain query timeout</span>
                 </div>
               </div>
+
+              <div className={styles.fieldRow}>
+                <div className={styles.fieldGroup}>
+                  <label className={styles.fieldLabel}>Workers</label>
+                  <input
+                    type="number"
+                    className="textInput"
+                    value={data.paramspiderWorkers ?? 5}
+                    onChange={(e) => updateField('paramspiderWorkers', parseInt(e.target.value) || 5)}
+                    min={1}
+                    max={10}
+                  />
+                  <span className={styles.fieldHint}>Parallel domain workers</span>
+                </div>
+              </div>
             </>
           )}
         </div>

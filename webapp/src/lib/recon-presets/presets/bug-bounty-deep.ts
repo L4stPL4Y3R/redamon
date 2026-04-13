@@ -125,6 +125,8 @@ Bug bounty hunters who have already triaged a target (perhaps with the Quick Win
     katanaRateLimit: 50,
     katanaTimeout: 3600,
     katanaJsCrawl: true,
+    katanaParallelism: 8,
+    katanaConcurrency: 15,
 
     // --- Hakrawler: deep crawl ---
     hakrawlerEnabled: true,
@@ -144,9 +146,11 @@ Bug bounty hunters who have already triaged a target (perhaps with the Quick Win
     gauVerifyUrls: true,
     gauDetectMethods: true,
     gauFilterDeadEndpoints: true,
+    gauWorkers: 10,
 
     // --- DISABLE ParamSpider (Arjun + GAU cover this) ---
     paramspiderEnabled: false,
+    paramspiderWorkers: 8,
 
     // --- jsluice: moderate limits ---
     jsluiceEnabled: true,

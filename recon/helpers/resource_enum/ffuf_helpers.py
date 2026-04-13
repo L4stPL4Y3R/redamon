@@ -15,7 +15,126 @@ import shutil
 import subprocess
 import tempfile
 from typing import Dict, List, Optional, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse
+
+
+def _fuzz_single_target(
+    idx: int,
+    fuzz_url: str,
+    output_dir: str,
+    wordlist: str,
+    threads: int,
+    timeout: int,
+    max_time: int,
+    rate: int,
+    match_codes: List[int],
+    filter_codes: List[int],
+    filter_size: str,
+    extensions: List[str],
+    recursion: bool,
+    recursion_depth: int,
+    auto_calibrate: bool,
+    custom_headers: List[str],
+    follow_redirects: bool,
+    allowed_hosts: set,
+    use_proxy: bool,
+) -> Tuple[List[Dict], List[Dict]]:
+    """Run FFuf against a single fuzz target URL. Returns (results, external_entries)."""
+    results = []
+    external_entries = []
+    output_file = os.path.join(output_dir, f"ffuf_result_{idx}.json")
+
+    cmd = ["ffuf"]
+    cmd.extend(["-u", fuzz_url])
+    cmd.extend(["-w", wordlist])
+    cmd.extend(["-t", str(threads)])
+    cmd.extend(["-timeout", str(timeout)])
+    cmd.extend(["-maxtime", str(max_time)])
+
+    if rate > 0:
+        cmd.extend(["-rate", str(rate)])
+
+    if match_codes:
+        cmd.extend(["-mc", ",".join(str(c) for c in match_codes)])
+
+    if filter_codes:
+        cmd.extend(["-fc", ",".join(str(c) for c in filter_codes)])
+
+    if filter_size:
+        cmd.extend(["-fs", filter_size])
+
+    if extensions:
+        cmd.extend(["-e", ",".join(extensions)])
+
+    if recursion:
+        cmd.extend(["-recursion", "-recursion-depth", str(recursion_depth)])
+
+    if auto_calibrate:
+        cmd.append("-ac")
+
+    if follow_redirects:
+        cmd.append("-r")
+
+    for header in custom_headers:
+        cmd.extend(["-H", header])
+
+    if use_proxy:
+        cmd.extend(["-x", "socks5://127.0.0.1:9050"])
+
+    cmd.extend(["-of", "json", "-o", output_file])
+    cmd.extend(["-s"])  # Silent mode (no banner/progress)
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=max_time + 60,
+        )
+
+        if os.path.exists(output_file):
+            with open(output_file, 'r') as f:
+                try:
+                    ffuf_output = json.load(f)
+                except json.JSONDecodeError:
+                    print(f"[!][FFuf] Failed to parse JSON output for {fuzz_url}")
+                    return results, external_entries
+
+            for entry in ffuf_output.get("results", []):
+                url = entry.get("url", "")
+                if not url:
+                    continue
+
+                try:
+                    parsed = urlparse(url)
+                    host = parsed.hostname or ''
+                    if host and allowed_hosts and host not in allowed_hosts:
+                        external_entries.append({
+                            "domain": host, "source": "ffuf", "url": url,
+                        })
+                        continue
+                except Exception:
+                    continue
+
+                results.append({
+                    "url": url,
+                    "status": entry.get("status", 0),
+                    "length": entry.get("length", 0),
+                    "words": entry.get("words", 0),
+                    "lines": entry.get("lines", 0),
+                    "content_type": entry.get("content-type", ""),
+                    "redirect_location": entry.get("redirectlocation", ""),
+                    "duration": entry.get("duration", 0),
+                    "input_fuzz": entry.get("input", {}).get("FUZZ", ""),
+                })
+
+    except subprocess.TimeoutExpired:
+        print(f"[!][FFuf] Timeout exceeded for {fuzz_url}")
+    except Exception as e:
+        print(f"[!][FFuf] Error fuzzing {fuzz_url}: {e}")
+
+    return results, external_entries
 
 
 def run_ffuf_discovery(
@@ -37,6 +156,7 @@ def run_ffuf_discovery(
     allowed_hosts: set,
     discovered_base_paths: Optional[List[str]] = None,
     use_proxy: bool = False,
+    parallelism: int = 3,
 ) -> Tuple[List[Dict], Dict]:
     """
     Run FFuf directory fuzzer against target URLs.
@@ -82,6 +202,7 @@ def run_ffuf_discovery(
     if recursion:
         print(f"[*][FFuf] Recursion: depth {recursion_depth}")
     print(f"[*][FFuf] Target URLs: {len(target_urls)}")
+    print(f"[*][FFuf] Parallelism: {parallelism} concurrent targets")
 
     all_results = []
     external_domain_entries = []
@@ -92,99 +213,29 @@ def run_ffuf_discovery(
     output_dir = tempfile.mkdtemp(prefix="redamon_ffuf_")
 
     try:
-        for idx, fuzz_url in enumerate(fuzz_targets):
-            output_file = os.path.join(output_dir, f"ffuf_result_{idx}.json")
+        effective_threads = max(threads // parallelism, 5)
+        max_workers = min(parallelism, len(fuzz_targets))
 
-            cmd = ["ffuf"]
-
-            cmd.extend(["-u", fuzz_url])
-            cmd.extend(["-w", wordlist])
-            cmd.extend(["-t", str(threads)])
-            cmd.extend(["-timeout", str(timeout)])
-            cmd.extend(["-maxtime", str(max_time)])
-
-            if rate > 0:
-                cmd.extend(["-rate", str(rate)])
-
-            if match_codes:
-                cmd.extend(["-mc", ",".join(str(c) for c in match_codes)])
-
-            if filter_codes:
-                cmd.extend(["-fc", ",".join(str(c) for c in filter_codes)])
-
-            if filter_size:
-                cmd.extend(["-fs", filter_size])
-
-            if extensions:
-                cmd.extend(["-e", ",".join(extensions)])
-
-            if recursion:
-                cmd.extend(["-recursion", "-recursion-depth", str(recursion_depth)])
-
-            if auto_calibrate:
-                cmd.append("-ac")
-
-            if follow_redirects:
-                cmd.append("-r")
-
-            for header in custom_headers:
-                cmd.extend(["-H", header])
-
-            if use_proxy:
-                cmd.extend(["-x", "socks5://127.0.0.1:9050"])
-
-            cmd.extend(["-of", "json", "-o", output_file])
-            cmd.extend(["-s"])  # Silent mode (no banner/progress)
-
-            try:
-                result = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=max_time + 60,
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {}
+            for idx, fuzz_url in enumerate(fuzz_targets):
+                future = executor.submit(
+                    _fuzz_single_target,
+                    idx, fuzz_url, output_dir, wordlist, effective_threads,
+                    timeout, max_time, rate, match_codes, filter_codes,
+                    filter_size, extensions, recursion, recursion_depth,
+                    auto_calibrate, custom_headers, follow_redirects,
+                    allowed_hosts, use_proxy
                 )
+                futures[future] = fuzz_url
 
-                if os.path.exists(output_file):
-                    with open(output_file, 'r') as f:
-                        try:
-                            ffuf_output = json.load(f)
-                        except json.JSONDecodeError:
-                            print(f"[!][FFuf] Failed to parse JSON output for {fuzz_url}")
-                            continue
-
-                    results = ffuf_output.get("results", [])
-                    for entry in results:
-                        url = entry.get("url", "")
-                        if not url:
-                            continue
-
-                        try:
-                            parsed = urlparse(url)
-                            host = parsed.hostname or ''
-                            if host and allowed_hosts and host not in allowed_hosts:
-                                external_domain_entries.append({
-                                    "domain": host, "source": "ffuf", "url": url,
-                                })
-                                continue
-                        except Exception:
-                            continue
-
-                        all_results.append({
-                            "url": url,
-                            "status": entry.get("status", 0),
-                            "length": entry.get("length", 0),
-                            "words": entry.get("words", 0),
-                            "lines": entry.get("lines", 0),
-                            "content_type": entry.get("content-type", ""),
-                            "redirect_location": entry.get("redirectlocation", ""),
-                            "duration": entry.get("duration", 0),
-                            "input_fuzz": entry.get("input", {}).get("FUZZ", ""),
-                        })
-
-            except subprocess.TimeoutExpired:
-                print(f"[!][FFuf] Timeout exceeded for {fuzz_url}")
-            except Exception as e:
-                print(f"[!][FFuf] Error fuzzing {fuzz_url}: {e}")
+            for future in as_completed(futures):
+                try:
+                    results, externals = future.result()
+                    all_results.extend(results)
+                    external_domain_entries.extend(externals)
+                except Exception as e:
+                    print(f"[!][FFuf] Error: {e}")
 
     finally:
         shutil.rmtree(output_dir, ignore_errors=True)

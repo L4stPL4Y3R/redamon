@@ -117,6 +117,21 @@ export function HakrawlerSection({ data, updateField, onRun }: HakrawlerSectionP
                 </div>
               </div>
 
+              <div className={styles.fieldRow}>
+                <div className={styles.fieldGroup}>
+                  <label className={styles.fieldLabel}>Parallelism</label>
+                  <input
+                    type="number"
+                    className="textInput"
+                    value={data.hakrawlerParallelism ?? 4}
+                    onChange={(e) => updateField('hakrawlerParallelism', parseInt(e.target.value) || 4)}
+                    min={1}
+                    max={10}
+                  />
+                  <span className={styles.fieldHint}>Number of URLs to crawl in parallel</span>
+                </div>
+              </div>
+
               <div className={styles.subSection}>
                 <h3 className={styles.subSectionTitle}>Options</h3>
                 <div className={styles.toggleRow}>

@@ -95,6 +95,21 @@ export function ShodanSection({ data, updateField, onRun }: ShodanSectionProps) 
             </div>
           )}
 
+          <div className={styles.fieldRow}>
+            <div className={styles.fieldGroup}>
+              <label className={styles.fieldLabel}>Workers</label>
+              <input
+                type="number"
+                className="textInput"
+                value={data.shodanWorkers ?? 5}
+                onChange={(e) => updateField('shodanWorkers', parseInt(e.target.value) || 5)}
+                min={1}
+                max={20}
+              />
+              <span className={styles.fieldHint}>Parallel IP lookup workers</span>
+            </div>
+          </div>
+
           <div className={styles.subSection}>
             <h3 className={styles.subSectionTitle}>Pipeline Features</h3>
 

@@ -74,6 +74,7 @@ Network security teams and pentesters who need to map large external perimeters 
 
     whoisEnabled: true,
     dnsEnabled: true,
+    dnsMaxWorkers: 100,
 
     // --- Naabu: SYN scan, high rate and threads ---
     naabuEnabled: true,
@@ -147,11 +148,16 @@ Network security teams and pentesters who need to map large external perimeters 
 
     // --- DISABLE all web crawlers ---
     katanaEnabled: false,
+    katanaParallelism: 10,
+    katanaConcurrency: 20,
     hakrawlerEnabled: false,
+    hakrawlerParallelism: 6,
 
     // --- DISABLE archive/passive URL discovery ---
     gauEnabled: false,
+    gauWorkers: 15,
     paramspiderEnabled: false,
+    paramspiderWorkers: 10,
 
     // --- DISABLE JS analysis ---
     jsluiceEnabled: false,

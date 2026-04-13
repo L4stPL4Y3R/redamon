@@ -44,6 +44,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     'WHOIS_MAX_RETRIES': 6,
     'DNS_ENABLED': True,
     'DNS_MAX_RETRIES': 3,
+    'DNS_MAX_WORKERS': 50,
+    'DNS_RECORD_PARALLELISM': True,
 
     # Naabu Port Scanner
     'NAABU_ENABLED': True,
@@ -218,6 +220,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
         'Accept-Language: en-US,en;q=0.9',
     ],
+    'KATANA_PARALLELISM': 5,
+    'KATANA_CONCURRENCY': 10,
 
     # GAU Passive URL Discovery
     'GAU_ENABLED': False,
@@ -246,11 +250,13 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     'GAU_METHOD_DETECT_RATE_LIMIT': 50,
     'GAU_METHOD_DETECT_THREADS': 25,
     'GAU_FILTER_DEAD_ENDPOINTS': True,
+    'GAU_WORKERS': 10,
 
     # ParamSpider Passive Parameter Discovery
     'PARAMSPIDER_ENABLED': False,
     'PARAMSPIDER_PLACEHOLDER': 'FUZZ',
     'PARAMSPIDER_TIMEOUT': 120,
+    'PARAMSPIDER_WORKERS': 5,
 
     # Hakrawler Web Crawler
     'HAKRAWLER_ENABLED': True,
@@ -262,6 +268,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     'HAKRAWLER_INCLUDE_SUBS': True,
     'HAKRAWLER_INSECURE': True,
     'HAKRAWLER_CUSTOM_HEADERS': [],
+    'HAKRAWLER_PARALLELISM': 4,
 
     # jsluice JavaScript Analyzer
     'JSLUICE_ENABLED': True,
@@ -270,6 +277,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     'JSLUICE_EXTRACT_URLS': True,
     'JSLUICE_EXTRACT_SECRETS': True,
     'JSLUICE_CONCURRENCY': 5,
+    'JSLUICE_PARALLELISM': 3,
 
     # ========== JS RECON SCANNER ==========
     'JS_RECON_ENABLED': False,
@@ -315,6 +323,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     'FFUF_FOLLOW_REDIRECTS': False,
     'FFUF_CUSTOM_HEADERS': [],
     'FFUF_SMART_FUZZ': True,
+    'FFUF_PARALLELISM': 3,
 
     # Arjun Parameter Discovery
     'ARJUN_ENABLED': True,
@@ -348,6 +357,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     'KITERUNNER_METHOD_DETECT_TIMEOUT': 5,
     'KITERUNNER_METHOD_DETECT_RATE_LIMIT': 50,
     'KITERUNNER_METHOD_DETECT_THREADS': 25,
+    'KITERUNNER_PARALLELISM': 2,
 
     # CVE Lookup
     'CVE_LOOKUP_ENABLED': True,
@@ -405,6 +415,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     'SHODAN_REVERSE_DNS': True,
     'SHODAN_DOMAIN_DNS': False,
     'SHODAN_PASSIVE_CVES': True,
+    'SHODAN_WORKERS': 5,
     'SHODAN_API_KEY': '',
     'URLSCAN_API_KEY': '',
 
@@ -577,6 +588,8 @@ def fetch_project_settings(project_id: str, webapp_url: str) -> dict[str, Any]:
     settings['WHOIS_MAX_RETRIES'] = project.get('whoisMaxRetries', DEFAULT_SETTINGS['WHOIS_MAX_RETRIES'])
     settings['DNS_ENABLED'] = project.get('dnsEnabled', DEFAULT_SETTINGS['DNS_ENABLED'])
     settings['DNS_MAX_RETRIES'] = project.get('dnsMaxRetries', DEFAULT_SETTINGS['DNS_MAX_RETRIES'])
+    settings['DNS_MAX_WORKERS'] = project.get('dnsMaxWorkers', DEFAULT_SETTINGS['DNS_MAX_WORKERS'])
+    settings['DNS_RECORD_PARALLELISM'] = project.get('dnsRecordParallelism', DEFAULT_SETTINGS['DNS_RECORD_PARALLELISM'])
 
     # Naabu Port Scanner
     settings['NAABU_ENABLED'] = project.get('naabuEnabled', DEFAULT_SETTINGS['NAABU_ENABLED'])
@@ -696,6 +709,8 @@ def fetch_project_settings(project_id: str, webapp_url: str) -> dict[str, Any]:
     settings['KATANA_PARAMS_ONLY'] = project.get('katanaParamsOnly', DEFAULT_SETTINGS['KATANA_PARAMS_ONLY'])
     settings['KATANA_EXCLUDE_PATTERNS'] = project.get('katanaExcludePatterns', DEFAULT_SETTINGS['KATANA_EXCLUDE_PATTERNS'])
     settings['KATANA_CUSTOM_HEADERS'] = project.get('katanaCustomHeaders', DEFAULT_SETTINGS['KATANA_CUSTOM_HEADERS'])
+    settings['KATANA_PARALLELISM'] = project.get('katanaParallelism', DEFAULT_SETTINGS['KATANA_PARALLELISM'])
+    settings['KATANA_CONCURRENCY'] = project.get('katanaConcurrency', DEFAULT_SETTINGS['KATANA_CONCURRENCY'])
 
     # Hakrawler Web Crawler
     settings['HAKRAWLER_ENABLED'] = project.get('hakrawlerEnabled', DEFAULT_SETTINGS['HAKRAWLER_ENABLED'])
@@ -707,6 +722,7 @@ def fetch_project_settings(project_id: str, webapp_url: str) -> dict[str, Any]:
     settings['HAKRAWLER_INCLUDE_SUBS'] = project.get('hakrawlerIncludeSubs', DEFAULT_SETTINGS['HAKRAWLER_INCLUDE_SUBS'])
     settings['HAKRAWLER_INSECURE'] = project.get('hakrawlerInsecure', DEFAULT_SETTINGS['HAKRAWLER_INSECURE'])
     settings['HAKRAWLER_CUSTOM_HEADERS'] = project.get('hakrawlerCustomHeaders', DEFAULT_SETTINGS['HAKRAWLER_CUSTOM_HEADERS'])
+    settings['HAKRAWLER_PARALLELISM'] = project.get('hakrawlerParallelism', DEFAULT_SETTINGS['HAKRAWLER_PARALLELISM'])
 
     # jsluice JavaScript Analyzer
     settings['JSLUICE_ENABLED'] = project.get('jsluiceEnabled', DEFAULT_SETTINGS['JSLUICE_ENABLED'])
@@ -715,6 +731,7 @@ def fetch_project_settings(project_id: str, webapp_url: str) -> dict[str, Any]:
     settings['JSLUICE_EXTRACT_URLS'] = project.get('jsluiceExtractUrls', DEFAULT_SETTINGS['JSLUICE_EXTRACT_URLS'])
     settings['JSLUICE_EXTRACT_SECRETS'] = project.get('jsluiceExtractSecrets', DEFAULT_SETTINGS['JSLUICE_EXTRACT_SECRETS'])
     settings['JSLUICE_CONCURRENCY'] = project.get('jsluiceConcurrency', DEFAULT_SETTINGS['JSLUICE_CONCURRENCY'])
+    settings['JSLUICE_PARALLELISM'] = project.get('jsluiceParallelism', DEFAULT_SETTINGS['JSLUICE_PARALLELISM'])
 
     # JS Recon Scanner
     settings['JS_RECON_ENABLED'] = project.get('jsReconEnabled', DEFAULT_SETTINGS['JS_RECON_ENABLED'])
@@ -760,6 +777,7 @@ def fetch_project_settings(project_id: str, webapp_url: str) -> dict[str, Any]:
     settings['FFUF_FOLLOW_REDIRECTS'] = project.get('ffufFollowRedirects', DEFAULT_SETTINGS['FFUF_FOLLOW_REDIRECTS'])
     settings['FFUF_CUSTOM_HEADERS'] = project.get('ffufCustomHeaders', DEFAULT_SETTINGS['FFUF_CUSTOM_HEADERS'])
     settings['FFUF_SMART_FUZZ'] = project.get('ffufSmartFuzz', DEFAULT_SETTINGS['FFUF_SMART_FUZZ'])
+    settings['FFUF_PARALLELISM'] = project.get('ffufParallelism', DEFAULT_SETTINGS['FFUF_PARALLELISM'])
 
     # Arjun Parameter Discovery
     settings['ARJUN_ENABLED'] = project.get('arjunEnabled', DEFAULT_SETTINGS['ARJUN_ENABLED'])
@@ -796,11 +814,13 @@ def fetch_project_settings(project_id: str, webapp_url: str) -> dict[str, Any]:
     settings['GAU_METHOD_DETECT_RATE_LIMIT'] = project.get('gauMethodDetectRateLimit', DEFAULT_SETTINGS['GAU_METHOD_DETECT_RATE_LIMIT'])
     settings['GAU_METHOD_DETECT_THREADS'] = project.get('gauMethodDetectThreads', DEFAULT_SETTINGS['GAU_METHOD_DETECT_THREADS'])
     settings['GAU_FILTER_DEAD_ENDPOINTS'] = project.get('gauFilterDeadEndpoints', DEFAULT_SETTINGS['GAU_FILTER_DEAD_ENDPOINTS'])
+    settings['GAU_WORKERS'] = project.get('gauWorkers', DEFAULT_SETTINGS['GAU_WORKERS'])
 
     # ParamSpider Passive Parameter Discovery
     settings['PARAMSPIDER_ENABLED'] = project.get('paramspiderEnabled', DEFAULT_SETTINGS['PARAMSPIDER_ENABLED'])
     settings['PARAMSPIDER_PLACEHOLDER'] = project.get('paramspiderPlaceholder', DEFAULT_SETTINGS['PARAMSPIDER_PLACEHOLDER'])
     settings['PARAMSPIDER_TIMEOUT'] = project.get('paramspiderTimeout', DEFAULT_SETTINGS['PARAMSPIDER_TIMEOUT'])
+    settings['PARAMSPIDER_WORKERS'] = project.get('paramspiderWorkers', DEFAULT_SETTINGS['PARAMSPIDER_WORKERS'])
 
     # Kiterunner API Discovery
     settings['KITERUNNER_ENABLED'] = project.get('kiterunnerEnabled', DEFAULT_SETTINGS['KITERUNNER_ENABLED'])
@@ -820,6 +840,7 @@ def fetch_project_settings(project_id: str, webapp_url: str) -> dict[str, Any]:
     settings['KITERUNNER_METHOD_DETECT_TIMEOUT'] = project.get('kiterunnerMethodDetectTimeout', DEFAULT_SETTINGS['KITERUNNER_METHOD_DETECT_TIMEOUT'])
     settings['KITERUNNER_METHOD_DETECT_RATE_LIMIT'] = project.get('kiterunnerMethodDetectRateLimit', DEFAULT_SETTINGS['KITERUNNER_METHOD_DETECT_RATE_LIMIT'])
     settings['KITERUNNER_METHOD_DETECT_THREADS'] = project.get('kiterunnerMethodDetectThreads', DEFAULT_SETTINGS['KITERUNNER_METHOD_DETECT_THREADS'])
+    settings['KITERUNNER_PARALLELISM'] = project.get('kiterunnerParallelism', DEFAULT_SETTINGS['KITERUNNER_PARALLELISM'])
 
     # CVE Lookup
     settings['CVE_LOOKUP_ENABLED'] = project.get('cveLookupEnabled', DEFAULT_SETTINGS['CVE_LOOKUP_ENABLED'])
@@ -875,6 +896,7 @@ def fetch_project_settings(project_id: str, webapp_url: str) -> dict[str, Any]:
     settings['SHODAN_REVERSE_DNS'] = project.get('shodanReverseDns', DEFAULT_SETTINGS['SHODAN_REVERSE_DNS'])
     settings['SHODAN_DOMAIN_DNS'] = project.get('shodanDomainDns', DEFAULT_SETTINGS['SHODAN_DOMAIN_DNS'])
     settings['SHODAN_PASSIVE_CVES'] = project.get('shodanPassiveCves', DEFAULT_SETTINGS['SHODAN_PASSIVE_CVES'])
+    settings['SHODAN_WORKERS'] = project.get('shodanWorkers', DEFAULT_SETTINGS['SHODAN_WORKERS'])
 
     # URLScan.io Passive Enrichment
     settings['URLSCAN_ENABLED'] = project.get('urlscanEnabled', DEFAULT_SETTINGS['URLSCAN_ENABLED'])
@@ -1161,6 +1183,8 @@ def apply_stealth_overrides(settings: dict[str, Any]) -> dict[str, Any]:
     settings['KATANA_RATE_LIMIT'] = 2
     settings['KATANA_MAX_URLS'] = 50
     settings['KATANA_JS_CRAWL'] = False  # JS rendering = headless browser = noisy
+    settings['KATANA_PARALLELISM'] = 1
+    settings['KATANA_CONCURRENCY'] = 1
 
     # --- GAU: enable it (passive source) but throttle verification ---
     settings['GAU_ENABLED'] = True
@@ -1168,9 +1192,11 @@ def apply_stealth_overrides(settings: dict[str, Any]) -> dict[str, Any]:
     settings['GAU_VERIFY_THREADS'] = 1
     settings['GAU_METHOD_DETECT_RATE_LIMIT'] = 2
     settings['GAU_METHOD_DETECT_THREADS'] = 1
+    settings['GAU_WORKERS'] = 1
 
     # --- ParamSpider: enable it (passive source) ---
     settings['PARAMSPIDER_ENABLED'] = True
+    settings['PARAMSPIDER_WORKERS'] = 1
 
     # --- Nuclei: passive-only scanning ---
     settings['NUCLEI_DAST_MODE'] = False       # No active fuzzing
@@ -1189,6 +1215,7 @@ def apply_stealth_overrides(settings: dict[str, Any]) -> dict[str, Any]:
 
     # --- jsluice: keep enabled but reduce file count ---
     settings['JSLUICE_MAX_FILES'] = 20
+    settings['JSLUICE_PARALLELISM'] = 1
 
     # --- FFuf: DISABLED (active directory brute-force) ---
     settings['FFUF_ENABLED'] = False
@@ -1201,6 +1228,13 @@ def apply_stealth_overrides(settings: dict[str, Any]) -> dict[str, Any]:
 
     # --- Banner Grabbing: DISABLED (direct socket connections) ---
     settings['BANNER_GRAB_ENABLED'] = False
+
+    # --- Shodan: reduce parallel workers ---
+    settings['SHODAN_WORKERS'] = 1
+
+    # --- DNS: reduce parallel workers ---
+    settings['DNS_MAX_WORKERS'] = 5
+    settings['DNS_RECORD_PARALLELISM'] = False
 
     # --- Subdomain Brute Force: DISABLED ---
     settings['USE_BRUTEFORCE_FOR_SUBDOMAINS'] = False

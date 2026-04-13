@@ -421,29 +421,43 @@ def dns_lookup_single(hostname: str, rtype: str, max_retries: int = 3) -> list:
     return None
 
 
-def dns_lookup(hostname: str, max_retries: int = 3) -> dict:
+def dns_lookup(hostname: str, max_retries: int = 3, parallel: bool = True) -> dict:
     """
     Perform full DNS lookup for all record types with retry logic.
 
     Args:
         hostname: Domain or subdomain to resolve
         max_retries: Maximum retry attempts per record type
+        parallel: Query all 7 record types concurrently (default True)
 
     Returns:
         Dictionary with all DNS records
     """
-    
+
     dns_data = {}
-    
-    for rtype in DNS_RECORD_TYPES:
-        dns_data[rtype] = dns_lookup_single(hostname, rtype, max_retries)
-    
+
+    if parallel and len(DNS_RECORD_TYPES) > 1:
+        with ThreadPoolExecutor(max_workers=len(DNS_RECORD_TYPES)) as executor:
+            future_to_rtype = {
+                executor.submit(dns_lookup_single, hostname, rtype, max_retries): rtype
+                for rtype in DNS_RECORD_TYPES
+            }
+            for future in as_completed(future_to_rtype):
+                rtype = future_to_rtype[future]
+                try:
+                    dns_data[rtype] = future.result()
+                except Exception:
+                    dns_data[rtype] = None
+    else:
+        for rtype in DNS_RECORD_TYPES:
+            dns_data[rtype] = dns_lookup_single(hostname, rtype, max_retries)
+
     # Extract IPs for convenience
     ips = {
         "ipv4": dns_data.get("A") or [],
         "ipv6": dns_data.get("AAAA") or []
     }
-    
+
     return {
         "records": dns_data,
         "ips": ips,
@@ -512,7 +526,7 @@ def verify_domain_ownership(domain: str, token: str, txt_prefix: str = "_redamon
     return result
 
 
-def resolve_all_dns(domain: str, subdomains: list, max_workers: int = 20) -> dict:
+def resolve_all_dns(domain: str, subdomains: list, max_workers: int = 20, record_parallelism: bool = True) -> dict:
     """
     Resolve DNS for domain and all subdomains using parallel workers.
 
@@ -520,6 +534,7 @@ def resolve_all_dns(domain: str, subdomains: list, max_workers: int = 20) -> dic
         domain: Root domain
         subdomains: List of discovered subdomains
         max_workers: Max concurrent DNS resolution threads (default: 20)
+        record_parallelism: Query 7 record types in parallel per host (default: True)
 
     Returns:
         Dictionary with DNS data for domain and each subdomain
@@ -534,14 +549,14 @@ def resolve_all_dns(domain: str, subdomains: list, max_workers: int = 20) -> dic
 
     # Resolve root domain first
     print(f"[*][DNS] {domain} (root)")
-    result["domain"] = dns_lookup(domain)
+    result["domain"] = dns_lookup(domain, parallel=record_parallelism)
     if result["domain"]["ips"]["ipv4"]:
         print(f"[+][DNS] {domain} → {', '.join(result['domain']['ips']['ipv4'])}")
 
     # Resolve all subdomains in parallel
     with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="dns") as executor:
         future_to_sub = {
-            executor.submit(dns_lookup, sub): sub
+            executor.submit(dns_lookup, sub, 3, record_parallelism): sub
             for sub in subs_to_resolve
         }
         for future in as_completed(future_to_sub):
@@ -770,7 +785,9 @@ def discover_subdomains(domain: str, anonymous: bool = False, bruteforce: bool =
     
     # DNS Resolution for domain + all subdomains
     if resolve:
-        result["dns"] = resolve_all_dns(domain, all_subs)
+        dns_workers = (settings or {}).get('DNS_MAX_WORKERS', 50)
+        dns_record_parallel = (settings or {}).get('DNS_RECORD_PARALLELISM', True)
+        result["dns"] = resolve_all_dns(domain, all_subs, max_workers=dns_workers, record_parallelism=dns_record_parallel)
 
     # Build subdomain status map from DNS results
     subdomain_status_map = {}

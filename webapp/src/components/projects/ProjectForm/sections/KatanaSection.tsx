@@ -119,6 +119,33 @@ export function KatanaSection({ data, updateField, onRun }: KatanaSectionProps) 
             </div>
           </div>
 
+          <div className={styles.fieldRow}>
+            <div className={styles.fieldGroup}>
+              <label className={styles.fieldLabel}>Parallelism</label>
+              <input
+                type="number"
+                className="textInput"
+                value={data.katanaParallelism ?? 5}
+                onChange={(e) => updateField('katanaParallelism', parseInt(e.target.value) || 5)}
+                min={1}
+                max={50}
+              />
+              <span className={styles.fieldHint}>Number of target URLs to crawl simultaneously</span>
+            </div>
+            <div className={styles.fieldGroup}>
+              <label className={styles.fieldLabel}>Concurrency</label>
+              <input
+                type="number"
+                className="textInput"
+                value={data.katanaConcurrency ?? 10}
+                onChange={(e) => updateField('katanaConcurrency', parseInt(e.target.value) || 10)}
+                min={1}
+                max={50}
+              />
+              <span className={styles.fieldHint}>Concurrent fetchers per target URL</span>
+            </div>
+          </div>
+
           <div className={styles.subSection}>
             <h3 className={styles.subSectionTitle}>Options</h3>
             <div className={styles.toggleRow}>

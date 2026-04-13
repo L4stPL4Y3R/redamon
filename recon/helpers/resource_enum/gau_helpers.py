@@ -252,7 +252,8 @@ def run_gau_discovery(
     year_range: Optional[List[str]] = None,
     verbose: bool = False,
     use_proxy: bool = False,
-    urlscan_api_key: str = ""
+    urlscan_api_key: str = "",
+    workers: int = 10
 ) -> Tuple[List[str], Dict[str, List[str]]]:
     """
     Run GAU passive URL discovery for multiple domains.
@@ -275,9 +276,9 @@ def run_gau_discovery(
     all_discovered_urls = set()
     urls_by_domain = {}
     total_domains = len(target_domains)
-    max_workers = min(5, total_domains)
+    max_workers = min(workers, total_domains)
 
-    print(f"[*][GAU] Processing {total_domains} domains with {max_workers} parallel workers...")
+    print(f"[*][GAU] Processing {total_domains} domains with {max_workers} parallel workers (max configured: {workers})...")
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_domain = {}

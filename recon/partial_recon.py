@@ -119,7 +119,9 @@ def run_subdomain_discovery(config: dict) -> None:
             print(f"[*][Partial Recon] Resolving DNS for {len(all_subs)} subdomains...")
             result["subdomains"] = all_subs
             result["subdomain_count"] = len(all_subs)
-            result["dns"] = resolve_all_dns(domain, all_subs)
+            dns_workers = settings.get('DNS_MAX_WORKERS', 50)
+            dns_record_parallel = settings.get('DNS_RECORD_PARALLELISM', True)
+            result["dns"] = resolve_all_dns(domain, all_subs, max_workers=dns_workers, record_parallelism=dns_record_parallel)
 
             # Rebuild subdomain status map
             subdomain_status_map = {}
@@ -3180,6 +3182,7 @@ def run_jsluice(config: dict) -> None:
 
     # Run jsluice analysis (filters to .js files internally, downloads and analyzes)
     print(f"[*][Partial Recon] Running jsluice analysis...")
+    JSLUICE_PARALLELISM = settings.get('JSLUICE_PARALLELISM', 3)
     jsluice_result = run_jsluice_analysis(
         target_urls,
         JSLUICE_MAX_FILES,
@@ -3187,6 +3190,7 @@ def run_jsluice(config: dict) -> None:
         JSLUICE_EXTRACT_URLS,
         JSLUICE_EXTRACT_SECRETS,
         JSLUICE_CONCURRENCY,
+        JSLUICE_PARALLELISM,
         target_domains,
         use_proxy,
     )

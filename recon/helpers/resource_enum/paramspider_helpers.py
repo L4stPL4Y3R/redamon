@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Dict, List, Set, Tuple
 from urllib.parse import urlparse
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from .classification import classify_parameter, classify_endpoint
 from .gau_helpers import parse_gau_url_to_endpoint
 
@@ -92,6 +94,7 @@ def run_paramspider_discovery(
     placeholder: str,
     timeout: int,
     use_proxy: bool = False,
+    workers: int = 5,
 ) -> Tuple[List[str], Dict[str, List[str]]]:
     """
     Run ParamSpider passive parameter discovery for multiple domains.
@@ -108,26 +111,40 @@ def run_paramspider_discovery(
     print(f"\n[*][ParamSpider] Running passive parameter discovery...")
     print(f"[*][ParamSpider] Placeholder: {placeholder}")
     print(f"[*][ParamSpider] Domains: {len(target_domains)}")
+    print(f"[*][ParamSpider] Workers: {workers}")
 
     all_discovered_urls = set()
     urls_by_domain = {}
     tmp_dir = _create_temp_dir()
 
     try:
-        for i, domain in enumerate(sorted(target_domains), 1):
-            print(f"[*][ParamSpider] [{i}/{len(target_domains)}] Querying Wayback Machine for: {domain}...")
+        max_workers = min(workers, len(target_domains))
+        print(f"[*][ParamSpider] Processing {len(target_domains)} domains with {max_workers} parallel workers...")
 
-            domain_urls = run_paramspider_for_domain(
-                domain=domain,
-                placeholder=placeholder,
-                timeout=timeout,
-                use_proxy=use_proxy,
-                tmp_dir=tmp_dir,
-            )
-            urls_by_domain[domain] = domain_urls
-            all_discovered_urls.update(domain_urls)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_domain = {}
+            for domain in sorted(target_domains):
+                future = executor.submit(
+                    run_paramspider_for_domain,
+                    domain=domain,
+                    placeholder=placeholder,
+                    timeout=timeout,
+                    use_proxy=use_proxy,
+                    tmp_dir=tmp_dir,
+                )
+                future_to_domain[future] = domain
 
-            print(f"[+][ParamSpider] Found {len(domain_urls)} parameterized URLs")
+            completed = 0
+            for future in as_completed(future_to_domain):
+                domain = future_to_domain[future]
+                completed += 1
+                try:
+                    domain_urls = future.result()
+                    urls_by_domain[domain] = domain_urls
+                    all_discovered_urls.update(domain_urls)
+                    print(f"[+][ParamSpider] [{completed}/{len(target_domains)}] {domain}: {len(domain_urls)} parameterized URLs")
+                except Exception as e:
+                    print(f"[!][ParamSpider] [{completed}/{len(target_domains)}] {domain} failed: {e}")
 
         urls_list = sorted(all_discovered_urls)
         print(f"[+][ParamSpider] Discovered {len(urls_list)} total parameterized URLs")

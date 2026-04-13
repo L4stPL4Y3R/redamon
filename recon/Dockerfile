@@ -8,13 +8,17 @@
 # Static linking required: Alpine uses musl but the final image uses Debian/glibc
 # Source: https://github.com/BishopFox/jsluice (MIT)
 FROM golang:1.22-alpine AS jsluice-builder
-RUN apk add --no-cache gcc musl-dev && \
-    CGO_ENABLED=1 go install -ldflags='-linkmode external -extldflags "-static"' \
+RUN printf '#!/bin/sh\nmax=5; n=0; until "$@"; do n=$((n+1)); [ $n -ge $max ] && exit 1; echo "Retry $n/$max ..."; sleep $((n*5)); done\n' \
+    > /usr/local/bin/retry && chmod +x /usr/local/bin/retry
+RUN retry apk add --no-cache gcc musl-dev && \
+    CGO_ENABLED=1 retry go install -ldflags='-linkmode external -extldflags "-static"' \
         github.com/BishopFox/jsluice/cmd/jsluice@latest
 
 # Stage 1b: Build ffuf binary (pure Go, no CGO needed)
 FROM golang:1.22-alpine AS ffuf-builder
-RUN CGO_ENABLED=0 go install github.com/ffuf/ffuf/v2@latest
+RUN printf '#!/bin/sh\nmax=5; n=0; until "$@"; do n=$((n+1)); [ $n -ge $max ] && exit 1; echo "Retry $n/$max ..."; sleep $((n*5)); done\n' \
+    > /usr/local/bin/retry && chmod +x /usr/local/bin/retry
+RUN CGO_ENABLED=0 retry go install github.com/ffuf/ffuf/v2@latest
 
 # Stage 1c: Build masscan from source (C project, requires libpcap)
 FROM debian:bookworm-slim AS masscan-builder
@@ -43,9 +47,13 @@ ENV PYTHONPATH=/app
 WORKDIR /app
 
 # Add Docker official APT repository (for up-to-date CLI)
+# Retry helper for transient network failures
+RUN printf '#!/bin/sh\nmax=5; n=0; until "$@"; do n=$((n+1)); [ $n -ge $max ] && exit 1; echo "Retry $n/$max ..."; sleep $((n*5)); done\n' \
+    > /usr/local/bin/retry && chmod +x /usr/local/bin/retry
+
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
     && install -m 0755 -d /etc/apt/keyrings \
-    && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
+    && retry curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
     && chmod a+r /etc/apt/keyrings/docker.asc \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian \
     $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list \
@@ -130,16 +138,16 @@ COPY --from=ffuf-builder /go/bin/ffuf /usr/local/bin/ffuf
 
 # Install SecLists wordlists for FFuf directory fuzzing
 RUN mkdir -p /usr/share/seclists/Discovery/Web-Content && \
-    curl -sL https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/common.txt \
+    retry curl -sL https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/common.txt \
         -o /usr/share/seclists/Discovery/Web-Content/common.txt && \
-    curl -sL https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/raft-medium-directories.txt \
+    retry curl -sL https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/raft-medium-directories.txt \
         -o /usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt && \
-    curl -sL https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/big.txt \
+    retry curl -sL https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/big.txt \
         -o /usr/share/seclists/Discovery/Web-Content/big.txt
 
 # Download jhaddix all.txt wordlist for Amass brute-force subdomain enumeration
 RUN mkdir -p /app/recon/wordlists && \
-    curl -sL "https://gist.githubusercontent.com/jhaddix/86a06c5dc309d08580a018c66354a056/raw/all.txt" \
+    retry curl -sL "https://gist.githubusercontent.com/jhaddix/86a06c5dc309d08580a018c66354a056/raw/all.txt" \
         -o /app/recon/wordlists/jhaddix-all.txt
 
 # Copy the application code

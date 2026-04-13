@@ -1015,7 +1015,9 @@ def run_domain_recon(target: str, anonymous: bool = False, bruteforce: bool = Fa
             from recon.domain_recon import dns_lookup, resolve_all_dns
             include_root = target_info.get("include_root_domain", False)
             # Use parallel resolve_all_dns for filtered subdomains too
-            dns_result = resolve_all_dns(root_domain, full_subdomains)
+            dns_workers = _settings.get('DNS_MAX_WORKERS', 50)
+            dns_record_parallel = _settings.get('DNS_RECORD_PARALLELISM', True)
+            dns_result = resolve_all_dns(root_domain, full_subdomains, max_workers=dns_workers, record_parallelism=dns_record_parallel)
             domain_dns = dns_result["domain"] if include_root else {}
             combined_result["dns"] = {
                 "domain": domain_dns,

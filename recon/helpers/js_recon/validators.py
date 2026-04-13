@@ -8,6 +8,7 @@ Rate-limited: 1 req/sec per service via threading.Lock.
 """
 
 import re
+import math
 import time
 import threading
 import requests
@@ -404,6 +405,39 @@ def validate_openai(matched_text: str, timeout: int = 5) -> dict:
     return _rate_limited_request('openai', do_request, timeout)
 
 
+# ---------------------------------------------------------------------------
+# Format-only validators (no API calls, structural checks only)
+# ---------------------------------------------------------------------------
+
+def validate_twilio_format(matched_text: str, timeout: int = 5) -> dict:
+    """Format validation for Twilio Account SID (no API call)."""
+    sid = re.search(r'AC([0-9a-f]{32})', matched_text)
+    if not sid:
+        return {'valid': False, 'scope': '', 'info': 'Not valid hex format for Twilio SID', 'error': 'format_invalid'}
+    hex_part = sid.group(1)
+    # Check entropy -- real SIDs are random hex
+    freq: dict[str, int] = {}
+    for c in hex_part:
+        freq[c] = freq.get(c, 0) + 1
+    entropy = -sum((count / len(hex_part)) * math.log2(count / len(hex_part)) for count in freq.values())
+    if entropy < 3.0:
+        return {'valid': False, 'scope': '', 'info': f'Low entropy ({entropy:.1f}) suggests non-secret data', 'error': 'format_invalid'}
+    return {'valid': False, 'scope': '', 'info': 'Format matches Twilio SID structure (hex, high entropy)', 'error': 'format_only'}
+
+
+def validate_twitter_format(matched_text: str, timeout: int = 5) -> dict:
+    """Format validation for Twitter Bearer Token (no API call)."""
+    token = re.search(r'AAAAAAAAAAAAAAAAAAAAAA([0-9A-Za-z%]+)', matched_text)
+    if not token:
+        return {'valid': False, 'scope': '', 'info': '', 'error': 'format_invalid'}
+    suffix = token.group(1)
+    if len(suffix) < 30:
+        return {'valid': False, 'scope': '', 'info': 'Token too short for Twitter bearer', 'error': 'format_invalid'}
+    if len(set(suffix)) < 5:
+        return {'valid': False, 'scope': '', 'info': 'Insufficient character diversity', 'error': 'format_invalid'}
+    return {'valid': False, 'scope': '', 'info': 'Format matches Twitter bearer structure', 'error': 'format_only'}
+
+
 # Registry mapping validator_ref strings to functions
 VALIDATOR_REGISTRY = {
     'validate_aws': validate_aws,
@@ -427,6 +461,8 @@ VALIDATOR_REGISTRY = {
     'validate_shopify': validate_shopify,
     'validate_cloudflare': validate_cloudflare,
     'validate_openai': validate_openai,
+    'validate_twilio_format': validate_twilio_format,
+    'validate_twitter_format': validate_twitter_format,
 }
 
 

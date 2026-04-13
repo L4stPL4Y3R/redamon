@@ -346,6 +346,36 @@ export function SubdomainDiscoverySection({ data, updateField, onRun }: Subdomai
           </div>
 
           <div className={styles.subSection}>
+            <h3 className={styles.subSectionTitle}>DNS Performance</h3>
+
+            <div className={styles.fieldRow}>
+              <div className={styles.fieldGroup}>
+                <label className={styles.fieldLabel}>DNS Max Workers</label>
+                <input
+                  type="number"
+                  className="textInput"
+                  value={data.dnsMaxWorkers ?? 50}
+                  onChange={(e) => updateField('dnsMaxWorkers', parseInt(e.target.value) || 50)}
+                  min={1}
+                  max={200}
+                />
+                <span className={styles.fieldHint}>Parallel DNS resolution workers</span>
+              </div>
+            </div>
+
+            <div className={styles.toggleRow}>
+              <div>
+                <span className={styles.toggleLabel}>DNS Record Parallelism</span>
+                <p className={styles.toggleDescription}>Query all DNS record types in parallel per hostname</p>
+              </div>
+              <Toggle
+                checked={data.dnsRecordParallelism ?? true}
+                onChange={(checked) => updateField('dnsRecordParallelism', checked)}
+              />
+            </div>
+          </div>
+
+          <div className={styles.subSection}>
             <h3 className={styles.subSectionTitle}>DNS &amp; WHOIS <span className={styles.badgePassive}>Passive</span></h3>
 
             <div className={styles.toggleRowCompact}>

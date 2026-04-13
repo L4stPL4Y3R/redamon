@@ -143,6 +143,21 @@ export function KiterunnerSection({ data, updateField, onRun }: KiterunnerSectio
                   <span className={styles.fieldHint}>Parallel scanning threads</span>
                 </div>
                 <div className={styles.fieldGroup}>
+                  <label className={styles.fieldLabel}>Parallelism</label>
+                  <input
+                    type="number"
+                    className="textInput"
+                    value={data.kiterunnerParallelism ?? 2}
+                    onChange={(e) => updateField('kiterunnerParallelism', parseInt(e.target.value) || 2)}
+                    min={1}
+                    max={5}
+                  />
+                  <span className={styles.fieldHint}>Number of wordlists to process in parallel</span>
+                </div>
+              </div>
+
+              <div className={styles.fieldRow}>
+                <div className={styles.fieldGroup}>
                   <label className={styles.fieldLabel}>Min Content Length</label>
                   <input
                     type="number"

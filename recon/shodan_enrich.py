@@ -12,11 +12,34 @@ Features:
   - Domain DNS: Subdomain enumeration + DNS records (paid Shodan plan)
   - Passive CVEs: Extract known CVEs from Shodan host data
 """
+import threading
 import time
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 import requests
+
+
+class _RateLimiter:
+    """Thread-safe rate limiter ensuring a minimum interval between requests.
+
+    Reserves time slots under the lock but sleeps outside to allow
+    other threads to reserve their own slots concurrently.
+    """
+    def __init__(self, interval: float):
+        self._interval = interval
+        self._lock = threading.Lock()
+        self._last = 0.0
+
+    def wait(self):
+        with self._lock:
+            now = time.time()
+            elapsed = now - self._last
+            delay = self._interval - elapsed if elapsed < self._interval else 0.0
+            self._last = now + delay  # reserve the slot
+        if delay > 0:
+            time.sleep(delay)
 
 try:
     from recon.ip_filter import filter_ips_for_enrichment
@@ -113,55 +136,16 @@ def _internetdb_get(ip: str) -> dict | None:
         return None
 
 
-def _run_host_lookup(ips: list[str], api_key: str, key_rotator=None) -> list[dict]:
-    """Fetch Shodan host data for each IP.
-
-    Tries the full /shodan/host/{ip} API first. If that returns 403
-    (paid membership required) or no API key is configured, automatically
-    falls back to the free InternetDB API (https://internetdb.shodan.io/{ip})
-    which provides ports, hostnames, CPEs, CVEs, and tags — no banners or geo data.
-    """
-    hosts = []
-    use_internetdb = not api_key  # No key → go straight to InternetDB
-
-    if use_internetdb:
-        logger.info("No Shodan API key — using InternetDB (free, no key required)")
-        print("[*][Shodan] No API key — using InternetDB (free, no key required)")
-
-    for ip in ips:
-        if not use_internetdb:
-            try:
-                data = _shodan_get(f"/shodan/host/{ip}", api_key, key_rotator=key_rotator)
-            except ShodanApiKeyError:
-                logger.info("Paid API unavailable — falling back to InternetDB (free)")
-                print("[*][Shodan] Falling back to InternetDB (free, no key required)")
-                use_internetdb = True
-                data = None
-
-        if use_internetdb:
-            idb = _internetdb_get(ip)
-            if idb:
-                host_entry = {
-                    "ip": ip,
-                    "os": None,
-                    "isp": None,
-                    "org": None,
-                    "country_name": None,
-                    "city": None,
-                    "ports": idb.get("ports", []),
-                    "vulns": idb.get("vulns", []),
-                    "hostnames": idb.get("hostnames", []),
-                    "cpes": idb.get("cpes", []),
-                    "tags": idb.get("tags", []),
-                    "services": [],
-                    "source": "internetdb",
-                }
-                hosts.append(host_entry)
-                logger.info(f"  InternetDB host: {ip} — {len(host_entry['ports'])} ports, "
-                            f"{len(host_entry['vulns'])} vulns")
-            # InternetDB has no documented rate limit but be polite
-            time.sleep(0.5)
-        elif data:
+def _lookup_single_ip(ip: str, use_internetdb: bool, api_key: str, key_rotator, rate_limiter: _RateLimiter) -> dict | None:
+    """Lookup a single IP via Shodan API or InternetDB. Thread-safe."""
+    if not use_internetdb:
+        try:
+            rate_limiter.wait()
+            data = _shodan_get(f"/shodan/host/{ip}", api_key, key_rotator=key_rotator)
+        except ShodanApiKeyError:
+            # Caller will detect and switch to InternetDB
+            raise
+        if data:
             host_entry = {
                 "ip": ip,
                 "os": data.get("os"),
@@ -183,15 +167,96 @@ def _run_host_lookup(ips: list[str], api_key: str, key_rotator=None) -> list[dic
                     "banner": (svc.get("data", "") or "")[:500],
                     "module": svc.get("_shodan", {}).get("module", ""),
                 })
-            hosts.append(host_entry)
             logger.info(f"  Shodan host lookup: {ip} — {len(host_entry['ports'])} ports, "
                         f"{len(host_entry['vulns'])} vulns")
-            time.sleep(1)  # Rate limit (free tier: 1 req/sec)
+            return host_entry
+        return None
+
+    # InternetDB path
+    rate_limiter.wait()
+    idb = _internetdb_get(ip)
+    if idb:
+        host_entry = {
+            "ip": ip,
+            "os": None,
+            "isp": None,
+            "org": None,
+            "country_name": None,
+            "city": None,
+            "ports": idb.get("ports", []),
+            "vulns": idb.get("vulns", []),
+            "hostnames": idb.get("hostnames", []),
+            "cpes": idb.get("cpes", []),
+            "tags": idb.get("tags", []),
+            "services": [],
+            "source": "internetdb",
+        }
+        logger.info(f"  InternetDB host: {ip} — {len(host_entry['ports'])} ports, "
+                    f"{len(host_entry['vulns'])} vulns")
+        return host_entry
+    return None
+
+
+def _run_host_lookup(ips: list[str], api_key: str, key_rotator=None, max_workers: int = 5) -> list[dict]:
+    """Fetch Shodan host data for each IP using parallel workers.
+
+    Tries the full /shodan/host/{ip} API first. If that returns 403
+    (paid membership required) or no API key is configured, automatically
+    falls back to the free InternetDB API (https://internetdb.shodan.io/{ip})
+    which provides ports, hostnames, CPEs, CVEs, and tags -- no banners or geo data.
+    """
+    hosts = []
+    use_internetdb = not api_key  # No key -> go straight to InternetDB
+
+    if use_internetdb:
+        logger.info("No Shodan API key — using InternetDB (free, no key required)")
+        print("[*][Shodan] No API key — using InternetDB (free, no key required)")
+
+    # Rate limiter: 1 req/sec for Shodan API, 0.5s for InternetDB
+    rate_limiter = _RateLimiter(0.5 if use_internetdb else 1.0)
+    workers = min(max_workers, len(ips))
+
+    if workers <= 1 or len(ips) <= 1:
+        # Sequential fallback for single IP or single worker
+        for ip in ips:
+            result = _lookup_single_ip(ip, use_internetdb, api_key, key_rotator, rate_limiter)
+            if result:
+                hosts.append(result)
+        return hosts
+
+    # Try parallel execution; fall back to InternetDB if Shodan API fails
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {
+            executor.submit(_lookup_single_ip, ip, use_internetdb, api_key, key_rotator, rate_limiter): ip
+            for ip in ips
+        }
+
+        for future in as_completed(futures):
+            ip = futures[future]
+            try:
+                result = future.result()
+                if result:
+                    hosts.append(result)
+            except ShodanApiKeyError:
+                # Switch to InternetDB for remaining IPs
+                logger.info("Paid API unavailable — falling back to InternetDB (free)")
+                print("[*][Shodan] Falling back to InternetDB (free, no key required)")
+                # Cancel remaining futures and re-run sequentially with InternetDB
+                executor.shutdown(wait=False, cancel_futures=True)
+                remaining_ips = [ip2 for ip2 in ips if ip2 not in {futures[f] for f in futures if f.done()}]
+                idb_limiter = _RateLimiter(0.5)
+                for rip in remaining_ips:
+                    result = _lookup_single_ip(rip, True, api_key, key_rotator, idb_limiter)
+                    if result:
+                        hosts.append(result)
+                break
+            except Exception as e:
+                logger.warning(f"Host lookup failed for {ip}: {e}")
 
     return hosts
 
 
-def _run_reverse_dns(ips: list[str], api_key: str, hosts: list[dict] | None = None, key_rotator=None) -> dict[str, list[str]]:
+def _run_reverse_dns(ips: list[str], api_key: str, hosts: list[dict] | None = None, key_rotator=None, max_workers: int = 5) -> dict[str, list[str]]:
     """Batch reverse DNS lookup.
 
     Tries the Shodan /dns/reverse API first. On 403, falls back to
@@ -228,15 +293,25 @@ def _run_reverse_dns(ips: list[str], api_key: str, hosts: list[dict] | None = No
                 results[host["ip"]] = hns
                 logger.info(f"  InternetDB reverse DNS: {host['ip']} → {hns}")
 
-    # For IPs not covered by host data, query InternetDB directly
+    # For IPs not covered by host data, query InternetDB directly (parallel)
     covered = set(results.keys())
-    for ip in ips:
-        if ip not in covered:
+    uncovered = [ip for ip in ips if ip not in covered]
+    if uncovered:
+        rate_limiter = _RateLimiter(0.5)
+        workers = min(max_workers, len(uncovered))
+
+        def _lookup_rdns(ip):
+            rate_limiter.wait()
             idb = _internetdb_get(ip)
             if idb and idb.get("hostnames"):
-                results[ip] = idb["hostnames"]
-                logger.info(f"  InternetDB reverse DNS: {ip} → {idb['hostnames']}")
-            time.sleep(0.5)
+                return ip, idb["hostnames"]
+            return ip, None
+
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            for ip, hostnames in executor.map(lambda ip: _lookup_rdns(ip), uncovered):
+                if hostnames:
+                    results[ip] = hostnames
+                    logger.info(f"  InternetDB reverse DNS: {ip} → {hostnames}")
 
     return results
 
@@ -276,12 +351,12 @@ def _run_domain_dns(domain: str, api_key: str, key_rotator=None) -> dict:
     return result
 
 
-def _extract_passive_cves(hosts: list[dict], ips: list[str], api_key: str, key_rotator=None) -> list[dict]:
+def _extract_passive_cves(hosts: list[dict], ips: list[str], api_key: str, key_rotator=None, max_workers: int = 5) -> list[dict]:
     """Extract CVEs from host lookup data.
 
     If host data exists (from host lookup, which may be InternetDB data),
     CVEs are extracted directly. If no host data, queries InternetDB per-IP
-    (free, no key required).
+    (free, no key required) using parallel workers.
     """
     cves: list[dict] = []
     seen_cve_ip: set[tuple[str, str]] = set()
@@ -302,21 +377,27 @@ def _extract_passive_cves(hosts: list[dict], ips: list[str], api_key: str, key_r
                         "source": source,
                     })
     else:
-        # No host data — query InternetDB directly (free, no key needed)
+        # No host data -- query InternetDB directly (free, no key needed)
         print("[*][Shodan] Querying InternetDB for passive CVEs (free)")
-        for ip in ips:
-            idb = _internetdb_get(ip)
-            if idb:
-                for cve_id in idb.get("vulns", []):
-                    key = (cve_id, ip)
-                    if key not in seen_cve_ip:
-                        seen_cve_ip.add(key)
-                        cves.append({
-                            "cve_id": cve_id,
-                            "ip": ip,
-                            "source": "internetdb",
-                        })
-            time.sleep(0.5)
+        rate_limiter = _RateLimiter(0.5)
+        workers = min(max_workers, len(ips))
+
+        def _query_cves(ip):
+            rate_limiter.wait()
+            return ip, _internetdb_get(ip)
+
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            for ip, idb in executor.map(_query_cves, ips):
+                if idb:
+                    for cve_id in idb.get("vulns", []):
+                        key = (cve_id, ip)
+                        if key not in seen_cve_ip:
+                            seen_cve_ip.add(key)
+                            cves.append({
+                                "cve_id": cve_id,
+                                "ip": ip,
+                                "source": "internetdb",
+                            })
 
     logger.info(f"  Shodan passive CVEs: {len(cves)} CVEs across {len(set(c['ip'] for c in cves))} IPs")
     return cves
@@ -338,6 +419,7 @@ def run_shodan_enrichment(combined_result: dict, settings: dict[str, Any]) -> di
     """
     api_key = settings.get("SHODAN_API_KEY", "")
     key_rotator = settings.get("SHODAN_KEY_ROTATOR")
+    shodan_workers = settings.get("SHODAN_WORKERS", 5)
 
     do_host = settings.get("SHODAN_HOST_LOOKUP", False)
     do_rdns = settings.get("SHODAN_REVERSE_DNS", False)
@@ -368,13 +450,13 @@ def run_shodan_enrichment(combined_result: dict, settings: dict[str, Any]) -> di
         # 1. Host Lookup (falls back to InternetDB on 403)
         if do_host and ips:
             print(f"[*][Shodan] Running host lookup on {len(ips)} IPs...")
-            shodan_data["hosts"] = _run_host_lookup(ips, api_key, key_rotator=key_rotator)
+            shodan_data["hosts"] = _run_host_lookup(ips, api_key, key_rotator=key_rotator, max_workers=shodan_workers)
             print(f"[+][Shodan] Host lookup complete: {len(shodan_data['hosts'])} hosts enriched")
 
         # 2. Reverse DNS (falls back to InternetDB hostnames on 403)
         if do_rdns and ips:
             print(f"[*][Shodan] Running reverse DNS on {len(ips)} IPs...")
-            shodan_data["reverse_dns"] = _run_reverse_dns(ips, api_key, shodan_data["hosts"], key_rotator=key_rotator)
+            shodan_data["reverse_dns"] = _run_reverse_dns(ips, api_key, shodan_data["hosts"], key_rotator=key_rotator, max_workers=shodan_workers)
             print(f"[+][Shodan] Reverse DNS complete: {len(shodan_data['reverse_dns'])} IPs resolved")
 
         # 3. Domain DNS (domain mode only, paid Shodan plan — no free fallback)
@@ -388,7 +470,7 @@ def run_shodan_enrichment(combined_result: dict, settings: dict[str, Any]) -> di
         if do_cves and ips:
             print(f"[*][Shodan] Extracting passive CVEs...")
             shodan_data["cves"] = _extract_passive_cves(
-                shodan_data["hosts"], ips, api_key, key_rotator=key_rotator
+                shodan_data["hosts"], ips, api_key, key_rotator=key_rotator, max_workers=shodan_workers
             )
             print(f"[+][Shodan] Passive CVEs complete: {len(shodan_data['cves'])} CVEs found")
 

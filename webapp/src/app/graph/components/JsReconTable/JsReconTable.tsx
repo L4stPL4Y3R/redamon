@@ -86,8 +86,27 @@ function sevBadge(severity: string) {
 
 function valBadge(status: string) {
   if (status === 'validated') return <span className={`${styles.badge} ${styles.badgeLive}`}>LIVE</span>
+  if (status === 'format_validated') return <span className={`${styles.badge} ${styles.badgeFormatValid}`}>format ok</span>
   if (status === 'invalid') return <span className={`${styles.badge} ${styles.badgeInvalid}`}>invalid</span>
   return <span className={`${styles.badge} ${styles.badgeUnvalidated}`}>{status || 'n/a'}</span>
+}
+
+const VALIDATION_PRIORITY: Record<string, number> = {
+  validated: 0, format_validated: 1, incomplete: 2, unvalidated: 3, skipped: 4, invalid: 5,
+}
+const SEVERITY_PRIORITY: Record<string, number> = {
+  critical: 0, high: 1, medium: 2, low: 3, info: 4,
+}
+
+function sortSecrets(rows: any[]): any[] {
+  return [...rows].sort((a, b) => {
+    const va = VALIDATION_PRIORITY[a.validation?.status ?? 'unvalidated'] ?? 3
+    const vb = VALIDATION_PRIORITY[b.validation?.status ?? 'unvalidated'] ?? 3
+    if (va !== vb) return va - vb
+    const sa = SEVERITY_PRIORITY[a.severity ?? 'info'] ?? 4
+    const sb = SEVERITY_PRIORITY[b.severity ?? 'info'] ?? 4
+    return sa - sb
+  })
 }
 
 export const JsReconTable = memo(function JsReconTable({
@@ -225,7 +244,7 @@ function CopyButton({ text }: { text: string }) {
 }
 
 function SecretsTable({ rows, search, limit }: { rows: any[]; search: string; limit: number }) {
-  const filtered = filterRows(rows, search).slice(0, limit)
+  const filtered = sortSecrets(filterRows(rows, search)).slice(0, limit)
   if (!filtered.length) return <div className={styles.stateContainer}>No secrets found.</div>
   return (
     <table className={styles.table}>

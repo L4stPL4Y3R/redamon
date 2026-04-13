@@ -104,6 +104,18 @@ export function JsluiceSection({ data, updateField, onRun }: JsluiceSectionProps
                   />
                   <span className={styles.fieldHint}>Files processed concurrently by jsluice</span>
                 </div>
+                <div className={styles.fieldGroup}>
+                  <label className={styles.fieldLabel}>Parallelism</label>
+                  <input
+                    type="number"
+                    className="textInput"
+                    value={data.jsluiceParallelism ?? 3}
+                    onChange={(e) => updateField('jsluiceParallelism', parseInt(e.target.value) || 3)}
+                    min={1}
+                    max={10}
+                  />
+                  <span className={styles.fieldHint}>Parallel base URL analysis batches</span>
+                </div>
               </div>
 
               <div className={styles.subSection}>

@@ -28,7 +28,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, Optional
 from urllib.parse import urlparse
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import sys
 
 # Add project root to path for imports
@@ -126,6 +126,8 @@ def run_resource_enum(recon_data: dict, output_file: Optional[Path] = None, sett
     KATANA_PARAMS_ONLY = settings.get('KATANA_PARAMS_ONLY', False)
     KATANA_CUSTOM_HEADERS = settings.get('KATANA_CUSTOM_HEADERS', [])
     KATANA_EXCLUDE_PATTERNS = settings.get('KATANA_EXCLUDE_PATTERNS', [])
+    KATANA_PARALLELISM = settings.get('KATANA_PARALLELISM', 5)
+    KATANA_CONCURRENCY = settings.get('KATANA_CONCURRENCY', 10)
 
     # Hakrawler settings
     HAKRAWLER_ENABLED = settings.get('HAKRAWLER_ENABLED', False)
@@ -137,6 +139,7 @@ def run_resource_enum(recon_data: dict, output_file: Optional[Path] = None, sett
     HAKRAWLER_INCLUDE_SUBS = settings.get('HAKRAWLER_INCLUDE_SUBS', False)
     HAKRAWLER_INSECURE = settings.get('HAKRAWLER_INSECURE', True)
     HAKRAWLER_CUSTOM_HEADERS = settings.get('HAKRAWLER_CUSTOM_HEADERS', [])
+    HAKRAWLER_PARALLELISM = settings.get('HAKRAWLER_PARALLELISM', 4)
 
     # jsluice settings
     JSLUICE_ENABLED = settings.get('JSLUICE_ENABLED', True)
@@ -145,6 +148,7 @@ def run_resource_enum(recon_data: dict, output_file: Optional[Path] = None, sett
     JSLUICE_EXTRACT_URLS = settings.get('JSLUICE_EXTRACT_URLS', True)
     JSLUICE_EXTRACT_SECRETS = settings.get('JSLUICE_EXTRACT_SECRETS', True)
     JSLUICE_CONCURRENCY = settings.get('JSLUICE_CONCURRENCY', 5)
+    JSLUICE_PARALLELISM = settings.get('JSLUICE_PARALLELISM', 3)
 
     # FFuf settings
     FFUF_ENABLED = settings.get('FFUF_ENABLED', False)
@@ -163,6 +167,7 @@ def run_resource_enum(recon_data: dict, output_file: Optional[Path] = None, sett
     FFUF_FOLLOW_REDIRECTS = settings.get('FFUF_FOLLOW_REDIRECTS', False)
     FFUF_CUSTOM_HEADERS = settings.get('FFUF_CUSTOM_HEADERS', [])
     FFUF_SMART_FUZZ = settings.get('FFUF_SMART_FUZZ', True)
+    FFUF_PARALLELISM = settings.get('FFUF_PARALLELISM', 3)
 
     # Arjun settings
     ARJUN_ENABLED = settings.get('ARJUN_ENABLED', False)
@@ -206,12 +211,14 @@ def run_resource_enum(recon_data: dict, output_file: Optional[Path] = None, sett
     GAU_METHOD_DETECT_TIMEOUT = settings.get('GAU_METHOD_DETECT_TIMEOUT', 5)
     GAU_METHOD_DETECT_RATE_LIMIT = settings.get('GAU_METHOD_DETECT_RATE_LIMIT', 30)
     GAU_FILTER_DEAD_ENDPOINTS = settings.get('GAU_FILTER_DEAD_ENDPOINTS', True)
+    GAU_WORKERS = settings.get('GAU_WORKERS', 10)
     URLSCAN_API_KEY = settings.get('URLSCAN_API_KEY', '')
 
     # ParamSpider settings - disable in IP mode (archives index by domain, not IP)
     PARAMSPIDER_ENABLED = False if ip_mode else settings.get('PARAMSPIDER_ENABLED', False)
     PARAMSPIDER_PLACEHOLDER = settings.get('PARAMSPIDER_PLACEHOLDER', 'FUZZ')
     PARAMSPIDER_TIMEOUT = settings.get('PARAMSPIDER_TIMEOUT', 120)
+    PARAMSPIDER_WORKERS = settings.get('PARAMSPIDER_WORKERS', 5)
 
     # Kiterunner settings
     KITERUNNER_ENABLED = settings.get('KITERUNNER_ENABLED', False)
@@ -231,6 +238,7 @@ def run_resource_enum(recon_data: dict, output_file: Optional[Path] = None, sett
     KITERUNNER_METHOD_DETECT_TIMEOUT = settings.get('KITERUNNER_METHOD_DETECT_TIMEOUT', 3)
     KITERUNNER_METHOD_DETECT_RATE_LIMIT = settings.get('KITERUNNER_METHOD_DETECT_RATE_LIMIT', 50)
     KITERUNNER_METHOD_DETECT_THREADS = settings.get('KITERUNNER_METHOD_DETECT_THREADS', 20)
+    KITERUNNER_PARALLELISM = settings.get('KITERUNNER_PARALLELISM', 2)
 
     # General settings
     USE_TOR_FOR_RECON = settings.get('USE_TOR_FOR_RECON', False)
@@ -330,6 +338,8 @@ def run_resource_enum(recon_data: dict, output_file: Optional[Path] = None, sett
             print(f"[*][Katana] Custom headers: {len(KATANA_CUSTOM_HEADERS)}")
         if KATANA_EXCLUDE_PATTERNS:
             print(f"[*][Katana] Exclude patterns: {len(KATANA_EXCLUDE_PATTERNS)}")
+        print(f"[*][Katana] Parallelism: {KATANA_PARALLELISM} (concurrent targets)")
+        print(f"[*][Katana] Concurrency: {KATANA_CONCURRENCY} (fetchers per target)")
     # Hakrawler settings
     print(f"[*][Hakrawler] Enabled: {HAKRAWLER_ENABLED}")
     if HAKRAWLER_ENABLED:
@@ -340,6 +350,7 @@ def run_resource_enum(recon_data: dict, output_file: Optional[Path] = None, sett
         print(f"[*][Hakrawler] Include subdomains: {HAKRAWLER_INCLUDE_SUBS}")
         if HAKRAWLER_CUSTOM_HEADERS:
             print(f"[*][Hakrawler] Custom headers: {len(HAKRAWLER_CUSTOM_HEADERS)}")
+        print(f"[*][Hakrawler] Parallelism: {HAKRAWLER_PARALLELISM} concurrent crawlers")
     # jsluice settings
     print(f"[*][jsluice] Enabled: {JSLUICE_ENABLED}")
     if JSLUICE_ENABLED:
@@ -347,6 +358,7 @@ def run_resource_enum(recon_data: dict, output_file: Optional[Path] = None, sett
         print(f"[*][jsluice] Timeout: {JSLUICE_TIMEOUT}s")
         print(f"[*][jsluice] Extract URLs: {JSLUICE_EXTRACT_URLS}")
         print(f"[*][jsluice] Extract secrets: {JSLUICE_EXTRACT_SECRETS}")
+        print(f"[*][jsluice] Parallelism: {JSLUICE_PARALLELISM} concurrent base URLs")
     # FFuf settings
     print(f"[*][FFuf] Enabled: {FFUF_ENABLED}")
     if FFUF_ENABLED:
@@ -356,6 +368,7 @@ def run_resource_enum(recon_data: dict, output_file: Optional[Path] = None, sett
         print(f"[*][FFuf] Timeout: {FFUF_TIMEOUT}s per request, {FFUF_MAX_TIME}s max")
         print(f"[*][FFuf] Auto-calibrate: {FFUF_AUTO_CALIBRATE}")
         print(f"[*][FFuf] Smart fuzz: {FFUF_SMART_FUZZ}")
+        print(f"[*][FFuf] Parallelism: {FFUF_PARALLELISM} concurrent targets")
         if FFUF_EXTENSIONS:
             print(f"[*][FFuf] Extensions: {', '.join(FFUF_EXTENSIONS)}")
         if FFUF_RECURSION:
@@ -374,11 +387,13 @@ def run_resource_enum(recon_data: dict, output_file: Optional[Path] = None, sett
             print(f"[*][GAU] Verify timeout: {GAU_VERIFY_TIMEOUT}s")
         print(f"[*][GAU] Detect methods: {GAU_DETECT_METHODS}")
         print(f"[*][GAU] Filter dead endpoints: {GAU_FILTER_DEAD_ENDPOINTS}")
+        print(f"[*][GAU] Workers: {GAU_WORKERS} parallel domain queries")
     # ParamSpider settings
     print(f"[*][ParamSpider] Enabled: {PARAMSPIDER_ENABLED}")
     if PARAMSPIDER_ENABLED:
         print(f"[*][ParamSpider] Placeholder: {PARAMSPIDER_PLACEHOLDER}")
         print(f"[*][ParamSpider] Timeout: {PARAMSPIDER_TIMEOUT}s")
+        print(f"[*][ParamSpider] Workers: {PARAMSPIDER_WORKERS} parallel domains")
     # Kiterunner settings
     print(f"[*][Kiterunner] Enabled: {KITERUNNER_ENABLED}")
     if KITERUNNER_ENABLED:
@@ -457,7 +472,9 @@ def run_resource_enum(recon_data: dict, output_file: Optional[Path] = None, sett
                 target_domains,
                 KATANA_CUSTOM_HEADERS,
                 KATANA_EXCLUDE_PATTERNS,
-                use_proxy
+                use_proxy,
+                KATANA_PARALLELISM,
+                KATANA_CONCURRENCY,
             )
 
         # Submit Hakrawler crawler if enabled
@@ -475,7 +492,8 @@ def run_resource_enum(recon_data: dict, output_file: Optional[Path] = None, sett
                 target_domains,
                 HAKRAWLER_CUSTOM_HEADERS,
                 KATANA_EXCLUDE_PATTERNS,
-                use_proxy
+                use_proxy,
+                HAKRAWLER_PARALLELISM,
             )
 
         # Submit GAU discovery if enabled
@@ -492,7 +510,8 @@ def run_resource_enum(recon_data: dict, output_file: Optional[Path] = None, sett
                 GAU_YEAR_RANGE,
                 GAU_VERBOSE,
                 use_proxy,
-                URLSCAN_API_KEY
+                URLSCAN_API_KEY,
+                GAU_WORKERS,
             )
 
         # Submit ParamSpider discovery if enabled
@@ -503,6 +522,7 @@ def run_resource_enum(recon_data: dict, output_file: Optional[Path] = None, sett
                 PARAMSPIDER_PLACEHOLDER,
                 PARAMSPIDER_TIMEOUT,
                 use_proxy,
+                PARAMSPIDER_WORKERS,
             )
 
         # Collect results from all parallel tools
@@ -526,42 +546,60 @@ def run_resource_enum(recon_data: dict, output_file: Optional[Path] = None, sett
             except Exception as e:
                 print(f"[!][ResourceEnum] {name} failed: {e}")
 
-    # Run Kiterunner sequentially for each wordlist
+    # Run Kiterunner in parallel for each wordlist
     if KITERUNNER_ENABLED and target_urls and kr_binary_path and KITERUNNER_WORDLISTS:
-        print(f"\n[*][Kiterunner] Running API discovery ({len(KITERUNNER_WORDLISTS)} wordlists sequentially)...")
-        for wordlist_name in KITERUNNER_WORDLISTS:
+        # KITERUNNER_PARALLELISM already extracted from settings above
+        max_workers = min(KITERUNNER_PARALLELISM, len(KITERUNNER_WORDLISTS))
+        print(f"\n[*][Kiterunner] Running API discovery ({len(KITERUNNER_WORDLISTS)} wordlists, {max_workers} parallel)...")
+
+        def _run_kr_wordlist(wordlist_name):
             print(f"\n[*][Kiterunner] Processing wordlist: {wordlist_name}")
-            try:
-                # Get the proper wordlist path (downloads if needed, or returns ASSETNOTE: prefix)
-                _, wordlist_path = ensure_kiterunner_binary(wordlist_name)
-                if not wordlist_path:
-                    print(f"[!][Kiterunner] Could not get wordlist: {wordlist_name}")
-                    continue
-                wordlist_results = run_kiterunner_discovery(
-                    target_urls,
-                    kr_binary_path,
-                    wordlist_path,
-                    wordlist_name,
-                    KITERUNNER_RATE_LIMIT,
-                    KITERUNNER_CONNECTIONS,
-                    KITERUNNER_TIMEOUT,
-                    KITERUNNER_SCAN_TIMEOUT,
-                    KITERUNNER_THREADS,
-                    KITERUNNER_IGNORE_STATUS,
-                    KITERUNNER_MATCH_STATUS,
-                    KITERUNNER_MIN_CONTENT_LENGTH,
-                    KITERUNNER_HEADERS,
-                    use_proxy
-                )
-                # Merge results, avoiding duplicates
-                existing_urls = {(r['url'], r['method']) for r in kr_results}
-                for result in wordlist_results:
-                    if (result['url'], result['method']) not in existing_urls:
-                        kr_results.append(result)
-                        existing_urls.add((result['url'], result['method']))
-                print(f"[+][Kiterunner] {wordlist_name}: {len(wordlist_results)} endpoints found, {len(kr_results)} total unique")
-            except Exception as e:
-                print(f"[!][Kiterunner] Failed for {wordlist_name}: {e}")
+            _, wordlist_path = ensure_kiterunner_binary(wordlist_name)
+            if not wordlist_path:
+                print(f"[!][Kiterunner] Could not get wordlist: {wordlist_name}")
+                return wordlist_name, []
+            wordlist_results = run_kiterunner_discovery(
+                target_urls,
+                kr_binary_path,
+                wordlist_path,
+                wordlist_name,
+                KITERUNNER_RATE_LIMIT,
+                KITERUNNER_CONNECTIONS,
+                KITERUNNER_TIMEOUT,
+                KITERUNNER_SCAN_TIMEOUT,
+                KITERUNNER_THREADS,
+                KITERUNNER_IGNORE_STATUS,
+                KITERUNNER_MATCH_STATUS,
+                KITERUNNER_MIN_CONTENT_LENGTH,
+                KITERUNNER_HEADERS,
+                use_proxy
+            )
+            return wordlist_name, wordlist_results
+
+        all_wordlist_results = []
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(_run_kr_wordlist, wl): wl
+                for wl in KITERUNNER_WORDLISTS
+            }
+            for future in as_completed(futures):
+                try:
+                    wordlist_name, wordlist_results = future.result()
+                    all_wordlist_results.append((wordlist_name, wordlist_results))
+                    print(f"[+][Kiterunner] {wordlist_name}: {len(wordlist_results)} endpoints found")
+                except Exception as e:
+                    wl = futures[future]
+                    print(f"[!][Kiterunner] Failed for {wl}: {e}")
+
+        # Merge all results, deduplicating
+        existing_urls = set()
+        for wordlist_name, wordlist_results in all_wordlist_results:
+            for result in wordlist_results:
+                key = (result['url'], result['method'])
+                if key not in existing_urls:
+                    kr_results.append(result)
+                    existing_urls.add(key)
+        print(f"[+][Kiterunner] Total unique endpoints: {len(kr_results)}")
 
     # Organize discovered endpoints
     if katana_urls:
@@ -611,6 +649,7 @@ def run_resource_enum(recon_data: dict, output_file: Optional[Path] = None, sett
                 JSLUICE_EXTRACT_URLS,
                 JSLUICE_EXTRACT_SECRETS,
                 JSLUICE_CONCURRENCY,
+                JSLUICE_PARALLELISM,
                 target_domains,
                 use_proxy
             )
@@ -667,6 +706,7 @@ def run_resource_enum(recon_data: dict, output_file: Optional[Path] = None, sett
                 target_domains,
                 discovered_base_paths,
                 use_proxy,
+                FFUF_PARALLELISM,
             )
 
             if ffuf_results:
@@ -940,12 +980,15 @@ def run_resource_enum(recon_data: dict, output_file: Optional[Path] = None, sett
             'katana_rate_limit': KATANA_RATE_LIMIT if KATANA_ENABLED else None,
             'katana_js_crawl': KATANA_JS_CRAWL if KATANA_ENABLED else None,
             'katana_params_only': KATANA_PARAMS_ONLY if KATANA_ENABLED else None,
+            'katana_parallelism': KATANA_PARALLELISM if KATANA_ENABLED else None,
+            'katana_concurrency': KATANA_CONCURRENCY if KATANA_ENABLED else None,
             'katana_urls_found': len(katana_urls) if KATANA_ENABLED else 0,
             # Hakrawler metadata
             'hakrawler_enabled': HAKRAWLER_ENABLED,
             'hakrawler_docker_image': HAKRAWLER_DOCKER_IMAGE if HAKRAWLER_ENABLED else None,
             'hakrawler_depth': HAKRAWLER_DEPTH if HAKRAWLER_ENABLED else None,
             'hakrawler_threads': HAKRAWLER_THREADS if HAKRAWLER_ENABLED else None,
+            'hakrawler_parallelism': HAKRAWLER_PARALLELISM if HAKRAWLER_ENABLED else None,
             'hakrawler_urls_found': len(hakrawler_urls) if HAKRAWLER_ENABLED else 0,
             'hakrawler_stats': hakrawler_stats,
             # jsluice metadata

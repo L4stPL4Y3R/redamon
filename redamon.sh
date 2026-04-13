@@ -866,20 +866,33 @@ cmd_purge() {
     #   - .file_hashes.json       (file-level hash dedup, Layer 1)
     # These live inside data/cache but are state, not content.
     info "Removing host-side KB index state..."
-    rm -f \
-        "$SCRIPT_DIR/knowledge_base/data/index.faiss" \
-        "$SCRIPT_DIR/knowledge_base/data/chunk_ids.json" \
-        "$SCRIPT_DIR/knowledge_base/data/index.faiss.manifest.json" \
+    # These files are created by Docker (root-owned), so normal rm may fail.
+    # Try without sudo first; escalate only if needed.
+    local kb_files=(
+        "$SCRIPT_DIR/knowledge_base/data/index.faiss"
+        "$SCRIPT_DIR/knowledge_base/data/chunk_ids.json"
+        "$SCRIPT_DIR/knowledge_base/data/index.faiss.manifest.json"
         "$SCRIPT_DIR/knowledge_base/data/.last_ingest"
+    )
+    if ! rm -f "${kb_files[@]}" 2>/dev/null; then
+        warn "Root-owned files detected, elevating with sudo..."
+        sudo rm -f "${kb_files[@]}"
+    fi
 
     info "Removing host-side KB dedup state (manifest + file hashes)..."
-    rm -f "$SCRIPT_DIR/knowledge_base/data/cache/.manifest.json"
+    if ! rm -f "$SCRIPT_DIR/knowledge_base/data/cache/.manifest.json" 2>/dev/null; then
+        sudo rm -f "$SCRIPT_DIR/knowledge_base/data/cache/.manifest.json"
+    fi
     # Wipe every per-source .file_hashes.json without touching the
     # downloaded content alongside it. -print is for operator feedback.
     if [[ -d "$SCRIPT_DIR/knowledge_base/data/cache" ]]; then
-        find "$SCRIPT_DIR/knowledge_base/data/cache" \
+        if ! find "$SCRIPT_DIR/knowledge_base/data/cache" \
             -type f -name '.file_hashes.json' -print -delete \
-            2>/dev/null || true
+            2>/dev/null; then
+            sudo find "$SCRIPT_DIR/knowledge_base/data/cache" \
+                -type f -name '.file_hashes.json' -print -delete \
+                2>/dev/null || true
+        fi
     fi
 
     rm -f "$GVM_FLAG_FILE"

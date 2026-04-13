@@ -26,6 +26,8 @@ export const reconPresetSchema = z.object({
   whoisMaxRetries: int,
   dnsEnabled: bool,
   dnsMaxRetries: int,
+  dnsMaxWorkers: int,
+  dnsRecordParallelism: bool,
 
   // -- Subdomain Discovery --
   subdomainDiscoveryEnabled: bool,
@@ -138,6 +140,8 @@ export const reconPresetSchema = z.object({
   katanaExcludePatterns: strArr,
   katanaScope: str,
   katanaCustomHeaders: strArr,
+  katanaParallelism: int,
+  katanaConcurrency: int,
 
   // -- Web Crawling: Hakrawler --
   hakrawlerEnabled: bool,
@@ -147,6 +151,7 @@ export const reconPresetSchema = z.object({
   hakrawlerMaxUrls: int,
   hakrawlerIncludeSubs: bool,
   hakrawlerInsecure: bool,
+  hakrawlerParallelism: int,
 
   // -- JS Analysis: jsluice --
   jsluiceEnabled: bool,
@@ -155,6 +160,7 @@ export const reconPresetSchema = z.object({
   jsluiceExtractUrls: bool,
   jsluiceExtractSecrets: bool,
   jsluiceConcurrency: int,
+  jsluiceParallelism: int,
 
   // -- JS Analysis: JS Recon --
   jsReconEnabled: bool,
@@ -192,6 +198,7 @@ export const reconPresetSchema = z.object({
   ffufAutoCalibrate: bool,
   ffufFollowRedirects: bool,
   ffufSmartFuzz: bool,
+  ffufParallelism: int,
 
   // -- Parameter Discovery: Arjun --
   arjunEnabled: bool,
@@ -217,10 +224,12 @@ export const reconPresetSchema = z.object({
   gauVerifyUrls: bool,
   gauDetectMethods: bool,
   gauFilterDeadEndpoints: bool,
+  gauWorkers: int,
 
   // -- ParamSpider --
   paramspiderEnabled: bool,
   paramspiderTimeout: int,
+  paramspiderWorkers: int,
 
   // -- API Discovery: Kiterunner --
   kiterunnerEnabled: bool,
@@ -233,6 +242,7 @@ export const reconPresetSchema = z.object({
   kiterunnerDetectMethods: bool,
   kiterunnerMethodDetectionMode: str,
   kiterunnerBruteforceMethods: strArr,
+  kiterunnerParallelism: int,
 
   // -- Vulnerability Scanning: Nuclei --
   nucleiEnabled: bool,
@@ -312,6 +322,7 @@ export const reconPresetSchema = z.object({
   shodanReverseDns: bool,
   shodanDomainDns: bool,
   shodanPassiveCves: bool,
+  shodanWorkers: int,
   urlscanEnabled: bool,
   urlscanMaxResults: int,
   censysEnabled: bool,
@@ -348,6 +359,8 @@ export const RECON_PARAMETER_CATALOG = `
 - whoisMaxRetries: integer - Max WHOIS retries (default 6)
 - dnsEnabled: boolean - Run DNS resolution
 - dnsMaxRetries: integer - Max DNS retries (default 3)
+- dnsMaxWorkers: integer - DNS resolution parallel workers
+- dnsRecordParallelism: boolean - Query DNS record types in parallel
 
 ## Subdomain Discovery
 - subdomainDiscoveryEnabled: boolean - Master switch for subdomain discovery
@@ -460,6 +473,8 @@ export const RECON_PARAMETER_CATALOG = `
 - katanaExcludePatterns: string[] - Regex patterns to exclude from crawling
 - katanaScope: string - Scope filter: "dn" (domain), "rdn" (root domain), etc.
 - katanaCustomHeaders: string[] - Custom HTTP headers for crawler
+- katanaParallelism: integer - Targets crawled simultaneously
+- katanaConcurrency: integer - Concurrent fetchers per target
 
 ## Web Crawling - Hakrawler
 - hakrawlerEnabled: boolean
@@ -469,6 +484,7 @@ export const RECON_PARAMETER_CATALOG = `
 - hakrawlerMaxUrls: integer
 - hakrawlerIncludeSubs: boolean - Include subdomains
 - hakrawlerInsecure: boolean - Skip TLS verification
+- hakrawlerParallelism: integer - Parallel crawler instances
 
 ## JavaScript Analysis - jsluice
 - jsluiceEnabled: boolean - Run jsluice JS analyzer (active tool, sends HTTP requests)
@@ -477,6 +493,7 @@ export const RECON_PARAMETER_CATALOG = `
 - jsluiceExtractUrls: boolean
 - jsluiceExtractSecrets: boolean
 - jsluiceConcurrency: integer
+- jsluiceParallelism: integer - Base URLs analyzed in parallel
 
 ## JavaScript Analysis - JS Recon (deep)
 - jsReconEnabled: boolean - Run deep JS analysis
@@ -514,6 +531,7 @@ export const RECON_PARAMETER_CATALOG = `
 - ffufAutoCalibrate: boolean
 - ffufFollowRedirects: boolean
 - ffufSmartFuzz: boolean
+- ffufParallelism: integer - Targets fuzzed in parallel
 
 ## Parameter Discovery - Arjun
 - arjunEnabled: boolean - Run Arjun parameter discovery
@@ -539,10 +557,12 @@ export const RECON_PARAMETER_CATALOG = `
 - gauVerifyUrls: boolean - Verify discovered URLs are alive
 - gauDetectMethods: boolean - Detect allowed HTTP methods
 - gauFilterDeadEndpoints: boolean
+- gauWorkers: integer - Parallel domain query workers
 
 ## ParamSpider
 - paramspiderEnabled: boolean - Run ParamSpider passive parameter discovery
 - paramspiderTimeout: integer - Seconds
+- paramspiderWorkers: integer - Parallel domain workers
 
 ## API Discovery - Kiterunner
 - kiterunnerEnabled: boolean - Run Kiterunner API endpoint discovery
@@ -555,6 +575,7 @@ export const RECON_PARAMETER_CATALOG = `
 - kiterunnerDetectMethods: boolean
 - kiterunnerMethodDetectionMode: string - "bruteforce"
 - kiterunnerBruteforceMethods: string[] - ["GET", "POST", "PUT", "DELETE", "PATCH"]
+- kiterunnerParallelism: integer - Wordlists processed in parallel
 
 ## Vulnerability Scanning - Nuclei
 - nucleiEnabled: boolean - Run Nuclei vulnerability scanner
@@ -634,6 +655,7 @@ export const RECON_PARAMETER_CATALOG = `
 - shodanReverseDns: boolean
 - shodanDomainDns: boolean
 - shodanPassiveCves: boolean - Passive CVE lookup via Shodan
+- shodanWorkers: integer - Parallel IP lookup workers
 - urlscanEnabled: boolean - URLScan.io
 - urlscanMaxResults: integer
 - censysEnabled: boolean

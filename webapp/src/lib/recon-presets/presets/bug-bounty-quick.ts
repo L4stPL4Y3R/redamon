@@ -112,13 +112,18 @@ Bug bounty hunters triaging a new target. You want to know if there are quick wi
     katanaRateLimit: 100,
     katanaTimeout: 600,
     katanaJsCrawl: true,
+    katanaParallelism: 10,
+    katanaConcurrency: 15,
 
     // --- DISABLE Hakrawler (Katana alone is sufficient) ---
     hakrawlerEnabled: false,
+    hakrawlerParallelism: 5,
 
     // --- DISABLE GAU & ParamSpider (archive lookups too slow) ---
     gauEnabled: false,
+    gauWorkers: 10,
     paramspiderEnabled: false,
+    paramspiderWorkers: 8,
 
     // --- jsluice: quick pass on discovered JS ---
     jsluiceEnabled: true,
@@ -132,6 +137,7 @@ Bug bounty hunters triaging a new target. You want to know if there are quick wi
 
     // --- DISABLE directory fuzzing ---
     ffufEnabled: false,
+    ffufParallelism: 4,
 
     // --- DISABLE API discovery ---
     kiterunnerEnabled: false,
