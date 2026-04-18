@@ -79,6 +79,12 @@ export const KNOWN_ATTACK_PATH_CONFIG: Record<string, { label: string; shortLabe
     color: 'var(--accent-info, #06b6d4)',
     bgColor: 'rgba(6, 182, 212, 0.15)',
   },
+  xss: {
+    label: 'Cross-Site Scripting',
+    shortLabel: 'XSS',
+    color: 'var(--accent-success, #10b981)',
+    bgColor: 'rgba(16, 185, 129, 0.15)',
+  },
 }
 
 /** Derive display config for any attack skill type (known, user, or unclassified). */

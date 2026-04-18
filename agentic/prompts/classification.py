@@ -44,6 +44,13 @@ _SQLI_SECTION = """### sql_injection — SQL Injection
 - Keywords: SQL injection, SQLi, sqlmap, database dump, union select, blind injection, WAF bypass, authentication bypass
 """
 
+_XSS_SECTION = """### xss — Cross-Site Scripting (XSS)
+- XSS testing against web applications using dalfox, kxss, Playwright DOM analysis, and manual context-aware payloads
+- Includes: reflected XSS, stored XSS, DOM-based XSS, blind XSS via OOB callbacks, CSP bypass
+- Key distinction: injecting JavaScript that executes in a victim's browser context (vs sql_injection which targets the DB, vs ssrf-unclassified which targets the backend)
+- Keywords: XSS, cross-site scripting, reflected XSS, stored XSS, DOM XSS, blind XSS, dalfox, payload encoding, CSP bypass, innerHTML, event handler, script injection
+"""
+
 _UNCLASSIFIED_SECTION = """### <descriptive_term>-unclassified
 - ANY exploitation request that does NOT clearly fit the enabled attack skills above
 - The agent has no specialized workflow for these — it will use available tools generically
@@ -51,14 +58,14 @@ _UNCLASSIFIED_SECTION = """### <descriptive_term>-unclassified
   - "Test for SSRF on the API" → unclassified (attacker sends crafted input to a web service)
   - "Generate a reverse shell payload" → phishing (attacker creates a file for a target user to execute)
 - **Key distinction from sql_injection:** if the request is specifically about SQL injection, use the `sql_injection` skill instead
+- **Key distinction from xss:** if the request is specifically about XSS, cross-site scripting, or JavaScript injection in a browser, use the `xss` skill instead
 - You MUST create a short, descriptive snake_case term followed by "-unclassified"
 - Format: `<term>-unclassified` where term is 1-4 lowercase words joined by underscores
-- Example values: "ssrf-unclassified", "xss-unclassified", "file_upload-unclassified", "directory_traversal-unclassified"
-- Keywords: XSS, cross-site scripting, directory traversal, path traversal, SSRF, file upload, command injection, LFI, RFI, deserialization, XXE, privilege escalation
+- Example values: "ssrf-unclassified", "file_upload-unclassified", "directory_traversal-unclassified", "command_injection-unclassified"
+- Keywords: directory traversal, path traversal, SSRF, file upload, command injection, LFI, RFI, deserialization, XXE, privilege escalation
 - Example requests:
   - "Test for SSRF on the API" -> "ssrf-unclassified"
   - "Try to upload a web shell" -> "file_upload-unclassified"
-  - "Test for XSS on the login page" -> "xss-unclassified"
   - "Attempt directory traversal" -> "directory_traversal-unclassified"
   - "Try command injection on the web form" -> "command_injection-unclassified"
 """
@@ -70,6 +77,7 @@ _BUILTIN_SKILL_MAP = {
     'cve_exploit': (_CVE_EXPLOIT_SECTION, 'c', 'cve_exploit'),
     'denial_of_service': (_DOS_SECTION, 'd', 'denial_of_service'),
     'sql_injection': (_SQLI_SECTION, 'e', 'sql_injection'),
+    'xss': (_XSS_SECTION, 'f', 'xss'),
 }
 
 # Classification instructions for built-in skills (no priority — best match wins)
@@ -93,6 +101,10 @@ _CLASSIFICATION_INSTRUCTIONS = {
       - Does the request mention SQL injection, SQLi, database dumping, or union/blind injection?
       - Does it target a web application parameter with SQL-specific attack intent?
       - Does it mention sqlmap, WAF bypass for SQL, authentication bypass via SQL, or OOB/DNS exfiltration?""",
+    'xss': """   - **xss**:
+      - Does the request mention XSS, cross-site scripting, JavaScript injection, or DOM sinks?
+      - Does it target a web application input/parameter with the goal of executing JS in a victim browser?
+      - Does it mention reflected/stored/DOM XSS, payload encoding, CSP bypass, blind XSS callbacks, or dalfox?""",
 }
 
 
@@ -156,7 +168,7 @@ def build_classification_prompt(objective: str) -> str:
     parts.append("## Attack Skill Types (ONLY for exploitation phase)\n")
 
     # Built-in skills (only enabled ones)
-    for skill_id in ['phishing_social_engineering', 'brute_force_credential_guess', 'cve_exploit', 'denial_of_service', 'sql_injection']:
+    for skill_id in ['phishing_social_engineering', 'brute_force_credential_guess', 'cve_exploit', 'denial_of_service', 'sql_injection', 'xss']:
         if skill_id in enabled_builtins:
             section_text, _, _ = _BUILTIN_SKILL_MAP[skill_id]
             parts.append(section_text)
@@ -187,7 +199,7 @@ def build_classification_prompt(objective: str) -> str:
                  "'brute force SSH' → brute_force_credential_guess). Pick the one whose criteria fit most closely:\n")
 
     # Built-in skill classification criteria
-    builtin_skill_ids = ['phishing_social_engineering', 'brute_force_credential_guess', 'cve_exploit', 'denial_of_service', 'sql_injection']
+    builtin_skill_ids = ['phishing_social_engineering', 'brute_force_credential_guess', 'cve_exploit', 'denial_of_service', 'sql_injection', 'xss']
     for skill_id in builtin_skill_ids:
         if skill_id in enabled_builtins:
             parts.append(_CLASSIFICATION_INSTRUCTIONS[skill_id])
@@ -239,7 +251,7 @@ Notes:
 - `required_phase` determines if this is reconnaissance ("informational") or active attack ("exploitation")
 - `attack_path_type` MUST always be set — it identifies which agent skill workflow to use, regardless of phase
 - For general recon with no specific attack technique, use "recon-unclassified"
-- For unclassified attack techniques, use a descriptive term followed by "-unclassified" (e.g., "xss-unclassified")
+- For unclassified attack techniques, use a descriptive term followed by "-unclassified" (e.g., "ssrf-unclassified", "file_upload-unclassified")
 - `detected_service` should only be set for brute_force_credential_guess, null otherwise
 - `confidence` should be 0.9+ if the intent is very clear, 0.6-0.8 if somewhat ambiguous
 - `target_host`, `target_port`, `target_cves` are best-effort extraction — null/empty if not mentioned""")

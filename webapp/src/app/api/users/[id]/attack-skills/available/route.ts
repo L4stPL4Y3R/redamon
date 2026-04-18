@@ -17,6 +17,11 @@ const BUILT_IN_SKILLS = [
     description: 'SQL injection testing with SQLMap, WAF bypass, blind injection, and OOB DNS exfiltration',
   },
   {
+    id: 'xss',
+    name: 'Cross-Site Scripting',
+    description: 'Reflected, stored, DOM-based, and blind XSS testing with dalfox, kxss, Playwright, and CSP-bypass guidance',
+  },
+  {
     id: 'brute_force_credential_guess',
     name: 'Credential Testing',
     description: 'Credential policy validation using Hydra against login services',

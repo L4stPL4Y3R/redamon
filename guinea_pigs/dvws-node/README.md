@@ -137,7 +137,7 @@ Violations of these rules will result in immediate IP ban and may be reported to
 
 ```bash
 # from folder /redamon
-scp -i ~/.ssh/guinea_pigs.pem guinea_pigs/dvws-node/setup.sh ubuntu@15.160.68.117:~/setup.sh && ssh -i ~/.ssh/guinea_pigs.pem ubuntu@15.160.68.117 "bash ~/setup.sh"
+scp -i ~/.ssh/guinea_pigs.pem -r guinea_pigs/dvws-node/setup.sh guinea_pigs/dvws-node/xss-lab ubuntu@15.160.68.117:~/ && ssh -i ~/.ssh/guinea_pigs.pem ubuntu@15.160.68.117 "bash ~/setup.sh"
 ```
 
 ### 3. Wipe & Clean (remove everything)

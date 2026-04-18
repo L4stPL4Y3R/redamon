@@ -56,6 +56,15 @@ class TestSyntax(unittest.TestCase):
         "graph_db/mixins/gvm_mixin.py",
         "graph_db/mixins/secret_mixin.py",
         "graph_db/mixins/osint_mixin.py",
+        # recon_mixin split (per-topic sub-mixins)
+        "graph_db/mixins/recon/__init__.py",
+        "graph_db/mixins/recon/domain_mixin.py",
+        "graph_db/mixins/recon/port_mixin.py",
+        "graph_db/mixins/recon/http_mixin.py",
+        "graph_db/mixins/recon/vuln_mixin.py",
+        "graph_db/mixins/recon/resource_mixin.py",
+        "graph_db/mixins/recon/js_recon_mixin.py",
+        "graph_db/mixins/recon/user_input_mixin.py",
     ]
 
     def test_all_files_parse(self):
@@ -153,6 +162,14 @@ class TestMethodPresence(unittest.TestCase):
             "graph_db/mixins/gvm_mixin.py",
             "graph_db/mixins/secret_mixin.py",
             "graph_db/mixins/osint_mixin.py",
+            # recon_mixin split
+            "graph_db/mixins/recon/domain_mixin.py",
+            "graph_db/mixins/recon/port_mixin.py",
+            "graph_db/mixins/recon/http_mixin.py",
+            "graph_db/mixins/recon/vuln_mixin.py",
+            "graph_db/mixins/recon/resource_mixin.py",
+            "graph_db/mixins/recon/js_recon_mixin.py",
+            "graph_db/mixins/recon/user_input_mixin.py",
         ]:
             new_methods |= self._methods(path)
 
@@ -167,10 +184,21 @@ class TestMethodPresence(unittest.TestCase):
                 "__init__", "close", "verify_connection",
                 "clear_project_data", "clear_gvm_data"
             },
-            "graph_db/mixins/recon_mixin.py": {
+            # After recon_mixin split: methods live in per-topic sub-mixins
+            "graph_db/mixins/recon/domain_mixin.py": {
                 "update_graph_from_domain_discovery", "update_graph_from_ip_recon",
-                "update_graph_from_port_scan", "update_graph_from_http_probe",
-                "update_graph_from_vuln_scan", "update_graph_from_resource_enum",
+            },
+            "graph_db/mixins/recon/port_mixin.py": {
+                "update_graph_from_port_scan",
+            },
+            "graph_db/mixins/recon/http_mixin.py": {
+                "update_graph_from_http_probe",
+            },
+            "graph_db/mixins/recon/vuln_mixin.py": {
+                "update_graph_from_vuln_scan",
+            },
+            "graph_db/mixins/recon/resource_mixin.py": {
+                "update_graph_from_resource_enum",
             },
             "graph_db/mixins/gvm_mixin.py": {
                 "_extract_gvm_technologies", "_merge_gvm_technology",

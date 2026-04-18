@@ -117,10 +117,12 @@ RUN retry go install -v github.com/projectdiscovery/naabu/v2/cmd/naabu@latest \
 # Source: https://github.com/projectdiscovery/httpx (MIT) - HTTP toolkit
 # Source: https://github.com/hahwul/dalfox (MIT) - XSS vulnerability scanner
 # Source: https://github.com/projectdiscovery/dnsx (MIT) - Fast DNS toolkit
+# Source: https://github.com/Emoe/kxss (MIT) - Per-character XSS reflection probe
 RUN retry go install -v github.com/ffuf/ffuf/v2@latest \
     && retry go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest \
     && retry go install -v github.com/hahwul/dalfox/v2@latest \
-    && retry go install -v github.com/projectdiscovery/dnsx/cmd/dnsx@latest
+    && retry go install -v github.com/projectdiscovery/dnsx/cmd/dnsx@latest \
+    && retry go install -v github.com/Emoe/kxss@latest
 
 # Install jsluice -- JavaScript static analyzer for hidden endpoints and secrets
 # Source: https://github.com/BishopFox/jsluice (MIT)

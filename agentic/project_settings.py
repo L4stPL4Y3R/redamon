@@ -154,6 +154,11 @@ DEFAULT_AGENT_SETTINGS: dict[str, Any] = {
     'SQLI_RISK': 1,                     # sqlmap --risk (1-3, higher = more aggressive tests)
     'SQLI_TAMPER_SCRIPTS': '',          # Comma-separated tamper scripts (e.g., "space2comment,randomcase")
 
+    # XSS Testing
+    'XSS_DALFOX_ENABLED': True,           # Allow dalfox automated WAF evasion when manual payloads fail
+    'XSS_BLIND_CALLBACK_ENABLED': False,  # Allow interactsh-based blind XSS callbacks (sends data OOB to oast.fun)
+    'XSS_CSP_BYPASS_ENABLED': True,       # Include CSP bypass guidance in the workflow prompt
+
     # Attack Skill Configuration
     'ATTACK_SKILL_CONFIG': {
         'builtIn': {
@@ -162,6 +167,7 @@ DEFAULT_AGENT_SETTINGS: dict[str, Any] = {
             'phishing_social_engineering': False,
             'denial_of_service': False,
             'sql_injection': True,
+            'xss': True,
         },
         'user': {},
     },

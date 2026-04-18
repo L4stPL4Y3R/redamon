@@ -71,6 +71,13 @@ from .sql_injection_prompts import (
     SQLI_PAYLOAD_REFERENCE,
 )
 
+# Re-export from XSS prompts
+from .xss_prompts import (
+    XSS_TOOLS,
+    XSS_BLIND_WORKFLOW,
+    XSS_PAYLOAD_REFERENCE,
+)
+
 # Re-export from unclassified attack path prompts
 from .unclassified_prompts import UNCLASSIFIED_EXPLOIT_TOOLS
 
@@ -268,6 +275,19 @@ def get_phase_tools(
             parts.append(SQLI_TOOLS.format(**sqli_settings))
             parts.append(SQLI_OOB_WORKFLOW)
             parts.append(SQLI_PAYLOAD_REFERENCE)
+            return True
+        elif (attack_path_type == "xss"
+                and "xss" in enabled_builtins
+                and "execute_curl" in allowed_tools):
+            xss_settings = {
+                'xss_dalfox_enabled': get_setting('XSS_DALFOX_ENABLED', True),
+                'xss_blind_callback_enabled': get_setting('XSS_BLIND_CALLBACK_ENABLED', False),
+                'xss_csp_bypass_enabled': get_setting('XSS_CSP_BYPASS_ENABLED', True),
+            }
+            parts.append(XSS_TOOLS.format(**xss_settings))
+            if xss_settings['xss_blind_callback_enabled'] and "kali_shell" in allowed_tools:
+                parts.append(XSS_BLIND_WORKFLOW)
+            parts.append(XSS_PAYLOAD_REFERENCE)
             return True
         elif ("cve_exploit" == attack_path_type
                 and "cve_exploit" in enabled_builtins

@@ -92,11 +92,11 @@ class TestStateRegistration(unittest.TestCase):
         self.assertEqual(apc.attack_path_type, "sql_injection")
 
     def test_all_known_paths_present(self):
-        """All 5 built-in skills should be in KNOWN_ATTACK_PATHS."""
+        """All built-in skills should be in KNOWN_ATTACK_PATHS."""
         expected = {
             "cve_exploit", "brute_force_credential_guess",
             "phishing_social_engineering", "denial_of_service",
-            "sql_injection",
+            "sql_injection", "xss",
         }
         self.assertEqual(KNOWN_ATTACK_PATHS, expected)
 

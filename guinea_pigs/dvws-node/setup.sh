@@ -38,6 +38,13 @@ rm -rf ~/dvws-node
 git clone https://github.com/snoopysecurity/dvws-node.git ~/dvws-node
 cd ~/dvws-node
 
+# If the operator scp'd the xss-lab directory alongside setup.sh, move it in.
+if [ -d ~/xss-lab ]; then
+    echo "=== Importing Argentum site (xss-lab) ==="
+    rm -rf ~/dvws-node/xss-lab
+    mv ~/xss-lab ~/dvws-node/xss-lab
+fi
+
 echo "=== Creating additional containers ==="
 
 # Tomcat container
@@ -162,6 +169,7 @@ LANDING_HTML
 cat > ~/dvws-node/landing/nginx.conf << 'NGINX_CONF'
 server {
     listen 80;
+    client_max_body_size 16M;
 
     # Landing page with legal terms
     location = / {
@@ -171,6 +179,16 @@ server {
     location = /legal {
         root /usr/share/nginx/html;
         try_files /index.html =404;
+    }
+
+    # Argentum Digital site (Node.js sidecar on port 3001)
+    location /argentum/ {
+        proxy_pass http://argentum:3001;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_http_version 1.1;
     }
 
     # Proxy everything else to DVWS-Node
@@ -200,6 +218,15 @@ services:
       - ./landing/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       - web
+      - argentum
+    restart: unless-stopped
+
+  # Argentum Digital sidecar (Node.js + headless Chromium for the moderation queue)
+  argentum:
+    build: ./xss-lab
+    container_name: gpigs-argentum
+    expose:
+      - "3001"
     restart: unless-stopped
 
   # Base DVWS services -- add restart policy

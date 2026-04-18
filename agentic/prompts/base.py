@@ -122,6 +122,15 @@ def build_attack_path_behavior(attack_path_type):
             "In exploitation: Follow the DoS workflow — execute attack, verify impact, "
             "then action='complete'. NEVER request post_exploitation — DoS does not provide access."
         )
+    elif attack_path_type == "xss":
+        return (
+            "In informational phase: Use query_graph to surface existing Endpoints/Parameters/Forms, "
+            "then render the target with execute_playwright to enumerate input vectors. "
+            "Once vectors are mapped, request transition to exploitation.\n"
+            "In exploitation: Follow the XSS workflow — canary sweep, kxss per-char filter probe, "
+            "context-aware payloads, Playwright dialog-handler proof, dalfox WAF evasion if filtered, "
+            "then action='complete' after PoC capture."
+        )
     elif attack_path_type.startswith("user_skill:"):
         return (
             "Follow the attack skill workflow guidance provided in the Available Tools section.\n"

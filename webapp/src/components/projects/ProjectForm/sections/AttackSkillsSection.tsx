@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { ChevronDown, Bug, KeyRound, Mail, Swords, Loader2, Settings, Zap, Database } from 'lucide-react'
+import { ChevronDown, Bug, KeyRound, Mail, Swords, Loader2, Settings, Zap, Database, Code2 } from 'lucide-react'
 import type { Project } from '@prisma/client'
 import { useProject } from '@/providers/ProjectProvider'
 import { Toggle } from '@/components/ui/Toggle/Toggle'
@@ -47,6 +47,12 @@ const BUILT_IN_SKILLS: BuiltInSkillDef[] = [
     icon: <Database size={16} />,
   },
   {
+    id: 'xss',
+    name: 'Cross-Site Scripting',
+    description: 'Reflected, stored, DOM-based, and blind XSS testing with dalfox, kxss, Playwright, and CSP-bypass guidance',
+    icon: <Code2 size={16} />,
+  },
+  {
     id: 'brute_force_credential_guess',
     name: 'Credential Testing',
     description: 'Credential policy validation using Hydra against login services',
@@ -75,6 +81,7 @@ const DEFAULT_CONFIG: AttackSkillConfig = {
   builtIn: {
     cve_exploit: true,
     sql_injection: true,
+    xss: true,
     brute_force_credential_guess: false,
     phishing_social_engineering: false,
     denial_of_service: false,
