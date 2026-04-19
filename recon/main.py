@@ -1370,6 +1370,21 @@ def run_domain_recon(target: str, anonymous: bool = False, bruteforce: bool = Fa
                 combined_result["metadata"].setdefault("phase_errors", {})["vuln_scan"] = str(e)
                 save_recon_file(combined_result, output_file)
 
+        # GROUP 6b — GraphQL Security Testing (after vuln scan, before external domains)
+        if _settings.get('GRAPHQL_SECURITY_ENABLED', False):
+            print(f"\n[*][Pipeline] GROUP 6b: GraphQL Security Testing")
+            print("-" * 40)
+            try:
+                from recon.graphql_scan import run_graphql_scan
+                combined_result = run_graphql_scan(combined_result, _settings)
+                combined_result["metadata"]["modules_executed"].append("graphql_scan")
+                save_recon_file(combined_result, output_file)
+                _graph_update_bg("update_graph_from_graphql_scan", combined_result, USER_ID, PROJECT_ID)
+            except Exception as e:
+                print(f"[!][GraphQL] Error: {e}")
+                combined_result["metadata"].setdefault("phase_errors", {})["graphql_scan"] = str(e)
+                save_recon_file(combined_result, output_file)
+
     # External Domains — aggregate from all sources and persist
     try:
         ext_domains = _aggregate_external_domains(combined_result)
@@ -1439,6 +1454,20 @@ def run_domain_recon(target: str, anonymous: bool = False, bruteforce: bool = Fa
         mitre_meta = combined_result.get("metadata", {}).get("mitre_enrichment", {})
         if mitre_meta:
             print(f"[+][MITRE] Enriched: {mitre_meta.get('total_cves_enriched', 0)}/{mitre_meta.get('total_cves_processed', 0)} CVEs")
+
+    # GraphQL security stats
+    if _settings.get('GRAPHQL_SECURITY_ENABLED', False) and "graphql_scan" in combined_result:
+        graphql_summary = combined_result["graphql_scan"].get("summary", {})
+        endpoints_tested = graphql_summary.get('endpoints_tested', 0)
+        if endpoints_tested > 0:
+            print(f"[+][GraphQL] Endpoints tested: {endpoints_tested}")
+            print(f"[+][GraphQL] Introspection enabled: {graphql_summary.get('introspection_enabled', 0)}")
+            vulns = graphql_summary.get('vulnerabilities_found', 0)
+            if vulns > 0:
+                print(f"[+][GraphQL] Vulnerabilities: {vulns} " +
+                      f"(Critical: {graphql_summary['by_severity']['critical']}, " +
+                      f"High: {graphql_summary['by_severity']['high']}, " +
+                      f"Medium: {graphql_summary['by_severity']['medium']})")
 
     print(f"[+][Pipeline] Output saved: {output_file}")
     print(f"{'=' * 70}")

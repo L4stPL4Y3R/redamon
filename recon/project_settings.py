@@ -508,6 +508,25 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     'ROE_TIME_WINDOW_START_TIME': '09:00',
     'ROE_TIME_WINDOW_END_TIME': '18:00',
     'ROE_GLOBAL_MAX_RPS': 0,
+
+    # GraphQL Security Testing
+    'GRAPHQL_SECURITY_ENABLED': False,
+    'GRAPHQL_INTROSPECTION_TEST': True,
+    'GRAPHQL_MUTATION_TESTING': True,
+    'GRAPHQL_PROXY_TESTING': True,
+    'GRAPHQL_SAFE_MODE': True,
+    'GRAPHQL_MAX_MUTATIONS_TEST': 50,
+    'GRAPHQL_TIMEOUT': 30,
+    'GRAPHQL_RATE_LIMIT': 10,
+    'GRAPHQL_CONCURRENCY': 5,
+    'GRAPHQL_AUTH_TYPE': '',
+    'GRAPHQL_AUTH_VALUE': '',
+    'GRAPHQL_AUTH_HEADER': '',
+    'GRAPHQL_ENDPOINTS': '',
+    'GRAPHQL_DEPTH_LIMIT': 10,
+    'GRAPHQL_RETRY_COUNT': 3,
+    'GRAPHQL_RETRY_BACKOFF': 2.0,
+    'GRAPHQL_VERIFY_SSL': True,  # Enable SSL verification by default
 }
 
 
@@ -1080,6 +1099,25 @@ def fetch_project_settings(project_id: str, webapp_url: str) -> dict[str, Any]:
     settings['ROE_TIME_WINDOW_END_TIME'] = project.get('roeTimeWindowEndTime', DEFAULT_SETTINGS['ROE_TIME_WINDOW_END_TIME'])
     settings['ROE_GLOBAL_MAX_RPS'] = project.get('roeGlobalMaxRps', DEFAULT_SETTINGS['ROE_GLOBAL_MAX_RPS'])
 
+    # GraphQL Security Testing
+    settings['GRAPHQL_SECURITY_ENABLED'] = project.get('graphqlSecurityEnabled', DEFAULT_SETTINGS['GRAPHQL_SECURITY_ENABLED'])
+    settings['GRAPHQL_INTROSPECTION_TEST'] = project.get('graphqlIntrospectionTest', DEFAULT_SETTINGS['GRAPHQL_INTROSPECTION_TEST'])
+    settings['GRAPHQL_MUTATION_TESTING'] = project.get('graphqlMutationTesting', DEFAULT_SETTINGS['GRAPHQL_MUTATION_TESTING'])
+    settings['GRAPHQL_PROXY_TESTING'] = project.get('graphqlProxyTesting', DEFAULT_SETTINGS['GRAPHQL_PROXY_TESTING'])
+    settings['GRAPHQL_SAFE_MODE'] = project.get('graphqlSafeMode', DEFAULT_SETTINGS['GRAPHQL_SAFE_MODE'])
+    settings['GRAPHQL_MAX_MUTATIONS_TEST'] = project.get('graphqlMaxMutationsTest', DEFAULT_SETTINGS['GRAPHQL_MAX_MUTATIONS_TEST'])
+    settings['GRAPHQL_TIMEOUT'] = project.get('graphqlTimeout', DEFAULT_SETTINGS['GRAPHQL_TIMEOUT'])
+    settings['GRAPHQL_RATE_LIMIT'] = project.get('graphqlRateLimit', DEFAULT_SETTINGS['GRAPHQL_RATE_LIMIT'])
+    settings['GRAPHQL_CONCURRENCY'] = project.get('graphqlConcurrency', DEFAULT_SETTINGS['GRAPHQL_CONCURRENCY'])
+    settings['GRAPHQL_AUTH_TYPE'] = project.get('graphqlAuthType', DEFAULT_SETTINGS['GRAPHQL_AUTH_TYPE'])
+    settings['GRAPHQL_AUTH_VALUE'] = project.get('graphqlAuthValue', DEFAULT_SETTINGS['GRAPHQL_AUTH_VALUE'])
+    settings['GRAPHQL_AUTH_HEADER'] = project.get('graphqlAuthHeader', DEFAULT_SETTINGS['GRAPHQL_AUTH_HEADER'])
+    settings['GRAPHQL_ENDPOINTS'] = project.get('graphqlEndpoints', DEFAULT_SETTINGS['GRAPHQL_ENDPOINTS'])
+    settings['GRAPHQL_DEPTH_LIMIT'] = project.get('graphqlDepthLimit', DEFAULT_SETTINGS['GRAPHQL_DEPTH_LIMIT'])
+    settings['GRAPHQL_RETRY_COUNT'] = project.get('graphqlRetryCount', DEFAULT_SETTINGS['GRAPHQL_RETRY_COUNT'])
+    settings['GRAPHQL_RETRY_BACKOFF'] = project.get('graphqlRetryBackoff', DEFAULT_SETTINGS['GRAPHQL_RETRY_BACKOFF'])
+    settings['GRAPHQL_VERIFY_SSL'] = project.get('graphqlVerifySsl', DEFAULT_SETTINGS['GRAPHQL_VERIFY_SSL'])
+
     # RoE: cap all rate limits to the global max if set
     roe_max_rps = settings['ROE_GLOBAL_MAX_RPS']
     if settings.get('ROE_ENABLED', False) and roe_max_rps > 0:
@@ -1090,6 +1128,7 @@ def fetch_project_settings(project_id: str, webapp_url: str) -> dict[str, Any]:
             'FFUF_RATE', 'ARJUN_RATE_LIMIT',
             'PUREDNS_RATE_LIMIT',
             'HAKRAWLER_THREADS',
+            'GRAPHQL_RATE_LIMIT',
         ]
         for key in RATE_LIMIT_KEYS:
             if key not in settings:
@@ -1311,8 +1350,18 @@ def apply_stealth_overrides(settings: dict[str, Any]) -> dict[str, Any]:
     settings['JS_RECON_INCLUDE_CHUNKS'] = False
     settings['JS_RECON_INCLUDE_FRAMEWORK_JS'] = False
 
+    # --- GraphQL Security: minimal introspection only ---
+    settings['GRAPHQL_SECURITY_ENABLED'] = True  # Can still do passive introspection
+    settings['GRAPHQL_INTROSPECTION_TEST'] = True
+    settings['GRAPHQL_MUTATION_TESTING'] = False  # Mutations are active/noisy
+    settings['GRAPHQL_PROXY_TESTING'] = False     # Proxy testing is active/noisy
+    settings['GRAPHQL_SAFE_MODE'] = True          # Extra safety
+    settings['GRAPHQL_RATE_LIMIT'] = 2            # Very low rate
+    settings['GRAPHQL_CONCURRENCY'] = 1           # Sequential only
+    settings['GRAPHQL_TIMEOUT'] = 60              # Longer timeout for slow responses
+
     logger.info("Stealth overrides applied: Naabu=passive, Masscan=OFF, httpx=low-rate, Katana=minimal, "
                 "Nuclei=no-DAST, Kiterunner=OFF, BannerGrab=OFF, BruteForce=OFF, "
-                "ActiveSecurityChecks=OFF, JsRecon=reduced")
+                "ActiveSecurityChecks=OFF, JsRecon=reduced, GraphQL=introspection-only")
 
     return settings
