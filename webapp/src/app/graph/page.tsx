@@ -10,10 +10,25 @@ import { PageBottomBar } from './components/PageBottomBar'
 import { ReconConfirmModal } from './components/ReconConfirmModal'
 import { GvmConfirmModal } from './components/GvmConfirmModal'
 import { ReconLogsDrawer } from './components/ReconLogsDrawer'
-import { ViewTabs, type ViewMode, type TunnelStatus } from './components/ViewTabs'
+import { ViewTabs, type ViewMode, type TunnelStatus, type TableViewMode } from './components/ViewTabs'
 import { DataTable } from './components/DataTable'
 import { JsReconTable, exportJsReconXlsx } from './components/JsReconTable'
 import type { JsReconData } from './components/JsReconTable'
+import {
+  KillChainTable,
+  BlastRadiusTable,
+  TakeoverTable,
+  SecretsTable,
+  NetInitAccessTable,
+  GraphqlLedgerTable,
+  WebInitAccessTable,
+  ParamMatrixTable,
+  SharedInfraTable,
+  DnsEmailTable,
+  ThreatIntelTable,
+  SupplyChainTable,
+  DnsDriftTable,
+} from './components/RedZoneTables'
 import { ActiveSessions } from './components/ActiveSessions'
 import { RoeViewer } from './components/RoeViewer'
 import { KaliTerminal } from './components/KaliTerminal'
@@ -394,7 +409,7 @@ export default function GraphPage() {
   const tableRows = useTableData(data)
   const filterTableRows = useTableData(filterGraphData ?? undefined)
   const [globalFilter, setGlobalFilter] = useState('')
-  const [tableViewMode, setTableViewMode] = useState<'all' | 'jsRecon'>('all')
+  const [tableViewMode, setTableViewMode] = useState<TableViewMode>('all')
   const [jsReconSearch, setJsReconSearch] = useState('')
   const [jsReconData, setJsReconData] = useState<JsReconData | null>(null)
   const [activeNodeTypes, setActiveNodeTypes] = useState<Set<string>>(new Set())
@@ -1232,6 +1247,32 @@ export default function GraphPage() {
           ) : activeView === 'table' ? (
             tableViewMode === 'jsRecon' ? (
               <JsReconTable projectId={projectId} search={jsReconSearch} onDataLoaded={setJsReconData} />
+            ) : tableViewMode === 'killChain' ? (
+              <KillChainTable projectId={projectId} />
+            ) : tableViewMode === 'blastRadius' ? (
+              <BlastRadiusTable projectId={projectId} />
+            ) : tableViewMode === 'takeover' ? (
+              <TakeoverTable projectId={projectId} />
+            ) : tableViewMode === 'secrets' ? (
+              <SecretsTable projectId={projectId} />
+            ) : tableViewMode === 'netInitAccess' ? (
+              <NetInitAccessTable projectId={projectId} />
+            ) : tableViewMode === 'graphql' ? (
+              <GraphqlLedgerTable projectId={projectId} />
+            ) : tableViewMode === 'webInitAccess' ? (
+              <WebInitAccessTable projectId={projectId} />
+            ) : tableViewMode === 'paramMatrix' ? (
+              <ParamMatrixTable projectId={projectId} />
+            ) : tableViewMode === 'sharedInfra' ? (
+              <SharedInfraTable projectId={projectId} />
+            ) : tableViewMode === 'dnsEmail' ? (
+              <DnsEmailTable projectId={projectId} />
+            ) : tableViewMode === 'threatIntel' ? (
+              <ThreatIntelTable projectId={projectId} />
+            ) : tableViewMode === 'supplyChain' ? (
+              <SupplyChainTable projectId={projectId} />
+            ) : tableViewMode === 'dnsDrift' ? (
+              <DnsDriftTable projectId={projectId} />
             ) : (
               <DataTable
                 data={filterGraphData ?? data}

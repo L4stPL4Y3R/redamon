@@ -430,8 +430,23 @@
   border-radius: var(--radius-md);
   padding: 3px;
   z-index: 20;
-  min-width: 130px;
+  min-width: 200px;
   box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+
+.tableDropdownDivider {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border-primary);
+}
+
+.tableDropdownHeader {
+  padding: 4px 10px 2px;
+  font-size: 9px;
+  font-weight: var(--font-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-tertiary);
 }
 
 .tableDropdownItem {

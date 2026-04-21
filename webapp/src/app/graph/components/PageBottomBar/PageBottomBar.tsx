@@ -4,7 +4,7 @@ import { useRef, useState, useEffect, useCallback, useMemo } from 'react'
 import { Link2 } from 'lucide-react'
 import { NODE_COLORS } from '../../config'
 import { GraphData } from '../../types'
-import type { ViewMode } from '../ViewTabs'
+import type { ViewMode, TableViewMode } from '../ViewTabs'
 import styles from './PageBottomBar.module.css'
 
 interface PageBottomBarProps {
@@ -12,7 +12,7 @@ interface PageBottomBarProps {
   is3D: boolean
   showLabels: boolean
   activeView: ViewMode
-  tableViewMode?: 'all' | 'jsRecon'
+  tableViewMode?: TableViewMode
   // Table view filter props
   activeNodeTypes?: Set<string>
   nodeTypeCounts?: Record<string, number>
@@ -97,7 +97,7 @@ export function PageBottomBar({
 
   const visibleSessionCount = sessionChainIds.length - (hiddenSessions?.size ?? 0)
 
-  const hideBar = activeView === 'sessions' || activeView === 'terminal' || activeView === 'roe' || (activeView === 'table' && tableViewMode === 'jsRecon')
+  const hideBar = activeView === 'sessions' || activeView === 'terminal' || activeView === 'roe' || (activeView === 'table' && tableViewMode !== 'all')
 
   if (hideBar) return null
 

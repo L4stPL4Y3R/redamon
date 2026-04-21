@@ -1,12 +1,47 @@
 'use client'
 
 import { memo, useState, useRef, useEffect, useCallback } from 'react'
-import { Waypoints, Table2, Terminal, Shield, Search, Download, SquareTerminal, Filter, Plus, Trash2, X, ChevronDown, Code } from 'lucide-react'
+import { Waypoints, Table2, Terminal, Shield, Search, Download, SquareTerminal, Filter, Plus, Trash2, X, ChevronDown, Code, Target, Zap, Flag, Key, Server, Boxes, LockKeyhole, Bug, Network, Mail, ShieldAlert, Package, History } from 'lucide-react'
 import { Toggle } from '@/components/ui'
 import { AUTO_2D_THRESHOLD } from '../GraphCanvas'
 import styles from './ViewTabs.module.css'
 
 export type ViewMode = 'graph' | 'graphViews' | 'table' | 'sessions' | 'terminal' | 'roe'
+
+export type TableViewMode =
+  | 'all'
+  | 'jsRecon'
+  | 'killChain'
+  | 'blastRadius'
+  | 'takeover'
+  | 'secrets'
+  | 'netInitAccess'
+  | 'graphql'
+  | 'webInitAccess'
+  | 'paramMatrix'
+  | 'sharedInfra'
+  | 'dnsEmail'
+  | 'threatIntel'
+  | 'supplyChain'
+  | 'dnsDrift'
+
+const TABLE_MODE_LABELS: Record<TableViewMode, string> = {
+  all: 'All Nodes',
+  jsRecon: 'JS Recon',
+  killChain: 'Kill-Chain',
+  blastRadius: 'Blast Radius',
+  takeover: 'Takeover',
+  secrets: 'Secrets',
+  netInitAccess: 'Net Init-Access',
+  graphql: 'GraphQL',
+  webInitAccess: 'Web Init-Access',
+  paramMatrix: 'Parameter Matrix',
+  sharedInfra: 'Shared Infra',
+  dnsEmail: 'DNS & Email',
+  threatIntel: 'Threat Intel',
+  supplyChain: 'Supply-Chain',
+  dnsDrift: 'DNS Drift',
+}
 
 export interface TunnelInfo {
   active: boolean
@@ -44,9 +79,9 @@ interface ViewTabsProps {
   selectedFilterId?: string | null
   onSelectFilter?: (id: string | null) => void
   onDeleteFilter?: (id: string) => void
-  // Table view mode (All Nodes vs specialized views)
-  tableViewMode?: 'all' | 'jsRecon'
-  onTableViewModeChange?: (mode: 'all' | 'jsRecon') => void
+  // Table view mode (All Nodes vs specialized views vs red-zone analytics)
+  tableViewMode?: TableViewMode
+  onTableViewModeChange?: (mode: TableViewMode) => void
   // JS Recon table controls
   jsReconSearch?: string
   onJsReconSearchChange?: (value: string) => void
@@ -225,8 +260,27 @@ export const ViewTabs = memo(function ViewTabs({
             className={`${styles.tab} ${activeView === 'table' ? styles.tabActive : ''}`}
             onClick={() => onViewChange('table')}
           >
-            {tableViewMode === 'jsRecon' ? <Code size={14} /> : <Table2 size={14} />}
-            <span>{tableViewMode === 'jsRecon' ? 'JS Recon' : 'All Nodes'}</span>
+            {(() => {
+              const mode = tableViewMode ?? 'all'
+              const Icon =
+                mode === 'jsRecon' ? Code
+                : mode === 'killChain' ? Target
+                : mode === 'blastRadius' ? Zap
+                : mode === 'takeover' ? Flag
+                : mode === 'secrets' ? Key
+                : mode === 'netInitAccess' ? Server
+                : mode === 'graphql' ? Boxes
+                : mode === 'webInitAccess' ? LockKeyhole
+                : mode === 'paramMatrix' ? Bug
+                : mode === 'sharedInfra' ? Network
+                : mode === 'dnsEmail' ? Mail
+                : mode === 'threatIntel' ? ShieldAlert
+                : mode === 'supplyChain' ? Package
+                : mode === 'dnsDrift' ? History
+                : Table2
+              return <Icon size={14} />
+            })()}
+            <span>{TABLE_MODE_LABELS[tableViewMode ?? 'all']}</span>
             <ChevronDown
               size={18}
               strokeWidth={3}
@@ -247,6 +301,84 @@ export const ViewTabs = memo(function ViewTabs({
                 onClick={() => { onTableViewModeChange?.('jsRecon'); setTableMenuOpen(false); onViewChange('table') }}
               >
                 <Code size={12} /> JS Recon
+              </button>
+              <button
+                className={`${styles.tableDropdownItem} ${tableViewMode === 'killChain' ? styles.tableDropdownItemActive : ''}`}
+                onClick={() => { onTableViewModeChange?.('killChain'); setTableMenuOpen(false); onViewChange('table') }}
+              >
+                <Target size={12} /> Kill-Chain Explorer
+              </button>
+              <button
+                className={`${styles.tableDropdownItem} ${tableViewMode === 'blastRadius' ? styles.tableDropdownItemActive : ''}`}
+                onClick={() => { onTableViewModeChange?.('blastRadius'); setTableMenuOpen(false); onViewChange('table') }}
+              >
+                <Zap size={12} /> Technology Blast Radius
+              </button>
+              <button
+                className={`${styles.tableDropdownItem} ${tableViewMode === 'takeover' ? styles.tableDropdownItemActive : ''}`}
+                onClick={() => { onTableViewModeChange?.('takeover'); setTableMenuOpen(false); onViewChange('table') }}
+              >
+                <Flag size={12} /> Subdomain Takeover
+              </button>
+              <button
+                className={`${styles.tableDropdownItem} ${tableViewMode === 'secrets' ? styles.tableDropdownItemActive : ''}`}
+                onClick={() => { onTableViewModeChange?.('secrets'); setTableMenuOpen(false); onViewChange('table') }}
+              >
+                <Key size={12} /> Secrets & Credentials
+              </button>
+              <button
+                className={`${styles.tableDropdownItem} ${tableViewMode === 'netInitAccess' ? styles.tableDropdownItemActive : ''}`}
+                onClick={() => { onTableViewModeChange?.('netInitAccess'); setTableMenuOpen(false); onViewChange('table') }}
+              >
+                <Server size={12} /> Net Initial-Access
+              </button>
+              <button
+                className={`${styles.tableDropdownItem} ${tableViewMode === 'graphql' ? styles.tableDropdownItemActive : ''}`}
+                onClick={() => { onTableViewModeChange?.('graphql'); setTableMenuOpen(false); onViewChange('table') }}
+              >
+                <Boxes size={12} /> GraphQL Risk Ledger
+              </button>
+              <button
+                className={`${styles.tableDropdownItem} ${tableViewMode === 'webInitAccess' ? styles.tableDropdownItemActive : ''}`}
+                onClick={() => { onTableViewModeChange?.('webInitAccess'); setTableMenuOpen(false); onViewChange('table') }}
+              >
+                <LockKeyhole size={12} /> Web Initial-Access
+              </button>
+              <button
+                className={`${styles.tableDropdownItem} ${tableViewMode === 'paramMatrix' ? styles.tableDropdownItemActive : ''}`}
+                onClick={() => { onTableViewModeChange?.('paramMatrix'); setTableMenuOpen(false); onViewChange('table') }}
+              >
+                <Bug size={12} /> Parameter Matrix
+              </button>
+              <button
+                className={`${styles.tableDropdownItem} ${tableViewMode === 'sharedInfra' ? styles.tableDropdownItemActive : ''}`}
+                onClick={() => { onTableViewModeChange?.('sharedInfra'); setTableMenuOpen(false); onViewChange('table') }}
+              >
+                <Network size={12} /> Shared Infrastructure
+              </button>
+              <button
+                className={`${styles.tableDropdownItem} ${tableViewMode === 'dnsEmail' ? styles.tableDropdownItemActive : ''}`}
+                onClick={() => { onTableViewModeChange?.('dnsEmail'); setTableMenuOpen(false); onViewChange('table') }}
+              >
+                <Mail size={12} /> DNS & Email Posture
+              </button>
+              <button
+                className={`${styles.tableDropdownItem} ${tableViewMode === 'threatIntel' ? styles.tableDropdownItemActive : ''}`}
+                onClick={() => { onTableViewModeChange?.('threatIntel'); setTableMenuOpen(false); onViewChange('table') }}
+              >
+                <ShieldAlert size={12} /> Threat Intel Overlay
+              </button>
+              <button
+                className={`${styles.tableDropdownItem} ${tableViewMode === 'supplyChain' ? styles.tableDropdownItemActive : ''}`}
+                onClick={() => { onTableViewModeChange?.('supplyChain'); setTableMenuOpen(false); onViewChange('table') }}
+              >
+                <Package size={12} /> Supply-Chain
+              </button>
+              <button
+                className={`${styles.tableDropdownItem} ${tableViewMode === 'dnsDrift' ? styles.tableDropdownItemActive : ''}`}
+                onClick={() => { onTableViewModeChange?.('dnsDrift'); setTableMenuOpen(false); onViewChange('table') }}
+              >
+                <History size={12} /> Historic DNS Drift
               </button>
             </div>
           )}
