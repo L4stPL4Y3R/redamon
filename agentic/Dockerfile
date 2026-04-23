@@ -35,13 +35,23 @@ RUN printf '#!/bin/sh\nmax=5; n=0; until "$@"; do n=$((n+1)); [ $n -ge $max ] &&
     > /usr/local/bin/retry && chmod +x /usr/local/bin/retry
 
 # Install Node.js 20 LTS + npm (for JS/TS projects)
-RUN retry curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+RUN retry curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors \
+        -o /tmp/nodesource.sh https://deb.nodesource.com/setup_20.x \
+    && bash /tmp/nodesource.sh \
+    && rm /tmp/nodesource.sh \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/* \
     && npm install -g yarn pnpm
 
 # Install Go 1.22 (for Go projects)
-RUN retry curl -fsSL https://go.dev/dl/go1.22.10.linux-amd64.tar.gz | tar -C /usr/local -xz
+# Download to file first (not piped to tar) so `retry` can cleanly re-run on
+# a truncated HTTP/2 stream. curl's own --retry adds a second layer for
+# transient errors; sha256 check catches any silently-short download.
+RUN retry curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors \
+        -o /tmp/go.tgz https://go.dev/dl/go1.22.10.linux-amd64.tar.gz \
+    && echo "736ce492a19d756a92719a6121226087ccd91b652ed5caec40ad6dbfb2252092  /tmp/go.tgz" | sha256sum -c - \
+    && tar -C /usr/local -xzf /tmp/go.tgz \
+    && rm /tmp/go.tgz
 ENV PATH="/usr/local/go/bin:/root/go/bin:${PATH}"
 
 # Install Ruby + Bundler (for Ruby/Rails projects)
@@ -60,11 +70,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     php-cli php-xml php-mbstring php-curl php-zip \
     && rm -rf /var/lib/apt/lists/* \
-    && retry curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+    && retry curl -sS --retry 5 --retry-delay 5 --retry-all-errors \
+        -o /tmp/composer-setup.php https://getcomposer.org/installer \
+    && php /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer \
+    && rm /tmp/composer-setup.php
 
 # Install .NET 8 SDK (for C# projects)
 RUN apt-get update && apt-get install -y --no-install-recommends libicu-dev && rm -rf /var/lib/apt/lists/* \
-    && retry curl -fsSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 8.0 --install-dir /usr/share/dotnet \
+    && retry curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors \
+        -o /tmp/dotnet-install.sh https://dot.net/v1/dotnet-install.sh \
+    && bash /tmp/dotnet-install.sh --channel 8.0 --install-dir /usr/share/dotnet \
+    && rm /tmp/dotnet-install.sh \
     && ln -s /usr/share/dotnet/dotnet /usr/local/bin/dotnet
 ENV DOTNET_ROOT="/usr/share/dotnet"
 
