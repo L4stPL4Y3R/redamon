@@ -1138,7 +1138,10 @@ export default function SettingsPage() {
       {/* Tab: Tradecraft Resources */}
       {activeTab === 'tradecraft' && <div className={styles.section}>
         <div className={styles.sectionHeader}>
-          <h2 className={styles.sectionTitle}>Tradecraft Resources</h2>
+          <h2 className={styles.sectionTitle}>
+            Tradecraft Resources
+            <WikiInfoButton target="https://github.com/samugit83/redamon/wiki/Tradecraft-Lookup" title="Open Tradecraft Lookup wiki page" />
+          </h2>
           {!tcShowForm && !tcEditing && (
             <button className="primaryButton" onClick={() => setTcShowForm(true)}>
               <Plus size={14} /> Add Resource
