@@ -35,6 +35,12 @@ python-dotenv>=1.0.0
 pydantic>=2.0.0
 httpx>=0.27.0
 
+# Tradecraft Lookup tool (HTML parsing + PDF extraction for curated resources)
+beautifulsoup4>=4.12.0
+markdownify>=0.13.0
+pypdf>=4.0.0
+lxml>=5.0.0
+
 # Async support
 anyio>=4.0.0
 

@@ -21,7 +21,7 @@ from state import (
     summarize_trace_for_response,
 )
 from project_settings import get_setting
-from key_rotation import KeyRotator
+from orchestrator_helpers.key_rotation import KeyRotator
 from tools import (
     MCPToolsManager,
     Neo4jToolManager,
@@ -366,6 +366,70 @@ class AgentOrchestrator:
         if serp_api_key and self._google_dork_manager:
             self._google_dork_manager.key_rotator = _build_rotator(serp_api_key, 'serp')
 
+        # Tradecraft Lookup
+        if self._tradecraft_manager and self.tool_executor:
+            tc_enabled = get_setting('TRADECRAFT_TOOL_ENABLED', True)
+            tc_resources = get_setting('TRADECRAFT_RESOURCES', []) or []
+            github_token = user_settings.get('githubAccessToken', '')
+            if tc_enabled:
+                self._tradecraft_manager.set_resources(tc_resources)
+                self._tradecraft_manager.set_github_token(github_token)
+                # Refresh tunable knobs from settings each load
+                self._tradecraft_manager.llm = self.llm
+                self._tradecraft_manager.section_picker_llm = self._build_section_picker_llm() or self.llm
+                self._tradecraft_manager.tier2_threshold_bytes = get_setting(
+                    'TRADECRAFT_TIER2_THRESHOLD_BYTES', 800
+                )
+                self._tradecraft_manager.fetch_timeout = get_setting(
+                    'TRADECRAFT_FETCH_TIMEOUT', 30
+                )
+                self._tradecraft_manager.default_ttl = get_setting(
+                    'TRADECRAFT_DEFAULT_TTL_SEC', 86400
+                )
+                new_tool = self._tradecraft_manager.get_tool()
+                self.tool_executor.update_tradecraft_tool(new_tool)
+                # Swap the dynamic per-resource catalog into TOOL_REGISTRY
+                from prompts.tool_registry import swap_tradecraft_entry
+                swap_tradecraft_entry(self._tradecraft_manager.build_registry_entry())
+                if new_tool:
+                    logger.info(
+                        f"Tradecraft Lookup tool registered with "
+                        f"{len(self._tradecraft_manager._resources)} resources"
+                    )
+                else:
+                    logger.info("Tradecraft Lookup tool: zero enabled resources")
+            else:
+                self.tool_executor.update_tradecraft_tool(None)
+                from prompts.tool_registry import pop_tradecraft_entry
+                pop_tradecraft_entry()
+
+    def _build_section_picker_llm(self):
+        """Instantiate a Haiku LLM for the tradecraft section picker.
+
+        Returns None on any failure -> the manager will fall back to self.llm.
+        """
+        try:
+            picker_model = get_setting(
+                'TRADECRAFT_SECTION_PICKER_MODEL', 'claude-haiku-4-5-20251001'
+            )
+            from langchain_anthropic import ChatAnthropic
+            from orchestrator_helpers.llm_setup import _resolve_provider_key
+            from project_settings import get_settings
+            user_providers = get_settings().get('USER_LLM_PROVIDERS') or []
+            anthropic_p = _resolve_provider_key(user_providers, 'anthropic')
+            api_key = (anthropic_p or {}).get('apiKey')
+            if not api_key:
+                return None
+            return ChatAnthropic(
+                model=picker_model,
+                anthropic_api_key=api_key,
+                temperature=0,
+                max_tokens=64,
+            )
+        except Exception as e:
+            logger.debug(f"Section picker LLM build skipped: {e}")
+            return None
+
     def _setup_llm(self) -> None:
         """Initialize the LLM based on current model_name.
 
@@ -439,10 +503,28 @@ class AgentOrchestrator:
         self._google_dork_manager = GoogleDorkToolManager()
         google_dork_tool = self._google_dork_manager.get_tool()
 
+        # Setup Tradecraft Lookup tool (resources resolved later via _apply_project_settings).
+        # get_tool() returns None until at least one enabled resource is loaded.
+        from orchestrator_helpers.tradecraft_lookup import TradecraftLookupManager
+        self._tradecraft_manager = TradecraftLookupManager(
+            llm=self.llm,
+            mcp_manager=mcp_manager,
+        )
+        # Tool starts as None; orchestrator hot-swaps it once resources load.
+        tradecraft_tool = self._tradecraft_manager.get_tool()
+        # Strip the registry entry until resources are loaded so the
+        # baseline empty entry doesn't reach the system prompt.
+        from prompts.tool_registry import pop_tradecraft_entry
+        pop_tradecraft_entry()
+
+        # Stash the MCP manager so the /tradecraft/verify HTTP endpoint can reach it.
+        self._mcp_manager = mcp_manager
+
         # Create phase-aware tool executor
         self.tool_executor = PhaseAwareToolExecutor(
             mcp_manager, graph_tool, web_search_tool,
             shodan_tool, google_dork_tool,
+            tradecraft_tool,
         )
         self.tool_executor.register_mcp_tools(mcp_tools)
 

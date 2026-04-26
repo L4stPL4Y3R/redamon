@@ -13,7 +13,7 @@
 
 <p align="center">
   <a href="https://github.com/samugit83/redamon/stargazers"><img height="24" src="https://img.shields.io/github/stars/samugit83/redamon?style=flat&color=2E8B57&label=Stars" alt="GitHub Stars"/></a>
-  <img height="24" src="https://img.shields.io/badge/v4.3.0-release-2E8B57?style=flat" alt="Version 4.3.0"/>
+  <img height="24" src="https://img.shields.io/badge/v4.4.0-release-2E8B57?style=flat" alt="Version 4.4.0"/>
   <img height="24" src="https://img.shields.io/badge/WARNING-SECURITY%20TOOL-B22222?style=flat" alt="Security Tool Warning"/>
   <img height="24" src="https://img.shields.io/badge/LICENSE-MIT-4169A1?style=flat" alt="MIT License"/>
   <img height="24" src="https://img.shields.io/badge/END--TO--END-PIPELINE-A01025?style=flat" alt="End-to-End Pipeline"/>
@@ -468,6 +468,7 @@ A **LangGraph-based autonomous agent** implementing the ReAct pattern. It progre
 |:-----:|-------|-------------|:------:|:----------:|
 | **Intelligence** | **query_graph** | Neo4j graph queries -- primary source of truth for recon data | All | -- |
 | | **web_search** | Internet search via Tavily for CVE details, exploit PoCs, advisories | All | -- |
+| | **tradecraft_lookup** | User-curated catalog of trusted security knowledge URLs (HackTricks, PayloadsAllTheThings, CVE PoC repos, vendor blogs) -- 6 auto-detected resource types, sitemap-driven section pick, sqlite+disk cache | Exploit, Post | -- |
 | | **shodan** | Shodan OSINT -- host details, reverse DNS, device search | Info, Exploit | -- |
 | | **google_dork** | Google dorking via SerpAPI -- exposed files, admin panels, directory listings | Info | -- |
 | **Recon & OSINT** | **execute_subfinder** | Passive subdomain enumeration via OSINT (CT logs, DNS datasets). No traffic to target | Info, Exploit | network_recon :8000 |

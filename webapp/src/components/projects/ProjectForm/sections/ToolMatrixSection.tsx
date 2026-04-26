@@ -12,6 +12,12 @@ type FormData = Omit<Project, 'id' | 'userId' | 'createdAt' | 'updatedAt' | 'use
 
 /** Tool → settings field name + human label + signup URL */
 const TOOL_KEY_INFO: Record<string, { field: string; label: string; hint: string; url: string }> = {
+  tradecraft_lookup: {
+    field: '_tradecraft_resources',  // sentinel: not an API key field
+    label: 'Tradecraft Resources',
+    hint: 'Configure curated knowledge URLs in Global Settings -> Tradecraft. The agent only sees enabled resources.',
+    url: '/settings?tab=tradecraft',
+  },
   web_search: {
     field: 'tavilyApiKey',
     label: 'Tavily',
@@ -73,7 +79,16 @@ export function ToolMatrixSection({ data, updateField }: ToolMatrixSectionProps)
         if (!settings.serpApiKey) missing.add('google_dork')
         if (!settings.wpscanApiToken) missing.add('execute_wpscan')
         if (!settings.urlscanApiKey) missing.add('execute_gau')
-        setMissingKeys(missing)
+        // tradecraft_lookup: warn when zero enabled resources are configured
+        fetch(`/api/users/${userId}/tradecraft-resources`)
+          .then(r2 => r2.ok ? r2.json() : [])
+          .then((arr: Array<{ enabled?: boolean }>) => {
+            const enabledCount = (arr || []).filter(r => r.enabled !== false).length
+            const next = new Set(missing)
+            if (enabledCount === 0) next.add('tradecraft_lookup')
+            setMissingKeys(next)
+          })
+          .catch(() => setMissingKeys(missing))
       })
       .catch(() => {})
   }, [userId])
@@ -81,6 +96,11 @@ export function ToolMatrixSection({ data, updateField }: ToolMatrixSectionProps)
   useEffect(() => { fetchKeyStatus() }, [fetchKeyStatus])
 
   const openKeyModal = (toolId: string) => {
+    // Special-case: tradecraft_lookup has no API key. Redirect to the Tradecraft tab.
+    if (toolId === 'tradecraft_lookup') {
+      window.location.href = '/settings?tab=tradecraft'
+      return
+    }
     setKeyModal(toolId)
     setKeyValue('')
     setKeyVisible(false)
@@ -166,6 +186,7 @@ export function ToolMatrixSection({ data, updateField }: ToolMatrixSectionProps)
               { id: 'execute_hydra', label: 'execute_hydra' },
               { id: 'metasploit_console', label: 'metasploit_console' },
               { id: 'msf_restart', label: 'msf_restart' },
+              { id: 'tradecraft_lookup', label: 'tradecraft_lookup' },
             ].map(tool => {
               const phaseMap = (typeof data.agentToolPhaseMap === 'string'
                 ? JSON.parse(data.agentToolPhaseMap)

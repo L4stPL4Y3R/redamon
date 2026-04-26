@@ -1515,15 +1515,16 @@ class PhaseAwareToolExecutor:
         web_search_tool: Optional[callable] = None,
         shodan_tool: Optional[callable] = None,
         google_dork_tool: Optional[callable] = None,
+        tradecraft_tool: Optional[callable] = None,
     ):
         self.mcp_manager = mcp_manager
         self.graph_tool = graph_tool
         self.web_search_tool = web_search_tool
         self._all_tools: Dict[str, callable] = {}
         # Names of tools backed by MCP servers; only these trigger a reconnect
-        # on transport errors. Graph / web_search / shodan / google_dork run
-        # in-process and must not trigger MCP rebuilds if they happen to raise
-        # a look-alike error.
+        # on transport errors. Graph / web_search / shodan / google_dork /
+        # tradecraft_lookup run in-process and must not trigger MCP rebuilds
+        # if they happen to raise a look-alike error.
         self._mcp_tool_names: set = set()
 
         # Register graph tool
@@ -1541,6 +1542,10 @@ class PhaseAwareToolExecutor:
         # Register Google dork tool
         if google_dork_tool:
             self._all_tools["google_dork"] = google_dork_tool
+
+        # Register Tradecraft Lookup tool (conditional on enabled resources)
+        if tradecraft_tool:
+            self._all_tools["tradecraft_lookup"] = tradecraft_tool
 
     def register_mcp_tools(self, tools: List) -> None:
         """
@@ -1577,6 +1582,18 @@ class PhaseAwareToolExecutor:
             self._all_tools["google_dork"] = tool
         else:
             self._all_tools.pop("google_dork", None)
+
+    def update_tradecraft_tool(self, tool: Optional[callable]) -> None:
+        """Replace or remove the Tradecraft Lookup tool.
+
+        Called from `_apply_project_settings()` whenever the user's
+        tradecraft resource catalog changes. None -> tool unregistered
+        (zero enabled resources).
+        """
+        if tool:
+            self._all_tools["tradecraft_lookup"] = tool
+        else:
+            self._all_tools.pop("tradecraft_lookup", None)
 
     def set_wpscan_api_token(self, token: str) -> None:
         """Store WPScan API token for auto-injection into execute_wpscan args."""
@@ -1679,6 +1696,10 @@ class PhaseAwareToolExecutor:
                 output = await active_tool.ainvoke(tool_args)
             elif tool_name == "google_dork":
                 output = await active_tool.ainvoke(tool_args.get("query", ""))
+            elif tool_name == "tradecraft_lookup":
+                # Pass the structured args through. The tool function picks them up
+                # by name (resource_id, query, cve_id, section_path, force_refresh).
+                output = await active_tool.ainvoke(tool_args)
             elif tool_name == "execute_wpscan":
                 # Inject WPScan API token if configured and not already in args
                 args = tool_args.get("args", "")

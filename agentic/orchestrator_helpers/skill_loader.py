@@ -19,8 +19,8 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# Root directory of all skill files (relative to this file)
-_SKILLS_DIR = Path(__file__).parent / "skills"
+# Root directory of all skill files (sibling to orchestrator_helpers/, in agentic/skills/)
+_SKILLS_DIR = Path(__file__).parent.parent / "skills"
 
 # Maximum skills injected per session (matching Infosec-skills convention)
 MAX_SKILLS = 5

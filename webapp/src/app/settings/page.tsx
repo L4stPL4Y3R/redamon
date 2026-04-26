@@ -7,6 +7,8 @@ import { useProject } from '@/providers/ProjectProvider'
 import { useVersionCheck } from '@/hooks/useVersionCheck'
 import { LlmProviderForm } from '@/components/settings/LlmProviderForm'
 import type { ProviderData } from '@/components/settings/LlmProviderForm'
+import { TradecraftResourceForm } from '@/components/settings/TradecraftResourceForm'
+import { TradecraftResourceList } from '@/components/settings/TradecraftResourceList'
 import { PROVIDER_TYPES } from '@/lib/llmProviderPresets'
 import { Modal } from '@/components/ui/Modal/Modal'
 import { useAlertModal, useToast, WikiInfoButton } from '@/components/ui'
@@ -772,9 +774,109 @@ export default function SettingsPage() {
   }, [pendingImport])
 
   const searchParams = useSearchParams()
-  const validTabs = ['providers', 'skills', 'chat-skills', 'keys', 'system']
+  const validTabs = ['providers', 'skills', 'chat-skills', 'tradecraft', 'keys', 'system']
   const initialTab = searchParams.get('tab') || 'providers'
   const [activeTab, setActiveTab] = useState(validTabs.includes(initialTab) ? initialTab : 'providers')
+
+  // Tradecraft Resources state
+  type TcResource = import('@/components/settings/TradecraftResourceForm').TradecraftResource & {
+    crawlStoppedBecause?: string
+    crawlStats?: { pages_fetched?: number; llm_calls?: number; elapsed_sec?: number }
+    sitemap?: { nav?: unknown[]; tree?: unknown[]; pages?: unknown[]; links?: unknown[] }
+  }
+  const [tcResources, setTcResources] = useState<TcResource[]>([])
+  const [tcLoading, setTcLoading] = useState(false)
+  const [tcShowForm, setTcShowForm] = useState(false)
+  const [tcEditing, setTcEditing] = useState<TcResource | null>(null)
+  const [tcRefreshingId, setTcRefreshingId] = useState<string | null>(null)
+  const tcPollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const fetchTcResources = useCallback(async () => {
+    if (!userId) return
+    setTcLoading(true)
+    try {
+      const r = await fetch(`/api/users/${userId}/tradecraft-resources`)
+      if (r.ok) setTcResources(await r.json())
+    } catch (e) { console.error('fetchTcResources', e) }
+    finally { setTcLoading(false) }
+  }, [userId])
+
+  useEffect(() => {
+    if (activeTab === 'tradecraft' && userId) {
+      fetchTcResources()
+    }
+  }, [activeTab, userId, fetchTcResources])
+
+  // Light polling while a resource has not yet been verified (lastVerifiedAt null)
+  useEffect(() => {
+    if (activeTab !== 'tradecraft' || !userId) {
+      if (tcPollingRef.current) { clearInterval(tcPollingRef.current); tcPollingRef.current = null }
+      return
+    }
+    const anyPending = tcResources.some(r => !r.lastVerifiedAt)
+    if (anyPending && !tcPollingRef.current) {
+      tcPollingRef.current = setInterval(fetchTcResources, 5000)
+    } else if (!anyPending && tcPollingRef.current) {
+      clearInterval(tcPollingRef.current); tcPollingRef.current = null
+    }
+    return () => {
+      if (tcPollingRef.current) { clearInterval(tcPollingRef.current); tcPollingRef.current = null }
+    }
+  }, [activeTab, userId, tcResources, fetchTcResources])
+
+  const tcHandleSave = useCallback(() => {
+    setTcShowForm(false); setTcEditing(null); fetchTcResources(); toast.success('Saved')
+  }, [fetchTcResources, toast])
+
+  const tcHandleCancel = useCallback(() => { setTcShowForm(false); setTcEditing(null) }, [])
+
+  const tcHandleDelete = useCallback(async (r: TcResource) => {
+    if (!userId || !r.id) return
+    const ok = await showConfirm(
+      `Delete "${r.name}"? This removes the catalog entry and disk cache.`,
+      'Delete tradecraft resource',
+    )
+    if (!ok) return
+    try {
+      const resp = await fetch(`/api/users/${userId}/tradecraft-resources/${r.id}`, { method: 'DELETE' })
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+      toast.success('Deleted')
+      fetchTcResources()
+    } catch (e) { toast.error(`Delete failed: ${e instanceof Error ? e.message : String(e)}`) }
+  }, [userId, showConfirm, toast, fetchTcResources])
+
+  const tcHandleRefresh = useCallback(async (r: TcResource) => {
+    if (!userId || !r.id) return
+    setTcRefreshingId(r.id)
+    try {
+      const resp = await fetch(`/api/users/${userId}/tradecraft-resources/${r.id}/refresh`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+      })
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}))
+        throw new Error(data.error || `HTTP ${resp.status}`)
+      }
+      toast.success('Refreshed')
+      fetchTcResources()
+    } catch (e) { toast.error(`Refresh failed: ${e instanceof Error ? e.message : String(e)}`) }
+    finally { setTcRefreshingId(null) }
+  }, [userId, toast, fetchTcResources])
+
+  const tcHandleToggleEnabled = useCallback(async (r: TcResource, next: boolean) => {
+    if (!userId || !r.id) return
+    // Optimistic update
+    setTcResources(prev => prev.map(x => x.id === r.id ? { ...x, enabled: next } : x))
+    try {
+      const resp = await fetch(`/api/users/${userId}/tradecraft-resources/${r.id}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: next }),
+      })
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+    } catch (e) {
+      toast.error(`Toggle failed: ${e instanceof Error ? e.message : String(e)}`)
+      fetchTcResources()
+    }
+  }, [userId, toast, fetchTcResources])
 
   if (!userId) {
     return (
@@ -804,6 +906,9 @@ export default function SettingsPage() {
         </button>
         <button className={`${styles.tab} ${activeTab === 'chat-skills' ? styles.tabActive : ''}`} onClick={() => setActiveTab('chat-skills')}>
           <BookOpen size={14} /> Chat Skills
+        </button>
+        <button className={`${styles.tab} ${activeTab === 'tradecraft' ? styles.tabActive : ''}`} onClick={() => setActiveTab('tradecraft')}>
+          <BookOpen size={14} /> Tradecraft
         </button>
         <button className={`${styles.tab} ${activeTab === 'keys' ? styles.tabActive : ''}`} onClick={() => setActiveTab('keys')}>
           API Keys & Tunneling
@@ -1028,6 +1133,42 @@ export default function SettingsPage() {
             ))}
           </div>
         )}
+      </div>}
+
+      {/* Tab: Tradecraft Resources */}
+      {activeTab === 'tradecraft' && <div className={styles.section}>
+        <div className={styles.sectionHeader}>
+          <h2 className={styles.sectionTitle}>Tradecraft Resources</h2>
+          {!tcShowForm && !tcEditing && (
+            <button className="primaryButton" onClick={() => setTcShowForm(true)}>
+              <Plus size={14} /> Add Resource
+            </button>
+          )}
+        </div>
+        <p className={styles.sectionHint}>
+          Curated knowledge sites the agent consults during exploitation
+          (HackTricks, PayloadsAllTheThings, CVE PoC repos, ...). On add, the
+          agent fetches the homepage, builds a sitemap, and writes a short
+          summary that becomes the tool&apos;s catalog entry. The agent only sees
+          enabled resources.
+        </p>
+        {(tcShowForm || tcEditing) && (
+          <TradecraftResourceForm
+            userId={userId!}
+            resource={tcEditing}
+            onSave={tcHandleSave}
+            onCancel={tcHandleCancel}
+          />
+        )}
+        <TradecraftResourceList
+          resources={tcResources}
+          loading={tcLoading}
+          refreshingId={tcRefreshingId}
+          onEdit={(r) => setTcEditing(r)}
+          onDelete={tcHandleDelete}
+          onRefresh={tcHandleRefresh}
+          onToggleEnabled={tcHandleToggleEnabled}
+        />
       </div>}
 
       {/* Tab: API Keys & Tunneling */}

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.4.0] - 2026-04-26
+
+### Added
+
+- **Tradecraft Lookup tool** ([agentic/tradecraft_lookup.py](agentic/tradecraft_lookup.py), [agentic/tradecraft_crawl.py](agentic/tradecraft_crawl.py)) -- per-user catalog of curated security knowledge URLs (HackTricks, PayloadsAllTheThings, CVE PoC repos, vendor blogs) the agent consults during exploitation. Six auto-detected resource types (`mkdocs-wiki`, `gitbook`, `github-repo`, `cve-poc-db`, `sphinx-docs`, `agentic-crawl`) each with a type-specific sitemap builder and TTL. Verify-once / query-many split: at add-time the agent fetches the homepage, detects the type, builds a sitemap, and writes a 250-350 word summary that becomes the runtime tool description; at query-time a Tier 1 HTTP / Tier 2 Playwright fetch with sqlite+disk cache returns content in an untrusted-content envelope. `cve-poc-db` is special-cased to skip the section picker and resolve `cve_id="CVE-YYYY-NNNNN"` deterministically. The `tradecraft_lookup` tool is registered conditionally and removed when zero resources are enabled. New Prisma model `UserTradecraftResource`, new webapp **Tradecraft** tab in Global Settings (Quick Add list of 51 curated presets, async verify polling, refresh / edit / delete / enable toggle), new `/tradecraft/verify` agent endpoint, 9 new project settings (`TRADECRAFT_*`), and a four-bound LLM-driven Playwright crawl loop for the fallback type. Wired into exploitation + post-exploitation phases via `agentToolPhaseMap`
+- **Wiki documentation** -- [redamon.wiki/Global-Settings.md](redamon.wiki/Global-Settings.md) gains a full **Tradecraft** section (resources screen + add-resource modal, all 51 Quick Add presets grouped by type, resource-type comparison) and new dedicated [redamon.wiki/Tradecraft-Lookup.md](redamon.wiki/Tradecraft-Lookup.md) tool page (verify vs session split, sequence diagrams, section picker, two-tier fetch, cache layer, SSRF guard, comparison vs `web_search` and FAISS KB)
+- **End-to-end README** ([readmes/README.TRADECRAFT.md](readmes/README.TRADECRAFT.md)) covering both phases with mermaid diagrams, lifecycle state diagram, and per-type sitemap-source table
+
+### Notes
+
+- **Minor version bump** (4.3.0 -> 4.4.0) -- new agent tool + new Prisma model + new agent endpoint + new webapp tab. No breaking changes: `TRADECRAFT_TOOL_ENABLED=true` default, but the tool registers only when the user has at least one enabled resource. Required commands after pulling: `docker compose exec webapp npx prisma db push` (new `user_tradecraft_resources` table), `docker compose build agent && docker compose up -d agent` (new Python module is COPY-baked into the agent image), webapp rebuild only in production mode
+
+---
+
 ## [4.3.0] - 2026-04-26
 
 ### Added

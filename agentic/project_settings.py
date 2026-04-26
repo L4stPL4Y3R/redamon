@@ -74,10 +74,23 @@ DEFAULT_AGENT_SETTINGS: dict[str, Any] = {
     'NGROK_TUNNEL_ENABLED': False,
     'CHISEL_TUNNEL_ENABLED': False,
 
+    # Tradecraft Lookup tool
+    # (Output truncation is delegated to the global TOOL_OUTPUT_MAX_CHARS so
+    # tradecraft results follow the same cap as every other tool.)
+    'TRADECRAFT_TOOL_ENABLED': True,
+    'TRADECRAFT_FETCH_TIMEOUT': 30,
+    'TRADECRAFT_DEFAULT_TTL_SEC': 86400,
+    'TRADECRAFT_TIER2_THRESHOLD_BYTES': 800,
+    'TRADECRAFT_SECTION_PICKER_MODEL': 'claude-haiku-4-5-20251001',
+    'TRADECRAFT_CRAWL_MAX_PAGES': 30,
+    'TRADECRAFT_CRAWL_MAX_LLM_CALLS': 20,
+    'TRADECRAFT_CRAWL_TIME_BUDGET_SEC': 180,
+    'TRADECRAFT_CRAWL_MAX_DEPTH': 3,
+
     # Agent Limits
     'MAX_ITERATIONS': 100,
     'EXECUTION_TRACE_MEMORY_STEPS': 100,
-    'TOOL_OUTPUT_MAX_CHARS': 20000,
+    'TOOL_OUTPUT_MAX_CHARS': 40000,
     # Cap on concurrent tools inside ONE plan_tools wave. Applies to both the
     # root agent and every fireteam member because both paths execute through
     # execute_plan_node. Semaphore semantics: a 20-step plan with cap=10 runs
@@ -147,6 +160,7 @@ DEFAULT_AGENT_SETTINGS: dict[str, Any] = {
         'web_search': ['informational', 'exploitation', 'post_exploitation'],
         'shodan': ['informational', 'exploitation'],
         'google_dork': ['informational'],
+        'tradecraft_lookup': ['exploitation', 'post_exploitation'],
     },
 
     # Kali Shell Library Installation
@@ -450,6 +464,19 @@ def fetch_agent_settings(project_id: str, webapp_url: str) -> dict[str, Any]:
         except Exception as e:
             logger.warning(f"Failed to fetch user settings: {e}")
             settings['USER_SETTINGS'] = {}
+
+        # Fetch user tradecraft resources (for the tradecraft_lookup tool catalog)
+        try:
+            tc_resp = requests.get(
+                f"{webapp_url.rstrip('/')}/api/users/{user_id}/tradecraft-resources?internal=true",
+                headers=INTERNAL_HEADERS,
+                timeout=10,
+            )
+            tc_resp.raise_for_status()
+            settings['TRADECRAFT_RESOURCES'] = tc_resp.json()
+        except Exception as e:
+            logger.warning(f"Failed to fetch tradecraft resources: {e}")
+            settings['TRADECRAFT_RESOURCES'] = []
 
         # If selected model is custom/, extract its specific config
         model_id = settings.get('OPENAI_MODEL', '')

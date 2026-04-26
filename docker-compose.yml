@@ -420,6 +420,7 @@ services:
       - cypherfix-repos:/tmp/cypherfix-repos
       - ./knowledge_base/kb_config.yaml:/app/knowledge_base/kb_config.yaml:ro
       - ./knowledge_base/data:/app/knowledge_base/data
+      - tradecraft_cache:/app/tradecraft_cache
     depends_on:
       neo4j:
         condition: service_healthy
@@ -613,6 +614,8 @@ volumes:
   neo4j_plugins:
   kb_data:
     name: redamon_kb_data
+  tradecraft_cache:
+    name: redamon_tradecraft_cache
   # GVM volumes (names must match container_manager.py references)
   vt_data:
     name: redamon_vt_data

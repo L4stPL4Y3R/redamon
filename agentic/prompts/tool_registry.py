@@ -412,6 +412,35 @@ TOOL_REGISTRY = {
     },
 }
 
+# =========================================================================
+# Tradecraft Lookup (dynamic registry entry)
+# =========================================================================
+#
+# The tradecraft_lookup tool's description is rebuilt at runtime from the
+# user's enabled tradecraft resources (see TradecraftLookupManager.build_registry_entry).
+# `swap_tradecraft_entry()` is called from the orchestrator's
+# `_apply_project_settings()` after resources are loaded.
+#
+# When zero resources: the entry is removed via `pop_tradecraft_entry()` so the
+# agent does not see a registry entry that promises capabilities the tool
+# cannot deliver.
+
+def swap_tradecraft_entry(rich_entry: dict) -> None:
+    """Inject the dynamic per-resource catalog into TOOL_REGISTRY.
+
+    `rich_entry` must contain keys: purpose, when_to_use, args_format, description.
+    Empty dict -> remove the entry entirely.
+    """
+    if not rich_entry:
+        TOOL_REGISTRY.pop("tradecraft_lookup", None)
+        return
+    TOOL_REGISTRY["tradecraft_lookup"] = rich_entry
+
+
+def pop_tradecraft_entry() -> None:
+    TOOL_REGISTRY.pop("tradecraft_lookup", None)
+
+
 # Simplified web_search entry used when Knowledge Base is not available
 # (--skipkbase install or missing KB dependencies). Replaces the full
 # KB-centric entry in TOOL_REGISTRY at runtime via orchestrator.py.

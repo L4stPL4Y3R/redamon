@@ -128,8 +128,8 @@ async def check_target_guardrail(body: GuardrailRequest):
     2. Soft guardrail (LLM-based): blocks well-known private companies.
        Fails open if LLM is unavailable.
     """
-    from hard_guardrail import is_hard_blocked
-    from guardrail import check_target_allowed
+    from orchestrator_helpers.hard_guardrail import is_hard_blocked
+    from orchestrator_helpers.guardrail import check_target_allowed
     from project_settings import DEFAULT_AGENT_SETTINGS
 
     # Hard guardrail: deterministic, non-disableable
@@ -367,7 +367,7 @@ class ReportSummarizeRequest(BaseModel):
 @app.post("/api/report/summarize", tags=["Report"])
 async def summarize_report(body: ReportSummarizeRequest):
     """Generate LLM narrative summaries for pentest report sections."""
-    from report_summarizer import generate_report_narratives
+    from orchestrator_helpers.report_summarizer import generate_report_narratives
     from project_settings import DEFAULT_AGENT_SETTINGS
     from orchestrator_helpers.llm_setup import setup_llm
 
@@ -468,6 +468,121 @@ def _setup_llm_for_endpoint(model_name: str) -> "BaseChatModel":
     )
 
 
+# =============================================================================
+# TRADECRAFT — Verify endpoint for the per-user knowledge resource catalog
+# =============================================================================
+
+class TradecraftVerifyRequest(BaseModel):
+    url: str
+    user_id: Optional[str] = None      # used to load the user's LLM provider keys
+    github_token: Optional[str] = None
+    force: bool = False
+
+
+def _build_llm_for_user(user_id: Optional[str]):
+    """Build an LLM for a non-project endpoint by loading the user's providers
+    via the internal webapp API. Falls back to env-based providers when user_id
+    is missing or the lookup fails."""
+    import os
+    import requests
+    from orchestrator_helpers.llm_setup import setup_llm, _resolve_provider_key
+    from project_settings import DEFAULT_AGENT_SETTINGS, get_settings
+
+    model_name = (get_settings() or {}).get(
+        'OPENAI_MODEL', DEFAULT_AGENT_SETTINGS.get('OPENAI_MODEL', 'claude-opus-4-6')
+    )
+    user_providers: list = []
+    if user_id:
+        webapp_url = os.environ.get('WEBAPP_URL', 'http://webapp:3000')
+        internal_key = os.environ.get('INTERNAL_API_KEY', '')
+        try:
+            resp = requests.get(
+                f"{webapp_url.rstrip('/')}/api/users/{user_id}/llm-providers?internal=true",
+                headers={'x-internal-key': internal_key} if internal_key else {},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            user_providers = resp.json() or []
+        except Exception as e:
+            logger.warning(f"tradecraft verify: failed to fetch user LLM providers: {e}")
+
+    openai_p = _resolve_provider_key(user_providers, "openai")
+    anthropic_p = _resolve_provider_key(user_providers, "anthropic")
+    openrouter_p = _resolve_provider_key(user_providers, "openrouter")
+    bedrock_p = _resolve_provider_key(user_providers, "bedrock")
+    return setup_llm(
+        model_name,
+        openai_api_key=(openai_p or {}).get("apiKey"),
+        anthropic_api_key=(anthropic_p or {}).get("apiKey"),
+        openrouter_api_key=(openrouter_p or {}).get("apiKey"),
+        aws_access_key_id=(bedrock_p or {}).get("awsAccessKeyId"),
+        aws_secret_access_key=(bedrock_p or {}).get("awsSecretKey"),
+        aws_region=(bedrock_p or {}).get("awsRegion") or "us-east-1",
+    )
+
+
+@app.post("/tradecraft/verify", tags=["Tradecraft"])
+async def tradecraft_verify(body: TradecraftVerifyRequest):
+    """
+    Fetch a tradecraft resource URL, detect its type, build a sitemap, and
+    LLM-summarize its scope. Called by the webapp `/api/users/{id}/tradecraft-resources/{rid}/verify` route.
+    """
+    from orchestrator_helpers.tradecraft_lookup import verify_resource
+    from project_settings import DEFAULT_AGENT_SETTINGS
+
+    if not orchestrator or not orchestrator._initialized:
+        return JSONResponse(
+            {"error": "Agent not initialized"}, status_code=503
+        )
+    # SSRF / scheme validation runs BEFORE LLM setup so a private-IP probe
+    # never wakes the LLM client. verify_resource also re-validates internally,
+    # but failing fast here keeps the path symmetric with the webapp guard.
+    from orchestrator_helpers.tradecraft_lookup import validate_url
+    ok, err = validate_url(body.url)
+    if not ok:
+        return {
+            "summary": "",
+            "resource_type": "agentic-crawl",
+            "sitemap": {},
+            "crawl_stopped_because": "",
+            "crawl_stats": {},
+            "last_error": err,
+        }
+    # Prefer the agent's loaded LLM (a project session is active);
+    # otherwise build one on demand from the user's saved providers.
+    llm = orchestrator.llm
+    if llm is None:
+        try:
+            llm = _build_llm_for_user(body.user_id)
+        except Exception as e:
+            logger.error(f"tradecraft verify: cannot set up LLM: {e}")
+            return JSONResponse(
+                {"error": f"LLM not configured: {e}"}, status_code=503
+            )
+    bounds = {
+        "max_pages": DEFAULT_AGENT_SETTINGS.get("TRADECRAFT_CRAWL_MAX_PAGES", 30),
+        "max_llm_calls": DEFAULT_AGENT_SETTINGS.get("TRADECRAFT_CRAWL_MAX_LLM_CALLS", 20),
+        "time_budget_sec": DEFAULT_AGENT_SETTINGS.get("TRADECRAFT_CRAWL_TIME_BUDGET_SEC", 180),
+        "max_depth": DEFAULT_AGENT_SETTINGS.get("TRADECRAFT_CRAWL_MAX_DEPTH", 3),
+    }
+    mcp_manager = getattr(orchestrator, "_mcp_manager", None)
+    try:
+        result = await verify_resource(
+            body.url,
+            github_token=body.github_token or "",
+            force=body.force,
+            llm=llm,
+            mcp_manager=mcp_manager,
+            bounds=bounds,
+        )
+        return result
+    except Exception as exc:
+        logger.error(f"tradecraft verify failed: {exc}")
+        return JSONResponse(
+            {"error": str(exc)}, status_code=500
+        )
+
+
 @app.get("/defaults", tags=["System"])
 async def get_defaults():
     """
@@ -515,7 +630,7 @@ async def get_models(providers: str = Query(default="", description="JSON-encode
     When `providers` query param is supplied (JSON list of UserLlmProvider rows),
     uses those configs for discovery. Otherwise falls back to env vars.
     """
-    from model_providers import fetch_all_models
+    from orchestrator_helpers.model_providers import fetch_all_models
 
     provider_list = None
     if providers:
@@ -540,7 +655,7 @@ async def list_skills():
     Each entry contains: id, name, description, category.
     The frontend uses this to populate the skill selector in Project Settings.
     """
-    from skill_loader import list_skills as _list_skills
+    from orchestrator_helpers.skill_loader import list_skills as _list_skills
     skills = _list_skills()
     return {"skills": skills, "total": len(skills)}
 
@@ -548,7 +663,7 @@ async def list_skills():
 @app.get("/skills/{skill_id:path}", tags=["System"])
 async def get_skill_content(skill_id: str):
     """Return full content of a specific skill."""
-    from skill_loader import load_skill_content, list_skills as _list_skills
+    from orchestrator_helpers.skill_loader import load_skill_content, list_skills as _list_skills
     content = load_skill_content(skill_id)
     if content is None:
         return JSONResponse({"error": f"Skill not found: {skill_id}"}, status_code=404)

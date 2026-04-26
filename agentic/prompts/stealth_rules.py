@@ -34,6 +34,11 @@ stop and inform the user honestly — do NOT proceed with noisy techniques.
 ### web_search — NO RESTRICTIONS
 - Passive external API query. Use freely for CVE research and recon.
 
+### tradecraft_lookup — NO RESTRICTIONS
+- Fetches curated third-party knowledge sites (HackTricks, PayloadsAllTheThings, CVE PoC repos, ...) configured in the user's Global Settings.
+- Never sends traffic to the pentest target. All requests go to the user-trusted resource hosts.
+- Use freely whenever you need a specific exploitation technique, payload, or CVE PoC.
+
 ### execute_jsluice -- NO RESTRICTIONS
 - Passive local file analysis only. No network traffic. Use freely.
 
