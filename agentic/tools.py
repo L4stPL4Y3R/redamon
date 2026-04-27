@@ -251,7 +251,8 @@ class Neo4jToolManager:
         re.IGNORECASE,
     )
     _WRITE_PROCEDURE_RE = re.compile(
-        r'\bCALL\s+(apoc\.(create|merge|refactor|periodic|trigger|schema)|dbms\.)\b',
+        r'\bCALL\s+(apoc\.(create|merge|refactor|periodic|trigger|schema)|'
+        r'apoc\.cypher\.(runWrite|doIt)|dbms\.)\b',
         re.IGNORECASE,
     )
 
@@ -287,7 +288,16 @@ class Neo4jToolManager:
             lines = cypher.split("\n")
             cypher = "\n".join(lines[1:-1] if lines and lines[-1].strip() == "```" else lines[1:])
 
-        return cypher.strip().rstrip(";").strip()
+        return cls._truncate_at_first_return(cypher.strip().rstrip(";").strip())
+
+    @classmethod
+    def _truncate_at_first_return(cls, cypher: str) -> str:
+        """If the model emitted multiple top-level RETURN clauses, keep only the first."""
+        return_positions = [m.start() for m in re.finditer(r'\bRETURN\b', cypher, re.IGNORECASE)]
+        if len(return_positions) < 2:
+            return cypher
+        # Cut at the start of the second RETURN, then trim trailing whitespace/newlines.
+        return cypher[:return_positions[1]].rstrip().rstrip(";").rstrip()
 
     @classmethod
     def _find_disallowed_write_operation(cls, cypher: str) -> Optional[str]:
