@@ -240,12 +240,67 @@ class MCPToolsManager:
 class Neo4jToolManager:
     """Manages Neo4j graph query tool with tenant filtering."""
 
+    _CYPHER_START_RE = re.compile(
+        r'\b(MATCH|OPTIONAL\s+MATCH|WITH|UNWIND|RETURN|CALL|SHOW)\b',
+        re.IGNORECASE,
+    )
+    _WRITE_CLAUSE_RE = re.compile(
+        r'\b(CREATE|MERGE|DELETE|DETACH\s+DELETE|SET|REMOVE|DROP|ALTER|'
+        r'LOAD\s+CSV|START\s+DATABASE|STOP\s+DATABASE|GRANT|DENY|REVOKE|'
+        r'ENABLE\s+SERVER|DEALLOCATE|REALLOCATE|TERMINATE)\b',
+        re.IGNORECASE,
+    )
+    _WRITE_PROCEDURE_RE = re.compile(
+        r'\bCALL\s+(apoc\.(create|merge|refactor|periodic|trigger|schema)|dbms\.)\b',
+        re.IGNORECASE,
+    )
+
     def __init__(self, uri: str, user: str, password: str, llm: "BaseChatModel"):
         self.uri = uri
         self.user = user
         self.password = password
         self.llm = llm
         self.graph: Optional[Neo4jGraph] = None
+
+    @classmethod
+    def _extract_cypher_from_response(cls, content: str) -> str:
+        """Extract the executable Cypher query from model output."""
+        cypher = (content or "").strip()
+
+        fence_match = re.search(
+            r'```(?:cypher|cql)?\s*\n(.*?)```',
+            cypher,
+            re.DOTALL | re.IGNORECASE,
+        )
+        if fence_match:
+            cypher = fence_match.group(1).strip()
+
+        cypher = re.sub(r'<think>.*?</think>', '', cypher, flags=re.DOTALL | re.IGNORECASE).strip()
+
+        start_match = cls._CYPHER_START_RE.search(cypher)
+        if start_match:
+            cypher = cypher[start_match.start():].strip()
+
+        cypher = re.sub(r'^(?:Cypher\s+Query|Query)\s*:\s*', '', cypher, flags=re.IGNORECASE).strip()
+
+        if cypher.startswith("```"):
+            lines = cypher.split("\n")
+            cypher = "\n".join(lines[1:-1] if lines and lines[-1].strip() == "```" else lines[1:])
+
+        return cypher.strip().rstrip(";").strip()
+
+    @classmethod
+    def _find_disallowed_write_operation(cls, cypher: str) -> Optional[str]:
+        """Return a disallowed write clause/procedure name, or None for read-only Cypher."""
+        proc_match = cls._WRITE_PROCEDURE_RE.search(cypher)
+        if proc_match:
+            return proc_match.group(1)
+
+        match = cls._WRITE_CLAUSE_RE.search(cypher)
+        if match:
+            return re.sub(r'\s+', ' ', match.group(1).upper())
+
+        return None
 
     def _inject_tenant_filter(self, cypher: str, user_id: str, project_id: str) -> str:
         """
@@ -380,7 +435,16 @@ Incorporate the filter pattern into your MATCH clauses so results are scoped app
 - Do NOT include user_id or project_id filters - they will be added automatically
 - Do NOT use any parameters (like $target, $domain, etc.) - use literal values or no filters
 - If the question doesn't specify a target, query ALL matching data
-- Always use LIMIT to restrict results{graph_view_rules}
+- Always use LIMIT to restrict results
+- CRITICAL: Generate a SINGLE Cypher query with ONE RETURN statement at the end
+- For comprehensive requests, use multiple MATCH clauses or OPTIONAL MATCH, then return all data in ONE RETURN
+- NEVER create multiple queries or multiple RETURN statements
+- Example structure for comprehensive queries:
+  MATCH (d:Domain {name: 'example.com'})
+  OPTIONAL MATCH (d)-[:HAS_SUBDOMAIN]->(s:Subdomain)
+  OPTIONAL MATCH (s)-[:RESOLVES_TO]->(i:IP)
+  OPTIONAL MATCH (i)-[:HAS_PORT]->(p:Port)
+  RETURN d, s, i, p LIMIT 100{graph_view_rules}
 
 User Question: {question}
 
@@ -388,14 +452,7 @@ Cypher Query:"""
 
         response = await self.llm.ainvoke(prompt)
         from orchestrator_helpers.json_utils import normalize_content
-        cypher = normalize_content(response.content).strip()
-
-        # Clean up the response - remove markdown code blocks if present
-        if cypher.startswith("```"):
-            lines = cypher.split("\n")
-            cypher = "\n".join(lines[1:-1] if lines[-1] == "```" else lines[1:])
-
-        return cypher.strip()
+        return self._extract_cypher_from_response(normalize_content(response.content))
 
     def get_tool(self) -> Optional[callable]:
         """
@@ -471,9 +528,7 @@ Cypher Query:"""
                         logger.info(f"[{user_id}/{project_id}] Generated Cypher (attempt {attempt + 1}): {cypher}")
 
                         # Reject write operations -- query_graph is read-only
-                        _upper = cypher.upper()
-                        _WRITE_KW = ['CREATE', 'MERGE', 'DELETE', 'DETACH', 'SET ', 'REMOVE', 'DROP', 'CALL']
-                        _found = next((kw for kw in _WRITE_KW if kw in _upper), None)
+                        _found = manager._find_disallowed_write_operation(cypher)
                         if _found:
                             return f"Error: Write operations are not allowed in graph queries (found: {_found.strip()})"
 

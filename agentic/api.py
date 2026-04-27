@@ -1186,9 +1186,7 @@ async def text_to_cypher(body: TextToCypherRequest):
                 )
 
             # Reject write operations -- data filters are read-only
-            _upper = cypher.upper()
-            _WRITE_KW = ['CREATE', 'MERGE', 'DELETE', 'DETACH', 'SET ', 'REMOVE', 'DROP', 'CALL']
-            if any(kw in _upper for kw in _WRITE_KW):
+            if manager._find_disallowed_write_operation(cypher):
                 return JSONResponse(
                     content={"error": "Write operations are not allowed in data filters"},
                     status_code=400,
