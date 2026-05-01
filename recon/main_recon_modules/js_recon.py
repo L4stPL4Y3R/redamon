@@ -412,7 +412,7 @@ def _run_analysis(js_files: list, settings: dict) -> dict:
                     results['dev_comments'] = result.get('dev_comments', [])
 
             except Exception as e:
-                print(f"[!][JsRecon] Analyzer '{name}' failed: {e}")
+                print(f"[!][JsRecon] Analyzer '{name}' failed: {type(e).__name__}: {e}")
 
     return results
 
