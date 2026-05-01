@@ -50,8 +50,8 @@ export async function PATCH(request: NextRequest) {
     if (!user) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 })
     }
-    const current = (user.uiPreferences ?? {}) as Prisma.JsonObject
-    const next: Prisma.JsonObject = { ...current, [featureKey]: value as Prisma.InputJsonValue }
+    const current = (user.uiPreferences ?? {}) as Prisma.InputJsonObject
+    const next: Prisma.InputJsonObject = { ...current, [featureKey]: value as Prisma.InputJsonValue }
     const updated = await prisma.user.update({
       where: { id: session.userId },
       data: { uiPreferences: next },
