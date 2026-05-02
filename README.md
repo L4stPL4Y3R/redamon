@@ -42,7 +42,6 @@
 
 > **LEGAL DISCLAIMER**: This tool is intended for **authorized security testing**, **educational purposes**, and **research only**. Never use this system to scan, probe, or attack any system you do not own or have explicit written permission to test. Unauthorized access is **illegal** and punishable by law. By using this tool, you accept **full responsibility** for your actions. **[Read Full Disclaimer](DISCLAIMER.md)**
 
-
 <p align="center">
   <img src="assets/agent.gif" alt="RedAmon Agent Demo" width="100%"/>
 </p>
