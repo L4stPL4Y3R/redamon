@@ -54,7 +54,7 @@
 
 <br/>
 
-<h2 align="center">Dynamic Multi-Tool Parallel Recon Pipeline...</h2>
+<h2 align="center">Dynamic Multi-Tool Parallel Recon Pipeline</h2>
 <p align="center">
 <img src="assets/recon-pipeline.gif" alt="Parallel recon pipeline in action" width="100%"/>
 </p>
