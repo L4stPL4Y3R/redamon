@@ -164,3 +164,6 @@ bmark/
 # Knowledge base runtime data
 knowledge_base/data/
 **/.file_hashes.json
+
+# DevergoLabs
+DevergoLabs/

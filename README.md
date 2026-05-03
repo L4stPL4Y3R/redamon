@@ -64,6 +64,16 @@
 
 <br/>
 
+<h2 align="center">Recon as a Living Knowledge Graph</h2>
+<p align="center">
+<img src="assets/redamon-graph.gif" alt="RedAmon Neo4j attack-surface graph rendered in 2D" width="100%"/>
+</p>
+<p align="center">
+  <em>Industry-standard scanners chained so each tool's output feeds the next, then merged into a single Neo4j knowledge graph. Findings are deduplicated, relationships are explicit, and the agent inherits a structured, fully connected attack surface ready to query in natural language.</em>
+</p>
+
+<br/>
+
 <h1 align="center"><span style="color:#D48A8A">Offense</span> meets <span style="color:#8AAED4">defense</span> — one pipeline, full visibility.</h1>
 <p align="center">
 <b><samp><big>Reconnaissance ➜ Exploitation ➜ Post-Exploitation ➜ AI Triage ➜ CodeFix Agent ➜ GitHub PR</big></samp></b>
