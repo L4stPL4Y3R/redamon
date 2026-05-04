@@ -35,6 +35,63 @@ CDN_ASNS: dict[int, str] = {
     209242: "cloudflare",
 }
 
+# CDN names that httpx / naabu emit which RELIABLY indicate the IP is an
+# edge node and does NOT serve the origin application directly. Suppressing
+# Direct-IP findings on these is safe.
+#
+# Excluded on purpose: "aws", "amazon", "azure", "gcp", "google" — those
+# cover bare EC2/ALB/Cloud-LB origins where the IP often DOES serve the
+# app (e.g. an ALB IP returns the real site to a direct-IP request).
+# Treating those as CDN would suppress real Direct IP Access findings.
+RELIABLE_EDGE_CDN_NAMES: set[str] = {
+    "cloudflare",
+    "cloudfront",
+    "akamai",
+    "akamaighost",
+    "fastly",
+    "imperva",
+    "incapsula",
+    "sucuri",
+    "stackpath",
+    "azurefrontdoor",
+    "azure-cdn",
+    "gcore",
+}
+
+
+def is_reliable_edge_cdn_name(cdn_name) -> bool:
+    """True if *cdn_name* is a known edge-only CDN provider."""
+    if not cdn_name:
+        return False
+    return str(cdn_name).strip().lower() in RELIABLE_EDGE_CDN_NAMES
+
+
+def collect_reliable_edge_ips(recon_data: dict) -> set[str]:
+    """
+    Like collect_cdn_ips but only counts IPs whose cdn name is in
+    RELIABLE_EDGE_CDN_NAMES. Drops generic cloud-provider labels
+    (aws/amazon/azure/gcp/google) that mislabel bare origin IPs.
+    """
+    matches: set[str] = set()
+
+    port_scan = recon_data.get("port_scan") or {}
+    for ip, info in (port_scan.get("by_ip") or {}).items():
+        if not isinstance(info, dict):
+            continue
+        if info.get("is_cdn") and is_reliable_edge_cdn_name(info.get("cdn")):
+            matches.add(ip)
+
+    http_probe = recon_data.get("http_probe") or {}
+    for _url, info in (http_probe.get("by_url") or {}).items():
+        if not isinstance(info, dict):
+            continue
+        if info.get("is_cdn") and is_reliable_edge_cdn_name(info.get("cdn")):
+            ip = info.get("ip")
+            if ip:
+                matches.add(ip)
+
+    return matches
+
 CLOUDFLARE_IPV4_URL = "https://www.cloudflare.com/ips-v4"
 CLOUDFLARE_IPV6_URL = "https://www.cloudflare.com/ips-v6"
 

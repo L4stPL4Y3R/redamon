@@ -498,11 +498,15 @@ def _build_vuln_scan_data_from_graph(domain: str, user_id: str, project_id: str)
                 recon_data["subdomains"] = record["subdomains"] or []
 
             # 3) BaseURL nodes (for build_target_urls http_probe fallback)
+            #    Also fetch is_cdn / cdn / asn so the CDN prefilter in
+            #    run_security_checks (collect_cdn_ips, collect_asn_cdn_ips)
+            #    can suppress findings on httpx-flagged CDN edges.
             result = session.run(
                 """
                 MATCH (b:BaseURL {user_id: $uid, project_id: $pid})
                 RETURN b.url AS url, b.status_code AS status_code,
-                       b.host AS host, b.content_type AS content_type
+                       b.host AS host, b.content_type AS content_type,
+                       b.is_cdn AS is_cdn, b.cdn AS cdn, b.asn AS asn
                 """,
                 uid=user_id, pid=project_id,
             )
@@ -511,12 +515,45 @@ def _build_vuln_scan_data_from_graph(domain: str, user_id: str, project_id: str)
                 status_code = record["status_code"]
                 if status_code is not None and int(status_code) >= 500:
                     continue
+                host = record["host"] or ""
+                is_cdn = bool(record["is_cdn"])
+                # Resolve host -> first IP so collect_cdn_ips can map URL flag
+                # to an IP. dns.subdomains was populated above.
+                resolved_ip = None
+                sub_entry = recon_data["dns"]["subdomains"].get(host)
+                if sub_entry:
+                    sub_ips = sub_entry.get("ips", {})
+                    resolved_ip = (
+                        (sub_ips.get("ipv4") or [None])[0]
+                        or (sub_ips.get("ipv6") or [None])[0]
+                    )
                 recon_data["http_probe"]["by_url"][url] = {
                     "url": url,
-                    "host": record["host"] or "",
+                    "host": host,
                     "status_code": int(status_code) if status_code is not None else 200,
                     "content_type": record["content_type"] or "",
+                    "is_cdn": is_cdn,
+                    "cdn": record["cdn"],
+                    "asn": record["asn"],
+                    "ip": resolved_ip,
                 }
+                # If the URL is CDN-flagged AND the cdn name is a reliable
+                # edge provider (not generic "aws"/"azure"), also stamp
+                # is_cdn on every IP the host resolves to so port_scan.by_ip
+                # propagates it. Generic cloud labels are not propagated
+                # because the IP often serves the origin app directly.
+                if is_cdn and sub_entry:
+                    from recon.helpers.cdn_ranges import is_reliable_edge_cdn_name
+                    if is_reliable_edge_cdn_name(record["cdn"]):
+                        sub_ips = sub_entry.get("ips", {})
+                        for ip_addr in (sub_ips.get("ipv4") or []) + (sub_ips.get("ipv6") or []):
+                            entry = recon_data["port_scan"]["by_ip"].setdefault(ip_addr, {
+                                "ip": ip_addr, "hostnames": [], "ports": [],
+                                "is_cdn": False, "cdn": None, "asn": None,
+                            })
+                            entry["is_cdn"] = True
+                            if not entry.get("cdn"):
+                                entry["cdn"] = record["cdn"]
 
             # 4) Endpoints with parameters (for DAST mode)
             result = session.run(

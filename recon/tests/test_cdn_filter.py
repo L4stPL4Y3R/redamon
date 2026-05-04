@@ -33,11 +33,14 @@ if str(PROJECT_ROOT) not in sys.path:
 from recon.helpers import cdn_ranges as cr
 from recon.helpers.cdn_ranges import (
     CDN_ASNS,
+    RELIABLE_EDGE_CDN_NAMES,
     cdn_name_from_asn,
     collect_asn_cdn_ips,
     collect_prefix_cdn_ips,
+    collect_reliable_edge_ips,
     extract_asn_number,
     is_cloudflare_ip,
+    is_reliable_edge_cdn_name,
     response_is_cdn_edge,
 )
 
@@ -45,6 +48,8 @@ from recon.helpers.cdn_ranges import (
 # so live-fetch tests can opt back in.
 _REAL_FETCH_PREFIX_LIST = cr._fetch_prefix_list
 from recon.helpers.security_checks import (
+    _has_cdn_markers,
+    _is_bare_origin_match,
     check_direct_ip_http,
     check_direct_ip_https,
     check_ip_api_exposed,
@@ -762,3 +767,284 @@ class TestPartialReconCypherHydration:
         # collect_cdn_ips reads port_scan.by_ip; the rebuild must allocate it.
         assert '"port_scan"' in src
         assert '"by_ip"' in src
+
+
+# ===========================================================================
+# Reliable-edge-CDN-name gate (regression guard for the cdn=aws bug)
+# ===========================================================================
+
+class TestReliableEdgeCdnName:
+    @pytest.mark.parametrize("name", [
+        "cloudflare", "Cloudflare", "CLOUDFLARE",
+        "cloudfront", "akamai", "akamaighost", "fastly",
+        "imperva", "incapsula", "sucuri", "stackpath",
+        "azurefrontdoor", "gcore",
+    ])
+    def test_reliable_names_match(self, name):
+        assert is_reliable_edge_cdn_name(name) is True
+
+    @pytest.mark.parametrize("name", [
+        "aws",        # generic AWS — covers bare ALB/EC2 origins
+        "amazon",
+        "azure",      # generic Azure
+        "gcp",
+        "google",
+        "",
+        None,
+        "  ",
+        "unknown-cdn",
+    ])
+    def test_ambiguous_or_unknown_names_do_not_match(self, name):
+        # Critical regression guard: cdn="aws" must NOT count as a CDN edge,
+        # otherwise bare ALB origins get false-suppressed (devergolabs case).
+        assert is_reliable_edge_cdn_name(name) is False
+
+    def test_collect_reliable_edge_ips_excludes_aws_label(self):
+        recon = {
+            "port_scan": {"by_ip": {
+                "5.5.5.5":  {"is_cdn": True, "cdn": "cloudflare"},  # included
+                "6.6.6.6":  {"is_cdn": True, "cdn": "aws"},         # excluded
+                "7.7.7.7":  {"is_cdn": True, "cdn": None},          # excluded
+            }},
+            "http_probe": {"by_url": {
+                "https://x/": {"ip": "8.8.8.8", "is_cdn": True, "cdn": "cloudfront"},
+                "https://y/": {"ip": "9.9.9.9", "is_cdn": True, "cdn": "azure"},
+            }},
+        }
+        assert collect_reliable_edge_ips(recon) == {"5.5.5.5", "8.8.8.8"}
+
+
+# ===========================================================================
+# _has_cdn_markers
+# ===========================================================================
+
+class TestHasCdnMarkers:
+    def test_cf_ray_header(self):
+        r = _mock_response(200, {"CF-RAY": "abc"})
+        assert _has_cdn_markers(r) is True
+
+    def test_x_amz_cf_id_header(self):
+        r = _mock_response(200, {"X-Amz-Cf-Id": "xyz"})
+        assert _has_cdn_markers(r) is True
+
+    def test_x_served_by_fastly(self):
+        r = _mock_response(200, {"X-Served-By": "cache-iad-kjyo7100"})
+        assert _has_cdn_markers(r) is True
+
+    def test_server_token_cloudfront(self):
+        r = _mock_response(200, {"Server": "CloudFront"})
+        assert _has_cdn_markers(r) is True
+
+    def test_server_token_awselb_does_NOT_match(self):
+        # awselb is a Cloud LB, not a WAF/CDN front. Must not register
+        # as CDN markers, otherwise the bare-origin comparison flips.
+        r = _mock_response(200, {"Server": "awselb/2.0"})
+        assert _has_cdn_markers(r) is False
+
+    def test_plain_nginx_no_markers(self):
+        r = _mock_response(200, {"Server": "nginx/1.24.0"})
+        assert _has_cdn_markers(r) is False
+
+    def test_none_response(self):
+        assert _has_cdn_markers(None) is False
+
+
+# ===========================================================================
+# _is_bare_origin_match (the comparison test)
+# ===========================================================================
+
+class TestIsBareOriginMatch:
+    def _route(self, ip_resp, host_resp):
+        """Return a fake requests.get that distinguishes IP from hostname URLs."""
+        def fake(url, *a, **kw):
+            host = url.split("//", 1)[1].split("/", 1)[0]
+            return ip_resp if host == "1.2.3.4" else host_resp
+        return fake
+
+    def test_identical_responses_no_cdn_returns_true(self):
+        ip_resp = _mock_response(200, {"Server": "awselb/2.0"}, "x" * 1000)
+        ip_resp.content = b"x" * 1000
+        host_resp = _mock_response(200, {"Server": "awselb/2.0"}, "x" * 1000)
+        host_resp.content = b"x" * 1000
+        with patch(
+            "recon.helpers.security_checks.requests.get",
+            side_effect=self._route(ip_resp, host_resp),
+        ):
+            assert _is_bare_origin_match(
+                "1.2.3.4", ["www.example.com"], "http", timeout=1
+            ) is True
+
+    def test_hostname_has_cdn_ip_does_not_returns_false(self):
+        # Real bypass scenario: hostname goes through CF, IP does not.
+        ip_resp = _mock_response(200, {"Server": "nginx"}, "origin")
+        ip_resp.content = b"origin"
+        host_resp = _mock_response(200, {"CF-RAY": "abc-LHR", "Server": "cloudflare"}, "frontend")
+        host_resp.content = b"frontend"
+        with patch(
+            "recon.helpers.security_checks.requests.get",
+            side_effect=self._route(ip_resp, host_resp),
+        ):
+            assert _is_bare_origin_match(
+                "1.2.3.4", ["www.example.com"], "https", timeout=1
+            ) is False
+
+    def test_different_status_codes_returns_false(self):
+        ip_resp = _mock_response(200, {"Server": "nginx"}, "ok")
+        ip_resp.content = b"ok"
+        host_resp = _mock_response(403, {"Server": "nginx"}, "forbidden")
+        host_resp.content = b"forbidden"
+        with patch(
+            "recon.helpers.security_checks.requests.get",
+            side_effect=self._route(ip_resp, host_resp),
+        ):
+            assert _is_bare_origin_match(
+                "1.2.3.4", ["www.example.com"], "http", timeout=1
+            ) is False
+
+    def test_different_servers_returns_false(self):
+        ip_resp = _mock_response(200, {"Server": "awselb/2.0"}, "ok")
+        ip_resp.content = b"ok"
+        host_resp = _mock_response(200, {"Server": "Microsoft-IIS/10.0"}, "ok")
+        host_resp.content = b"ok"
+        with patch(
+            "recon.helpers.security_checks.requests.get",
+            side_effect=self._route(ip_resp, host_resp),
+        ):
+            assert _is_bare_origin_match(
+                "1.2.3.4", ["www.example.com"], "http", timeout=1
+            ) is False
+
+    def test_size_delta_too_large_returns_false(self):
+        ip_resp = _mock_response(200, {"Server": "awselb/2.0"}, "x")
+        ip_resp.content = b"x" * 100
+        host_resp = _mock_response(200, {"Server": "awselb/2.0"}, "x")
+        host_resp.content = b"x" * 50000  # well beyond 10% / 500-byte delta
+        with patch(
+            "recon.helpers.security_checks.requests.get",
+            side_effect=self._route(ip_resp, host_resp),
+        ):
+            assert _is_bare_origin_match(
+                "1.2.3.4", ["www.example.com"], "http", timeout=1
+            ) is False
+
+    def test_ip_unreachable_returns_false(self):
+        import requests as _r
+        with patch(
+            "recon.helpers.security_checks.requests.get",
+            side_effect=_r.exceptions.ConnectTimeout("boom"),
+        ):
+            assert _is_bare_origin_match(
+                "1.2.3.4", ["www.example.com"], "http", timeout=1
+            ) is False
+
+    def test_hostname_unreachable_falls_through_to_false(self):
+        ip_resp = _mock_response(200, {"Server": "awselb/2.0"}, "ok")
+        ip_resp.content = b"ok"
+        import requests as _r
+
+        def fake(url, *a, **kw):
+            host = url.split("//", 1)[1].split("/", 1)[0]
+            if host == "1.2.3.4":
+                return ip_resp
+            raise _r.exceptions.ConnectTimeout("dns-fail")
+
+        with patch("recon.helpers.security_checks.requests.get", side_effect=fake):
+            assert _is_bare_origin_match(
+                "1.2.3.4", ["www.example.com"], "http", timeout=1
+            ) is False
+
+
+# ===========================================================================
+# Integration: check_direct_ip_http / _https with hostnames
+# ===========================================================================
+
+class TestCheckDirectIpHttpWithHostnames:
+    def test_bare_origin_match_suppresses_finding(self):
+        ip_resp = _mock_response(200, {"Server": "awselb/2.0"}, "ok")
+        ip_resp.content = b"hello world"
+        host_resp = _mock_response(200, {"Server": "awselb/2.0"}, "ok")
+        host_resp.content = b"hello world"
+
+        def fake(url, *a, **kw):
+            host = url.split("//", 1)[1].split("/", 1)[0]
+            return ip_resp if host == "203.0.113.5" else host_resp
+
+        with patch("recon.helpers.security_checks.requests.get", side_effect=fake):
+            f = check_direct_ip_http(
+                "203.0.113.5", hostnames=["www.example.com"], timeout=1
+            )
+        assert f is None  # bare origin -> no finding
+
+    def test_hostname_with_waf_ip_without_emits_finding(self):
+        # Real bypass: hostname response has CF, IP response does not.
+        ip_resp = _mock_response(200, {"Server": "nginx"}, "")
+        ip_resp.content = b"origin content"
+        host_resp = _mock_response(200, {"CF-RAY": "abc", "Server": "cloudflare"}, "")
+        host_resp.content = b"frontend content"
+
+        def fake(url, *a, **kw):
+            host = url.split("//", 1)[1].split("/", 1)[0]
+            return ip_resp if host == "203.0.113.5" else host_resp
+
+        with patch("recon.helpers.security_checks.requests.get", side_effect=fake):
+            f = check_direct_ip_http(
+                "203.0.113.5", hostnames=["www.example.com"], timeout=1
+            )
+        assert f is not None
+        assert f["type"] == "direct_ip_http"
+
+    def test_no_hostnames_falls_back_to_legacy(self):
+        # Backward compat: when hostnames is None, the comparison is skipped
+        # and the original probe-the-IP-only behavior emits the finding.
+        with patch("recon.helpers.security_checks.requests.get") as m:
+            m.return_value = _mock_response(200, {"Server": "nginx"}, "ok")
+            f = check_direct_ip_http("203.0.113.5", timeout=1)  # no hostnames
+        assert f is not None
+        assert f["severity"] == "medium"
+
+
+class TestCheckDirectIpHttpsWithHostnames:
+    def test_bare_origin_match_suppresses_finding(self):
+        ip_resp = _mock_response(200, {"Server": "awselb/2.0"}, "")
+        ip_resp.content = b"app"
+        host_resp = _mock_response(200, {"Server": "awselb/2.0"}, "")
+        host_resp.content = b"app"
+
+        def fake(url, *a, **kw):
+            host = url.split("//", 1)[1].split("/", 1)[0]
+            return ip_resp if host == "203.0.113.5" else host_resp
+
+        with patch("recon.helpers.security_checks.requests.get", side_effect=fake):
+            assert check_direct_ip_https(
+                "203.0.113.5", hostnames=["www.example.com"], timeout=1
+            ) is None
+
+
+# ===========================================================================
+# run_direct_ip_checks plumbs hostnames through subdomains_to_ips
+# ===========================================================================
+
+class TestRunDirectIpChecksHostnamePlumb:
+    def test_subdomains_to_ips_drives_bare_origin_suppression(self):
+        # 18.x is the AWS-style bare-ALB case: same content via hostname
+        # and via IP, no CDN markers either side -> must be suppressed.
+        ip_resp = _mock_response(200, {"Server": "awselb/2.0"}, "")
+        ip_resp.content = b"content body"
+        host_resp = _mock_response(200, {"Server": "awselb/2.0"}, "")
+        host_resp.content = b"content body"
+
+        def fake(url, *a, **kw):
+            host = url.split("//", 1)[1].split("/", 1)[0]
+            return ip_resp if host == "18.102.144.144" else host_resp
+
+        with patch("recon.helpers.security_checks.requests.get", side_effect=fake):
+            findings = run_direct_ip_checks(
+                ips=["18.102.144.144"],
+                subdomains_to_ips={"www.example.com": ["18.102.144.144"]},
+                enabled_checks={
+                    "direct_ip_http": True, "direct_ip_https": False,
+                    "ip_api_exposed": False, "waf_bypass": False,
+                },
+                timeout=1, max_workers=1, cdn_ips=set(),
+            )
+        assert findings == []

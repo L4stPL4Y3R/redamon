@@ -19,6 +19,7 @@ import concurrent.futures
 from recon.helpers.cdn_ranges import (
     collect_asn_cdn_ips,
     collect_prefix_cdn_ips,
+    collect_reliable_edge_ips,
     response_is_cdn_edge,
 )
 
@@ -109,7 +110,99 @@ def _analyze_redirect_chain(ip: str, scheme: str, timeout: int = 10) -> Dict:
     return result
 
 
-def check_direct_ip_http(ip: str, timeout: int = 10) -> Optional[Dict]:
+# Headers that, when present on a hostname response but absent on the
+# direct-IP response, indicate a real WAF/CDN front layer being bypassed.
+_WAF_CDN_HEADER_NAMES = (
+    "cf-ray", "cf-cache-status", "x-amz-cf-id", "x-served-by",
+    "x-akamai-staging", "x-akamai-transformed", "x-cache", "x-cdn",
+    "x-fastly-request-id", "x-azure-ref", "x-azure-fdid",
+)
+_WAF_CDN_SERVER_TOKENS = (
+    "cloudflare", "cloudfront", "akamai", "fastly", "varnish",
+    "imperva", "sucuri", "stackpath",
+)
+
+
+def _has_cdn_markers(response) -> bool:
+    """True if *response* carries any header / Server token that indicates
+    it came through a CDN or WAF front layer."""
+    if response is None:
+        return False
+    headers_lower = {k.lower(): v for k, v in (response.headers or {}).items()}
+    if any(h in headers_lower for h in _WAF_CDN_HEADER_NAMES):
+        return True
+    server = headers_lower.get("server", "").lower()
+    return any(tok in server for tok in _WAF_CDN_SERVER_TOKENS)
+
+
+def _is_bare_origin_match(ip: str, hostnames: List[str], scheme: str, timeout: int) -> bool:
+    """
+    Probe both the IP directly and each candidate hostname, then decide
+    whether the IP is simply the bare origin (architecture, not a vuln).
+
+    Returns True iff at least one hostname response matches the IP response
+    closely enough to conclude there is no protection layer in between
+    (same status, same Server header, similar content size, neither carries
+    CDN/WAF markers). Reasoning: if hitting the hostname goes through nothing
+    that hitting the IP does not also go through, there is nothing being
+    bypassed — the IP just IS the public endpoint (e.g. bare AWS ALB).
+
+    Returns False if any hostname response carries CDN/WAF markers absent
+    from the IP response (real bypass — caller should still emit), if all
+    hostname probes fail (cannot decide), or if responses diverge enough
+    that bare-origin equivalence cannot be claimed.
+    """
+    try:
+        ip_resp = requests.get(
+            f"{scheme}://{ip}",
+            timeout=timeout,
+            allow_redirects=False,
+            verify=False,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0"},
+        )
+    except requests.exceptions.RequestException:
+        return False
+
+    ip_server = (ip_resp.headers.get("Server") or "").strip().lower()
+    ip_status = ip_resp.status_code
+    ip_len = len(ip_resp.content or b"")
+    ip_has_cdn = _has_cdn_markers(ip_resp)
+
+    for hostname in hostnames:
+        try:
+            host_resp = requests.get(
+                f"{scheme}://{hostname}",
+                timeout=timeout,
+                allow_redirects=False,
+                verify=False,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0"},
+            )
+        except requests.exceptions.RequestException:
+            continue
+
+        host_has_cdn = _has_cdn_markers(host_resp)
+        # Real bypass: hostname goes through CDN/WAF but IP does not.
+        # Don't suppress — caller must emit.
+        if host_has_cdn and not ip_has_cdn:
+            return False
+
+        host_server = (host_resp.headers.get("Server") or "").strip().lower()
+        host_status = host_resp.status_code
+        host_len = len(host_resp.content or b"")
+
+        same_status = ip_status == host_status
+        same_server = ip_server == host_server
+        size_delta = abs(ip_len - host_len)
+        similar_size = size_delta < 500 or size_delta < max(host_len, ip_len, 1) * 0.1
+        no_cdn_either = not ip_has_cdn and not host_has_cdn
+
+        if same_status and same_server and similar_size and no_cdn_either:
+            return True
+
+    return False
+
+
+def check_direct_ip_http(ip: str, hostnames: Optional[List[str]] = None, timeout: int = 10) -> Optional[Dict]:
     """
     Check if HTTP is accessible directly via IP without TLS.
     This can indicate WAF bypass opportunities or exposed services.
@@ -137,6 +230,13 @@ def check_direct_ip_http(ip: str, timeout: int = 10) -> Optional[Dict]:
         if response.status_code < 500:
             cdn_match = response_is_cdn_edge(response)
             if cdn_match:
+                return None
+
+            # Bare-origin / architecture suppression (case 7).
+            # If hostname response matches IP response closely with no CDN
+            # markers either side, the IP IS the public endpoint and there
+            # is no protection layer being bypassed -> not a vuln.
+            if hostnames and _is_bare_origin_match(ip, hostnames, "http", timeout):
                 return None
 
             # Analyze redirect behavior
@@ -194,17 +294,19 @@ def check_direct_ip_http(ip: str, timeout: int = 10) -> Optional[Dict]:
     return None
 
 
-def check_direct_ip_https(ip: str, timeout: int = 10) -> Optional[Dict]:
+def check_direct_ip_https(ip: str, hostnames: Optional[List[str]] = None, timeout: int = 10) -> Optional[Dict]:
     """
     Check if HTTPS is accessible directly via IP.
     Less severe than HTTP but still indicates direct IP exposure.
-    
+
     Intelligently handles redirects:
     - If IP redirects to a hostname: Info severity (mitigated)
     - If IP serves content or redirects to same IP: Low severity
 
     Args:
         ip: IP address to check
+        hostnames: Hostnames that resolve to this IP (used for the
+                   bare-origin / architecture suppression test).
         timeout: Request timeout in seconds
 
     Returns:
@@ -223,6 +325,11 @@ def check_direct_ip_https(ip: str, timeout: int = 10) -> Optional[Dict]:
         if response.status_code < 500:
             cdn_match = response_is_cdn_edge(response)
             if cdn_match:
+                return None
+
+            # Bare-origin / architecture suppression (case 7) — see
+            # check_direct_ip_http for the full rationale.
+            if hostnames and _is_bare_origin_match(ip, hostnames, "https", timeout):
                 return None
 
             # Analyze redirect behavior
@@ -464,16 +571,24 @@ def run_direct_ip_checks(
         if skipped:
             print(f"[*][SecurityCheck] Skipping {skipped} CDN/edge IP(s) from Direct IP checks")
 
+    # Build IP -> [hostnames] mapping for the bare-origin comparison test
+    # inside check_direct_ip_*.
+    ip_to_hostnames: Dict[str, List[str]] = {}
+    for host, host_ips in (subdomains_to_ips or {}).items():
+        for ip in host_ips or []:
+            ip_to_hostnames.setdefault(ip, []).append(host)
+
     def check_single_ip(ip: str) -> List[Dict]:
         ip_findings = []
+        hostnames = ip_to_hostnames.get(ip) or None
 
         if enabled_checks.get("direct_ip_http", True):
-            result = check_direct_ip_http(ip, timeout)
+            result = check_direct_ip_http(ip, hostnames=hostnames, timeout=timeout)
             if result:
                 ip_findings.append(result)
 
         if enabled_checks.get("direct_ip_https", True):
-            result = check_direct_ip_https(ip, timeout)
+            result = check_direct_ip_https(ip, hostnames=hostnames, timeout=timeout)
             if result:
                 ip_findings.append(result)
 
@@ -2138,13 +2253,16 @@ def run_security_checks(
     # Run direct IP access checks
     if enabled_ip > 0 and ips:
         # Build the CDN/edge IP set used to prefilter findings.
-        # Case 1+2: IPs already flagged is_cdn by Naabu/httpx in this scan.
+        # Case 1+2: IPs flagged is_cdn by Naabu/httpx with a RELIABLE edge
+        #           CDN name (cloudflare/cloudfront/akamai/...). Generic
+        #           cloud labels like "aws"/"azure" are excluded on purpose
+        #           because they mislabel bare ALB/EC2 origins that DO
+        #           serve the application directly.
         # Case 3 layer 1: IPs inside published Cloudflare prefixes.
         # Case 3 layer 2: IPs whose ASN matches a known CDN ASN.
-        from recon.main_recon_modules.ip_filter import collect_cdn_ips
         cdn_ips: Set[str] = set()
         try:
-            cdn_ips |= collect_cdn_ips(recon_data)
+            cdn_ips |= collect_reliable_edge_ips(recon_data)
             cdn_ips |= collect_asn_cdn_ips(recon_data)
             cdn_ips |= collect_prefix_cdn_ips(ips)
         except Exception as exc:
