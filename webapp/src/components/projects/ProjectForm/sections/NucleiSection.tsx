@@ -7,6 +7,7 @@ import type { Project } from '@prisma/client'
 import styles from '../ProjectForm.module.css'
 import { NodeInfoTooltip } from '../NodeInfoTooltip'
 import { TimeEstimate } from '../TimeEstimate'
+import { FileImportButton } from '../FileImportButton'
 
 type FormData = Omit<Project, 'id' | 'userId' | 'createdAt' | 'updatedAt' | 'user'>
 
@@ -259,35 +260,54 @@ export function NucleiSection({ data, updateField, onRun }: NucleiSectionProps) 
             <h3 className={styles.subSectionTitle}>Template Configuration</h3>
             <div className={styles.fieldGroup}>
               <label className={styles.fieldLabel}>Template Folders</label>
-              <input
-                type="text"
-                className="textInput"
-                value={(data.nucleiTemplates ?? []).join(', ')}
-                onChange={(e) => updateField('nucleiTemplates', e.target.value.split(',').map(s => s.trim()).filter(Boolean))}
-                placeholder="cves, vulnerabilities, misconfig (empty = all)"
-              />
+              <div className={styles.fileImportWrap}>
+                <input
+                  type="text"
+                  className="textInput"
+                  value={(data.nucleiTemplates ?? []).join(', ')}
+                  onChange={(e) => updateField('nucleiTemplates', e.target.value.split(',').map(s => s.trim()).filter(Boolean))}
+                  placeholder="cves, vulnerabilities, misconfig (empty = all)"
+                />
+                <FileImportButton
+                  fieldName="template folders"
+                  onImport={(values) => updateField('nucleiTemplates', values)}
+                />
+              </div>
               <span className={styles.fieldHint}>cves, vulnerabilities, misconfiguration, exposures, technologies, default-logins, takeovers</span>
             </div>
             <div className={styles.fieldGroup}>
               <label className={styles.fieldLabel}>Exclude Template Paths</label>
-              <input
-                type="text"
-                className="textInput"
-                value={(data.nucleiExcludeTemplates ?? []).join(', ')}
-                onChange={(e) => updateField('nucleiExcludeTemplates', e.target.value.split(',').map(s => s.trim()).filter(Boolean))}
-                placeholder="http/vulnerabilities/generic/"
-              />
+              <div className={styles.fileImportWrap}>
+                <input
+                  type="text"
+                  className="textInput"
+                  value={(data.nucleiExcludeTemplates ?? []).join(', ')}
+                  onChange={(e) => updateField('nucleiExcludeTemplates', e.target.value.split(',').map(s => s.trim()).filter(Boolean))}
+                  placeholder="http/vulnerabilities/generic/"
+                />
+                <FileImportButton
+                  fieldName="template paths"
+                  onImport={(values) => updateField('nucleiExcludeTemplates', values)}
+                />
+              </div>
               <span className={styles.fieldHint}>Exclude specific directories or template files by path</span>
             </div>
             <div className={styles.fieldGroup}>
               <label className={styles.fieldLabel}>Custom Template Paths</label>
-              <textarea
-                className="textarea"
-                value={(data.nucleiCustomTemplates ?? []).join('\n')}
-                onChange={(e) => updateField('nucleiCustomTemplates', e.target.value.split('\n').filter(Boolean))}
-                placeholder="/path/to/custom-templates&#10;~/my-nuclei-templates"
-                rows={2}
-              />
+              <div className={styles.fileImportWrap}>
+                <textarea
+                  className="textarea"
+                  value={(data.nucleiCustomTemplates ?? []).join('\n')}
+                  onChange={(e) => updateField('nucleiCustomTemplates', e.target.value.split('\n').filter(Boolean))}
+                  placeholder="/path/to/custom-templates&#10;~/my-nuclei-templates"
+                  rows={2}
+                />
+                <FileImportButton
+                  variant="textarea"
+                  fieldName="template paths"
+                  onImport={(values) => updateField('nucleiCustomTemplates', values)}
+                />
+              </div>
               <span className={styles.fieldHint}>Add your own templates in addition to the official repository</span>
             </div>
           </div>
@@ -298,13 +318,19 @@ export function NucleiSection({ data, updateField, onRun }: NucleiSectionProps) 
             <div className={styles.fieldRow}>
               <div className={styles.fieldGroup}>
                 <label className={styles.fieldLabel}>Include Tags</label>
-                <input
-                  type="text"
-                  className="textInput"
-                  value={(data.nucleiTags ?? []).join(', ')}
-                  onChange={(e) => updateField('nucleiTags', e.target.value.split(',').map(s => s.trim()).filter(Boolean))}
-                  placeholder="cve, xss, sqli, rce (empty = custom templates only)"
-                />
+                <div className={styles.fileImportWrap}>
+                  <input
+                    type="text"
+                    className="textInput"
+                    value={(data.nucleiTags ?? []).join(', ')}
+                    onChange={(e) => updateField('nucleiTags', e.target.value.split(',').map(s => s.trim()).filter(Boolean))}
+                    placeholder="cve, xss, sqli, rce (empty = custom templates only)"
+                  />
+                  <FileImportButton
+                    fieldName="tags"
+                    onImport={(values) => updateField('nucleiTags', values)}
+                  />
+                </div>
                 <span className={styles.fieldHint}>
                   Popular: cve, xss, sqli, rce, lfi, ssrf, xxe, ssti.
                   <strong> Empty</strong> means the built-in 8000-template pool will <em>not</em> run &mdash;
@@ -313,13 +339,19 @@ export function NucleiSection({ data, updateField, onRun }: NucleiSectionProps) 
               </div>
               <div className={styles.fieldGroup}>
                 <label className={styles.fieldLabel}>Exclude Tags</label>
-                <input
-                  type="text"
-                  className="textInput"
-                  value={(data.nucleiExcludeTags ?? []).join(', ')}
-                  onChange={(e) => updateField('nucleiExcludeTags', e.target.value.split(',').map(s => s.trim()).filter(Boolean))}
-                  placeholder="dos, fuzz"
-                />
+                <div className={styles.fileImportWrap}>
+                  <input
+                    type="text"
+                    className="textInput"
+                    value={(data.nucleiExcludeTags ?? []).join(', ')}
+                    onChange={(e) => updateField('nucleiExcludeTags', e.target.value.split(',').map(s => s.trim()).filter(Boolean))}
+                    placeholder="dos, fuzz"
+                  />
+                  <FileImportButton
+                    fieldName="tags"
+                    onImport={(values) => updateField('nucleiExcludeTags', values)}
+                  />
+                </div>
                 <span className={styles.fieldHint}>Excluding dos, fuzz is recommended for production scans</span>
               </div>
             </div>

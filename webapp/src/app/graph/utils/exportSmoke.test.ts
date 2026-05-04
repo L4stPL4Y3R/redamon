@@ -44,9 +44,10 @@ let originalCreateObjectURL: typeof URL.createObjectURL
 let originalRevokeObjectURL: typeof URL.revokeObjectURL
 
 async function flush() {
-  // anchor.click is async (await blob.text()) -- give microtasks one tick
-  await Promise.resolve()
-  await Promise.resolve()
+  // anchor.click is async (await blob.text()) and our streaming exports
+  // chain a handful of microtasks per chunk. Pump generously so even
+  // multi-section exports settle before assertions run.
+  for (let i = 0; i < 64; i++) await Promise.resolve()
 }
 
 beforeEach(() => {
@@ -392,7 +393,7 @@ describe('Red Zone table exports', () => {
 
 describe('JS Recon table exports', () => {
   test('CSV: writes one section per non-empty bucket separated by section markers', async () => {
-    exportJsReconCsv(makeJsReconData())
+    await exportJsReconCsv(makeJsReconData())
     await flush()
     expect(downloads).toHaveLength(1)
     const dl = downloads[0]
@@ -415,7 +416,7 @@ describe('JS Recon table exports', () => {
   })
 
   test('JSON: produces a parseable object keyed by section name', async () => {
-    exportJsReconJson(makeJsReconData())
+    await exportJsReconJson(makeJsReconData())
     await flush()
     expect(downloads).toHaveLength(1)
     const dl = downloads[0]
@@ -435,7 +436,7 @@ describe('JS Recon table exports', () => {
   })
 
   test('Markdown: produces a multi-section markdown doc', async () => {
-    exportJsReconMarkdown(makeJsReconData())
+    await exportJsReconMarkdown(makeJsReconData())
     await flush()
     expect(downloads).toHaveLength(1)
     const dl = downloads[0]
@@ -470,5 +471,305 @@ describe('Multiple sequential exports', () => {
     expect(downloads[0].filename).toMatch(/\.csv$/)
     expect(downloads[1].filename).toMatch(/\.json$/)
     expect(downloads[2].filename).toMatch(/\.md$/)
+  })
+})
+
+// ============================================================
+// Large-dataset streaming
+// ============================================================
+//
+// Regression guard for the >2000-row browser-crash bug: build a 5000-row
+// dataset and assert that all three formats stream to completion without
+// throwing, produce well-formed output, and preserve every row.
+
+describe('Large-dataset streaming exports', () => {
+  function makeLargeRows(n: number): TableRow[] {
+    const rows: TableRow[] = []
+    for (let i = 0; i < n; i++) {
+      rows.push({
+        node: {
+          id: `n-${i}`,
+          type: 'Subdomain',
+          name: `host-${i}.example.com`,
+          properties: {
+            idx: i,
+            tag: i % 7 === 0 ? 'live' : 'unknown',
+            payload: { i, k: `v-${i}` },
+          },
+        } as any,
+        connectionsIn: [],
+        connectionsOut: [],
+        getLevel2: () => [],
+        getLevel3: () => [],
+      })
+    }
+    return rows
+  }
+
+  test('CSV streams 5000 rows without crashing and is parseable end-to-end', async () => {
+    const rows = makeLargeRows(5000)
+    await exportToCsv(rows)
+    await flush()
+    expect(downloads).toHaveLength(1)
+    const grid = parseCsv(downloads[0].text)
+    // header + 5000 data rows
+    const dataRows = grid.slice(1).filter(r => r.length > 1)
+    expect(dataRows).toHaveLength(5000)
+    const nameIdx = grid[0].indexOf('Name')
+    expect(dataRows[0][nameIdx]).toBe('host-0.example.com')
+    expect(dataRows[4999][nameIdx]).toBe('host-4999.example.com')
+  })
+
+  test('JSON streams 5000 rows and round-trips through JSON.parse', async () => {
+    const rows = makeLargeRows(5000)
+    await exportToJson(rows)
+    await flush()
+    expect(downloads).toHaveLength(1)
+    const data = JSON.parse(downloads[0].text)
+    expect(Array.isArray(data)).toBe(true)
+    expect(data).toHaveLength(5000)
+    expect(data[0].Name).toBe('host-0.example.com')
+    expect(data[4999].Name).toBe('host-4999.example.com')
+    // Nested objects survive per-row stringification
+    expect(data[0].payload).toEqual({ i: 0, k: 'v-0' })
+  })
+
+  test('Markdown streams 5000 rows into a valid GFM table', async () => {
+    const rows = makeLargeRows(5000)
+    await exportToMarkdown(rows)
+    await flush()
+    expect(downloads).toHaveLength(1)
+    const md = downloads[0].text
+    const dataLines = md.split('\n').filter(l => l.startsWith('| ') && !l.includes(' --- ') && !l.startsWith('| Type |'))
+    expect(dataLines.length).toBe(5000)
+    expect(dataLines[0]).toContain('host-0.example.com')
+    expect(dataLines[4999]).toContain('host-4999.example.com')
+  })
+})
+
+describe('downloadBlob back-compat shim', () => {
+  test('downloadBlob and downloadBlobParts produce identical bytes', async () => {
+    const { downloadBlob, downloadBlobParts } = await import('./exportHelpers')
+    downloadBlob('hello world', 'a.txt', 'text/plain')
+    await flush()
+    downloadBlobParts(['hello world'], 'b.txt', 'text/plain')
+    await flush()
+    expect(downloads).toHaveLength(2)
+    expect(downloads[0].text).toBe(downloads[1].text)
+    expect(downloads[0].mimeType).toBe(downloads[1].mimeType)
+  })
+})
+
+// ============================================================
+// Red Zone large-dataset streaming
+// ============================================================
+
+describe('Red Zone large-dataset streaming exports', () => {
+  function makeManyRedZoneRows(n: number) {
+    return Array.from({ length: n }, (_, i) => ({
+      severity: i % 5 === 0 ? 'critical' : 'low',
+      hostname: `host-${i}.example.com`,
+      port: 443,
+      isCdn: i % 3 === 0,
+      tags: i % 7 === 0 ? ['live', 'auth'] : [],
+      cveCount: i,
+      lastSeen: i % 11 === 0 ? null : '2026-04-29',
+      payload: { i, k: `v-${i}` },
+      garbled: i === 1234 ? 'edge\u0001case\u0007chunk' : `r${i}`,
+    }))
+  }
+
+  test('CSV: 5000 rows survive every chunk boundary', async () => {
+    const rows = makeManyRedZoneRows(5000)
+    await exportRedZoneCsv(rows, 'Blast-Radius', RED_ZONE_COLUMNS, 'redzone-blast-radius')
+    await flush()
+    expect(downloads).toHaveLength(1)
+    const grid = parseCsv(downloads[0].text)
+    const data = grid.slice(1).filter(r => r.length > 1)
+    expect(data).toHaveLength(5000)
+    // Sentinel cell with binary chars (from row 1234) must survive sanitization
+    const garbledIdx = grid[0].indexOf('Garbled')
+    expect(data[1234][garbledIdx]).not.toMatch(/[\u0000-\u0008]/)
+    expect(data[1234][garbledIdx]).toContain('edge')
+    expect(data[4999][grid[0].indexOf('Hostname')]).toBe('host-4999.example.com')
+  })
+
+  test('JSON: 5000 rows produce valid pretty-printed JSON with native types preserved', async () => {
+    const rows = makeManyRedZoneRows(5000)
+    await exportRedZoneJson(rows, 'Blast-Radius', RED_ZONE_COLUMNS, 'redzone-blast-radius')
+    await flush()
+    expect(downloads).toHaveLength(1)
+    const data = JSON.parse(downloads[0].text)
+    expect(Array.isArray(data)).toBe(true)
+    expect(data).toHaveLength(5000)
+    expect(typeof data[0].Port).toBe('number')
+    expect(typeof data[100].CDN).toBe('boolean')
+    expect(Array.isArray(data[7].Tags)).toBe(true)
+    expect(data[11]['Last Seen']).toBeNull()
+    expect(data[4999].Hostname).toBe('host-4999.example.com')
+  })
+
+  test('Markdown: 5000 rows produce a GFM table with one data line per row', async () => {
+    const rows = makeManyRedZoneRows(5000)
+    await exportRedZoneMarkdown(rows, 'Blast-Radius', RED_ZONE_COLUMNS, 'redzone-blast-radius')
+    await flush()
+    expect(downloads).toHaveLength(1)
+    const md = downloads[0].text
+    const dataLines = md
+      .split('\n')
+      .filter(l => l.startsWith('| ') && !l.includes(' --- ') && !l.startsWith('| Severity '))
+    expect(dataLines).toHaveLength(5000)
+    expect(dataLines[0]).toContain('host-0.example.com')
+    expect(dataLines[4999]).toContain('host-4999.example.com')
+  })
+})
+
+// ============================================================
+// Node Details envelope (large) -- exercises the JSON envelope wrap
+// around streamJsonArray with outerIndent
+// ============================================================
+
+describe('Node Details envelope under load', () => {
+  test('JSON envelope { nodeType, generatedAt, columns, rows } survives 5000 rows', async () => {
+    const { exportNodeDetailsJson } = await import(
+      '../components/NodeDetailsTable/exportNodeDetails'
+    )
+    const rows: TableRow[] = Array.from({ length: 5000 }, (_, i) => ({
+      node: {
+        id: `d-${i}`,
+        type: 'Domain',
+        name: `dom-${i}.example.com`,
+        properties: {
+          registrar: i % 2 === 0 ? 'GoDaddy' : 'Cloudflare',
+          country: 'US',
+          ttl: 300 + (i % 1000),
+        },
+      } as any,
+      connectionsIn: Array.from({ length: i % 4 }, (_, j) => ({
+        nodeId: `c-${j}`, nodeName: `c-${j}`, nodeType: 'X', relationType: 'r',
+      })),
+      connectionsOut: [],
+      getLevel2: () => [],
+      getLevel3: () => [],
+    }))
+    await exportNodeDetailsJson({
+      nodeType: 'Domain',
+      rows,
+      visibleDynamicKeys: ['registrar', 'country', 'ttl'],
+      showIn: true,
+      showOut: false,
+    })
+    await flush()
+    expect(downloads).toHaveLength(1)
+    const data = JSON.parse(downloads[0].text)
+    expect(data.nodeType).toBe('Domain')
+    expect(data.generatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+    expect(data.columns).toEqual(['Name', 'registrar', 'country', 'ttl', 'In'])
+    expect(data.rows).toHaveLength(5000)
+    expect(data.rows[0]).toEqual({
+      Name: 'dom-0.example.com',
+      registrar: 'GoDaddy',
+      country: 'US',
+      ttl: 300,
+      In: 0,
+    })
+    expect(data.rows[4999].Name).toBe('dom-4999.example.com')
+    expect(data.rows[4999].In).toBe(3) // 4999 % 4
+  })
+})
+
+// ============================================================
+// JS Recon multi-chunk per section + section-ordering preservation
+// ============================================================
+
+describe('JS Recon under load and ordering', () => {
+  function makeBigSecrets(n: number) {
+    return Array.from({ length: n }, (_, i) => ({
+      severity: i % 4 === 0 ? 'critical' : 'low',
+      name: `Secret ${i}`,
+      redacted_value: `R${i}`,
+      matched_text: i === 777 ? 'has\u0001binary' : `m${i}`,
+      category: 'cloud',
+      source_url: `https://example.com/${i}.js`,
+      line_number: i,
+      context: `ctx-${i}`,
+      detection_method: 'regex',
+      validation: { status: 'unvalidated' },
+      confidence: 'high',
+      validator_ref: 'aws',
+    }))
+  }
+
+  test('CSV: large Secrets section streams across many chunks; binary chars survive sanitization', async () => {
+    const data: JsReconData = {
+      secrets: makeBigSecrets(2000),
+      endpoints: [{ severity: 'info', method: 'GET', path: '/x', full_url: 'https://x', type: 'rest', category: 'x', base_url: 'https://x', source_js: 'a.js', parameters: [], line_number: 1 }],
+      discovered_subdomains: ['x.example.com'],
+    }
+    await exportJsReconCsv(data)
+    await flush()
+    expect(downloads).toHaveLength(1)
+    const text = downloads[0].text
+    expect(text).toContain('# Section: Secrets')
+    expect(text).toContain('# Section: Endpoints')
+    expect(text).toContain('# Section: Subdomains')
+    expect(text).not.toMatch(/[\u0000-\u0008]/)
+    // Section integrity: the marker should appear ONCE per non-empty section
+    expect((text.match(/# Section: Secrets/g) || []).length).toBe(1)
+    expect((text.match(/# Section: Endpoints/g) || []).length).toBe(1)
+    // The Secrets section should have all 2000 rows (search for last sentinel)
+    expect(text).toContain('Secret 1999')
+    expect(text).toContain('Secret 0')
+  })
+
+  test('JSON: large multi-section payload is parseable and preserves section order', async () => {
+    const data: JsReconData = {
+      secrets: makeBigSecrets(1500),
+      endpoints: [
+        { severity: 'info', method: 'GET', path: '/a', full_url: 'https://a', type: 'rest', category: 'a', base_url: 'https://a', source_js: 'a.js', parameters: [], line_number: 1 },
+      ],
+      discovered_subdomains: ['admin.example.com', 'api.example.com'],
+      external_domains: [{ domain: 'cdn.example.net', times_seen: 10 }],
+    }
+    await exportJsReconJson(data)
+    await flush()
+    const parsed = JSON.parse(downloads[0].text)
+    // Order of keys must follow buildJsReconSheets order: Secrets, Endpoints, ..., Subdomains, External Domains
+    const keys = Object.keys(parsed)
+    expect(keys).toEqual(['Secrets', 'Endpoints', 'Subdomains', 'External Domains'])
+    expect(parsed.Secrets).toHaveLength(1500)
+    expect(parsed.Secrets[0].name).toBe('Secret 0')
+    expect(parsed.Secrets[1499].name).toBe('Secret 1499')
+    expect(parsed.Subdomains).toEqual([
+      { subdomain: 'admin.example.com' },
+      { subdomain: 'api.example.com' },
+    ])
+  })
+
+  test('JSON: empty data produces "{}" not malformed JSON', async () => {
+    await exportJsReconJson({})
+    await flush()
+    const parsed = JSON.parse(downloads[0].text)
+    expect(parsed).toEqual({})
+  })
+
+  test('Markdown: section count matches non-empty sheet count', async () => {
+    const data: JsReconData = {
+      secrets: makeBigSecrets(1100),
+      endpoints: [],
+      discovered_subdomains: ['admin.example.com'],
+    }
+    await exportJsReconMarkdown(data)
+    await flush()
+    const md = downloads[0].text
+    expect(md).toContain('## Secrets (1100)')
+    expect(md).toContain('## Subdomains (1)')
+    expect(md).not.toContain('## Endpoints')
+    // 1100 data lines for the Secrets table (header / sep are excluded)
+    const secretsSection = md.split('## Secrets (1100)')[1].split('## ')[0]
+    const dataLines = secretsSection
+      .split('\n')
+      .filter(l => l.startsWith('| ') && !l.includes(' --- ') && !l.startsWith('| severity '))
+    expect(dataLines).toHaveLength(1100)
   })
 })

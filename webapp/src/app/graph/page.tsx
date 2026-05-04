@@ -688,35 +688,53 @@ export default function GraphPage() {
     return rows
   }, [effectiveTableRows, globalFilter])
 
-  const handleExportCsv = useCallback(() => {
+  // Tracks which All-Nodes / JS Recon export format is currently being
+  // generated, so the corresponding button can show a spinner instead of
+  // the download icon.
+  const [allNodesExporting, setAllNodesExporting] = useState<'csv' | 'json' | 'md' | null>(null)
+  const [jsReconExporting, setJsReconExporting] = useState<'csv' | 'json' | 'md' | null>(null)
+
+  const handleExportCsv = useCallback(async () => {
+    if (allNodesExporting) return
+    setAllNodesExporting('csv')
     try {
-      exportToCsv(filteredExportRows())
+      await exportToCsv(filteredExportRows())
       toast.success('CSV exported')
     } catch (err) {
       console.error('Failed to export CSV:', err)
       toast.error('Failed to export CSV')
+    } finally {
+      setAllNodesExporting(null)
     }
-  }, [filteredExportRows, toast])
+  }, [filteredExportRows, toast, allNodesExporting])
 
-  const handleExportJson = useCallback(() => {
+  const handleExportJson = useCallback(async () => {
+    if (allNodesExporting) return
+    setAllNodesExporting('json')
     try {
-      exportToJson(filteredExportRows())
+      await exportToJson(filteredExportRows())
       toast.success('JSON exported')
     } catch (err) {
       console.error('Failed to export JSON:', err)
       toast.error('Failed to export JSON')
+    } finally {
+      setAllNodesExporting(null)
     }
-  }, [filteredExportRows, toast])
+  }, [filteredExportRows, toast, allNodesExporting])
 
-  const handleExportMarkdown = useCallback(() => {
+  const handleExportMarkdown = useCallback(async () => {
+    if (allNodesExporting) return
+    setAllNodesExporting('md')
     try {
-      exportToMarkdown(filteredExportRows())
+      await exportToMarkdown(filteredExportRows())
       toast.success('Markdown exported')
     } catch (err) {
       console.error('Failed to export Markdown:', err)
       toast.error('Failed to export Markdown')
+    } finally {
+      setAllNodesExporting(null)
     }
-  }, [filteredExportRows, toast])
+  }, [filteredExportRows, toast, allNodesExporting])
 
   // ── End table view state ──────────────────────────────────────────────
 
@@ -1245,6 +1263,7 @@ export default function GraphPage() {
         onExport={handleExportCsv}
         onExportJson={handleExportJson}
         onExportMarkdown={handleExportMarkdown}
+        allNodesExporting={allNodesExporting}
         totalRows={effectiveTableRows.length}
         filteredRows={textFilteredCount}
         sessionCount={activeSessions.totalCount}
@@ -1257,9 +1276,22 @@ export default function GraphPage() {
         onTableViewModeChange={setTableViewMode}
         jsReconSearch={jsReconSearch}
         onJsReconSearchChange={setJsReconSearch}
-        onJsReconExportCsv={jsReconData ? () => exportJsReconCsv(jsReconData) : undefined}
-        onJsReconExportJson={jsReconData ? () => exportJsReconJson(jsReconData) : undefined}
-        onJsReconExportMarkdown={jsReconData ? () => exportJsReconMarkdown(jsReconData) : undefined}
+        onJsReconExportCsv={jsReconData ? async () => {
+          if (jsReconExporting) return
+          setJsReconExporting('csv')
+          try { await exportJsReconCsv(jsReconData) } finally { setJsReconExporting(null) }
+        } : undefined}
+        onJsReconExportJson={jsReconData ? async () => {
+          if (jsReconExporting) return
+          setJsReconExporting('json')
+          try { await exportJsReconJson(jsReconData) } finally { setJsReconExporting(null) }
+        } : undefined}
+        onJsReconExportMarkdown={jsReconData ? async () => {
+          if (jsReconExporting) return
+          setJsReconExporting('md')
+          try { await exportJsReconMarkdown(jsReconData) } finally { setJsReconExporting(null) }
+        } : undefined}
+        jsReconExporting={jsReconExporting}
         jsReconMeta={jsReconData ? `${jsReconData.scan_metadata?.js_files_analyzed || 0} files${jsReconData.summary?.validated_keys?.live ? ` | ${jsReconData.summary.validated_keys.live} LIVE` : ''}` : undefined}
         is3D={effectiveIs3D}
         showLabels={showLabels}

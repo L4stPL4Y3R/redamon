@@ -291,9 +291,15 @@ export function NodeDetailsTable({ data, isLoading, error }: NodeDetailsTablePro
     showIn: !hiddenSet.has('connectionsIn'),
     showOut: !hiddenSet.has('connectionsOut'),
   })
-  const handleExportCsv = () => { exportNodeDetailsCsv(buildExportInput()) }
-  const handleExportJson = () => { exportNodeDetailsJson(buildExportInput()) }
-  const handleExportMarkdown = () => { exportNodeDetailsMarkdown(buildExportInput()) }
+  const [exporting, setExporting] = useState<'csv' | 'json' | 'md' | null>(null)
+  const runExport = async (format: 'csv' | 'json' | 'md', fn: () => Promise<void>) => {
+    if (exporting) return
+    setExporting(format)
+    try { await fn() } finally { setExporting(null) }
+  }
+  const handleExportCsv = () => runExport('csv', () => exportNodeDetailsCsv(buildExportInput()))
+  const handleExportJson = () => runExport('json', () => exportNodeDetailsJson(buildExportInput()))
+  const handleExportMarkdown = () => runExport('md', () => exportNodeDetailsMarkdown(buildExportInput()))
 
   // -- States --------------------------------------------------------------
   if (isLoading) {
@@ -351,31 +357,37 @@ export function NodeDetailsTable({ data, isLoading, error }: NodeDetailsTablePro
           <button
             className={styles.exportBtn}
             onClick={handleExportCsv}
-            disabled={rows.length === 0}
+            disabled={rows.length === 0 || !!exporting}
             aria-label="Export to CSV"
             title="Export to CSV"
           >
-            <Download size={12} />
+            {exporting === 'csv'
+              ? <Loader2 size={12} className={styles.spinner} />
+              : <Download size={12} />}
             <span>CSV</span>
           </button>
           <button
             className={styles.exportBtn}
             onClick={handleExportJson}
-            disabled={rows.length === 0}
+            disabled={rows.length === 0 || !!exporting}
             aria-label="Export to JSON"
             title="Export to JSON"
           >
-            <Download size={12} />
+            {exporting === 'json'
+              ? <Loader2 size={12} className={styles.spinner} />
+              : <Download size={12} />}
             <span>JSON</span>
           </button>
           <button
             className={styles.exportBtn}
             onClick={handleExportMarkdown}
-            disabled={rows.length === 0}
+            disabled={rows.length === 0 || !!exporting}
             aria-label="Export to Markdown"
             title="Export to Markdown"
           >
-            <Download size={12} />
+            {exporting === 'md'
+              ? <Loader2 size={12} className={styles.spinner} />
+              : <Download size={12} />}
             <span>MD</span>
           </button>
 

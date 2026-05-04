@@ -7,6 +7,7 @@ import type { Project } from '@prisma/client'
 import styles from '../ProjectForm.module.css'
 import { NodeInfoTooltip } from '../NodeInfoTooltip'
 import { TimeEstimate } from '../TimeEstimate'
+import { FileImportButton } from '../FileImportButton'
 
 type FormData = Omit<Project, 'id' | 'userId' | 'createdAt' | 'updatedAt' | 'user'>
 
@@ -178,13 +179,19 @@ export function GauSection({ data, updateField, onRun }: GauSectionProps) {
                 <h3 className={styles.subSectionTitle}>Blacklist Extensions</h3>
                 <div className={styles.fieldGroup}>
                   <label className={styles.fieldLabel}>File Extensions to Exclude</label>
-                  <input
-                    type="text"
-                    className="textInput"
-                    value={(data.gauBlacklistExtensions ?? []).join(', ')}
-                    onChange={(e) => updateField('gauBlacklistExtensions', e.target.value.split(',').map(s => s.trim()).filter(Boolean))}
-                    placeholder="png, jpg, css, pdf, zip"
-                  />
+                  <div className={styles.fileImportWrap}>
+                    <input
+                      type="text"
+                      className="textInput"
+                      value={(data.gauBlacklistExtensions ?? []).join(', ')}
+                      onChange={(e) => updateField('gauBlacklistExtensions', e.target.value.split(',').map(s => s.trim()).filter(Boolean))}
+                      placeholder="png, jpg, css, pdf, zip"
+                    />
+                    <FileImportButton
+                      fieldName="extensions"
+                      onImport={(values) => updateField('gauBlacklistExtensions', values)}
+                    />
+                  </div>
                   <span className={styles.fieldHint}>Skip static assets like images, fonts, and documents</span>
                 </div>
               </div>
@@ -256,13 +263,20 @@ export function GauSection({ data, updateField, onRun }: GauSectionProps) {
 
                     <div className={styles.fieldGroup}>
                       <label className={styles.fieldLabel}>Accept Status Codes</label>
-                      <input
-                        type="text"
-                        className="textInput"
-                        value={(data.gauVerifyAcceptStatus ?? []).join(', ')}
-                        onChange={(e) => updateField('gauVerifyAcceptStatus', e.target.value.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n)))}
-                        placeholder="200, 201, 301, 302, 307, 308, 401, 403"
-                      />
+                      <div className={styles.fileImportWrap}>
+                        <input
+                          type="text"
+                          className="textInput"
+                          value={(data.gauVerifyAcceptStatus ?? []).join(', ')}
+                          onChange={(e) => updateField('gauVerifyAcceptStatus', e.target.value.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n)))}
+                          placeholder="200, 201, 301, 302, 307, 308, 401, 403"
+                        />
+                        <FileImportButton
+                          fieldName="status codes"
+                          validator={(t) => /^\d+$/.test(t)}
+                          onImport={(values) => updateField('gauVerifyAcceptStatus', values.map(v => parseInt(v)).filter(n => !isNaN(n)))}
+                        />
+                      </div>
                       <span className={styles.fieldHint}>Status codes that indicate a live URL. Include 401/403 for auth-protected endpoints</span>
                     </div>
 

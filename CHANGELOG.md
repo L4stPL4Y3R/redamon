@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.7.0] - 2026-05-04
+
+### Added
+
+- **Text-file import on multi-value Project Settings fields** -- reusable [FileImportButton](webapp/src/components/projects/ProjectForm/FileImportButton.tsx) renders a small icon on 22 inputs across 10 sections (Target, Naabu, Httpx, FFuf, Gau, Nuclei, Kiterunner, SSRF, Katana, Hakrawler). Click loads a `.txt` / `.csv` (max 5MB) and writes parsed values back in each field's storage shape. Parser splits on newlines, commas, semicolons, tabs, pipes; strips BOM and `#` / `//` comments; trims and dedupes; never splits on spaces / dots / colons / slashes so headers, IPs, `host:port` and CIDR survive round-trip. Numeric fields validate `^\d+$` and surface a skipped count. 58 tests in [FileImportButton.test.tsx](webapp/src/components/projects/ProjectForm/FileImportButton.test.tsx)
+- **Streaming exports for graph tables and AI Assistant Drawer** ([exportHelpers.ts](webapp/src/app/graph/utils/exportHelpers.ts)) -- new `streamCsv` / `streamJsonArray` / `streamMarkdownTable` / `streamLines` chunk rows in batches of 500 and yield to the event loop, preventing Chromium's "page unresponsive" watchdog on 50k-row exports. Output byte-identical to the non-streaming path (pinned by [exportSmoke.test.ts](webapp/src/app/graph/utils/exportSmoke.test.ts)). Migrated callers: [JsReconTable](webapp/src/app/graph/components/JsReconTable/JsReconTable.tsx), [NodeDetailsTable](webapp/src/app/graph/components/NodeDetailsTable/NodeDetailsTable.tsx), [RedZoneTableShell](webapp/src/app/graph/components/RedZoneTables/RedZoneTableShell.tsx), [useDownloadMarkdown](webapp/src/app/graph/components/AIAssistantDrawer/hooks/useDownloadMarkdown.ts)
+- **CDN-edge prefilter on direct-IP recon checks** ([security_checks.py](recon/helpers/security_checks.py)) -- `check_direct_ip_http`, `check_direct_ip_https`, `check_ip_api_exposed` short-circuit when the responding host is a CDN edge, eliminating false-positive "direct IP exposure" findings on cloud-hosted targets. `run_direct_ip_checks` takes a new `cdn_ips` set to bulk-skip already-classified IPs
+- **CDN / ASN hydration in partial-recon** ([graph_builders.py](recon/partial_recon_modules/graph_builders.py)) -- `_build_vuln_scan_data_from_graph` now populates `port_scan.by_ip` with `is_cdn` / `cdn` / `asn` from the `IP` node so partial-recon picks up CDN classification without re-running the port scan
+
+### Changed
+
+- **Webapp dev server uses Turbopack** ([webapp/package.json](webapp/package.json)) -- `npm run dev` is now `next dev --turbopack` for faster cold start and HMR. Production build unchanged
+
+---
+
 ## [4.6.0] - 2026-05-01
 
 ### Added

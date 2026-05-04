@@ -1,7 +1,7 @@
 'use client'
 
 import { memo, useState, useRef, useEffect, useCallback } from 'react'
-import { Waypoints, Table2, Terminal, Shield, Search, Download, SquareTerminal, Filter, Plus, Trash2, X, ChevronDown, Code, Target, Zap, Flag, Key, Server, Boxes, LockKeyhole, Bug, Network, Mail, ShieldAlert, Package, History, Layers } from 'lucide-react'
+import { Waypoints, Table2, Terminal, Shield, Search, Download, Loader2, SquareTerminal, Filter, Plus, Trash2, X, ChevronDown, Code, Target, Zap, Flag, Key, Server, Boxes, LockKeyhole, Bug, Network, Mail, ShieldAlert, Package, History, Layers } from 'lucide-react'
 import { Toggle } from '@/components/ui'
 import { AUTO_2D_THRESHOLD } from '../GraphCanvas'
 import styles from './ViewTabs.module.css'
@@ -72,6 +72,8 @@ interface ViewTabsProps {
   onExport?: () => void
   onExportJson?: () => void
   onExportMarkdown?: () => void
+  /** Which All-Nodes export format is currently being generated, if any. */
+  allNodesExporting?: 'csv' | 'json' | 'md' | null
   totalRows?: number
   filteredRows?: number
   // Sessions badge
@@ -92,6 +94,8 @@ interface ViewTabsProps {
   onJsReconExportCsv?: () => void
   onJsReconExportJson?: () => void
   onJsReconExportMarkdown?: () => void
+  /** Which JS Recon export format is currently being generated, if any. */
+  jsReconExporting?: 'csv' | 'json' | 'md' | null
   jsReconMeta?: string
   // View mode toggles (shown in right section when graph active)
   is3D?: boolean
@@ -109,6 +113,7 @@ export const ViewTabs = memo(function ViewTabs({
   onExport,
   onExportJson,
   onExportMarkdown,
+  allNodesExporting,
   totalRows,
   filteredRows,
   sessionCount,
@@ -124,6 +129,7 @@ export const ViewTabs = memo(function ViewTabs({
   onJsReconExportCsv,
   onJsReconExportJson,
   onJsReconExportMarkdown,
+  jsReconExporting,
   jsReconMeta,
   is3D,
   showLabels,
@@ -472,19 +478,25 @@ export const ViewTabs = memo(function ViewTabs({
               ? `${totalRows}`
               : `${filteredRows}/${totalRows}`}
           </span>
-          <button className={styles.exportBtn} onClick={onExport} aria-label="Export to CSV" title="Export to CSV">
-            <Download size={12} />
+          <button className={styles.exportBtn} onClick={onExport} disabled={!!allNodesExporting} aria-label="Export to CSV" title="Export to CSV">
+            {allNodesExporting === 'csv'
+              ? <Loader2 size={12} className={styles.exportSpinner} />
+              : <Download size={12} />}
             <span>CSV</span>
           </button>
           {onExportJson && (
-            <button className={styles.exportBtn} onClick={onExportJson} aria-label="Export to JSON" title="Export to JSON">
-              <Download size={12} />
+            <button className={styles.exportBtn} onClick={onExportJson} disabled={!!allNodesExporting} aria-label="Export to JSON" title="Export to JSON">
+              {allNodesExporting === 'json'
+                ? <Loader2 size={12} className={styles.exportSpinner} />
+                : <Download size={12} />}
               <span>JSON</span>
             </button>
           )}
           {onExportMarkdown && (
-            <button className={styles.exportBtn} onClick={onExportMarkdown} aria-label="Export to Markdown" title="Export to Markdown">
-              <Download size={12} />
+            <button className={styles.exportBtn} onClick={onExportMarkdown} disabled={!!allNodesExporting} aria-label="Export to Markdown" title="Export to Markdown">
+              {allNodesExporting === 'md'
+                ? <Loader2 size={12} className={styles.exportSpinner} />
+                : <Download size={12} />}
               <span>MD</span>
             </button>
           )}
@@ -506,20 +518,26 @@ export const ViewTabs = memo(function ViewTabs({
             />
           </div>
           {onJsReconExportCsv && (
-            <button className={styles.exportBtn} onClick={onJsReconExportCsv} aria-label="Export to CSV" title="Export to CSV">
-              <Download size={12} />
+            <button className={styles.exportBtn} onClick={onJsReconExportCsv} disabled={!!jsReconExporting} aria-label="Export to CSV" title="Export to CSV">
+              {jsReconExporting === 'csv'
+                ? <Loader2 size={12} className={styles.exportSpinner} />
+                : <Download size={12} />}
               <span>CSV</span>
             </button>
           )}
           {onJsReconExportJson && (
-            <button className={styles.exportBtn} onClick={onJsReconExportJson} aria-label="Export to JSON" title="Export to JSON">
-              <Download size={12} />
+            <button className={styles.exportBtn} onClick={onJsReconExportJson} disabled={!!jsReconExporting} aria-label="Export to JSON" title="Export to JSON">
+              {jsReconExporting === 'json'
+                ? <Loader2 size={12} className={styles.exportSpinner} />
+                : <Download size={12} />}
               <span>JSON</span>
             </button>
           )}
           {onJsReconExportMarkdown && (
-            <button className={styles.exportBtn} onClick={onJsReconExportMarkdown} aria-label="Export to Markdown" title="Export to Markdown">
-              <Download size={12} />
+            <button className={styles.exportBtn} onClick={onJsReconExportMarkdown} disabled={!!jsReconExporting} aria-label="Export to Markdown" title="Export to Markdown">
+              {jsReconExporting === 'md'
+                ? <Loader2 size={12} className={styles.exportSpinner} />
+                : <Download size={12} />}
               <span>MD</span>
             </button>
           )}

@@ -6,6 +6,7 @@ import { Toggle, WikiInfoButton } from '@/components/ui'
 import type { Project } from '@prisma/client'
 import styles from '../ProjectForm.module.css'
 import { NodeInfoTooltip } from '../NodeInfoTooltip'
+import { FileImportButton } from '../FileImportButton'
 
 type FormData = Omit<Project, 'id' | 'userId' | 'createdAt' | 'updatedAt' | 'user'>
 
@@ -161,13 +162,20 @@ export function HakrawlerSection({ data, updateField, onRun }: HakrawlerSectionP
                 <h3 className={styles.subSectionTitle}>Custom Headers</h3>
                 <div className={styles.fieldGroup}>
                   <label className={styles.fieldLabel}>Request Headers</label>
-                  <textarea
-                    className="textarea"
-                    value={(data.hakrawlerCustomHeaders ?? []).join('\n')}
-                    onChange={(e) => updateField('hakrawlerCustomHeaders', e.target.value.split('\n').filter(Boolean))}
-                    placeholder="Cookie: session=abc123&#10;Authorization: Bearer token..."
-                    rows={3}
-                  />
+                  <div className={styles.fileImportWrap}>
+                    <textarea
+                      className="textarea"
+                      value={(data.hakrawlerCustomHeaders ?? []).join('\n')}
+                      onChange={(e) => updateField('hakrawlerCustomHeaders', e.target.value.split('\n').filter(Boolean))}
+                      placeholder="Cookie: session=abc123&#10;Authorization: Bearer token..."
+                      rows={3}
+                    />
+                    <FileImportButton
+                      variant="textarea"
+                      fieldName="headers"
+                      onImport={(values) => updateField('hakrawlerCustomHeaders', values)}
+                    />
+                  </div>
                   <span className={styles.fieldHint}>One header per line (e.g., Cookie: value). Sent with every request</span>
                 </div>
               </div>

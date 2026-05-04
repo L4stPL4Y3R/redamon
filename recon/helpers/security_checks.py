@@ -13,8 +13,14 @@ import socket
 import ssl
 import requests
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Set
 import concurrent.futures
+
+from recon.helpers.cdn_ranges import (
+    collect_asn_cdn_ips,
+    collect_prefix_cdn_ips,
+    response_is_cdn_edge,
+)
 
 # Suppress SSL warnings for security testing
 import urllib3
@@ -129,6 +135,10 @@ def check_direct_ip_http(ip: str, timeout: int = 10) -> Optional[Dict]:
         )
 
         if response.status_code < 500:
+            cdn_match = response_is_cdn_edge(response)
+            if cdn_match:
+                return None
+
             # Analyze redirect behavior
             redirect_info = _analyze_redirect_chain(ip, "http", timeout)
             
@@ -211,6 +221,10 @@ def check_direct_ip_https(ip: str, timeout: int = 10) -> Optional[Dict]:
         )
 
         if response.status_code < 500:
+            cdn_match = response_is_cdn_edge(response)
+            if cdn_match:
+                return None
+
             # Analyze redirect behavior
             redirect_info = _analyze_redirect_chain(ip, "https", timeout)
             
@@ -304,6 +318,9 @@ def check_ip_api_exposed(ip: str, timeout: int = 10) -> Optional[Dict]:
             # Look for API-like responses (JSON or specific status codes)
             content_type = response.headers.get("Content-Type", "")
             is_json = "application/json" in content_type or "text/json" in content_type
+
+            if response_is_cdn_edge(response):
+                continue
 
             # 200 OK with JSON or 401/403 (auth required) indicates API presence
             if response.status_code in [200, 401, 403] and (is_json or response.status_code in [401, 403]):
@@ -419,7 +436,8 @@ def run_direct_ip_checks(
     subdomains_to_ips: Dict[str, List[str]],
     enabled_checks: Dict[str, bool],
     timeout: int = 10,
-    max_workers: int = 10
+    max_workers: int = 10,
+    cdn_ips: Optional[Set[str]] = None,
 ) -> List[Dict]:
     """
     Run all enabled direct IP access security checks.
@@ -430,11 +448,21 @@ def run_direct_ip_checks(
         enabled_checks: Dict of check_name -> enabled (bool)
         timeout: Request timeout in seconds
         max_workers: Maximum concurrent workers
+        cdn_ips: IPs already classified as CDN/edge, excluded from probing
+                 (cases 1, 2, 3 prefilter)
 
     Returns:
         List of vulnerability findings
     """
     findings = []
+    cdn_ips = cdn_ips or set()
+
+    if cdn_ips:
+        before = len(ips)
+        ips = [ip for ip in ips if ip not in cdn_ips]
+        skipped = before - len(ips)
+        if skipped:
+            print(f"[*][SecurityCheck] Skipping {skipped} CDN/edge IP(s) from Direct IP checks")
 
     def check_single_ip(ip: str) -> List[Dict]:
         ip_findings = []
@@ -470,6 +498,8 @@ def run_direct_ip_checks(
     if enabled_checks.get("waf_bypass", True):
         for subdomain, subdomain_ips in subdomains_to_ips.items():
             for ip in subdomain_ips:
+                if ip in cdn_ips:
+                    continue
                 result = check_waf_bypass(subdomain, ip, timeout)
                 if result:
                     findings.append(result)
@@ -2107,13 +2137,28 @@ def run_security_checks(
 
     # Run direct IP access checks
     if enabled_ip > 0 and ips:
+        # Build the CDN/edge IP set used to prefilter findings.
+        # Case 1+2: IPs already flagged is_cdn by Naabu/httpx in this scan.
+        # Case 3 layer 1: IPs inside published Cloudflare prefixes.
+        # Case 3 layer 2: IPs whose ASN matches a known CDN ASN.
+        from recon.main_recon_modules.ip_filter import collect_cdn_ips
+        cdn_ips: Set[str] = set()
+        try:
+            cdn_ips |= collect_cdn_ips(recon_data)
+            cdn_ips |= collect_asn_cdn_ips(recon_data)
+            cdn_ips |= collect_prefix_cdn_ips(ips)
+        except Exception as exc:
+            print(f"[!][SecurityCheck] CDN prefilter failed, probing all IPs: {exc}")
+            cdn_ips = set()
+
         print(f"[*][SecurityCheck] Running Direct IP Access checks on {len(ips)} IPs...")
         ip_findings = run_direct_ip_checks(
             ips=list(ips),
             subdomains_to_ips=subdomains_to_ips,
             enabled_checks=enabled_checks,
             timeout=timeout,
-            max_workers=max_workers
+            max_workers=max_workers,
+            cdn_ips=cdn_ips,
         )
         all_findings.extend(ip_findings)
         print(f"[+][SecurityCheck] Found {len(ip_findings)} issues")

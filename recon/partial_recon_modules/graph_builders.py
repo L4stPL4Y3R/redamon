@@ -402,11 +402,34 @@ def _build_vuln_scan_data_from_graph(domain: str, user_id: str, project_id: str)
         "http_probe": {
             "by_url": {},
         },
+        "port_scan": {
+            "by_ip": {},
+        },
         "resource_enum": {
             "by_base_url": {},
             "discovered_urls": [],
         },
     }
+
+    def _hydrate_ip_metadata(addr: str, is_cdn, cdn_name, asn) -> None:
+        """Populate port_scan.by_ip with CDN/ASN metadata so collect_cdn_ips
+        and collect_asn_cdn_ips can detect CDN IPs in partial-recon mode."""
+        if not addr:
+            return
+        entry = recon_data["port_scan"]["by_ip"].setdefault(addr, {
+            "ip": addr,
+            "hostnames": [],
+            "ports": [],
+            "is_cdn": False,
+            "cdn": None,
+            "asn": None,
+        })
+        if is_cdn and not entry["is_cdn"]:
+            entry["is_cdn"] = True
+        if cdn_name and not entry["cdn"]:
+            entry["cdn"] = cdn_name
+        if asn and not entry["asn"]:
+            entry["asn"] = asn
 
     with Neo4jClient() as graph_client:
         if not graph_client.verify_connection():
@@ -420,7 +443,8 @@ def _build_vuln_scan_data_from_graph(domain: str, user_id: str, project_id: str)
                 """
                 MATCH (d:Domain {name: $domain, user_id: $uid, project_id: $pid})
                       -[:RESOLVES_TO]->(i:IP)
-                RETURN i.address AS address, i.version AS version
+                RETURN i.address AS address, i.version AS version,
+                       i.is_cdn AS is_cdn, i.cdn_name AS cdn_name, i.asn AS asn
                 """,
                 domain=domain, uid=user_id, pid=project_id,
             )
@@ -428,6 +452,7 @@ def _build_vuln_scan_data_from_graph(domain: str, user_id: str, project_id: str)
                 addr = record["address"]
                 bucket = _classify_ip(addr, record["version"])
                 recon_data["dns"]["domain"]["ips"][bucket].append(addr)
+                _hydrate_ip_metadata(addr, record["is_cdn"], record["cdn_name"], record["asn"])
 
             if (recon_data["dns"]["domain"]["ips"]["ipv4"]
                     or recon_data["dns"]["domain"]["ips"]["ipv6"]):
@@ -439,7 +464,8 @@ def _build_vuln_scan_data_from_graph(domain: str, user_id: str, project_id: str)
                 MATCH (d:Domain {name: $domain, user_id: $uid, project_id: $pid})
                       -[:HAS_SUBDOMAIN]->(s:Subdomain)
                       -[:RESOLVES_TO]->(i:IP)
-                RETURN s.name AS subdomain, i.address AS address, i.version AS version
+                RETURN s.name AS subdomain, i.address AS address, i.version AS version,
+                       i.is_cdn AS is_cdn, i.cdn_name AS cdn_name, i.asn AS asn
                 """,
                 domain=domain, uid=user_id, pid=project_id,
             )
@@ -456,6 +482,7 @@ def _build_vuln_scan_data_from_graph(domain: str, user_id: str, project_id: str)
                         "has_records": True,
                     }
                 recon_data["dns"]["subdomains"][sub]["ips"][bucket].append(addr)
+                _hydrate_ip_metadata(addr, record["is_cdn"], record["cdn_name"], record["asn"])
 
             # Also get subdomains without IPs for the subdomains list
             result = session.run(

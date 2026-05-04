@@ -2,6 +2,7 @@
 
 import type { Project } from '@prisma/client'
 import { WikiInfoButton } from '@/components/ui/WikiInfoButton'
+import { FileImportButton } from '../FileImportButton'
 import styles from '../ProjectForm.module.css'
 
 type FormData = Omit<Project, 'id' | 'userId' | 'createdAt' | 'updatedAt' | 'user'>
@@ -166,13 +167,20 @@ export function SsrfSection({ data, updateField }: SsrfSectionProps) {
       <div className={styles.fieldRow} style={ROW_STYLE}>
         <div className={styles.fieldGroup}>
           <label className={styles.fieldLabel}>Port-scan Ports</label>
-          <input
-            type="text"
-            className="textInput"
-            value={data.ssrfPortScanPorts ?? ''}
-            onChange={(e) => updateField('ssrfPortScanPorts', e.target.value)}
-            placeholder="22,80,443,2375,3306,5432,6379,8080,8500,9200,27017"
-          />
+          <div className={styles.fileImportWrap}>
+            <input
+              type="text"
+              className="textInput"
+              value={data.ssrfPortScanPorts ?? ''}
+              onChange={(e) => updateField('ssrfPortScanPorts', e.target.value)}
+              placeholder="22,80,443,2375,3306,5432,6379,8080,8500,9200,27017"
+            />
+            <FileImportButton
+              fieldName="ports"
+              validator={(t) => /^\d+$/.test(t)}
+              onImport={(values) => updateField('ssrfPortScanPorts', values.join(','))}
+            />
+          </div>
           <span className={styles.fieldHint}>
             Comma-separated ports to probe via SSRF. Trim for quieter scans, extend for thorough coverage.
           </span>
@@ -182,13 +190,19 @@ export function SsrfSection({ data, updateField }: SsrfSectionProps) {
       <div className={styles.fieldRow} style={ROW_STYLE}>
         <div className={styles.fieldGroup}>
           <label className={styles.fieldLabel}>Internal CIDR Ranges</label>
-          <input
-            type="text"
-            className="textInput"
-            value={data.ssrfInternalRanges ?? ''}
-            onChange={(e) => updateField('ssrfInternalRanges', e.target.value)}
-            placeholder="127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16"
-          />
+          <div className={styles.fileImportWrap}>
+            <input
+              type="text"
+              className="textInput"
+              value={data.ssrfInternalRanges ?? ''}
+              onChange={(e) => updateField('ssrfInternalRanges', e.target.value)}
+              placeholder="127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16"
+            />
+            <FileImportButton
+              fieldName="CIDR ranges"
+              onImport={(values) => updateField('ssrfInternalRanges', values.join(','))}
+            />
+          </div>
           <span className={styles.fieldHint}>
             Comma-separated CIDR blocks the agent treats as internal. Adjust for orgs using non-standard internal addressing (e.g., 100.64.0.0/10 carrier-grade NAT).
           </span>
@@ -198,13 +212,19 @@ export function SsrfSection({ data, updateField }: SsrfSectionProps) {
       <div className={styles.fieldRow} style={ROW_STYLE}>
         <div className={styles.fieldGroup}>
           <label className={styles.fieldLabel}>Cloud Providers in Scope</label>
-          <input
-            type="text"
-            className="textInput"
-            value={data.ssrfCloudProviders ?? ''}
-            onChange={(e) => updateField('ssrfCloudProviders', e.target.value)}
-            placeholder="aws,gcp,azure,digitalocean,alibaba"
-          />
+          <div className={styles.fileImportWrap}>
+            <input
+              type="text"
+              className="textInput"
+              value={data.ssrfCloudProviders ?? ''}
+              onChange={(e) => updateField('ssrfCloudProviders', e.target.value)}
+              placeholder="aws,gcp,azure,digitalocean,alibaba"
+            />
+            <FileImportButton
+              fieldName="cloud providers"
+              onImport={(values) => updateField('ssrfCloudProviders', values.join(','))}
+            />
+          </div>
           <span className={styles.fieldHint}>
             Comma-separated cloud providers to include in the metadata-pivots section. Filters which provider endpoint tables ship in the prompt. Ignored when cloud metadata is disabled.
           </span>
@@ -217,14 +237,21 @@ export function SsrfSection({ data, updateField }: SsrfSectionProps) {
       <div className={styles.fieldRow} style={ROW_STYLE}>
         <div className={styles.fieldGroup}>
           <label className={styles.fieldLabel}>Custom Internal Targets</label>
-          <textarea
-            className="textInput"
-            rows={4}
-            value={data.ssrfCustomInternalTargets ?? ''}
-            onChange={(e) => updateField('ssrfCustomInternalTargets', e.target.value)}
-            placeholder={'admin.internal.example.com\n10.20.30.40:8500\njumphost.corp.local'}
-            style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', resize: 'vertical' }}
-          />
+          <div className={styles.fileImportWrap}>
+            <textarea
+              className="textInput"
+              rows={4}
+              value={data.ssrfCustomInternalTargets ?? ''}
+              onChange={(e) => updateField('ssrfCustomInternalTargets', e.target.value)}
+              placeholder={'admin.internal.example.com\n10.20.30.40:8500\njumphost.corp.local'}
+              style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-xs)', resize: 'vertical' }}
+            />
+            <FileImportButton
+              variant="textarea"
+              fieldName="internal targets"
+              onImport={(values) => updateField('ssrfCustomInternalTargets', values.join('\n'))}
+            />
+          </div>
           <span className={styles.fieldHint}>
             One hostname or IP[:port] per line. Injected into the prompt so the agent prioritizes these alongside the generic loopback / RFC1918 sweep.
           </span>

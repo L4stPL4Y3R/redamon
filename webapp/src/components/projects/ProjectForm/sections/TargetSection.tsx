@@ -5,6 +5,7 @@ import { ChevronDown, Target, ShieldAlert, AlertTriangle } from 'lucide-react'
 import { Toggle, WikiInfoButton } from '@/components/ui'
 import type { Project } from '@prisma/client'
 import { isHardBlockedDomain } from '@/lib/hard-guardrail'
+import { FileImportButton } from '../FileImportButton'
 import styles from '../ProjectForm.module.css'
 
 type FormData = Omit<Project, 'id' | 'userId' | 'createdAt' | 'updatedAt' | 'user'>
@@ -177,15 +178,24 @@ export function TargetSection({ data, updateField, mode = 'create' }: TargetSect
               <label className={`${styles.fieldLabel} ${styles.fieldLabelRequired}`}>
                 Target IPs / CIDRs
               </label>
-              <textarea
-                className="textarea"
-                value={displayIps}
-                onChange={(e) => handleIpsChange(e.target.value)}
-                placeholder={"192.168.1.1\n10.0.0.0/24\n2001:db8::1"}
-                rows={4}
-                disabled={isLocked}
-                title={isLocked ? 'Target IPs cannot be changed after creation.' : undefined}
-              />
+              <div className={styles.fileImportWrap}>
+                <textarea
+                  className="textarea"
+                  value={displayIps}
+                  onChange={(e) => handleIpsChange(e.target.value)}
+                  placeholder={"192.168.1.1\n10.0.0.0/24\n2001:db8::1"}
+                  rows={4}
+                  disabled={isLocked}
+                  title={isLocked ? 'Target IPs cannot be changed after creation.' : undefined}
+                />
+                {!isLocked && (
+                  <FileImportButton
+                    variant="textarea"
+                    fieldName="target IPs / CIDRs"
+                    onImport={(values) => updateField('targetIps', values)}
+                  />
+                )}
+              </div>
               <span className={styles.fieldHint}>
                 {isLocked
                   ? 'Target IPs are locked after project creation. Create a new project to change them.'
@@ -210,15 +220,23 @@ export function TargetSection({ data, updateField, mode = 'create' }: TargetSect
             <>
               <div className={styles.fieldGroup}>
                 <label className={styles.fieldLabel}>Subdomain Prefixes</label>
-                <input
-                  type="text"
-                  className="textInput"
-                  value={displayPrefixes}
-                  onChange={(e) => handlePrefixesChange(e.target.value)}
-                  placeholder="www, api, admin (comma-separated)"
-                  disabled={isLocked}
-                  title={isLocked ? 'Subdomain list cannot be changed after creation. Create a new project instead.' : undefined}
-                />
+                <div className={styles.fileImportWrap}>
+                  <input
+                    type="text"
+                    className="textInput"
+                    value={displayPrefixes}
+                    onChange={(e) => handlePrefixesChange(e.target.value)}
+                    placeholder="www, api, admin (comma-separated)"
+                    disabled={isLocked}
+                    title={isLocked ? 'Subdomain list cannot be changed after creation. Create a new project instead.' : undefined}
+                  />
+                  {!isLocked && (
+                    <FileImportButton
+                      fieldName="subdomain prefixes"
+                      onImport={(values) => handlePrefixesChange(values.join(', '))}
+                    />
+                  )}
+                </div>
                 <span className={styles.fieldHint}>
                   {isLocked
                     ? 'Target domain and subdomains are locked after project creation to keep graph data consistent. To change them, create a new project.'

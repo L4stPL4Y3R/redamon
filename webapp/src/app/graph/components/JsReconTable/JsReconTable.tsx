@@ -6,10 +6,10 @@ import { ExternalLink } from '@/components/ui'
 import styles from './JsReconTable.module.css'
 import {
   timestampSlug,
-  downloadBlob,
-  flattenCellValue,
-  escapeMarkdownCell,
-  toCsv,
+  downloadStreaming,
+  streamCsvChunks,
+  streamJsonArrayChunks,
+  streamMarkdownTableChunks,
   CSV_MIME,
 } from '../../utils/exportHelpers'
 
@@ -81,64 +81,96 @@ function buildJsReconSheets(data: JsReconData): JsReconSheet[] {
 /**
  * Multi-section CSV: each non-empty section gets a "# Section: <name>" marker
  * row followed by its own header + data rows, separated by a blank line.
- * Spreadsheet apps treat marker rows as a single oddly-formatted cell -- the
- * tradeoff for emitting a single file vs. a zip of per-section CSVs.
+ * Streamed end-to-end (showSaveFilePicker if available) so the largest
+ * findings dumps don't pin the file in browser memory.
  */
-export function exportJsReconCsv(data: JsReconData) {
-  const sheets = buildJsReconSheets(data)
-  const parts: string[] = ['\uFEFF']
-  let first = true
-  for (const sheet of sheets) {
-    if (!sheet.rows.length) continue
-    if (!first) parts.push('\r\n')
-    first = false
-    parts.push(`# Section: ${sheet.name}\r\n`)
-    const rowDicts = sheet.rows.map(r => {
+export async function exportJsReconCsv(data: JsReconData) {
+  const sheets = buildJsReconSheets(data).filter(s => s.rows.length > 0)
+
+  function* dictRows(sheet: { rows: any[]; columns: string[] }): Iterable<Record<string, unknown>> {
+    for (const r of sheet.rows) {
       const row: Record<string, unknown> = {}
       for (const col of sheet.columns) row[col] = getCol(r, col)
-      return row
-    })
-    // toCsv adds its own BOM and trailing newline; strip both for sub-sections.
-    const csv = toCsv(sheet.columns, rowDicts).replace(/^\uFEFF/, '')
-    parts.push(csv)
+      yield row
+    }
   }
-  downloadBlob(parts.join(''), `js-recon-${timestampSlug()}.csv`, CSV_MIME)
-}
 
-export function exportJsReconJson(data: JsReconData) {
-  const sheets = buildJsReconSheets(data)
-  const out: Record<string, unknown[]> = {}
-  for (const sheet of sheets) {
-    if (!sheet.rows.length) continue
-    out[sheet.name] = sheet.rows.map(r => {
-      const row: Record<string, unknown> = {}
-      for (const col of sheet.columns) row[col] = getCol(r, col) ?? null
-      return row
-    })
+  async function* combined(): AsyncGenerator<string> {
+    yield '\uFEFF'
+    let first = true
+    for (const sheet of sheets) {
+      if (!first) yield '\r\n'
+      first = false
+      yield `# Section: ${sheet.name}\r\n`
+      // streamCsvChunks emits its own BOM + trailing CRLF; drop the BOM
+      // (we already wrote one) but keep the trailing CRLF so the next
+      // section's marker starts on a fresh line.
+      let bomDropped = false
+      for await (const chunk of streamCsvChunks(sheet.columns, dictRows(sheet))) {
+        if (!bomDropped && chunk === '\uFEFF') { bomDropped = true; continue }
+        yield chunk
+      }
+    }
   }
-  downloadBlob(
-    JSON.stringify(out, null, 2),
-    `js-recon-${timestampSlug()}.json`,
-    'application/json;charset=utf-8',
+
+  await downloadStreaming(
+    `js-recon-${timestampSlug()}.csv`,
+    CSV_MIME,
+    () => combined(),
   )
 }
 
-export function exportJsReconMarkdown(data: JsReconData) {
-  const sheets = buildJsReconSheets(data)
-  const parts: string[] = [`# JS Recon Findings`, '', `Generated: ${new Date().toISOString()}`, '']
-  for (const sheet of sheets) {
-    if (!sheet.rows.length) continue
-    parts.push(`## ${sheet.name} (${sheet.rows.length})`, '')
-    const headerLine = `| ${sheet.columns.join(' | ')} |`
-    const sepLine = `| ${sheet.columns.map(() => '---').join(' | ')} |`
-    parts.push(headerLine, sepLine)
+export async function exportJsReconJson(data: JsReconData) {
+  const sheets = buildJsReconSheets(data).filter(s => s.rows.length > 0)
+
+  function* dictRows(sheet: { rows: any[]; columns: string[] }): Iterable<Record<string, unknown>> {
     for (const r of sheet.rows) {
-      const cells = sheet.columns.map(col => escapeMarkdownCell(flattenCellValue(getCol(r, col))))
-      parts.push(`| ${cells.join(' | ')} |`)
+      const row: Record<string, unknown> = {}
+      for (const col of sheet.columns) row[col] = getCol(r, col) ?? null
+      yield row
     }
-    parts.push('')
   }
-  downloadBlob(parts.join('\n'), `js-recon-${timestampSlug()}.md`, 'text/markdown;charset=utf-8')
+
+  async function* combined(): AsyncGenerator<string> {
+    if (sheets.length === 0) { yield '{}\n'; return }
+    yield '{\n'
+    for (let s = 0; s < sheets.length; s++) {
+      const sheet = sheets[s]
+      yield `  ${JSON.stringify(sheet.name)}: `
+      yield* streamJsonArrayChunks(dictRows(sheet), { outerIndent: 2 })
+      yield s === sheets.length - 1 ? '\n' : ',\n'
+    }
+    yield '}\n'
+  }
+
+  await downloadStreaming(
+    `js-recon-${timestampSlug()}.json`,
+    'application/json;charset=utf-8',
+    () => combined(),
+  )
+}
+
+export async function exportJsReconMarkdown(data: JsReconData) {
+  const sheets = buildJsReconSheets(data).filter(s => s.rows.length > 0)
+
+  async function* combined(): AsyncGenerator<string> {
+    yield `# JS Recon Findings\n\nGenerated: ${new Date().toISOString()}\n\n`
+    for (const sheet of sheets) {
+      yield `## ${sheet.name} (${sheet.rows.length})\n\n`
+      yield* streamMarkdownTableChunks(
+        sheet.columns,
+        sheet.rows,
+        (row, col) => getCol(row, col),
+      )
+      yield '\n\n'
+    }
+  }
+
+  await downloadStreaming(
+    `js-recon-${timestampSlug()}.md`,
+    'text/markdown;charset=utf-8',
+    () => combined(),
+  )
 }
 
 function sevBadge(severity: string) {

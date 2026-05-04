@@ -1,9 +1,9 @@
 import {
   timestampSlug,
-  downloadBlob,
-  flattenCellValue,
-  escapeMarkdownCell,
-  toCsv,
+  downloadStreaming,
+  streamCsvChunks,
+  streamJsonArrayChunks,
+  streamMarkdownTableChunks,
   CSV_MIME,
 } from '../../utils/exportHelpers'
 
@@ -19,66 +19,84 @@ export interface RedZoneExportConfig {
   columns: RedZoneExportColumn[]
 }
 
-function buildRowDict(rows: object[], columns: RedZoneExportColumn[]): Record<string, unknown>[] {
-  return rows.map(row => {
+function* lazyDictRows(rows: object[], columns: RedZoneExportColumn[]): Iterable<Record<string, unknown>> {
+  for (const row of rows) {
     const out: Record<string, unknown> = {}
     for (const col of columns) {
       out[col.header] = (row as Record<string, unknown>)[col.key]
     }
-    return out
-  })
+    yield out
+  }
 }
 
-export function exportRedZoneCsv<T extends object>(
-  rows: T[],
-  _sheetName: string,
-  columns: RedZoneExportColumn[],
-  fileSlug: string,
-) {
-  const headers = columns.map(c => c.header)
-  const data = buildRowDict(rows, columns)
-  const csv = toCsv(headers, data)
-  downloadBlob(csv, `${fileSlug}-${timestampSlug()}.csv`, CSV_MIME)
-}
-
-export function exportRedZoneJson<T extends object>(
-  rows: T[],
-  _sheetName: string,
-  columns: RedZoneExportColumn[],
-  fileSlug: string,
-) {
-  const data = buildRowDict(rows, columns).map(row => {
+function* lazyDictRowsForJson(rows: object[], columns: RedZoneExportColumn[]): Iterable<Record<string, unknown>> {
+  for (const row of rows) {
     const out: Record<string, unknown> = {}
-    for (const [k, v] of Object.entries(row)) out[k] = v ?? null
-    return out
-  })
-  downloadBlob(
-    JSON.stringify(data, null, 2),
-    `${fileSlug}-${timestampSlug()}.json`,
-    'application/json;charset=utf-8',
+    for (const col of columns) {
+      const v = (row as Record<string, unknown>)[col.key]
+      out[col.header] = v ?? null
+    }
+    yield out
+  }
+}
+
+export async function exportRedZoneCsv<T extends object>(
+  rows: T[],
+  _sheetName: string,
+  columns: RedZoneExportColumn[],
+  fileSlug: string,
+): Promise<void> {
+  const headers = columns.map(c => c.header)
+  await downloadStreaming(
+    `${fileSlug}-${timestampSlug()}.csv`,
+    CSV_MIME,
+    () => streamCsvChunks(headers, lazyDictRows(rows, columns)),
   )
 }
 
-export function exportRedZoneMarkdown<T extends object>(
+export async function exportRedZoneJson<T extends object>(
+  rows: T[],
+  _sheetName: string,
+  columns: RedZoneExportColumn[],
+  fileSlug: string,
+): Promise<void> {
+  await downloadStreaming(
+    `${fileSlug}-${timestampSlug()}.json`,
+    'application/json;charset=utf-8',
+    () => streamJsonArrayChunks(lazyDictRowsForJson(rows, columns)),
+  )
+}
+
+export async function exportRedZoneMarkdown<T extends object>(
   rows: T[],
   sheetName: string,
   columns: RedZoneExportColumn[],
   fileSlug: string,
-) {
+): Promise<void> {
   const headers = columns.map(c => c.header)
-  const headerLine = `| ${headers.join(' | ')} |`
-  const sepLine = `| ${headers.map(() => '---').join(' | ')} |`
-  const dataLines = rows.map(row =>
-    `| ${columns
-      .map(col => escapeMarkdownCell(flattenCellValue((row as Record<string, unknown>)[col.key])))
-      .join(' | ')} |`,
-  )
+  const preamble = `# ${sheetName}\n\nGenerated: ${new Date().toISOString()}\nRows: ${rows.length}\n\n`
 
-  const md = `# ${sheetName}\n\nGenerated: ${new Date().toISOString()}\nRows: ${rows.length}\n\n${headerLine}\n${sepLine}\n${dataLines.join('\n')}\n`
-  downloadBlob(md, `${fileSlug}-${timestampSlug()}.md`, 'text/markdown;charset=utf-8')
+  async function* combined(): AsyncGenerator<string> {
+    yield preamble
+    yield* streamMarkdownTableChunks(
+      headers,
+      rows,
+      (row, h) => {
+        const col = columns.find(c => c.header === h)
+        return col ? (row as Record<string, unknown>)[col.key] : undefined
+      },
+    )
+    yield '\n'
+  }
+
+  await downloadStreaming(
+    `${fileSlug}-${timestampSlug()}.md`,
+    'text/markdown;charset=utf-8',
+    () => combined(),
+  )
 }
 
-export function runRedZoneExport(
+export async function runRedZoneExport(
   format: 'csv' | 'json' | 'md',
   config: RedZoneExportConfig,
 ) {

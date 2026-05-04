@@ -247,7 +247,7 @@ describe('exportNodeDetailsJson / Markdown', () => {
 
   test('exportNodeDetailsJson emits a JSON file with ordered columns + rows', async () => {
     const r = makeRow(makeNode('Domain', 'example.com', { registrar: 'GoDaddy' }), 2, 3)
-    exportNodeDetailsJson({
+    await exportNodeDetailsJson({
       nodeType: 'Domain',
       rows: [r],
       visibleDynamicKeys: ['registrar'],
@@ -269,7 +269,7 @@ describe('exportNodeDetailsJson / Markdown', () => {
   test('exportNodeDetailsMarkdown emits a markdown table with header + separator + rows', async () => {
     const r1 = makeRow(makeNode('Domain', 'a.com', { registrar: 'GoDaddy' }))
     const r2 = makeRow(makeNode('Domain', 'b|c.com', { registrar: 'Name|cheap' })) // pipe must be escaped
-    exportNodeDetailsMarkdown({
+    await exportNodeDetailsMarkdown({
       nodeType: 'Domain',
       rows: [r1, r2],
       visibleDynamicKeys: ['registrar'],
@@ -282,7 +282,7 @@ describe('exportNodeDetailsJson / Markdown', () => {
     expect(downloads[0].filename).toMatch(/^redamon-domain-\d{4}-\d{2}-\d{2}.*\.md$/)
     expect(downloads[0].mimeType).toBe('text/markdown;charset=utf-8')
     const md = downloads[0].content
-    expect(md).toContain('# Domain — Node Inspector Export')
+    expect(md).toContain('# Domain - Node Inspector Export')
     expect(md).toContain('Rows: 2')
     expect(md).toContain('| Name | registrar |')
     expect(md).toContain('| --- | --- |')
@@ -293,7 +293,7 @@ describe('exportNodeDetailsJson / Markdown', () => {
 
   test('JSON export converts undefined cells to null (valid JSON)', async () => {
     const r = makeRow(makeNode('Domain', 'd1', {}))
-    exportNodeDetailsJson({
+    await exportNodeDetailsJson({
       nodeType: 'Domain',
       rows: [r],
       visibleDynamicKeys: ['missing_prop'],
@@ -354,7 +354,7 @@ describe('exportNodeDetailsCsv', () => {
 
   test('emits a CSV file with header + one row per node', async () => {
     const r = makeRow(makeNode('Domain', 'example.com', { registrar: 'GoDaddy' }), 1, 0)
-    exportNodeDetailsCsv({
+    await exportNodeDetailsCsv({
       nodeType: 'Domain',
       rows: [r],
       visibleDynamicKeys: ['registrar'],
@@ -376,7 +376,7 @@ describe('exportNodeDetailsCsv', () => {
         note: 'a, b "c"\nnewline',
       }),
     )
-    exportNodeDetailsCsv({
+    await exportNodeDetailsCsv({
       nodeType: 'Domain',
       rows: [r],
       visibleDynamicKeys: ['note'],

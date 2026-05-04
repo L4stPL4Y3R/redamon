@@ -7,6 +7,7 @@ import type { Project } from '@prisma/client'
 import styles from '../ProjectForm.module.css'
 import { NodeInfoTooltip } from '../NodeInfoTooltip'
 import { TimeEstimate } from '../TimeEstimate'
+import { FileImportButton } from '../FileImportButton'
 
 type FormData = Omit<Project, 'id' | 'userId' | 'createdAt' | 'updatedAt' | 'user'>
 
@@ -83,13 +84,19 @@ export function NaabuSection({ data, updateField, onRun }: NaabuSectionProps) {
                 </div>
                 <div className={styles.fieldGroup}>
                   <label className={styles.fieldLabel}>Custom Ports</label>
-                  <input
-                    type="text"
-                    className="textInput"
-                    value={data.naabuCustomPorts}
-                    onChange={(e) => updateField('naabuCustomPorts', e.target.value)}
-                    placeholder="80,443,8080-8090"
-                  />
+                  <div className={styles.fileImportWrap}>
+                    <input
+                      type="text"
+                      className="textInput"
+                      value={data.naabuCustomPorts}
+                      onChange={(e) => updateField('naabuCustomPorts', e.target.value)}
+                      placeholder="80,443,8080-8090"
+                    />
+                    <FileImportButton
+                      fieldName="custom ports"
+                      onImport={(values) => updateField('naabuCustomPorts', values.join(','))}
+                    />
+                  </div>
                   <span className={styles.fieldHint}>Overrides Top Ports if set. Use ranges: 8080-8090</span>
                 </div>
               </div>
