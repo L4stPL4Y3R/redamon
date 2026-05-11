@@ -180,11 +180,11 @@ class TestDangerousTools(unittest.TestCase):
 
     def test_expected_dangerous_tools(self):
         expected = {
-            'execute_nmap', 'execute_naabu', 'execute_masscan', 'execute_nuclei',
-            'execute_curl', 'msf_restart', 'kali_shell', 'metasploit_console',
-            'execute_code', 'execute_hydra', 'execute_playwright', 'execute_wpscan',
+            'execute_nmap', 'execute_naabu', 'execute_nuclei', 'execute_curl',
+            'msf_restart', 'kali_shell', 'metasploit_console', 'execute_code',
+            'execute_hydra', 'execute_playwright', 'execute_wpscan',
             'execute_ffuf', 'execute_arjun', 'execute_amass', 'execute_httpx',
-            'execute_subfinder', 'execute_gau', 'execute_katana',
+            'execute_gau', 'execute_katana',
         }
         self.assertEqual(DANGEROUS_TOOLS, expected)
 
