@@ -16,6 +16,7 @@ from typing import Any
 from langchain_core.messages import SystemMessage, HumanMessage
 
 from orchestrator_helpers.json_utils import normalize_content, extract_json
+from orchestrator_helpers.llm_retry import is_transient_llm_error
 
 logger = logging.getLogger(__name__)
 
@@ -161,23 +162,40 @@ async def _invoke_guardrail(llm: Any, user_prompt: str) -> dict[str, Any]:
         HumanMessage(content=user_prompt),
     ]
 
+    # Loop intent: retry both (a) transient API errors AND (b) successful
+    # responses with unparseable JSON. Non-transient API errors (auth,
+    # schema) re-raise immediately — wasted retries on permanent errors
+    # both burns budget and produces a misleading "Guardrail LLM check
+    # failed after 3 attempts" error message in place of the real cause.
     for attempt in range(3):
         try:
             response = await llm.ainvoke(messages)
-            text = normalize_content(response.content)
-            json_str = extract_json(text)
-
-            if json_str:
-                result = json.loads(json_str)
-                allowed = result.get("allowed", True)
-                reason = result.get("reason", "No reason provided")
-                logger.info(f"Guardrail result: allowed={allowed}, reason={reason}")
-                return {"allowed": bool(allowed), "reason": str(reason)}
-
-            logger.warning(f"Guardrail attempt {attempt + 1}: no JSON in response")
-
         except Exception as e:
-            logger.warning(f"Guardrail attempt {attempt + 1} error: {e}")
+            if not is_transient_llm_error(e):
+                logger.warning(
+                    f"Guardrail attempt {attempt + 1} non-transient error "
+                    f"({type(e).__name__}); re-raising: {e}"
+                )
+                raise
+            logger.warning(
+                f"Guardrail attempt {attempt + 1} transient error "
+                f"({type(e).__name__}): {e}"
+            )
+            if attempt < 2:
+                await asyncio.sleep(min(2 ** attempt, 8))
+            continue
+
+        text = normalize_content(response.content)
+        json_str = extract_json(text)
+
+        if json_str:
+            result = json.loads(json_str)
+            allowed = result.get("allowed", True)
+            reason = result.get("reason", "No reason provided")
+            logger.info(f"Guardrail result: allowed={allowed}, reason={reason}")
+            return {"allowed": bool(allowed), "reason": str(reason)}
+
+        logger.warning(f"Guardrail attempt {attempt + 1}: no JSON in response")
 
     # All retries exhausted — raise so callers can decide fail-open vs fail-closed
     raise RuntimeError("Guardrail LLM check failed after 3 attempts")

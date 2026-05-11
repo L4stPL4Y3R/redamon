@@ -27,6 +27,7 @@ from orchestrator_helpers.agent_context import get_agent_context
 from orchestrator_helpers.json_utils import json_dumps_safe, normalize_content
 from orchestrator_helpers.parsing import try_parse_llm_decision
 from orchestrator_helpers.config import get_identifiers, is_session_config_complete
+from orchestrator_helpers.llm_retry import retry_llm_call
 from project_settings import get_setting, get_allowed_tools_for_phase, DANGEROUS_TOOLS
 
 from prompts import (
@@ -466,7 +467,24 @@ async def think_node(state: AgentState, config, *, llm, guidance_queues, neo4j_c
                         f"Fix the error and output EXACTLY ONE valid JSON object. No extra text."
             ))
 
-        response = await llm.ainvoke(messages)
+        try:
+            response = await retry_llm_call(
+                llm, messages,
+                label=f"{user_id}/{project_id}/{session_id} think iter={iteration}",
+            )
+        except Exception as exc:
+            logger.error(
+                f"[{user_id}/{project_id}/{session_id}] LLM call failed after retries: {exc}"
+            )
+            decision = LLMDecision(
+                thought="",
+                reasoning="LLM call failed after transient-error retries",
+                action="complete",
+                completion_reason=f"llm_error: {exc}",
+                updated_todo_list=[],
+            )
+            break
+
         response_text = normalize_content(response.content).strip()
 
         usage = getattr(response, "usage_metadata", None) or {}
