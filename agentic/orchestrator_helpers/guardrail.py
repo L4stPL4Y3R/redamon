@@ -167,6 +167,7 @@ async def _invoke_guardrail(llm: Any, user_prompt: str) -> dict[str, Any]:
     # schema) re-raise immediately — wasted retries on permanent errors
     # both burns budget and produces a misleading "Guardrail LLM check
     # failed after 3 attempts" error message in place of the real cause.
+    last_transient: BaseException | None = None
     for attempt in range(3):
         try:
             response = await llm.ainvoke(messages)
@@ -177,6 +178,7 @@ async def _invoke_guardrail(llm: Any, user_prompt: str) -> dict[str, Any]:
                     f"({type(e).__name__}); re-raising: {e}"
                 )
                 raise
+            last_transient = e
             logger.warning(
                 f"Guardrail attempt {attempt + 1} transient error "
                 f"({type(e).__name__}): {e}"
@@ -197,5 +199,14 @@ async def _invoke_guardrail(llm: Any, user_prompt: str) -> dict[str, Any]:
 
         logger.warning(f"Guardrail attempt {attempt + 1}: no JSON in response")
 
-    # All retries exhausted — raise so callers can decide fail-open vs fail-closed
-    raise RuntimeError("Guardrail LLM check failed after 3 attempts")
+    # All retries exhausted — raise so callers can decide fail-open vs fail-closed.
+    # Preserve the last transient exception (if any) in both the message and
+    # the __cause__ chain: operators must be able to tell upstream-LLM
+    # capacity (529/timeout) from a parse failure without grepping logs.
+    if last_transient is not None:
+        raise RuntimeError(
+            f"Guardrail LLM check failed after 3 attempts. Last error: {last_transient}"
+        ) from last_transient
+    raise RuntimeError(
+        "Guardrail LLM check failed after 3 attempts (no parseable JSON in any response)"
+    )

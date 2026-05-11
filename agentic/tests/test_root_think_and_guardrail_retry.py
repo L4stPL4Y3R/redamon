@@ -197,16 +197,86 @@ class GuardrailSelectiveRetryTests(unittest.IsolatedAsyncioTestCase):
     # ----- Three transient failures → RuntimeError -----
 
     async def test_three_transient_failures_raise_runtime_error(self):
-        """All 3 transient → original 'failed after 3 attempts' RuntimeError
-        path is preserved. Caller decides fail-open vs fail-closed."""
+        """All 3 transient → 'failed after 3 attempts' RuntimeError path is
+        preserved AND the last transient exception is chained via __cause__
+        and surfaced in the message so operators can tell upstream-LLM
+        capacity from scope/auth problems without grepping logs.
+
+        REGRESSION (closed PR #107 intent): pre-fix the message was bare
+        "Guardrail LLM check failed after 3 attempts" and __cause__ was
+        None, so a 529 overload looked identical to a generic guardrail
+        failure in the UI.
+        """
+        last = APIConnectionError("third blip")
         mock_llm = MagicMock()
-        mock_llm.ainvoke = AsyncMock(side_effect=APIConnectionError("repeated"))
+        mock_llm.ainvoke = AsyncMock(side_effect=[
+            APIConnectionError("first blip"),
+            APIConnectionError("second blip"),
+            last,
+        ])
         result, sleep, exc = await self._run(mock_llm)
         self.assertIsInstance(exc, RuntimeError)
         self.assertIn("3 attempts", str(exc))
+        self.assertIn("Last error", str(exc))
+        self.assertIn("third blip", str(exc),
+                      "the final transient exception must surface in the message")
+        self.assertIs(exc.__cause__, last,
+                      "__cause__ must chain to the last transient — explicit "
+                      "raise ... from last_transient")
         self.assertEqual(mock_llm.ainvoke.await_count, 3)
         self.assertEqual(sleep.await_count, 2,
                          "no sleep after the final attempt")
+
+    # ----- Three no-JSON responses → RuntimeError WITHOUT chained cause -----
+
+    async def test_three_no_json_responses_raise_runtime_error_no_cause(self):
+        """REGRESSION: parse-only exhaustion (3x successful LLM calls, none
+        with parseable JSON) must NOT fabricate a fake __cause__ — there was
+        no exception. The message must clearly distinguish this path from
+        the transient-API-error path so operators see "no parseable JSON"
+        instead of misleading "Last error: None"."""
+        mock_llm = MagicMock()
+        mock_llm.ainvoke = AsyncMock(side_effect=[
+            MagicMock(content="prose only attempt 1"),
+            MagicMock(content="prose only attempt 2"),
+            MagicMock(content="prose only attempt 3"),
+        ])
+        result, sleep, exc = await self._run(mock_llm)
+        self.assertIsInstance(exc, RuntimeError)
+        self.assertIn("3 attempts", str(exc))
+        self.assertIn("no parseable JSON", str(exc))
+        self.assertNotIn("Last error", str(exc),
+                         "no transient was raised — must not invent one")
+        self.assertIsNone(exc.__cause__,
+                          "no upstream exception — chain must stay None")
+        self.assertEqual(mock_llm.ainvoke.await_count, 3)
+        self.assertEqual(sleep.await_count, 0,
+                         "parse-retry path does not sleep")
+
+    # ----- Mixed: 2 transient + 1 no-JSON → RuntimeError chained to transient -----
+
+    async def test_two_transient_then_no_json_chains_last_transient(self):
+        """REGRESSION: if a transient happened during the run but the final
+        attempt succeeded HTTP-wise yet returned no JSON, exhaustion still
+        raises and __cause__ should chain to the prior transient — that's
+        the most actionable upstream signal we have."""
+        first = APIConnectionError("attempt 1 blip")
+        second = APIConnectionError("attempt 2 blip")
+        mock_llm = MagicMock()
+        mock_llm.ainvoke = AsyncMock(side_effect=[
+            first,
+            second,
+            MagicMock(content="attempt 3 returned prose, no json"),
+        ])
+        result, sleep, exc = await self._run(mock_llm)
+        self.assertIsInstance(exc, RuntimeError)
+        self.assertIn("Last error", str(exc))
+        self.assertIn("attempt 2 blip", str(exc),
+                      "the last transient seen must surface")
+        self.assertIs(exc.__cause__, second)
+        self.assertEqual(mock_llm.ainvoke.await_count, 3)
+        # Two transient attempts → two sleeps (after attempts 1 and 2).
+        self.assertEqual(sleep.await_count, 2)
 
     # ----- Parse-retry still works for empty/malformed JSON responses -----
 
