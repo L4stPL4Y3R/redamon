@@ -85,6 +85,7 @@ function makeData(): GraphData {
       },
     ],
     links: [],
+    projectId: 'test-project',
   }
 }
 
@@ -120,7 +121,7 @@ describe('NodeDetailsTable', () => {
 
   test('renders empty state when no nodes', () => {
     render(
-      <NodeDetailsTable data={{ nodes: [], links: [] }} isLoading={false} error={null} />,
+      <NodeDetailsTable data={{ nodes: [], links: [], projectId: 'test-project' }} isLoading={false} error={null} />,
       { wrapper: makeWrapper() }
     )
     expect(screen.getByText(/No data yet/i)).toBeDefined()
@@ -420,6 +421,7 @@ describe('NodeDetailsTable', () => {
         { id: 'i1', name: '10.0.0.1', type: 'IP', properties: { name: '10.0.0.1' } },
       ],
       links: [],
+      projectId: 'test-project',
     }
     const { container, rerender } = render(
       <NodeDetailsTable data={data} isLoading={false} error={null} />,
@@ -449,6 +451,7 @@ describe('NodeDetailsTable', () => {
         { id: 'c1', name: 'recon-step-1', type: 'ChainStep', properties: { name: 'recon-step-1', purpose: 'enumerate' } },
       ],
       links: [],
+      projectId: 'test-project',
     }
     const { container } = render(
       <NodeDetailsTable data={data} isLoading={false} error={null} />,
@@ -476,6 +479,7 @@ describe('NodeDetailsTable', () => {
         },
       ],
       links: [],
+      projectId: 'test-project',
     }
     const { container } = render(
       <NodeDetailsTable data={data} isLoading={false} error={null} />,
@@ -505,6 +509,7 @@ describe('NodeDetailsTable', () => {
         },
       ],
       links: [],
+      projectId: 'test-project',
     }
     const { container } = render(
       <NodeDetailsTable data={data} isLoading={false} error={null} />,
@@ -541,6 +546,7 @@ describe('NodeDetailsTable', () => {
         },
       ],
       links: [],
+      projectId: 'test-project',
     }
     const { container } = render(
       <NodeDetailsTable data={data} isLoading={false} error={null} />,

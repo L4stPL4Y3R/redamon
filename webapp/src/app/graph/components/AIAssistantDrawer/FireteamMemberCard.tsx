@@ -23,7 +23,6 @@ interface FireteamMemberCardProps {
   missingApiKeys?: Set<string>
   onAddApiKey?: (toolId: string) => void
   onToolConfirmation?: (itemId: string, decision: 'approve' | 'reject') => void
-  toolConfirmationDisabled?: boolean
   /** Cancel a single running tool inside this member's tool list or nested plan waves. */
   onToolStop?: (itemId: string) => void
 }
@@ -49,7 +48,7 @@ function statusIcon(status: FireteamMemberPanel['status']) {
   }
 }
 
-export function FireteamMemberCard({ member, missingApiKeys, onAddApiKey, onToolConfirmation, toolConfirmationDisabled, onToolStop }: FireteamMemberCardProps) {
+export function FireteamMemberCard({ member, missingApiKeys, onAddApiKey, onToolConfirmation, onToolStop }: FireteamMemberCardProps) {
   const [expanded, setExpanded] = useState(false)
   const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set())
   const [collapsedWaves, setCollapsedWaves] = useState<Set<string>>(new Set())
@@ -144,7 +143,6 @@ export function FireteamMemberCard({ member, missingApiKeys, onAddApiKey, onTool
                       ? () => onToolConfirmation(w.id, 'reject')
                       : undefined
                   }
-                  confirmationDisabled={toolConfirmationDisabled}
                   onToolStop={onToolStop}
                 />
               ))}
