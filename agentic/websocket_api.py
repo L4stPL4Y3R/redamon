@@ -676,8 +676,15 @@ class StreamingCallback:
         })
         # Don't persist chunks — they are partial data; the full thinking is persisted via on_thinking
 
-    async def on_tool_start(self, tool_name: str, tool_args: dict, wave_id: str = None, step_index: int = None):
-        """Called when tool execution starts"""
+    async def on_tool_start(self, tool_name: str, tool_args: dict, wave_id: str = None, step_index: int = None,
+                            step_id: Optional[str] = None):
+        """Called when tool execution starts.
+
+        `step_id` is the ExecutionStep's stable uuid4 (state.py). It is the SAME
+        value on this tool's later tool_complete, so the frontend restore layer
+        can pair start<->complete by identity instead of by content fingerprint
+        (tool_name+args), which used to drop legitimately-repeated tool calls.
+        """
         payload = {
             "tool_name": tool_name,
             "tool_args": tool_args
@@ -686,6 +693,8 @@ class StreamingCallback:
             payload["wave_id"] = wave_id
         if step_index is not None:
             payload["step_index"] = step_index
+        if step_id:
+            payload["step_id"] = step_id
         await self.connection.send_message(MessageType.TOOL_START, payload)
         self._persist("tool_start", payload)
         # Initialize accumulator for this tool's output chunks
@@ -720,8 +729,13 @@ class StreamingCallback:
         wave_id: str = None,
         step_index: int = None,
         duration_ms: Optional[int] = None,
+        step_id: Optional[str] = None,
     ):
-        """Called when tool execution completes"""
+        """Called when tool execution completes.
+
+        `step_id` matches the value emitted on this tool's tool_start, letting
+        session restore pair the two by identity (see on_tool_start).
+        """
         payload = {
             "tool_name": tool_name,
             "success": success,
@@ -735,6 +749,8 @@ class StreamingCallback:
             payload["step_index"] = step_index
         if duration_ms is not None:
             payload["duration_ms"] = duration_ms
+        if step_id:
+            payload["step_id"] = step_id
         await self.connection.send_message(MessageType.TOOL_COMPLETE, payload)
         # Include accumulated raw output and tool_args in persisted payload
         ctx_key = f"{wave_id}:{step_index}:{tool_name}" if wave_id and step_index is not None else (f"{wave_id}:{tool_name}" if wave_id else tool_name)

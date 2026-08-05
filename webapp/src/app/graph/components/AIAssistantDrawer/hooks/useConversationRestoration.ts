@@ -120,64 +120,60 @@ export function useConversationRestoration(deps: ConversationRestorationDeps) {
     let hasWorkAfterQuestion = false
     let hasWorkAfterToolConfirmation = false
 
-    // --- Proper tool_start ↔ tool_complete pairing ---
-    const duplicateStartIds = new Set<string>()
-    const duplicateCompleteIds = new Set<string>()
-    {
-      const recentStarts = new Map<string, number>()
-      const recentCompletes = new Map<string, number>()
-      for (const msg of full.messages) {
-        const d = msg.data as any
-        const t = new Date(msg.createdAt).getTime()
-        if (msg.type === 'tool_start' && !d?.wave_id) {
-          const fp = `${d?.tool_name || ''}::${JSON.stringify(d?.tool_args || {})}`
-          const prev = recentStarts.get(fp)
-          if (prev && t - prev < 60000) {
-            duplicateStartIds.add(msg.id)
-          } else {
-            recentStarts.set(fp, t)
-          }
-        }
-        if (msg.type === 'tool_complete' && !d?.wave_id) {
-          const fp = `${d?.tool_name || ''}::${(d?.raw_output || '').slice(0, 500)}`
-          const prev = recentCompletes.get(fp)
-          if (prev && t - prev < 60000) {
-            duplicateCompleteIds.add(msg.id)
-          } else {
-            recentCompletes.set(fp, t)
-          }
-        }
-      }
-    }
-
-    const standaloneStartsByName = new Map<string, { id: string; createdAt: string }[]>()
-    const standaloneCompletesByName = new Map<string, { id: string; createdAt: string }[]>()
+    // --- tool_start <-> tool_complete pairing (by IDENTITY, not content) ---
+    //
+    // Each standalone tool_complete is paired with its tool_start so the timeline
+    // renders exactly ONE card per tool (the complete card, carrying final
+    // status/output; the paired start is dropped and only contributes its
+    // start-time for duration). An unpaired start stays a "running" card.
+    //
+    // Pairing key precedence:
+    //   1. `step_id` - the backend's stable per-step uuid, identical on a tool's
+    //      start and complete. This is exact and never collapses two legitimately
+    //      repeated identical calls (the old 60s tool_name+args/raw_output
+    //      fingerprint DID collapse them, silently dropping the second tool - the
+    //      "missing tool / two sequential thinkings after reload" bug).
+    //   2. per-name FIFO order - fallback for legacy rows persisted before
+    //      step_id was threaded through.
+    // No content-fingerprint de-duplication is applied: the backend already
+    // dedups events at emission (orchestrator_helpers/streaming.py), so every
+    // persisted row is a distinct event and must be rendered.
+    const startsByStepId = new Map<string, { id: string; createdAt: string }>()
+    const startsByNameFIFO = new Map<string, { id: string; createdAt: string }[]>()
     for (const msg of full.messages) {
       const d = msg.data as any
-      if (msg.type === 'tool_start' && !d?.wave_id && !duplicateStartIds.has(msg.id)) {
+      if (msg.type === 'tool_start' && !d?.wave_id) {
+        const rec = { id: msg.id, createdAt: msg.createdAt }
+        if (d?.step_id) startsByStepId.set(d.step_id, rec)
         const name = d?.tool_name || ''
-        if (!standaloneStartsByName.has(name)) standaloneStartsByName.set(name, [])
-        standaloneStartsByName.get(name)!.push({ id: msg.id, createdAt: msg.createdAt })
-      }
-      if (msg.type === 'tool_complete' && !d?.wave_id && !duplicateCompleteIds.has(msg.id)) {
-        const name = d?.tool_name || ''
-        if (!standaloneCompletesByName.has(name)) standaloneCompletesByName.set(name, [])
-        standaloneCompletesByName.get(name)!.push({ id: msg.id, createdAt: msg.createdAt })
+        if (!startsByNameFIFO.has(name)) startsByNameFIFO.set(name, [])
+        startsByNameFIFO.get(name)!.push(rec)
       }
     }
 
     const consumedStartIds = new Set<string>()
     const completeToStartTime = new Map<string, Date>()
-    for (const [name, completes] of standaloneCompletesByName) {
-      const starts = standaloneStartsByName.get(name) || []
-      for (let i = 0; i < completes.length && i < starts.length; i++) {
-        consumedStartIds.add(starts[i].id)
-        completeToStartTime.set(completes[i].id, new Date(starts[i].createdAt))
+    const pairStart = (completeMsgId: string, start: { id: string; createdAt: string }) => {
+      consumedStartIds.add(start.id)
+      completeToStartTime.set(completeMsgId, new Date(start.createdAt))
+    }
+    // Pass 1: exact pairing by step_id.
+    for (const msg of full.messages) {
+      const d = msg.data as any
+      if (msg.type === 'tool_complete' && !d?.wave_id && d?.step_id) {
+        const start = startsByStepId.get(d.step_id)
+        if (start && !consumedStartIds.has(start.id)) pairStart(msg.id, start)
       }
     }
-
-    const seenThinkingKeys = new Set<string>()
-    const seenRunningToolKeys = new Set<string>()
+    // Pass 2: per-name FIFO for completes still unpaired (legacy or step_id miss).
+    for (const msg of full.messages) {
+      const d = msg.data as any
+      if (msg.type === 'tool_complete' && !d?.wave_id && !completeToStartTime.has(msg.id)) {
+        const name = d?.tool_name || ''
+        const start = (startsByNameFIFO.get(name) || []).find(s => !consumedStartIds.has(s.id))
+        if (start) pairStart(msg.id, start)
+      }
+    }
 
     const restored: ChatItem[] = full.messages.map((msg: { id: string; type: string; data: unknown; createdAt: string }) => {
       const data = msg.data as any
@@ -186,12 +182,6 @@ export function useConversationRestoration(deps: ConversationRestorationDeps) {
         if (lastApprovalRequest) hasWorkAfterApproval = true
         if (lastQuestionRequest) hasWorkAfterQuestion = true
         if (lastToolConfirmationRequest) hasWorkAfterToolConfirmation = true
-      }
-
-      if (msg.type === 'thinking') {
-        const key = (data.thought || '').slice(0, 200)
-        if (seenThinkingKeys.has(key)) return null
-        seenThinkingKeys.add(key)
       }
 
       if (msg.type === 'user_message' || msg.type === 'assistant_message') {
@@ -234,11 +224,9 @@ export function useConversationRestoration(deps: ConversationRestorationDeps) {
         } as ThinkingItem
       } else if (msg.type === 'tool_start') {
         if (data.wave_id) return null
-        if (duplicateStartIds.has(msg.id)) return null
+        // A start paired to a complete is represented by the complete card.
         if (consumedStartIds.has(msg.id)) return null
-        const runKey = `${data.tool_name || ''}::${JSON.stringify(data.tool_args || {})}`
-        if (seenRunningToolKeys.has(runKey)) return null
-        seenRunningToolKeys.add(runKey)
+        // Otherwise this tool is still running - render it as its own card.
         return {
           type: 'tool_execution',
           id: msg.id,
@@ -250,7 +238,6 @@ export function useConversationRestoration(deps: ConversationRestorationDeps) {
         } as ToolExecutionItem
       } else if (msg.type === 'tool_complete') {
         if (data.wave_id) return null
-        if (duplicateCompleteIds.has(msg.id)) return null
         const rawOutput = data.raw_output || ''
         const startTime = completeToStartTime.get(msg.id)
         const completeTime = new Date(msg.createdAt)

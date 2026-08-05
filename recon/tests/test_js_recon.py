@@ -548,17 +548,80 @@ class TestRedaction(unittest.TestCase):
 # LINE THRESHOLD
 # ============================================================
 
-class TestLineThreshold(unittest.TestCase):
+class TestLongLineWindowing(unittest.TestCase):
+    """Minified single-line bundles must be scanned in overlapping windows,
+    not skipped. Regression coverage for the 100k-line-skip bug that silently
+    dropped every secret in a minified webpack bundle."""
 
-    def test_100k_line_skipped(self):
-        long_line = 'AKIA1234567890ABCDEF' + 'x' * 100_001
-        findings = _scan(long_line)
-        self.assertEqual(len(findings), 0)
+    # --- _window_line helper unit tests ---
+
+    def test_window_short_line_single_segment(self):
+        self.assertEqual(patterns._window_line('abc', size=100, overlap=10), ['abc'])
+
+    def test_window_covers_entire_line(self):
+        line = ''.join(chr(65 + (i % 26)) for i in range(250_000))
+        segs = patterns._window_line(line, size=100_000, overlap=5_000)
+        self.assertGreater(len(segs), 1)
+        # Every index of the original line is covered by at least one window.
+        step = 100_000 - 5_000
+        covered = [False] * len(line)
+        for w, seg in enumerate(segs):
+            start = w * step
+            for i in range(start, min(start + 100_000, len(line))):
+                covered[i] = True
+        self.assertTrue(all(covered))
+
+    def test_window_short_enough_line_not_split(self):
+        line = 'x' * 100_000  # exactly the threshold, not over it
+        self.assertEqual(len(patterns._window_line(line)), 1)
+
+    # --- scan_js_content behavior tests ---
 
     def test_short_line_processed(self):
-        short = 'AKIA1234567890ABCDEF'
-        findings = _scan(short)
+        findings = _scan('AKIA1234567890ABCDEF')
         self.assertGreaterEqual(len(findings), 1)
+
+    def test_secret_at_start_of_huge_minified_line_found(self):
+        # Previously the whole line was skipped; now it must be scanned. The key
+        # is quote-delimited as in real minified code, so the base64-blob and
+        # entropy false-positive filters do not fire.
+        long_line = 'var k="AKIA1234567890ABCDEF";' + 'x' * 200_000
+        findings = _scan(long_line)
+        self.assertTrue(any(f['name'] == 'AWS Access Key ID' for f in findings))
+
+    def test_slack_webhook_deep_in_500k_bundle_found(self):
+        # The Workday bundle case: webhook buried deep inside a minified one-liner.
+        url = 'https://hooks.slack.com/services/T12345678/B12345678/abcdefghijklmnop'
+        bundle = 'v=' + 'a' * 500_000 + ';SLACK_WEBHOOK_INTERNAL="' + url + '";'
+        findings = _scan(bundle, 'https://community.workday.com/bundle.js')
+        self.assertTrue(any(f['name'] == 'Slack Webhook' for f in findings))
+
+    def test_secret_straddling_window_boundary_found(self):
+        # Token crosses the 100k window edge; the 5k overlap must keep it intact.
+        url = 'https://hooks.slack.com/services/T12345678/B12345678/abcdefghijklmnop'
+        token = 'SLACK_X="' + url + '";'
+        bundle = 'a' * (100_000 - 20) + token + 'b' * 50_000
+        findings = _scan(bundle)
+        self.assertTrue(any(f['name'] == 'Slack Webhook' for f in findings))
+
+    def test_no_duplicate_findings_across_overlap(self):
+        # A secret sitting fully inside the overlap region [95k, 100k] is present
+        # in two consecutive windows but must be reported exactly once.
+        url = 'https://hooks.slack.com/services/T12345678/B12345678/abcdefghijklmnop'
+        bundle = 'a' * 96_000 + 'X="' + url + '";' + 'b' * 20_000
+        findings = _scan(bundle)
+        slack = [f for f in findings if f['name'] == 'Slack Webhook']
+        self.assertEqual(len(slack), 1)
+
+    def test_pathological_repetitive_line_scans_fast(self):
+        # Repetitive runs are the classic O(n^2)/ReDoS trigger. A 1M-char run
+        # must scan in well under the old skip threshold; guards against the
+        # Email/GitHub-Credentials-URL regexes regressing to greedy backtracking.
+        import time
+        line = 'v=' + 'a' * 1_000_000 + ';'
+        t = time.time()
+        _scan(line)
+        self.assertLess(time.time() - t, 20.0)
 
 
 # ============================================================
@@ -1120,6 +1183,25 @@ class TestIntegration(unittest.TestCase):
 
         comments = patterns.scan_dev_comments(js, 'app.js')
         self.assertGreaterEqual(len(comments), 1)
+
+    def test_minified_bundle_line_among_normal_lines(self):
+        # Integration: a real-world shape -- a few readable lines plus one giant
+        # minified vendor line carrying two Slack webhooks. Both must surface,
+        # and line numbers must still point at the original file line.
+        webhook1 = 'https://hooks.slack.com/services/T12345678/B12345678/abcdefghijklmnop'
+        webhook2 = 'https://hooks.slack.com/services/T87654321/B87654321/ponmlkjihgfedcba'
+        minified = (
+            'var e={' + 'k:"' + 'z' * 300_000 + '",'
+            + 'SLACK_WEBHOOK_INTERNAL_REST_DIRECTORY:"' + webhook1 + '",'
+            + 'p:"' + 'q' * 300_000 + '",'
+            + 'SLACK_WEBHOOK_WST_SLACK_PING_TEST:"' + webhook2 + '"};'
+        )
+        js = '// app entry\nconst boot = true;\n' + minified + '\nexport default boot;'
+        findings, _filtered = patterns.scan_js_content(js, 'https://community.workday.com/bundle.js')
+        slack = [f for f in findings if f['name'] == 'Slack Webhook']
+        self.assertEqual(len(slack), 2)
+        # The minified line is line 3 of the file.
+        self.assertTrue(all(f['line_number'] == 3 for f in slack))
 
     def test_all_modules_return_correct_types(self):
         self.assertIsInstance(patterns.scan_js_content('x', 't.js'), tuple)

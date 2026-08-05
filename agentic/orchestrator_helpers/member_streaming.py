@@ -116,7 +116,10 @@ class MemberScopedCallback:
     # ----- Tool lifecycle -----
 
     async def on_tool_start(self, tool_name: str, tool_args: dict,
-                            wave_id: Optional[str] = None, step_index: Optional[int] = None):
+                            wave_id: Optional[str] = None, step_index: Optional[int] = None,
+                            **kwargs):
+        # **kwargs absorbs root-only params (e.g. step_id) that emit_streaming_events
+        # now threads through; fireteam tool cards pair per member panel, not by step_id.
         await self._real.on_fireteam_tool_start(
             fireteam_id=self._fireteam_id,
             member_id=self._member_id,

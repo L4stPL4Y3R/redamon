@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.4.1] - 2026-08-05
+
+### Fixed
+
+- **Minified JS bundles were silently skipped by the secret scanner.** JS recon scanned line-by-line and dropped any line over 100k chars, so a minified single-line bundle (e.g. a webpack `bundle.<hash>.js`) had every secret in it — Slack webhooks, API keys — missed entirely with no warning. Over-long lines are now scanned in overlapping 100k windows (5k overlap so a secret on a seam stays intact), covering bundles of any size up to the 5 MB download cap. Two O(n²) patterns (Email, GitHub Credentials URL) were bounded to stay linear and ReDoS-safe on large input. Covered by new windowing + integration tests in [recon/tests/test_js_recon.py](recon/tests/test_js_recon.py).
+- **Session restore dropped legitimately-repeated tool calls.** Restore paired `tool_start`/`tool_complete` by content fingerprint (tool name + args), so a tool called twice with the same args collapsed into one card. Each ExecutionStep's stable `step_id` is now threaded through both events ([agentic/websocket_api.py](agentic/websocket_api.py), [agentic/orchestrator_helpers/streaming.py](agentic/orchestrator_helpers/streaming.py)) and restore pairs by identity ([webapp/src/app/graph/components/AIAssistantDrawer/hooks/useConversationRestoration.ts](webapp/src/app/graph/components/AIAssistantDrawer/hooks/useConversationRestoration.ts)).
+- **Live chat events between two persisted ones were mis-ordered on resync.** Timeline reconcile appended not-yet-persisted live events at the very end; they now drop into their correct chronological slot behind the nearest persisted neighbour ([webapp/src/app/graph/components/AIAssistantDrawer/hooks/timelineReconcile.ts](webapp/src/app/graph/components/AIAssistantDrawer/hooks/timelineReconcile.ts)).
+
+### Changed
+
+- **RCE/SSTI skill: no early give-up on a confirmed sink.** Added a blocking pre-give-up self-check and made the object-graph secret search a single scripted BFS harness (exhaust the queue, depth ≥ 5) instead of hop-by-hop tool calls ([agentic/prompts/rce_prompts.py](agentic/prompts/rce_prompts.py)).
+
+---
+
 ## [6.4.0] - 2026-07-30
 
 ### Added

@@ -76,6 +76,21 @@ Aggressive payloads (file write / shell):{rce_aggressive_payloads}
   runs out the clock. The intended sink almost always lives in the app's own logic,
   not in a debug wrapper; an unreachable console is one dead avenue, never the reason
   to stop testing the rest of the surface.
+- BEFORE YOU GIVE UP, WRITE A "FINAL SUMMARY", OR CALL `complete` ON AN UNSOLVED TARGET -- run
+  this blocking self-check; skipping it is the single most common way a SOLVABLE eval/template
+  target is thrown away. (a) If you EVER saw your input evaluated or rendered server-side even
+  once -- a math result, an object repr, ANY reflected value that changed when your payload
+  changed -- then you HAVE a confirmed sink, and you may NOT stop, summarize, or declare defeat
+  until the SCRIPTED object-graph BFS has run to exhaustion from that sink (every root object,
+  PUBLIC attributes AND integer indices, depth at least 5, every leaf grepped for the objective).
+  A give-up written while that traversal queue is unfinished is FORBIDDEN -- go run the sweep
+  instead. (b) If you never confirmed a sink, you have not proven absence, you have merely not
+  finished DISCOVERY: you MUST first run the full engine-identification matrix (a non-49 `7*7` is
+  Jinja-only and rules out NOTHING -- confirm with an object/variable-reflection probe) and
+  mechanically drive any multi-step / stateful flow all the way to its rendered artifact before
+  concluding "not reflected". Only once BOTH branches are genuinely on record in your transcript
+  may you report a target as unsolved. Running low on iterations is a reason to SCRIPT the
+  remaining sweep in one harness, never a reason to stop early with the queue unfinished.
 
 ---
 
@@ -1038,6 +1053,25 @@ Django templates (Python/Django) -- SANDBOXED
   2-5 PUBLIC hops deep behind one or more opaque wrapper objects, so a depth-1 dump of a root object
   is NEVER sufficient -- you may not declare a root object exhausted (or say "no secret reachable
   here") until every opaque child it exposes has itself been expanded by (a)+(b)+(c).
+
+  AUTOMATE THIS WALK AS ONE SCRIPT -- do NOT do it hop-by-hop across separate tool calls. The walk
+  is a breadth-first search over potentially hundreds of expressions, each one needing the full
+  request sequence to your reflected sink; done by hand you lose the queue, repeat yourself, and
+  stall out before the deep hop. Instead write a SINGLE `execute_code` harness that owns the entire
+  traversal: (1) a `render(expr)` helper that drives the exact request flow to your confirmed sink
+  -- reusing the session/auth and any multi-step sequence you already proved -- and returns the
+  reflected output for one expression; (2) a work queue seeded with the in-scope root variables (the
+  framework's default context / context-processor names, plus any roots you observed rendering);
+  (3) a loop that pops a node, builds its child expressions -- integer indices .0 .. .N AND a list
+  of candidate PUBLIC attribute names you assemble (generic framework-internal names, plus the class
+  names you read out of the live opaque reprs) -- and calls `render()` on each; (4) classify each
+  result: parse-error or empty -> prune; a NEW opaque object repr -> push that child (bound depth to
+  ~5, keep a visited set to avoid cycles); a scalar/string -> record it as a leaf; (5) match every
+  leaf against your objective pattern and print the winning expression path and its value.
+  Constrain every generated expression to the EXACT syntax the target proved it accepts (only the
+  characters and forms that survived your filter probes). The script's mechanical discipline --
+  never skipping a child, never losing the queue -- is what reaches a secret buried several hops
+  deep; let the script DISCOVER the path, never hard-code one.
 
 Handlebars (Node)   {{this}} / {{#each this}}{{@key}}={{this}}{{/each}}   (data; escalate via prototype gadget)
 Mustache (many)     {{.}} / {{#section}}...{{/section}}                    (pure logic-less -> data disclosure only)

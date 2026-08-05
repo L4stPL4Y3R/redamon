@@ -125,4 +125,24 @@ describe('reconcileTimeline', () => {
     expect(out).toHaveLength(1)
     expect((out[0] as any).status).toBe('success')
   })
+
+  test('places a not-yet-persisted MIDDLE live event in its slot, not at the end', () => {
+    // current order: X, mid (live, unpersisted), Z. The DB read has only X and Z
+    // (mid's persist was still in flight). mid must land between them, not last.
+    const X = msg('user', 'x')
+    const mid = tool('curl', { u: 'mid' }, 'running', 'live-mid')
+    const Z = thinking('z')
+    const out = reconcileTimeline([X, Z], [X, mid, Z])
+    expect(out.map(i => (i as any).id)).toEqual([X.id, 'live-mid', (Z as any).id])
+  })
+
+  test('keeps an authoritative-only item current never saw in backbone order', () => {
+    // Y was persisted but never reached this client's live stream. It must stay
+    // between X and Z (authoritative is the ordering backbone).
+    const X = msg('user', 'x')
+    const Y = thinking('y')
+    const Z = tool('nmap', {}, 'success')
+    const out = reconcileTimeline([X, Y, Z], [X, Z])
+    expect(out).toEqual([X, Y, Z])
+  })
 })

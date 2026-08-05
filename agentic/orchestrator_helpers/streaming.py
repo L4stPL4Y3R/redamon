@@ -196,6 +196,9 @@ async def emit_streaming_events(state: dict, callback) -> None:
                     # taken. Without this the member-streaming proxy defaults
                     # duration_ms to 0 and completed cards render "0s".
                     duration_ms=cstep.get("duration_ms"),
+                    # Stable step identity: lets session restore pair this
+                    # complete with its tool_start by id, not by content.
+                    step_id=cstep.get("step_id"),
                 )
                 callback._emitted_tool_complete_ids.add(cstep_id)
 
@@ -273,7 +276,10 @@ async def emit_streaming_events(state: dict, callback) -> None:
             if step.get("tool_name") and start_id not in callback._emitted_tool_start_ids:
                 await callback.on_tool_start(
                     step["tool_name"],
-                    step.get("tool_args", {})
+                    step.get("tool_args", {}),
+                    # Stable step identity, mirrored on tool_complete, so the
+                    # restore layer pairs start<->complete by id not content.
+                    step_id=step.get("step_id"),
                 )
                 callback._emitted_tool_start_ids.add(start_id)
 

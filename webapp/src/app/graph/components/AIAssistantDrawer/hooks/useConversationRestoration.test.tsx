@@ -1,0 +1,134 @@
+/**
+ * Regression tests for session restore de-duplication.
+ *
+ * Run: npx vitest run --no-file-parallelism \
+ *   src/app/graph/components/AIAssistantDrawer/hooks/useConversationRestoration.test.tsx
+ *
+ * The bug being defended: on reload, the restore path collapsed legitimately
+ * repeated tool calls / thoughts because it de-duped by CONTENT fingerprint
+ * (tool_name+args, raw_output[:500], thought[:200]) within a 60s window - even
+ * though the live stream (and the DB) correctly kept both. Result: a tool card
+ * silently vanished on reload, leaving two adjacent thinking cards.
+ *
+ * The fix pairs tool_start<->tool_complete by identity (step_id, else per-name
+ * FIFO) and renders every persisted row. These tests craft the exact shapes the
+ * old code dropped and assert they now survive.
+ */
+
+import { describe, test, expect, vi, beforeEach } from 'vitest'
+import { renderHook, act } from '@testing-library/react'
+import { useConversationRestoration } from './useConversationRestoration'
+import type { ChatItem } from '../types'
+
+// Capture whatever the hook hands to setChatItems (non-resync path passes the
+// fully-built array directly).
+function makeDeps(captured: { items: ChatItem[] }, full: any) {
+  return {
+    loadConversation: vi.fn(async () => full),
+    deleteConversation: vi.fn(async () => {}),
+    fetchConversations: vi.fn(async () => []),
+    onSwitchSession: vi.fn(),
+    onRefetchGraph: vi.fn(),
+    projectId: 'p1',
+    userId: 'u1',
+    setChatItems: vi.fn((v: any) => { captured.items = typeof v === 'function' ? v([]) : v }),
+    setCurrentPhase: vi.fn(),
+    setAttackPathType: vi.fn(),
+    setIterationCount: vi.fn(),
+    setIsLoading: vi.fn(),
+    setIsStopped: vi.fn(),
+    setTodoList: vi.fn(),
+    isRestoringConversation: { current: false },
+    shouldAutoScroll: { current: false },
+    setAwaitingApproval: vi.fn(),
+    setApprovalRequest: vi.fn(),
+    setAwaitingQuestion: vi.fn(),
+    setQuestionRequest: vi.fn(),
+    setAwaitingToolConfirmation: vi.fn(),
+    setToolConfirmationRequest: vi.fn(),
+    awaitingApprovalRef: { current: false },
+    awaitingQuestionRef: { current: false },
+    awaitingToolConfirmationRef: { current: false },
+    pendingApprovalToolId: { current: null },
+    pendingApprovalWaveId: { current: null },
+    setActiveSkill: vi.fn(),
+    updateConvMeta: vi.fn(async () => {}),
+    handleNewChat: vi.fn(),
+  } as any
+}
+
+const conv = { id: 'c1', sessionId: 's1', currentPhase: 'exploitation', iterationCount: 1, agentRunning: false } as any
+
+let t = 0
+const at = () => new Date(1700000000000 + (t += 1000)).toISOString()   // +1s each call, well under 60s
+
+const start = (tool_name: string, tool_args: any, extra: any = {}) =>
+  ({ id: `ts-${t}`, type: 'tool_start', data: { tool_name, tool_args, ...extra }, createdAt: at() })
+const complete = (tool_name: string, raw_output: string, extra: any = {}) =>
+  ({ id: `tc-${t}`, type: 'tool_complete', data: { tool_name, success: true, output_summary: 'ok', raw_output, ...extra }, createdAt: at() })
+const think = (thought: string) =>
+  ({ id: `th-${t}`, type: 'thinking', data: { thought, reasoning: '' }, createdAt: at() })
+
+async function restore(messages: any[], captured: { items: ChatItem[] }) {
+  const full = { ...conv, messages }
+  const { result } = renderHook(() => useConversationRestoration(makeDeps(captured, full)))
+  await act(async () => { await result.current.handleSelectConversation(conv) })
+}
+
+const tools = (items: ChatItem[]) => items.filter(i => (i as any).type === 'tool_execution')
+const thinks = (items: ChatItem[]) => items.filter(i => (i as any).type === 'thinking')
+
+beforeEach(() => { t = 0; vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false }))) })
+
+describe('useConversationRestoration - repeated tool/thought survival', () => {
+  test('two IDENTICAL legacy tool calls (no step_id) both survive (was: 2nd dropped)', async () => {
+    const cap = { items: [] as ChatItem[] }
+    await restore([
+      start('execute_curl', { u: '/' }),
+      complete('execute_curl', 'AAA'),
+      start('execute_curl', { u: '/' }),   // identical args, <60s later
+      complete('execute_curl', 'AAA'),     // identical output
+    ], cap)
+    // Old content-fingerprint dedup collapsed this to ONE card. Must be TWO now.
+    expect(tools(cap.items)).toHaveLength(2)
+    expect(tools(cap.items).every(t => (t as any).status === 'success')).toBe(true)
+  })
+
+  test('repeated identical tools pair exactly by step_id', async () => {
+    const cap = { items: [] as ChatItem[] }
+    await restore([
+      start('execute_curl', { u: '/a' }, { step_id: 'S1' }),
+      start('execute_curl', { u: '/a' }, { step_id: 'S2' }),
+      complete('execute_curl', 'out1', { step_id: 'S1' }),
+      complete('execute_curl', 'out2', { step_id: 'S2' }),
+    ], cap)
+    expect(tools(cap.items)).toHaveLength(2)
+  })
+
+  test('two distinct thoughts sharing a 200-char prefix both survive (was: 2nd dropped)', async () => {
+    const prefix = 'X'.repeat(220)
+    const cap = { items: [] as ChatItem[] }
+    await restore([think(prefix + ' ALPHA'), think(prefix + ' BETA')], cap)
+    expect(thinks(cap.items)).toHaveLength(2)
+  })
+
+  test('a still-running tool (start, no complete) renders as one running card', async () => {
+    const cap = { items: [] as ChatItem[] }
+    await restore([
+      start('execute_code', { code: 'x' }),
+      complete('execute_code', 'done'),
+      start('execute_code', { code: 'y' }),   // running, no complete yet
+    ], cap)
+    const ts = tools(cap.items)
+    expect(ts).toHaveLength(2)
+    expect(ts.filter(x => (x as any).status === 'running')).toHaveLength(1)
+    expect(ts.filter(x => (x as any).status === 'success')).toHaveLength(1)
+  })
+
+  test('normal single tool restores as exactly one success card (no regression)', async () => {
+    const cap = { items: [] as ChatItem[] }
+    await restore([start('execute_httpx', { u: 'x' }), complete('execute_httpx', 'r')], cap)
+    expect(tools(cap.items)).toHaveLength(1)
+    expect((tools(cap.items)[0] as any).status).toBe('success')
+  })
+})

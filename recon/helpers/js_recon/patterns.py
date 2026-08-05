@@ -85,7 +85,7 @@ _RAW_PATTERNS = [
     ("GitHub OAuth Token", r"gho_[0-9a-zA-Z]{36}", "high", "high", "auth", "validate_github"),
     ("GitHub App Token", r"(?:ghu|ghs)_[0-9a-zA-Z]{36}", "high", "high", "auth", "validate_github"),
     ("GitHub Refresh Token", r"ghr_[0-9a-zA-Z]{36}", "high", "high", "auth", None),
-    ("GitHub Credentials URL", r"[a-zA-Z0-9_-]*:[a-zA-Z0-9_\-]+@github\.com", "high", "high", "auth", None),
+    ("GitHub Credentials URL", r"[a-zA-Z0-9_-]{0,64}:[a-zA-Z0-9_\-]{1,128}@github\.com", "high", "high", "auth", None),
     ("GitLab PAT", r"glpat-[0-9a-zA-Z\-_]{20}", "high", "high", "auth", "validate_gitlab"),
     ("GitLab Runner Token", r"GR1348941[0-9a-zA-Z\-_]{20}", "high", "high", "auth", None),
     ("GitLab Pipeline Token", r"glptt-[0-9a-zA-Z\-_]{20}", "high", "high", "auth", None),
@@ -293,7 +293,7 @@ _RAW_PATTERNS = [
     ("Localhost with Port", r"(?:localhost|127\.0\.0\.1):\d{2,5}", "low", "medium", "infrastructure", None),
 
     # ========== LOW / INFO ==========
-    ("Email Address", r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", "info", "low", "info", None),
+    ("Email Address", r"[a-zA-Z0-9._%+-]{1,64}@[a-zA-Z0-9.-]{1,255}\.[a-zA-Z]{2,24}", "info", "low", "info", None),
     ("Private IP (RFC1918)", r"(?:^|[^0-9])(10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|172\.(?:1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3}|192\.168\.[0-9]{1,3}\.[0-9]{1,3})(?:[^0-9]|$)", "low", "medium", "info", None),
     ("UUID v4", r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}", "info", "low", "info", None),
     ("Debug Flag", r"(?i)(debug|NODE_ENV)\s*[:=]\s*['\"]?(true|development|1)['\"]?", "low", "medium", "info", None),
@@ -476,6 +476,41 @@ def _collapse_span_duplicates(findings: list) -> list:
     return collapsed
 
 
+# ---------------------------------------------------------------------------
+# Long-line windowing
+# ---------------------------------------------------------------------------
+# Minified bundles put the whole file on a single line. Rather than skip such
+# lines (which silently drops every secret in the bundle), scan them in
+# overlapping windows: each regex call stays small -- so a hostile target
+# cannot trigger catastrophic backtracking (ReDoS) -- and nothing is left
+# unscanned regardless of file size. The overlap must exceed the longest
+# possible match so a secret straddling a window boundary is still fully
+# contained in the next window. The largest bounded pattern is the Next.js Env
+# Leak (`.{0,5000}`), hence a 5k overlap.
+_MAX_SCAN_LINE_LEN = 100_000
+_WINDOW_OVERLAP = 5_000
+
+
+def _window_line(line: str, size: int = _MAX_SCAN_LINE_LEN,
+                 overlap: int = _WINDOW_OVERLAP) -> list:
+    """Split an over-long line into overlapping windows of `size` chars.
+
+    Consecutive windows advance by (size - overlap) so any match up to `overlap`
+    chars long is fully contained in at least one window. Duplicate hits in the
+    overlap region are collapsed downstream by the finding-id dedup.
+    """
+    step = size - overlap
+    segments = []
+    start = 0
+    n = len(line)
+    while start < n:
+        segments.append(line[start:start + size])
+        if start + size >= n:
+            break
+        start += step
+    return segments
+
+
 def scan_js_content(
     content: str,
     source_url: str,
@@ -531,16 +566,24 @@ def scan_js_content(
 
     lines = content.split('\n')
 
+    # Precompute scan units once (shared across every pattern). Over-long
+    # minified lines are broken into overlapping windows so each regex call
+    # stays small (ReDoS-safe) and no content is skipped; normal lines pass
+    # through untouched. Line numbers still refer to the original file line.
+    scan_units = []  # list of (line_num, segment_text)
+    for line_num, line in enumerate(lines, 1):
+        if len(line) > _MAX_SCAN_LINE_LEN:
+            for segment in _window_line(line):
+                scan_units.append((line_num, segment))
+        else:
+            scan_units.append((line_num, line))
+
     for pattern in patterns:
         conf_val = CONFIDENCE_ORDER.get(pattern['confidence'], 1)
         if conf_val < min_conf_val:
             continue
 
-        for line_num, line in enumerate(lines, 1):
-            # Skip extremely long lines to prevent regex performance issues
-            # 226 patterns x finditer() scales super-linearly; 100K is ~40s
-            if len(line) > 100_000:
-                continue
+        for line_num, line in scan_units:
             for match in pattern['regex'].finditer(line):
                 matched_text = match.group(0)
 
