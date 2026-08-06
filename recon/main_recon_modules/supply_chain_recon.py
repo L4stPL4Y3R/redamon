@@ -7,23 +7,52 @@ NO new fetch and NO SSRF surface, S4), verdicts it OFFLINE with osv-scanner, and
 stores a validated artifact under combined_result['supply_chain_recon'] for the
 graph write (Package/MalPackageFinding MERGE, anchored to the target BaseURLs).
 
-Only osv-scanner (static, offline) runs here. retire.js over target-served JS
-and GuardDog deep analysis (the hostile-byte steps) dispatch to the DIRTY
-analyzer and are v2; this module never fetches or executes anything.
+osv-scanner (static, offline) always runs here. GuardDog deep analysis runs too
+when SUPPLY_CHAIN_RECON_DEEP_ANALYSIS_ENABLED is on: it is dispatched INTO the
+hardened DIRTY analyzer image over the broker socket this container already
+holds, and only ever over packages the OSV pass already flagged. retire.js over
+target-served JS is still v2.
+
+This module itself never downloads or unpacks a tarball - it holds the Neo4j
+creds, the analyzer does not.
 """
 
 import copy
 import os
 import tempfile
+import time
 
 # supply_chain_common is mounted into the recon container like graph_db.
 from supply_chain_common import osv_runner as _osv_runner
+from supply_chain_common import guarddog_runner as _guarddog_runner
 from supply_chain_common.artifact import (
-    empty_artifact, add_osv_findings, to_cyclonedx,
+    empty_artifact, add_osv_findings, add_guarddog_findings, to_cyclonedx,
 )
 from supply_chain_common.security import validate_artifact, ArtifactError
 
 _OSV_DB = os.environ.get("OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY", "/osv-db")
+
+# Deep analysis (GuardDog) knobs. This step DOWNLOADS attacker-authored tarballs
+# from the public registry, so it is opt-in, capped, and restricted to packages
+# a passive OSV verdict already flagged - never a sweep of the whole set.
+_DEEP_MAX_PACKAGES = int(os.environ.get("SUPPLY_CHAIN_DEEP_MAX_PACKAGES", "10"))
+_DEEP_TIMEOUT = int(os.environ.get("SUPPLY_CHAIN_DEEP_TIMEOUT", "180"))
+# Whole-pass ceiling. Without it the worst case is MAX_PACKAGES * TIMEOUT
+# (10 x 180s = 30 min) of a recon scan blocked on a registry that is slow or
+# hanging, with no way for the pipeline to make progress.
+_DEEP_TOTAL_BUDGET = int(os.environ.get("SUPPLY_CHAIN_DEEP_TOTAL_BUDGET", "900"))
+_ANALYZER_IMAGE = os.environ.get("SUPPLY_CHAIN_ANALYZER_IMAGE",
+                                 _guarddog_runner.ANALYZER_IMAGE)
+
+# OSV ecosystem brand -> GuardDog ecosystem slug. Ecosystems GuardDog cannot
+# analyse (Maven, Packagist, NuGet) are absent on purpose and get skipped.
+_OSV_TO_GUARDDOG_ECO = {
+    "npm": "npm",
+    "PyPI": "pypi",
+    "Go": "go",
+    "crates.io": "crates",
+    "RubyGems": "rubygems",
+}
 
 
 def _extract_source_maps(combined_result):
@@ -137,6 +166,147 @@ def verdict_packages(packages, *, db_path=None, osv=None):
         return validate_artifact(safe)
 
 
+def flagged_specs(artifact, limit=_DEEP_MAX_PACKAGES):
+    """Unique packages an OSV verdict already flagged, as GuardDog coordinates.
+
+    Malicious first so the cap never starves the highest-signal packages.
+    Returns [{ecosystem (guarddog slug), name, version, purl, osv_ecosystem}].
+    """
+    seen = set()
+    out = []
+    dropped = 0
+    skipped_eco = set()
+    for bucket in ("malicious", "vulnerable"):
+        for f in artifact.get(bucket) or []:
+            name = f.get("name")
+            osv_eco = f.get("ecosystem")
+            gd_eco = _OSV_TO_GUARDDOG_ECO.get(osv_eco)
+            if not name:
+                continue
+            if not gd_eco:
+                skipped_eco.add(osv_eco)
+                continue
+            key = (gd_eco, name, f.get("version"))
+            if key in seen:
+                continue
+            seen.add(key)
+            if len(out) >= limit:
+                # Do NOT return early: keep counting so the cap is reported
+                # instead of silently truncating the flagged set.
+                dropped += 1
+                continue
+            out.append({"ecosystem": gd_eco, "name": name,
+                        "version": f.get("version"), "purl": f.get("purl"),
+                        "osv_ecosystem": osv_eco})
+    if dropped:
+        print("[!][SupplyChainRecon] deep analysis cap: {} flagged package(s) "
+              "beyond SUPPLY_CHAIN_DEEP_MAX_PACKAGES={} were NOT analysed"
+              .format(dropped, limit))
+    if skipped_eco:
+        print("[*][SupplyChainRecon] deep analysis skipped ecosystem(s) GuardDog "
+              "cannot analyse: {}".format(sorted(e for e in skipped_eco if e)))
+    return out
+
+
+def _add_soft_error(artifact, spec, message):
+    """Record an UNANALYSED package as a soft-error suspicious finding.
+
+    The graph writer only ever reads packages/malicious/suspicious - never
+    artifact["errors"] - so a failure recorded solely in `errors` is invisible
+    to the operator and the package reads as behaviourally clean. Every path
+    where GuardDog did not actually produce a verdict must land here.
+    """
+    artifact["suspicious"].append({
+        "name": spec["name"], "version": spec["version"],
+        "ecosystem": spec["osv_ecosystem"], "purl": spec["purl"],
+        "rule": "guarddog-not-run", "severity": "low",
+        "confidence": "suspicious", "message": str(message)[:2000],
+        "soft_error": True,
+    })
+    return artifact
+
+
+def deep_analyze(artifact, *, image=None, timeout=_DEEP_TIMEOUT,
+                 limit=_DEEP_MAX_PACKAGES, budget=_DEEP_TOTAL_BUDGET,
+                 guarddog=None):
+    """Behavioural (GuardDog) pass over the OSV-flagged packages.
+
+    Runs guarddog INSIDE the hardened dirty analyzer image, spawned through the
+    broker socket the recon container already holds (DOCKER_HOST). This process
+    never unpacks a tarball itself: it holds the Neo4j creds, the analyzer does
+    not.
+
+    A GuardDog hit is ALWAYS `suspicious`, never a terminal malicious verdict -
+    only an OSV MAL- hit is malicious. A download failure surfaces as a
+    soft_error finding so a package is never silently reported clean.
+
+    Mutates and returns `artifact` (revalidated by the caller).
+    """
+    gd_mod = guarddog or _guarddog_runner
+    specs = flagged_specs(artifact, limit=limit)
+    stats = {"scanned": 0, "suspicious": 0, "soft_errors": 0,
+             "failed": 0, "skipped_budget": 0}
+    if not specs:
+        return artifact, stats
+
+    prefix = gd_mod.hardened_docker_argv(image or _ANALYZER_IMAGE)
+    started = time.monotonic()
+
+    for spec in specs:
+        label = "{}@{}".format(spec["name"], spec["version"] or "latest")
+
+        elapsed = time.monotonic() - started
+        if budget and elapsed >= budget:
+            # Out of time. Every remaining package must be recorded as an
+            # UNANALYSED soft error, never left looking behaviourally clean.
+            stats["skipped_budget"] += 1
+            stats["failed"] += 1
+            _add_soft_error(artifact, spec,
+                            "deep analysis budget of {}s exhausted before this "
+                            "package was analysed".format(budget))
+            continue
+
+        print("[*][SupplyChainRecon] deep analysis: {}".format(label))
+        try:
+            res = gd_mod.scan_package(spec["ecosystem"], spec["name"],
+                                      spec["version"],
+                                      timeout=min(timeout, max(1, int(budget - elapsed))) if budget else timeout,
+                                      argv_prefix=prefix)
+        except Exception as exc:
+            # A hostile coordinate (SanitizeError) or a spawn failure must not
+            # discard the OSV verdicts already collected. Isolate per package,
+            # and record it so the package is not silently reported clean.
+            artifact["errors"].append("guarddog {}: {}".format(label, exc))
+            stats["failed"] += 1
+            _add_soft_error(artifact, spec, "guarddog dispatch raised: {}".format(exc))
+            continue
+
+        findings = res.get("findings") or []
+        if res.get("error"):
+            artifact["errors"].append("guarddog {}: {}".format(label, res["error"]))
+            stats["failed"] += 1
+            if not findings:
+                # THE false-clean guard. A dispatch failure (docker socket
+                # missing, image not pulled, timeout, non-JSON output) yields
+                # zero findings. artifact["errors"] is NOT written to the graph,
+                # so without this the package would show no behavioural findings
+                # and read as "deep analysis ran, nothing found" - the exact
+                # failure mode --no-sandbox was added to kill, one layer up.
+                _add_soft_error(artifact, spec,
+                                "guarddog did not run: {}".format(res["error"]))
+        else:
+            stats["scanned"] += 1
+
+        add_guarddog_findings(
+            artifact, findings,
+            ecosystem=spec["osv_ecosystem"], name=spec["name"],
+            version=spec["version"], purl=spec["purl"])
+        stats["suspicious"] += sum(1 for f in findings if not f.get("soft_error"))
+        stats["soft_errors"] += sum(1 for f in findings if f.get("soft_error"))
+
+    return artifact, stats
+
+
 def run_supply_chain_recon(combined_result, settings=None):
     """Harvest + verdict; store combined_result['supply_chain_recon']. Returns
     the mutated combined_result (pipeline convention)."""
@@ -155,6 +325,46 @@ def run_supply_chain_recon(combined_result, settings=None):
 
     artifact = verdict_packages(packages, db_path=_OSV_DB)
 
+    # Deep behavioural analysis (GuardDog), opt-in. Runs only over packages the
+    # offline OSV pass already flagged, inside the hardened dirty analyzer.
+    deep_stats = None
+    if settings.get("SUPPLY_CHAIN_RECON_DEEP_ANALYSIS_ENABLED"):
+        try:
+            artifact, deep_stats = deep_analyze(artifact)
+            # Re-validate: GuardDog output is attacker-influenced (rule messages
+            # quote package source), so it must clear the boundary gate too.
+            artifact = validate_artifact(artifact)
+        except ArtifactError as exc:
+            # D1: dropping the WHOLE suspicious list here made every package the
+            # deep pass touched read behaviourally clean again - including the
+            # soft-error markers that exist precisely to prevent that. Drop only
+            # the entries that cannot clear the gate, then re-mark every flagged
+            # package that lost its finding as UNANALYSED.
+            print("[!][SupplyChainRecon] deep analysis artifact invalid: {}".format(exc))
+            bad = artifact["suspicious"]
+            kept = []
+            for f in bad:
+                probe = dict(artifact, suspicious=[f])
+                try:
+                    validate_artifact(probe)
+                    kept.append(f)
+                except ArtifactError:
+                    pass
+            artifact["suspicious"] = kept
+            artifact["errors"].append(
+                "deep analysis: dropped {} unvalidatable finding(s): {}".format(
+                    len(bad) - len(kept), exc))
+            covered = {(f.get("name"), f.get("version")) for f in kept}
+            for spec in flagged_specs(artifact):
+                if (spec["name"], spec["version"]) not in covered:
+                    _add_soft_error(artifact, spec,
+                                    "deep analysis result failed validation and "
+                                    "was dropped; package NOT analysed")
+            artifact = validate_artifact(artifact)
+        except Exception as exc:
+            print("[!][SupplyChainRecon] deep analysis failed: {}".format(exc))
+            artifact["errors"].append("deep analysis failed: {}".format(exc))
+
     combined_result["supply_chain_recon"] = {
         "artifact": artifact,
         "base_urls": base_urls,
@@ -162,10 +372,19 @@ def run_supply_chain_recon(combined_result, settings=None):
             "packages": len(artifact["packages"]),
             "malicious": len(artifact["malicious"]),
             "vulnerable": len(artifact["vulnerable"]),
+            "suspicious": len(artifact["suspicious"]),
+            "deep_analysis": deep_stats,
         },
     }
-    print("[+][SupplyChainRecon] packages={} malicious={} vulnerable={}".format(
-        len(artifact["packages"]), len(artifact["malicious"]), len(artifact["vulnerable"])))
+    print("[+][SupplyChainRecon] packages={} malicious={} vulnerable={} suspicious={}".format(
+        len(artifact["packages"]), len(artifact["malicious"]),
+        len(artifact["vulnerable"]), len(artifact["suspicious"])))
+    if deep_stats:
+        print("[+][SupplyChainRecon] deep analysis: scanned={} suspicious={} "
+              "soft_errors={} failed={} skipped_budget={}".format(
+                  deep_stats["scanned"], deep_stats["suspicious"],
+                  deep_stats["soft_errors"], deep_stats["failed"],
+                  deep_stats["skipped_budget"]))
     return combined_result
 
 
