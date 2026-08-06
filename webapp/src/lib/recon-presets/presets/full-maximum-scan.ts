@@ -212,6 +212,11 @@ Pentesters running a final comprehensive sweep on a target they have full author
 
     // --- JS Recon: everything enabled, max files ---
     jsReconEnabled: true,
+    // Supply Chain: harvest the served package set and verdict it against the
+    // OFFLINE OSV database (passive, no extra target traffic).
+    supplyChainReconEnabled: true,
+    supplyChainReconEcosystems: 'npm',
+    supplyChainReconDeepAnalysisEnabled: false,   // GuardDog downloads tarballs; opt-in only
     jsReconMaxFiles: 2000,
     jsReconTimeout: 3600,
     jsReconConcurrency: 15,

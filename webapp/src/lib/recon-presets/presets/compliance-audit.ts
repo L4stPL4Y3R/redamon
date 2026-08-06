@@ -129,6 +129,11 @@ Security teams running compliance audits, blue teamers validating hardening base
     // --- DISABLE JS analysis ---
     jsluiceEnabled: false,
     jsReconEnabled: false,
+    // Supply Chain: harvest the served package set and verdict it against the
+    // OFFLINE OSV database (passive, no extra target traffic).
+    supplyChainReconEnabled: true,
+    supplyChainReconEcosystems: 'npm',
+    supplyChainReconDeepAnalysisEnabled: false,   // GuardDog downloads tarballs; opt-in only
 
     aiSurfaceReconEnabled: false,
     // --- DISABLE directory/API fuzzing ---

@@ -230,6 +230,11 @@ export const reconPresetSchema = z.object({
   jsluiceVerifyAcceptStatus: intArr,
   jsluiceExcludePatterns: strArr,
 
+  // -- Supply Chain (malicious / vulnerable dependencies) --
+  supplyChainReconEnabled: bool,
+  supplyChainReconEcosystems: str,
+  supplyChainReconDeepAnalysisEnabled: bool,
+
   // -- JS Analysis: JS Recon --
   jsReconEnabled: bool,
   jsReconMaxFiles: int,
@@ -732,6 +737,11 @@ export const RECON_PARAMETER_CATALOG = `
 - jsluiceVerifyThreads: integer - httpx worker threads
 - jsluiceVerifyAcceptStatus: integer[] - HTTP status codes treated as "live" by the verifier
 - jsluiceExcludePatterns: string[] - Deny-list patterns. Extensions like ".js" match the path suffix only; everything else is a substring match against the URL path and query.
+
+## Supply Chain (malicious / vulnerable dependencies)
+- supplyChainReconEnabled: boolean - Harvest the package set the live target serves (source maps, imports, detected technologies) and verdict it against the OFFLINE OSV database. Writes Package / MalPackageFinding nodes. Fully passive and offline: it re-uses data JS Recon already downloaded and sends NO extra traffic to the target, so it is safe even in stealth/passive presets. Best paired with jsReconEnabled + jsReconSourceMaps (source-map mining is the richest source); without JS Recon it still maps detected technologies to packages.
+- supplyChainReconEcosystems: string - Comma-separated OSV ecosystems to report (default "npm")
+- supplyChainReconDeepAnalysisEnabled: boolean - GuardDog behavioural analysis of flagged packages. Downloads untrusted tarballs, so keep false unless explicitly requested
 
 ## JavaScript Analysis - JS Recon (deep)
 - jsReconEnabled: boolean - Run deep JS analysis

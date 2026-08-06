@@ -171,6 +171,11 @@ Bug bounty hunters who have already triaged a target (perhaps with the Quick Win
 
     // --- JS Recon: full analysis ---
     jsReconEnabled: true,
+    // Supply Chain: harvest the served package set and verdict it against the
+    // OFFLINE OSV database (passive, no extra target traffic).
+    supplyChainReconEnabled: true,
+    supplyChainReconEcosystems: 'npm',
+    supplyChainReconDeepAnalysisEnabled: false,   // GuardDog downloads tarballs; opt-in only
     jsReconMaxFiles: 800,
     jsReconTimeout: 1800,
     jsReconConcurrency: 10,
