@@ -97,6 +97,12 @@ Relationships: `(GithubRepository|BaseURL)-[:DEPENDS_ON]->(Package)` and
   handling) are v2.
 - L2 v1 harvests via source-map mining + imports + technology->purl and verdicts
   offline. retire.js deep harvest of served JS + GuardDog dispatch are v2.
+  NOTE: source-map / import mining yields package NAMES without versions, and
+  osv-scanner cannot match a version-specific advisory (MAL/CVE) without a
+  version. So verdicts come primarily from the version-bearing sources
+  (wappalyzer technologies, and retire.js in v2); versionless packages are still
+  recorded as `Package` nodes for inventory. Advisories that affect all versions
+  can match versionless.
 
 ## Key files
 
