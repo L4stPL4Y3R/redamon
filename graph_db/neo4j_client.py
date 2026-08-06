@@ -17,9 +17,10 @@ from graph_db.mixins.secret_mixin import SecretMixin
 from graph_db.mixins.osint_mixin import OsintMixin
 from graph_db.mixins.graphql_mixin import GraphQLMixin
 from graph_db.mixins.cache_mixin import CacheMixin
+from graph_db.mixins.supply_chain_mixin import SupplyChainMixin
 
 
-class Neo4jClient(BaseMixin, ReconMixin, GvmMixin, SecretMixin, OsintMixin, GraphQLMixin, CacheMixin):
+class Neo4jClient(BaseMixin, ReconMixin, GvmMixin, SecretMixin, OsintMixin, GraphQLMixin, CacheMixin, SupplyChainMixin):
     """
     Public Neo4j client for RedAmon. All methods provided by mixins.
 

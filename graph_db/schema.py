@@ -38,6 +38,9 @@ CONSTRAINTS = [
     "CREATE CONSTRAINT githubhunt_unique IF NOT EXISTS FOR (gh:GithubHunt) REQUIRE gh.id IS UNIQUE",
     "CREATE CONSTRAINT githubrepo_unique IF NOT EXISTS FOR (gr:GithubRepository) REQUIRE gr.id IS UNIQUE",
     "CREATE CONSTRAINT githubpath_unique IF NOT EXISTS FOR (gp:GithubPath) REQUIRE gp.id IS UNIQUE",
+    # Supply-chain feature (plan Phase 2/4): Package + MalPackageFinding, shared by L1 + L2.
+    "CREATE CONSTRAINT package_unique IF NOT EXISTS FOR (p:Package) REQUIRE (p.purl, p.user_id, p.project_id) IS UNIQUE",
+    "CREATE CONSTRAINT malpackagefinding_unique IF NOT EXISTS FOR (mf:MalPackageFinding) REQUIRE (mf.finding_id, mf.user_id, mf.project_id) IS UNIQUE",
     "CREATE CONSTRAINT githubsecret_unique IF NOT EXISTS FOR (gs:GithubSecret) REQUIRE gs.id IS UNIQUE",
     "CREATE CONSTRAINT githubsensitivefile_unique IF NOT EXISTS FOR (gsf:GithubSensitiveFile) REQUIRE gsf.id IS UNIQUE",
     # TruffleHog Secret Scanner constraints
