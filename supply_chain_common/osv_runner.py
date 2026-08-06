@@ -59,12 +59,18 @@ def run_osv_scan(target, *, mode="lockfile", db_path=None, offline=True,
         return {"raw": None, "parsed": _empty_parsed(),
                 "exit_code": None, "error": "unknown mode: {}".format(mode)}
 
-    if offline and (not db_path or not os.path.isdir(str(db_path))):
-        # F5: running --offline with no local DB returns an EMPTY result with
-        # exit 0 - a silent false-clean where a genuinely malicious package
-        # passes. Fail hard instead of reporting a misleading clean verdict.
-        return {"raw": None, "parsed": _empty_parsed(), "exit_code": None,
-                "error": "offline OSV DB not found at {!r}".format(db_path)}
+    if offline:
+        # F5: running --offline with no local DB (missing dir OR an empty volume
+        # that was created but never populated by `redamon.sh supply-chain-sync`)
+        # returns an EMPTY result with exit 0 - a silent false-clean where a
+        # genuinely malicious package passes. Fail hard with an actionable error
+        # instead of reporting a misleading clean verdict.
+        db = str(db_path) if db_path else ""
+        if not db or not os.path.isdir(db) or not os.listdir(db):
+            return {"raw": None, "parsed": _empty_parsed(), "exit_code": None,
+                    "error": ("offline OSV DB missing or empty at {!r}; run "
+                              "'./redamon.sh supply-chain-sync <ecosystems>' "
+                              "first".format(db_path))}
 
     argv = [binary, "scan", "source"]
     flag = _MODE_FLAG[mode]

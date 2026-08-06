@@ -124,9 +124,10 @@ class TestOsvParserDeep(unittest.TestCase):
             return {"stdout": "{}", "stderr": "", "exit_code": 0,
                     "timed_out": False, "error": None}
         osv_runner.run_argv = fake
-        import tempfile
+        import tempfile, os as _os
         try:
-            with tempfile.TemporaryDirectory() as db:  # F5: db_path must exist
+            with tempfile.TemporaryDirectory() as db:  # F5: db must exist + be non-empty
+                open(_os.path.join(db, "osv-scanner"), "w").close()
                 osv_runner.run_osv_scan("/tmp/package-lock.json", mode="lockfile",
                                         db_path=db)
         finally:
@@ -141,13 +142,20 @@ class TestOsvParserDeep(unittest.TestCase):
 # --------------------------------------------------------------------------
 class TestReviewRegressions2(unittest.TestCase):
     def test_F5_offline_without_db_is_hard_error_not_clean(self):
-        # F5: offline scan with a missing DB dir must error, not report clean.
+        # F5: offline scan with a missing OR EMPTY DB dir must error (an empty
+        # volume created by update-but-not-yet-synced), not report clean.
+        import tempfile
         res = osv_runner.run_osv_scan("/tmp/package-lock.json", mode="lockfile",
                                       db_path="/nonexistent-osv-db", offline=True)
         self.assertIsNotNone(res["error"])
-        self.assertIn("OSV DB not found", res["error"])
+        self.assertIn("missing or empty", res["error"])
         res2 = osv_runner.run_osv_scan("/tmp/x", mode="lockfile", db_path=None, offline=True)
         self.assertIsNotNone(res2["error"])
+        with tempfile.TemporaryDirectory() as empty_db:  # created-but-never-synced
+            res3 = osv_runner.run_osv_scan("/tmp/x", mode="lockfile",
+                                           db_path=empty_db, offline=True)
+            self.assertIsNotNone(res3["error"])
+            self.assertIn("missing or empty", res3["error"])
 
     def test_F8_guarddog_errors_as_list_no_crash(self):
         # F8: errors emitted as a list must not raise AttributeError.

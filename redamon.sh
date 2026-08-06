@@ -1705,6 +1705,20 @@ cmd_update() {
     if echo "$changed_files" | grep -q "^codefix_sandbox/"; then
         rebuild_tools+=(codefix-sandbox)
     fi
+    # supply-chain (L1 CLEAN scanner): the .py source is volume-mounted into the
+    # spawned scan container (hot-reload), so rebuild the image ONLY when the
+    # baked layer changes -- the Dockerfile (osv-scanner binary) or requirements.
+    # Matches recon-orchestrator's precise rule. On the FIRST update onto this
+    # release these files are new, so the image is built; thereafter a pure .py
+    # change hot-reloads at spawn with no rebuild.
+    if echo "$changed_files" | grep -qE "^supply_chain_scan/(Dockerfile|requirements)"; then
+        rebuild_tools+=(supply-chain)
+    fi
+    # supply-chain-analyzer (DIRTY analyzer): entrypoint.py is BAKED (COPY), not
+    # mounted, so rebuild on ANY change to the analyzer dir (entrypoint or Dockerfile).
+    if echo "$changed_files" | grep -q "^supply_chain_analyzer/"; then
+        rebuild_tools+=(supply-chain-analyzer)
+    fi
     # capture-proxy / traffic-ingest (HTTP Traffic Capture): both share the
     # redamon-capture-proxy:latest image, built from capture_proxy/. It is in the
     # "capture" profile — never started by `up`, but SPAWNED on demand by the
