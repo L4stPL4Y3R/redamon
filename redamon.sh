@@ -18,7 +18,7 @@ CORE_SERVICES="postgres neo4j docker-broker recon-orchestrator kali-sandbox agen
 # AI Attack Surface scanner (garak/pyrit/giskard/promptfoo). wcvs is the Web Cache
 # Vulnerability Scanner, run docker-in-docker by the recon container for the web
 # cache poisoning module.
-TOOL_IMAGES="redamon-recon:latest redamon-vuln-scanner:latest redamon-github-hunter:latest redamon-trufflehog:latest redamon-baddns:latest redamon-ai-attack-surface:latest redamon-codefix-sandbox:latest redamon-wcvs:latest redamon-supply-chain-analyzer:latest"
+TOOL_IMAGES="redamon-recon:latest redamon-vuln-scanner:latest redamon-github-hunter:latest redamon-trufflehog:latest redamon-baddns:latest redamon-ai-attack-surface:latest redamon-codefix-sandbox:latest redamon-wcvs:latest redamon-supply-chain-analyzer:latest redamon-supply-chain:latest"
 DEV_COMPOSE="-f docker-compose.yml -f docker-compose.dev.yml"
 
 # Orchestrator-spawned containers that docker compose does NOT manage (they are

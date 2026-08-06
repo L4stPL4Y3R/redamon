@@ -313,6 +313,15 @@ services:
     image: redamon-supply-chain-analyzer:latest
     profiles: ["tools"]
 
+  # Supply-Chain scan (L1 "Other Scans") CLEAN writer. Build-only; spawned per
+  # scan by the orchestrator (holds Neo4j creds, static offline osv pass).
+  supply-chain:
+    build:
+      context: .
+      dockerfile: supply_chain_scan/Dockerfile
+    image: redamon-supply-chain:latest
+    profiles: ["tools"]
+
   # BadDNS (AGPL-3.0) runs isolated in its own container. RedAmon never
   # imports or links against it -- the recon container spawns this image
   # via Docker-in-Docker and receives NDJSON on stdout. See baddns_scan/
@@ -408,6 +417,10 @@ services:
       - ./github_secret_hunt/output:/app/github_secret_hunt/output:rw
       - ./trufflehog_scan:/app/trufflehog_scan:ro
       - ./trufflehog_scan/output:/app/trufflehog_scan/output:rw
+      # Supply-Chain scan (L1): source mounted so the orchestrator can resolve
+      # SUPPLY_CHAIN_PATH (host-path detection) and bind it into the spawned scan.
+      - ./supply_chain_scan:/app/supply_chain_scan:ro
+      - ./supply_chain_scan/output:/app/supply_chain_scan/output:rw
       - ./ai_attack_surface_scan:/app/ai_attack_surface_scan:ro
       - ./mcp/nuclei-templates:/app/nuclei-templates:ro
       - /tmp/redamon:/tmp/redamon:rw
