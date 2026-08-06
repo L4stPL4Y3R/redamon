@@ -44,6 +44,9 @@ from models import (
     GithubHuntStatus,
     TrufflehogStartRequest,
     TrufflehogState,
+    SupplyChainStartRequest,
+    SupplyChainState,
+    SupplyChainStatus,
     TrufflehogStatus,
     PartialReconStartRequest,
     PartialReconState,
@@ -120,6 +123,11 @@ GITHUB_HUNT_PATH = _get_host_path(_host_mounts, "/app/github_secret_hunt", "GITH
 GITHUB_HUNT_IMAGE = os.getenv("GITHUB_HUNT_IMAGE", "redamon-github-hunter:latest")
 TRUFFLEHOG_PATH = _get_host_path(_host_mounts, "/app/trufflehog_scan", "TRUFFLEHOG_PATH")
 TRUFFLEHOG_IMAGE = os.getenv("TRUFFLEHOG_IMAGE", "redamon-trufflehog:latest")
+# Supply-Chain scan (L1). SUPPLY_CHAIN_UPLOADS_PATH is the host dir where the
+# webapp stores an uploaded SBOM/lockfile; mounted read-only into the scan.
+SUPPLY_CHAIN_PATH = _get_host_path(_host_mounts, "/app/supply_chain_scan", "SUPPLY_CHAIN_PATH")
+SUPPLY_CHAIN_IMAGE = os.getenv("SUPPLY_CHAIN_IMAGE", "redamon-supply-chain:latest")
+SUPPLY_CHAIN_UPLOADS_PATH = os.getenv("SUPPLY_CHAIN_UPLOADS_PATH", "/tmp/redamon/supply-chain-uploads")
 try:
     AI_ATTACK_SURFACE_PATH = _get_host_path(_host_mounts, "/app/ai_attack_surface_scan", "AI_ATTACK_SURFACE_PATH")
 except RuntimeError:
@@ -272,7 +280,7 @@ async def lifespan(app: FastAPI):
     """Initialize and cleanup resources"""
     global container_manager, local_llm_manager
     logger.info("Starting Recon Orchestrator...")
-    container_manager = ContainerManager(recon_image=RECON_IMAGE, gvm_image=GVM_IMAGE, github_hunt_image=GITHUB_HUNT_IMAGE, trufflehog_image=TRUFFLEHOG_IMAGE, ai_attack_image=AI_ATTACK_SURFACE_IMAGE)
+    container_manager = ContainerManager(recon_image=RECON_IMAGE, gvm_image=GVM_IMAGE, github_hunt_image=GITHUB_HUNT_IMAGE, trufflehog_image=TRUFFLEHOG_IMAGE, ai_attack_image=AI_ATTACK_SURFACE_IMAGE, supply_chain_image=SUPPLY_CHAIN_IMAGE)
     # Share the orchestrator's docker client so the LLM lifecycle uses the same daemon.
     local_llm_manager = LocalLlmManager(client=container_manager.client)
     # The AI Attack Surface lifecycle ref-counts an Ollama judge lease through it.
@@ -1653,6 +1661,94 @@ async def stream_trufflehog_logs(project_id: str):
             }
 
         final_state = await container_manager.get_trufflehog_status(project_id)
+        yield {
+            "event": "complete",
+            "data": json.dumps({
+                "status": final_state.status.value,
+                "completedAt": final_state.completed_at.isoformat() if final_state.completed_at else None,
+                "error": final_state.error,
+            }),
+        }
+
+    return EventSourceResponse(event_generator())
+
+
+# =============================================================================
+# Supply-Chain scan (L1 "Other Scans") endpoints - mirror the trufflehog block.
+# =============================================================================
+@app.post("/supply-chain/{project_id}/start", response_model=SupplyChainState)
+async def start_supply_chain(project_id: str, request: SupplyChainStartRequest):
+    """Start a Supply-Chain scan (offline OSV audit of an uploaded SBOM/lockfile)."""
+    if not container_manager:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    try:
+        return await container_manager.start_supply_chain(
+            project_id=project_id,
+            user_id=request.user_id,
+            webapp_api_url=_spawned_webapp_url(),
+            supply_chain_path=SUPPLY_CHAIN_PATH,
+            uploads_host_path=SUPPLY_CHAIN_UPLOADS_PATH,
+        )
+    except ValueError as e:
+        raise _value_error_http(e)
+    except Exception as e:
+        logger.error(f"Error starting Supply-Chain scan: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/supply-chain/{project_id}/status", response_model=SupplyChainState)
+async def get_supply_chain_status(project_id: str):
+    if not container_manager:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    return await container_manager.get_supply_chain_status(project_id)
+
+
+@app.post("/supply-chain/{project_id}/stop", response_model=SupplyChainState)
+async def stop_supply_chain(project_id: str):
+    if not container_manager:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    return await container_manager.stop_supply_chain(project_id)
+
+
+@app.post("/supply-chain/{project_id}/pause", response_model=SupplyChainState)
+async def pause_supply_chain(project_id: str):
+    if not container_manager:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    return await container_manager.pause_supply_chain(project_id)
+
+
+@app.post("/supply-chain/{project_id}/resume", response_model=SupplyChainState)
+async def resume_supply_chain(project_id: str):
+    if not container_manager:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    return await container_manager.resume_supply_chain(project_id)
+
+
+@app.get("/supply-chain/{project_id}/logs")
+async def stream_supply_chain_logs(project_id: str):
+    """Stream Supply-Chain scanner logs via Server-Sent Events."""
+    if not container_manager:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    state = await container_manager.get_supply_chain_status(project_id)
+    if state.status == SupplyChainStatus.IDLE:
+        raise HTTPException(status_code=404, detail="No Supply-Chain scan found for this project")
+
+    async def event_generator():
+        try:
+            async for event in container_manager.stream_supply_chain_logs(project_id):
+                yield {
+                    "event": "log",
+                    "data": json.dumps({
+                        "log": event.log,
+                        "timestamp": event.timestamp.isoformat(),
+                        "level": event.level,
+                    }),
+                }
+        except Exception as e:
+            logger.error(f"Error streaming Supply-Chain logs: {e}")
+            yield {"event": "error", "data": json.dumps({"error": str(e)})}
+
+        final_state = await container_manager.get_supply_chain_status(project_id)
         yield {
             "event": "complete",
             "data": json.dumps({

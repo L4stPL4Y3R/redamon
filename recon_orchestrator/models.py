@@ -240,6 +240,47 @@ class TrufflehogLogEvent(BaseModel):
 
 
 # =============================================================================
+# Supply-Chain Scan Models (L1 "Other Scans")
+# =============================================================================
+class SupplyChainStatus(str, Enum):
+    """Status of a Supply-Chain scan process"""
+    IDLE = "idle"
+    STARTING = "starting"
+    RUNNING = "running"
+    PAUSED = "paused"
+    COMPLETED = "completed"
+    ERROR = "error"
+    STOPPING = "stopping"
+
+
+class SupplyChainStartRequest(BaseModel):
+    """Request to start a Supply-Chain scan"""
+    project_id: str
+    user_id: str
+    webapp_api_url: str
+
+
+class SupplyChainState(BaseModel):
+    """Current state of a Supply-Chain scan process"""
+    project_id: str
+    status: SupplyChainStatus
+    current_phase: Optional[str] = None
+    phase_number: Optional[Union[int, float]] = None
+    total_phases: int = 1
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    error: Optional[str] = None
+    container_id: Optional[str] = None
+
+
+class SupplyChainLogEvent(BaseModel):
+    """A single log line from the Supply-Chain scanner container"""
+    log: str
+    timestamp: datetime
+    level: str = "info"
+
+
+# =============================================================================
 # Partial Recon Models
 # =============================================================================
 

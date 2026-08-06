@@ -26,6 +26,7 @@ from models import (
     GvmState, GvmStatus, GvmLogEvent,
     GithubHuntState, GithubHuntStatus, GithubHuntLogEvent,
     TrufflehogState, TrufflehogStatus, TrufflehogLogEvent,
+    SupplyChainState, SupplyChainStatus, SupplyChainLogEvent,
     PartialReconState, PartialReconStatus,
     AiAttackSurfaceState, AiAttackSurfaceStatus, AiAttackSurfaceLogEvent,
 )
@@ -144,19 +145,21 @@ AI_ATTACK_SURFACE_PHASE_PATTERNS = [
 class ContainerManager:
     """Manages Docker containers for recon, GVM scan, GitHub hunt, and TruffleHog processes"""
 
-    def __init__(self, recon_image: str = "redamon-recon:latest", gvm_image: str = "redamon-vuln-scanner:latest", github_hunt_image: str = "redamon-github-hunter:latest", trufflehog_image: str = "redamon-trufflehog:latest", ai_attack_image: str = "redamon-ai-attack-surface:latest"):
+    def __init__(self, recon_image: str = "redamon-recon:latest", gvm_image: str = "redamon-vuln-scanner:latest", github_hunt_image: str = "redamon-github-hunter:latest", trufflehog_image: str = "redamon-trufflehog:latest", ai_attack_image: str = "redamon-ai-attack-surface:latest", supply_chain_image: str = "redamon-supply-chain:latest"):
         self.client = docker.from_env()
         self.recon_image = recon_image
         self.gvm_image = gvm_image
         self.github_hunt_image = github_hunt_image
         self.trufflehog_image = trufflehog_image
         self.ai_attack_image = ai_attack_image
+        self.supply_chain_image = supply_chain_image
         self.running_states: dict[str, ReconState] = {}
         # Nested dict: outer key = project_id, inner key = run_id
         self.partial_recon_states: dict[str, dict[str, PartialReconState]] = {}
         self.gvm_states: dict[str, GvmState] = {}
         self.github_hunt_states: dict[str, GithubHuntState] = {}
         self.trufflehog_states: dict[str, TrufflehogState] = {}
+        self.supply_chain_states: dict[str, SupplyChainState] = {}
         # AI Attack Surface: nested project_id -> run_id (parallel per-tool jobs).
         self.ai_attack_states: dict[str, dict[str, AiAttackSurfaceState]] = {}
         # Set by api.py after construction: the on-demand Ollama judge manager
@@ -265,6 +268,9 @@ class ContainerManager:
         for pid, st in self.trufflehog_states.items():
             if st.status in (TrufflehogStatus.RUNNING, TrufflehogStatus.STARTING, TrufflehogStatus.PAUSED):
                 keys.add(self._scan_key("trufflehog", pid))
+        for pid, st in self.supply_chain_states.items():
+            if st.status in (SupplyChainStatus.RUNNING, SupplyChainStatus.STARTING, SupplyChainStatus.PAUSED):
+                keys.add(self._scan_key("supply_chain", pid))
         return keys
 
     async def refresh_all_scan_states(self) -> None:
@@ -3160,6 +3166,187 @@ class ContainerManager:
                     container.remove(force=True)
                 except APIError:
                     pass
+
+    # ------------------------------------------------------------------
+    # Supply-Chain scan (L1 "Other Scans") lifecycle - the CLEAN writer.
+    # Mirrors the trufflehog lifecycle: a creds-holding container that runs a
+    # static OFFLINE osv-scanner pass on an uploaded SBOM/lockfile and writes
+    # Package/MalPackageFinding nodes. No Docker socket, no clone, no tarball.
+    # ------------------------------------------------------------------
+    def _get_supply_chain_container_name(self, project_id: str) -> str:
+        safe_id = re.sub(r'[^a-zA-Z0-9_.-]', '_', project_id)
+        return f"redamon-supply-chain-{safe_id}"
+
+    async def start_supply_chain(self, project_id: str, user_id: str,
+                                 webapp_api_url: str, supply_chain_path: str,
+                                 uploads_host_path: str) -> "SupplyChainState":
+        current = await self.get_supply_chain_status(project_id)
+        if current.status in (SupplyChainStatus.RUNNING, SupplyChainStatus.PAUSED):
+            raise ValueError(f"Supply-chain scan already active for project {project_id}")
+
+        await self._admit_scan("supply_chain", project_id, user_id=user_id)
+
+        container_name = self._get_supply_chain_container_name(project_id)
+        try:
+            old = self.client.containers.get(container_name)
+            old.remove(force=True)
+        except NotFound:
+            pass
+
+        state = SupplyChainState(
+            project_id=project_id, status=SupplyChainStatus.STARTING,
+            started_at=datetime.now(timezone.utc))
+        self.supply_chain_states[project_id] = state
+
+        try:
+            try:
+                self.client.images.get(self.supply_chain_image)
+            except NotFound:
+                logger.info(f"Building Supply-Chain image from {supply_chain_path}")
+                self.client.images.build(
+                    path=Path(supply_chain_path).parent.as_posix(),
+                    dockerfile=f"{Path(supply_chain_path).name}/Dockerfile",
+                    tag=self.supply_chain_image, rm=True)
+
+            container = self.client.containers.run(
+                self.supply_chain_image,
+                mem_limit=self._container_mem_limit("supply_chain"),
+                pids_limit=self._container_pids_limit(),
+                nano_cpus=self._container_cpu_limit(),
+                **self._scanner_hardening(drop_caps=False),
+                name=container_name,
+                detach=True,
+                network_mode="host",  # reach Neo4j at localhost:7687 (trufflehog pattern)
+                environment={
+                    "PROJECT_ID": project_id,
+                    "USER_ID": user_id,
+                    "WEBAPP_API_URL": webapp_api_url,
+                    "PYTHONUNBUFFERED": "1",
+                    "OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY": "/osv-db",
+                    "SUPPLY_CHAIN_UPLOADS_DIR": "/data/supply-chain-uploads",
+                    "NEO4J_URI": os.environ.get("NEO4J_URI", "bolt://localhost:7687"),
+                    "NEO4J_USER": os.environ.get("NEO4J_USER", "neo4j"),
+                    "NEO4J_PASSWORD": os.environ.get("NEO4J_PASSWORD", ""),
+                    **self._scanner_env(),
+                },
+                volumes={
+                    f"{supply_chain_path}/output": {"bind": "/app/supply_chain_scan/output", "mode": "rw"},
+                    f"{supply_chain_path}": {"bind": "/app/supply_chain_scan", "mode": "rw"},
+                    sibling_host_path(supply_chain_path, "graph_db"): {"bind": "/app/graph_db", "mode": "ro"},
+                    sibling_host_path(supply_chain_path, "supply_chain_common"): {"bind": "/app/supply_chain_common", "mode": "ro"},
+                    uploads_host_path: {"bind": "/data/supply-chain-uploads", "mode": "ro"},
+                    self.supply_chain_osv_db_volume: {"bind": "/osv-db", "mode": "ro"},
+                },
+                command="python supply_chain_scan/main.py",
+            )
+            state.container_id = container.id
+            state.status = SupplyChainStatus.RUNNING
+            logger.info(f"Started Supply-Chain container {container.id} for project {project_id}")
+        except Exception as e:
+            state.status = SupplyChainStatus.ERROR
+            state.error = str(e)
+            logger.error(f"Failed to start Supply-Chain scan for {project_id}: {e}")
+
+        return state
+
+    async def get_supply_chain_status(self, project_id: str) -> "SupplyChainState":
+        return await self._run_blocking(self._get_supply_chain_status_sync, project_id)
+
+    def _get_supply_chain_status_sync(self, project_id: str) -> "SupplyChainState":
+        if project_id in self.supply_chain_states:
+            state = self.supply_chain_states[project_id]
+            if state.container_id:
+                try:
+                    container = self.client.containers.get(state.container_id)
+                    if container.status == "paused":
+                        state.status = SupplyChainStatus.PAUSED
+                    elif container.status != "running":
+                        exit_code = container.attrs.get("State", {}).get("ExitCode", -1)
+                        if exit_code == 0:
+                            state.status = SupplyChainStatus.COMPLETED
+                        else:
+                            state.status = SupplyChainStatus.ERROR
+                            state.error = f"Container exited with code {exit_code}"
+                        state.completed_at = datetime.now(timezone.utc)
+                        try:
+                            container.remove()
+                        except Exception as e:
+                            logger.warning(f"Failed to auto-remove Supply-Chain container: {e}")
+                except NotFound:
+                    if state.status not in (SupplyChainStatus.COMPLETED, SupplyChainStatus.ERROR):
+                        state.status = SupplyChainStatus.ERROR
+                        state.error = "Container not found"
+                except APIError as e:
+                    logger.warning(f"Docker API error checking Supply-Chain container for {project_id}: {e}")
+            return state
+        return SupplyChainState(project_id=project_id, status=SupplyChainStatus.IDLE)
+
+    async def pause_supply_chain(self, project_id: str) -> "SupplyChainState":
+        state = await self.get_supply_chain_status(project_id)
+        if state.status != SupplyChainStatus.RUNNING or not state.container_id:
+            return state
+        try:
+            self.client.containers.get(state.container_id).pause()
+            state.status = SupplyChainStatus.PAUSED
+            self.supply_chain_states[project_id] = state
+        except (NotFound, APIError) as e:
+            state.status = SupplyChainStatus.ERROR
+            state.error = f"Failed to pause: {e}"
+        return state
+
+    async def resume_supply_chain(self, project_id: str) -> "SupplyChainState":
+        state = await self.get_supply_chain_status(project_id)
+        if state.status != SupplyChainStatus.PAUSED or not state.container_id:
+            return state
+        try:
+            self.client.containers.get(state.container_id).unpause()
+            state.status = SupplyChainStatus.RUNNING
+            self.supply_chain_states[project_id] = state
+        except (NotFound, APIError) as e:
+            state.status = SupplyChainStatus.ERROR
+            state.error = f"Failed to resume: {e}"
+        return state
+
+    async def stop_supply_chain(self, project_id: str, timeout: int = 10) -> "SupplyChainState":
+        state = await self.get_supply_chain_status(project_id)
+        if state.status not in (SupplyChainStatus.RUNNING, SupplyChainStatus.PAUSED):
+            return state
+        state.status = SupplyChainStatus.STOPPING
+        if state.container_id:
+            try:
+                container = self.client.containers.get(state.container_id)
+                if container.status == "paused":
+                    container.unpause()
+                container.stop(timeout=timeout)
+                container.remove()
+            except NotFound:
+                pass
+            except Exception as e:
+                logger.warning(f"Error stopping Supply-Chain container: {e}")
+        state.status = SupplyChainStatus.IDLE
+        state.completed_at = datetime.now(timezone.utc)
+        self.supply_chain_states[project_id] = state
+        return state
+
+    async def stream_supply_chain_logs(self, project_id: str) -> AsyncGenerator["SupplyChainLogEvent", None]:
+        state = await self.get_supply_chain_status(project_id)
+        if not state.container_id:
+            return
+        try:
+            container = self.client.containers.get(state.container_id)
+        except (NotFound, APIError):
+            return
+        for raw in container.logs(stream=True, follow=True):
+            try:
+                line = raw.decode("utf-8", errors="replace").rstrip("\n")
+            except Exception:
+                continue
+            if line:
+                yield SupplyChainLogEvent(log=line, timestamp=datetime.now(timezone.utc))
+
+    def get_supply_chain_running_count(self) -> int:
+        return sum(1 for st in self.supply_chain_states.values()
+                   if st.status in (SupplyChainStatus.RUNNING, SupplyChainStatus.STARTING))
 
     async def start_trufflehog(
         self,
