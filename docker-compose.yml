@@ -599,9 +599,14 @@ services:
       - ./graph_db:/opt/graph_db:ro
       # Shared agent workspace — agent writes tool-outputs / jobs here; kali tools can read
       - ./agentic/agent-workspace:/workspace
+      # Offline OSV database (supply-chain L3 execute_osv_scanner). Read-only:
+      # populate it with `./redamon.sh supply-chain-sync`, never from here.
+      - osv_db:/osv-db:ro
     environment:
       PYTHONUNBUFFERED: "1"
       PYTHONPATH: /opt:/opt/mcp_servers
+      # execute_osv_scanner reads the offline OSV DB from this path (plan Phase 1).
+      OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY: /osv-db
       # V7: suppress .pyc writes so the read-only /opt/mcp_servers mount does not
       # break module imports (Python silently skips bytecode caching).
       PYTHONDONTWRITEBYTECODE: "1"

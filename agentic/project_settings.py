@@ -27,6 +27,9 @@ DANGEROUS_TOOLS = frozenset({
     'execute_katana',
     # Active captured-traffic tools emit live target traffic (§10.4/§15.5).
     'proxy_replay', 'proxy_fuzz',
+    # Supply-chain L3: execute_guarddog downloads attacker-authored tarballs
+    # (registry egress). execute_osv_scanner is passive/offline -> NOT dangerous.
+    'execute_guarddog',
 })
 
 # =============================================================================
@@ -279,6 +282,10 @@ DEFAULT_AGENT_SETTINGS: dict[str, Any] = {
         'msf_restart': ['exploitation', 'post_exploitation'],
         'web_search': ['informational', 'exploitation', 'post_exploitation'],
         'cve_intel': ['informational', 'exploitation', 'post_exploitation'],
+        # Supply-chain L3. osv-scanner is passive/offline -> all phases.
+        # guarddog downloads untrusted code -> informational + exploitation only.
+        'execute_osv_scanner': ['informational', 'exploitation', 'post_exploitation'],
+        'execute_guarddog': ['informational', 'exploitation'],
         'shodan': ['informational', 'exploitation', 'post_exploitation'],
         'google_dork': ['informational'],
         'tradecraft_lookup': ['exploitation', 'post_exploitation'],

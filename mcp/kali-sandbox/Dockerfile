@@ -1,3 +1,10 @@
+# Supply-chain L3 (plan Phase 1): build the osv-scanner binary in a Go stage.
+# Kali's bundled Go (1.25.x) is older than osv-scanner v2.4.0 requires (>=1.26.4),
+# so we build it here on golang:1-bookworm (glibc, ABI-compatible with Kali) and
+# COPY the static binary into the sandbox below.
+FROM golang:1-bookworm AS osv-builder
+RUN GOBIN=/out go install github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.4.0
+
 FROM kalilinux/kali-rolling:latest
 
 LABEL maintainer="RedAmon Project"
@@ -188,6 +195,16 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
 # Neo4j driver for the redagraph CLI (tenant-scoped graph queries from the shell)
 RUN pip install --no-cache-dir neo4j
+
+# Supply-chain L3 tools (plan Phase 1):
+#  - osv-scanner: offline verdict engine (binary from the builder stage above).
+#    Reads the redamon-osv-db volume (mounted read-only in docker-compose); the
+#    execute_osv_scanner MCP tool sets OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY.
+#  - guarddog: behavioural analysis. execute_guarddog dispatches the actual
+#    tarball unpack to the hardened analyzer image, but guarddog is installed
+#    here too for local metadata checks / fallback. no-install-ok: our tool.
+COPY --from=osv-builder /out/osv-scanner /usr/local/bin/osv-scanner
+RUN pip install --no-cache-dir guarddog==3.0.1   # no-install-ok
 
 # Install API security testing tools (Python-based)
 # jwt_tool - JWT exploitation toolkit (alg:none, key confusion, cracking)
