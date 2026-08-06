@@ -27,57 +27,18 @@ import sys
 
 # supply_chain_common is bind-mounted at /app (like graph_db). PYTHONPATH=/app.
 from supply_chain_common import osv_runner, retire_runner, guarddog_runner
-from supply_chain_common.security import (
-    validate_artifact, ARTIFACT_SCHEMA_VERSION, ArtifactError,
+from supply_chain_common.security import validate_artifact, ArtifactError
+from supply_chain_common.artifact import (
+    empty_artifact, add_osv_findings, add_guarddog_findings,
 )
 
 _OSV_DB = os.environ.get("OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY")
 
 
-def _osv_findings_to_artifact(parsed, artifact):
-    for pkg in parsed.get("packages", []):
-        artifact["packages"].append({
-            "purl": pkg.get("purl"),
-            "name": pkg.get("name"),
-            "version": pkg.get("version"),
-            "ecosystem": pkg.get("ecosystem"),
-            "source": "osv",
-            "source_path": pkg.get("source_path"),
-        })
-    for mal in parsed.get("malicious", []):
-        artifact["malicious"].append({
-            "purl": mal.get("purl"),
-            "name": mal.get("name"),
-            "version": mal.get("version"),
-            "ecosystem": mal.get("ecosystem"),
-            "advisory_id": mal.get("advisory_id"),
-            "severity": "high",
-            "confidence": "malicious",
-            "title": mal.get("summary") or mal.get("advisory_id"),
-            "aliases": mal.get("aliases") or [],
-        })
-    for vul in parsed.get("vulnerable", []):
-        artifact["vulnerable"].append({
-            "purl": vul.get("purl"),
-            "name": vul.get("name"),
-            "version": vul.get("version"),
-            "ecosystem": vul.get("ecosystem"),
-            "advisory_id": vul.get("advisory_id"),
-            "severity": "unknown",
-            "confidence": "suspicious",
-            "title": vul.get("summary") or vul.get("advisory_id"),
-        })
-
-
 def run_job(job):
     mode = job.get("mode")
     target = job.get("target")
-    artifact = {
-        "schema_version": ARTIFACT_SCHEMA_VERSION,
-        "mode": mode if mode in {"lockfile", "sbom", "dir", "purls", "js-dir"} else None,
-        "packages": [], "malicious": [], "vulnerable": [], "suspicious": [],
-        "errors": [],
-    }
+    artifact = empty_artifact(mode)
 
     if mode == "js-dir":
         # Black-box harvest: retire.js over downloaded JS, then OSV over the
@@ -103,7 +64,7 @@ def run_job(job):
         osv_res = osv_runner.run_osv_scan(target, mode=mode, db_path=_OSV_DB)
         if osv_res["error"]:
             artifact["errors"].append("osv: {}".format(osv_res["error"]))
-        _osv_findings_to_artifact(osv_res["parsed"], artifact)
+        add_osv_findings(artifact, osv_res["parsed"])
     else:
         artifact["errors"].append("unsupported mode: {}".format(mode))
 
@@ -117,17 +78,7 @@ def run_job(job):
             gd = guarddog_runner.scan_package(eco, name, spec.get("version"))
             if gd["error"]:
                 artifact["errors"].append("guarddog {}: {}".format(name, gd["error"]))
-            for f in gd["findings"]:
-                artifact["suspicious"].append({
-                    "name": f.get("package") or name,
-                    "version": f.get("version"),
-                    "ecosystem": eco,
-                    "rule": f.get("rule"),
-                    "severity": f.get("severity"),
-                    "confidence": "suspicious",
-                    "message": f.get("message"),
-                    "soft_error": f.get("soft_error", False),
-                })
+            add_guarddog_findings(artifact, gd["findings"], ecosystem=eco, name=name)
 
     # Self-validate: never emit something the clean side would reject.
     return validate_artifact(artifact)
@@ -162,12 +113,10 @@ def main(argv=None):
 
 def _write_error(out_path, message):
     try:
+        art = empty_artifact()
+        art["errors"].append(message)
         with open(out_path, "w") as fh:
-            json.dump({
-                "schema_version": ARTIFACT_SCHEMA_VERSION, "mode": None,
-                "packages": [], "malicious": [], "vulnerable": [],
-                "suspicious": [], "errors": [message],
-            }, fh)
+            json.dump(art, fh)
     except OSError:
         sys.stderr.write(message + "\n")
 

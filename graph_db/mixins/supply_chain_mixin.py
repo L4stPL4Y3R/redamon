@@ -36,18 +36,25 @@ class SupplyChainMixin:
     """Mixin adding supply-chain graph writes to the Neo4jClient."""
 
     def update_graph_from_supply_chain(self, data, user_id, project_id, *,
-                                       anchor_label, anchor_key, anchor_value):
+                                       anchor_label=None, anchor_key=None,
+                                       anchor_value=None):
         """MERGE Package + MalPackageFinding nodes from a validated artifact.
 
-        anchor_label: "GithubRepository" (L1) or "BaseURL" (L2).
+        anchor_label: "GithubRepository" (L1 repo), "BaseURL" (L2 live target),
+                      or None (e.g. an uploaded SBOM has no graph parent). When
+                      None, packages/findings are still created, just without a
+                      DEPENDS_ON edge.
         anchor_key:   the anchor node's identity property ("id" or "url").
         anchor_value: its value. The DEPENDS_ON edge is created only when the
                       anchor node already exists (we never invent target nodes).
 
         Returns a stats dict.
         """
-        if anchor_label not in ("GithubRepository", "BaseURL"):
+        has_anchor = anchor_label is not None
+        if has_anchor and anchor_label not in ("GithubRepository", "BaseURL"):
             raise ValueError("unsupported anchor_label: {}".format(anchor_label))
+        if has_anchor and (not anchor_key or anchor_value is None):
+            raise ValueError("anchor_key and anchor_value required with anchor_label")
 
         stats = {"packages_merged": 0, "malicious_merged": 0,
                  "suspicious_merged": 0, "relationships_created": 0,
@@ -84,7 +91,10 @@ class SupplyChainMixin:
                     stats["errors"].append("package {}: {}".format(purl, exc))
                     continue
 
-                # DEPENDS_ON edge: only when the anchor node already exists.
+                # DEPENDS_ON edge: only when an anchor is given AND it already
+                # exists (an uploaded SBOM has no anchor -> packages float).
+                if not has_anchor:
+                    continue
                 try:
                     res = session.run(
                         """

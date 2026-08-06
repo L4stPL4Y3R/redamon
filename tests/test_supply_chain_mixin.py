@@ -141,6 +141,26 @@ class TestSupplyChainMixin(unittest.TestCase):
         self.assertEqual(stats["packages_merged"], 1)
         self.assertEqual(stats["relationships_created"], 0)
 
+    def test_no_anchor_creates_floating_packages(self):
+        # Uploaded-SBOM case: no repo/URL parent. Packages + findings created,
+        # but NO DEPENDS_ON edge attempted.
+        sess = FakeSession()
+        w = Writer(sess)
+        stats = w.update_graph_from_supply_chain(
+            artifact(packages=[{"purl": "pkg:npm/x@1", "name": "x", "ecosystem": "npm"}],
+                     malicious=[{"purl": "pkg:npm/x@1", "name": "x",
+                                 "advisory_id": "MAL-1", "confidence": "malicious"}]),
+            "u1", "p1")
+        self.assertEqual(stats["packages_merged"], 1)
+        self.assertEqual(stats["malicious_merged"], 1)
+        self.assertEqual(stats["relationships_created"], 0)
+        self.assertNotIn("DEPENDS_ON", " ".join(q for q, _ in sess.queries))
+
+    def test_anchor_without_key_raises(self):
+        with self.assertRaises(ValueError):
+            Writer(FakeSession()).update_graph_from_supply_chain(
+                artifact(), "u1", "p1", anchor_label="BaseURL")
+
     def test_bad_anchor_label_raises(self):
         with self.assertRaises(ValueError):
             Writer(FakeSession()).update_graph_from_supply_chain(
