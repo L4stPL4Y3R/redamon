@@ -47,6 +47,19 @@ stop and inform the user honestly — do NOT proceed with noisy techniques.
 ### execute_jsluice -- NO RESTRICTIONS
 - Passive local file analysis only. No network traffic. Use freely.
 
+### execute_osv_scanner -- NO RESTRICTIONS
+- Offline lookup against a local vulnerability database. Sends NO traffic to the
+  target and makes no network calls at all. Use freely.
+
+### execute_guarddog -- RESTRICTED
+- Sends NO traffic to the target, so it does not expose the engagement to the
+  target's monitoring. It DOES download the package archive from the public
+  registry (npmjs.org, PyPI, ...), which is attributable to your egress IP.
+- ALLOWED: triaging a small number of packages that a passive check already
+  flagged as suspicious.
+- FORBIDDEN: sweeping a whole dependency set, which produces a burst of registry
+  downloads. Use execute_osv_scanner (fully offline) for bulk checks instead.
+
 ### proxy_fuzz — FORBIDDEN
 - Iterating a payload set is inherently noisy; do NOT use proxy_fuzz in stealth mode.
 

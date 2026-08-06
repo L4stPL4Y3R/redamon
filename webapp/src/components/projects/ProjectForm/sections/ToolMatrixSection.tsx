@@ -237,6 +237,8 @@ export function ToolMatrixSection({ data, updateField }: ToolMatrixSectionProps)
               { id: 'execute_nuclei', label: 'execute_nuclei' },
               { id: 'execute_wpscan', label: 'execute_wpscan' },
               { id: 'execute_jsluice', label: 'execute_jsluice' },
+              { id: 'execute_osv_scanner', label: 'execute_osv_scanner' },
+              { id: 'execute_guarddog', label: 'execute_guarddog ⚠' },
               { id: 'execute_amass', label: 'execute_amass' },
               { id: 'execute_katana', label: 'execute_katana' },
               { id: 'execute_arjun', label: 'execute_arjun' },
