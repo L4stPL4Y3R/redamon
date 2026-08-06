@@ -250,6 +250,7 @@ All lifecycle management is handled by a single script:
 | `./redamon.sh clean` | Remove containers + images, keep data |
 | `./redamon.sh create-admin` | Create the admin login (or reset it) -- use if no prompt appeared at install |
 | `./redamon.sh reset-password` | Reset an existing user's password from the terminal |
+| `./redamon.sh supply-chain-sync [ecosystems]` | Populate the offline OSV database for the supply-chain feature (default: `npm`; e.g. `npm PyPI Go`) |
 | `./redamon.sh purge` | Remove everything including all data |
 
 
@@ -314,6 +315,8 @@ Tool images are built automatically on first run if they don't exist yet. The de
 | `trufflehog_scan/Dockerfile` | `docker compose --profile tools build trufflehog-scanner` |
 | `baddns_scan/Dockerfile` or `baddns_scan/entrypoint.sh` | `docker compose --profile tools build baddns-scanner` |
 | `wcvs/Dockerfile` (web cache poisoning engine) | `docker compose --profile tools build wcvs` |
+| `supply_chain_scan/Dockerfile` (L1 scanner) | `docker compose --profile tools build supply-chain` |
+| `supply_chain_analyzer/` (DIRTY analyzer; entrypoint is baked) | `docker compose --profile tools build supply-chain-analyzer` |
 | `docker-compose.yml` | `docker compose up -d` (re-creates affected containers) |
 | `prisma/schema.prisma` | `docker compose exec webapp npx prisma db push` |
 
@@ -521,6 +524,7 @@ Everything runs on a **fan-out / fan-in** architecture: each phase fires as many
 | | **Endpoint Extraction** | REST, GraphQL, WebSocket, router patterns | Passive | Per JS file |
 | | **Framework Fingerprinting** | 12 built-in + custom signatures | Passive | Per JS file |
 | | **DOM Sink Detection** | 17 XSS/prototype pollution patterns | Passive | Per JS file |
+| **Supply Chain Recon** | **Malicious Package Detection** | Black-box harvest of the npm package set the target serves (source-map `node_modules` mining + `import`/`require` + Wappalyzer technologies), synthesized into a CycloneDX SBOM and verdicted against the offline OSV database. Writes `Package` + `MalPackageFinding` nodes, anchored to `BaseURL` via `DEPENDS_ON`. No new fetches (parses JS-recon output) | Passive (offline) | Post-JS-recon (GROUP 5.5) |
 | **AI Surface Recon** | **AI/LLM/MCP/Vector-DB Fingerprinting** | Active confirmation of the surfaces the classifier flagged — chat-shape probes (dialect/streaming/latency), MCP handshake + `tools/list` + Cisco YARA tool-poisoning scan, OpenAPI/model-listing discovery, Julius YAML probe-pack engine, vector-DB confirmation reads (qdrant/chroma/weaviate/milvus). Writes `Endpoint.ai_*` / `ai_mcp_*`, `Parameter.is_ai_prompt_injectable`, confirmed `Technology(ai-*)`, and MCP tool-poisoning `Vulnerability` nodes | Active (benign, no LLM calls) | Hosts parallel, workloads sequential (GROUP 5c / Phase 4.5) |
 | **AI Gauntlet** | **Broad LLM Scan** | garak — 40 probe families (prompt injection, DAN jailbreaks, encoding bypass, data-leak replay, system-prompt extraction, toxicity, malware / exploit generation, package hallucination) | Active (offensive) | Offensive follow-up to recon; one-shot per probe, ASR per family, local-judge graded |
 | | **Multi-Turn Jailbreaks** | PyRIT — bounded conversational attacks (crescendo, skeleton-key, TAP, many-shot) | Active (offensive) | Multi-turn escalation, local attacker / judge model |
@@ -602,6 +606,8 @@ A **LangGraph-based autonomous agent** implementing the ReAct pattern. It progre
 | | **execute_hydra** | THC Hydra brute force -- 50+ protocols (SSH, FTP, RDP, SMB, HTTP, MySQL, etc.) | Exploit, Post | network_recon :8000 |
 | **Code Execution** | **kali_shell** | Full Kali Linux shell -- nikto, whatweb, testssl, commix, sstimap, tplmap, ysoserial, phpggc, dnsrecon, dnsx, subzy, enum4linux-ng, netexec, kerbrute, bloodhound-python, bhgraph, certipy-ad, bloodyAD, jwt_tool, graphql-cop, graphqlmap, gitleaks, semgrep, hashcat, john, cewl, paramspider, Node.js + npm, Python libs (websockets, zeep, python3-saml, boto3, msal, azure-identity, google-auth, google-cloud-storage), pre-staged post-exploit toolkits at /opt/tools/{linux,windows}/ (linpeas, LinEnum, pspy64, deepce, winPEAS, PowerUp, PrivescCheck), and 70+ CLI tools | All | network_recon :8000 |
 | | **execute_code** | Write and run code files (Python, bash, Ruby, Perl, C, C++) -- no shell escaping | Exploit, Post | network_recon :8000 |
+| **Supply Chain** | **execute_osv_scanner** | Offline OSV verdict -- is a package known-malicious (`MAL-`) or known-vulnerable (`CVE`/`GHSA`)? Passive, zero network (reads the local OSV DB). Accepts a purl, lockfile, or SBOM | All | network_recon :8000 |
+| | **execute_guarddog** | Behavioural malware analysis of one package (install hooks, obfuscation, exfil, typosquat). Downloads the tarball, so it dispatches to the hardened analyzer sandbox -- never unpacked inline | Info, Exploit | network_recon :8000 |
 | **Traffic (TrafficMind)** | **proxy_search** | Burp-style history over the captured HTTP corpus -- summaries only, same filters as the UI (host, method, status, tool, source, `q` URL / `bodyq` body substring, reflected, only5xx) | All | -- (in-process) |
 | | **proxy_get** | Full request or response (headers + body) for one captured transaction | All | -- (in-process) |
 | | **proxy_sitemap** | Distinct endpoints observed (host + path + method) with hit counts and status codes | All | -- (in-process) |
@@ -682,7 +688,7 @@ OpenAI-compatible provider settings include a **reasoning effort** control. Enab
 
 ### Attack Surface Graph
 
-A **Neo4j knowledge graph** with 17 node types and 20+ relationship types, the single source of truth for the target's attack surface. The agent queries it before every decision via natural language → Cypher translation.
+A **Neo4j knowledge graph** with 19 node types and 20+ relationship types, the single source of truth for the target's attack surface. The agent queries it before every decision via natural language → Cypher translation.
 
 > **[Wiki: Attack Surface Graph](https://github.com/samugit83/redamon/wiki/Attack-Surface-Graph)** | **[Technical: GRAPH.SCHEMA.md](readmes/GRAPH.SCHEMA.md)**
 
@@ -747,6 +753,12 @@ Scans GitHub repositories, gists, and commit history for exposed secrets using *
 ### TruffleHog Deep Secret Scanner
 
 Scans GitHub repositories for leaked credentials using **700+ detectors** with automatic verification of whether discovered secrets are still active. Powered by the TruffleHog engine (`trufflesecurity/trufflehog`), it detects API keys, passwords, tokens, certificates, and more across full commit history. Results are stored as `TrufflehogScan → TrufflehogRepository → TrufflehogFinding` nodes in the Neo4j graph. Both GitHub Hunt and TruffleHog are accessible from the **"Other Scans" modal** in the graph toolbar.
+
+### Supply Chain / Malicious Package Detection
+
+Detects known-malicious (`MAL-`) and known-vulnerable (`CVE`/`GHSA`) packages **fully offline** against a local OSV database, across three layers that share one engine and one graph model. **L1** audits an uploaded SBOM / lockfile from the **"Other Scans" modal**; **L2 (Supply-Chain Recon)** harvests the npm package set a live target actually serves during recon (source maps, imports, technologies) with zero manifest; **L3** gives the AI agent on-demand `execute_osv_scanner` / `execute_guarddog` tools. Untrusted bytes (tarballs, target JS) are processed in a hardened, secret-free, network-isolated **DIRTY** sandbox (`cap_drop=ALL`, read-only, no-install); only a schema-validated JSON artifact crosses into the creds-holding writer. Results are stored as `Package` / `MalPackageFinding` nodes (`MAL-` = malicious, `CVE`/`GHSA` = vulnerable, GuardDog = suspicious). Populate the offline DB once with `./redamon.sh supply-chain-sync npm`.
+
+> **[Technical: README.SUPPLY_CHAIN.md](readmes/README.SUPPLY_CHAIN.md)**
 
 ### Project Settings
 
@@ -913,6 +925,7 @@ flowchart TB
 | **Web Application** | Next.js dashboard for visualization and AI interaction | [README.WEBAPP.md](readmes/README.WEBAPP.md) |
 | **GVM Scanner** | Greenbone/OpenVAS network vulnerability scanner (170K+ NVTs) | [README.GVM.md](readmes/README.GVM.md) |
 | **TruffleHog Scanner** | Deep secret scanning with 700+ detectors and credential verification | n/a |
+| **Supply-Chain Scanner** | Offline malicious/vulnerable package detection (OSV-Scanner + GuardDog + retire.js) with a hardened DIRTY/CLEAN split; 3 layers (agent tools, standalone SBOM scan, live-target recon) | [README.SUPPLY_CHAIN.md](readmes/README.SUPPLY_CHAIN.md) |
 | **PostgreSQL Database** | Project settings, user accounts, configuration data | [README.POSTGRES.md](readmes/README.POSTGRES.md) |
 | **Test Environments** | Intentionally vulnerable Docker containers for safe testing | [README.GPIGS.md](readmes/README.GPIGS.md) |
 
@@ -925,6 +938,7 @@ flowchart TB
 | **Full Wiki** (user guide) | **[github.com/samugit83/redamon/wiki](https://github.com/samugit83/redamon/wiki)** |
 | Server Deployment (single-host) | **[Wiki: Deploying to a Server](https://github.com/samugit83/redamon/wiki/Deploying-to-a-Server)** · [deploy/single-host/README.md](deploy/single-host/README.md) |
 | **Security Posture** (defense-in-depth catalog) | **[readmes/README.SECURITY_POSTURE.md](readmes/README.SECURITY_POSTURE.md)** |
+| Supply-Chain / Malicious-Package Detection | [readmes/README.SUPPLY_CHAIN.md](readmes/README.SUPPLY_CHAIN.md) |
 | Threat Model (STRIDE) | [readmes/README.TM.SYSTEM_OVERVIEW.md](readmes/README.TM.SYSTEM_OVERVIEW.md) |
 | Security Policy | [SECURITY.md](SECURITY.md) |
 | AI-Assisted Development | **[Wiki: Ship Perfect PRs with AI](https://github.com/samugit83/redamon/wiki/AI-Assisted-Development)** |
