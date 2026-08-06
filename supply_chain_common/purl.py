@@ -66,6 +66,11 @@ def build_purl(ecosystem, name, version=None):
         # the '@' as %40 so the purl round-trips through URL parsers.
         scope, _, pkg = norm.partition("/")
         base = "pkg:npm/{}/{}".format(quote(scope, safe=""), quote(pkg, safe=""))
+    elif purl_type == "maven" and ":" in norm:
+        # Maven coordinates arrive as "group:artifact" (the OSV form); the purl
+        # spec puts the group in the namespace and the artifact in the name.
+        group, _, artifact = norm.partition(":")
+        base = "pkg:maven/{}/{}".format(quote(group, safe=""), quote(artifact, safe=""))
     else:
         # For namespaced types (maven group:artifact, go host/path) keep the
         # separators readable; only percent-encode characters that would break

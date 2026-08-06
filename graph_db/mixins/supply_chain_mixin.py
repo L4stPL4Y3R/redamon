@@ -115,6 +115,11 @@ class SupplyChainMixin:
                         continue
                 fid = _finding_id(purl, advisory)
                 try:
+                    # MERGE (not MATCH) the Package so a finding whose package is
+                    # not in `packages` (e.g. a GuardDog name-only hit) still
+                    # attaches instead of leaving an orphaned MalPackageFinding.
+                    # Existing packages keep their richer props; only a brand-new
+                    # one is seeded from the finding's fields.
                     session.run(
                         """
                         MERGE (mf:MalPackageFinding {finding_id: $fid, user_id: $uid, project_id: $pid})
@@ -124,10 +129,14 @@ class SupplyChainMixin:
                             mf.confidence = $confidence, mf.title = $title,
                             mf.detail = $detail, mf.last_seen = datetime()
                         WITH mf
-                        MATCH (p:Package {purl: $purl, user_id: $uid, project_id: $pid})
+                        MERGE (p:Package {purl: $purl, user_id: $uid, project_id: $pid})
+                        ON CREATE SET p.first_seen = datetime(), p.name = $pname,
+                                      p.ecosystem = $peco, p.source = 'finding'
+                        SET p.last_seen = datetime()
                         MERGE (p)-[:FLAGGED_AS]->(mf)
                         """,
                         fid=fid, uid=user_id, pid=project_id, purl=purl,
+                        pname=f.get("name"), peco=f.get("ecosystem"),
                         verdict=verdict, source_tool=source_tool,
                         advisory=advisory, severity=f.get("severity"),
                         confidence=f.get("confidence") or verdict,

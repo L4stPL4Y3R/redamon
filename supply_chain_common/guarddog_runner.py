@@ -145,8 +145,10 @@ def _parse_one_result(result, package, version):
         return out
 
     for rule, value in results.items():
-        if value is None:
-            continue  # metadata rule that did not fire
+        if not value:
+            # Falsy = rule did not fire: None (metadata not triggered), "" (empty
+            # message), or [] (no source-code hits). Skip all of them.
+            continue
         severity = severity_for_rule(rule)
         if isinstance(value, str):
             # metadata rule fired -> human message string
