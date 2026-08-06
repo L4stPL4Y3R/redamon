@@ -83,12 +83,13 @@ export function SupplyChainSection({ data, updateField, projectId }: SupplyChain
           </p>
 
           {/* L1: standalone SBOM scan */}
-          <div className={styles.fieldGroup}>
+          <div className={styles.fieldGroup} style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <Toggle
-              label="Supply-Chain Scan (Other Scans)"
               checked={!!d.supplyChainEnabled}
               onChange={(v) => updateField('supplyChainEnabled' as keyof FormData, v as never)}
+              aria-label="Supply-Chain Scan"
             />
+            <label className={styles.fieldLabel} style={{ margin: 0 }}>Supply-Chain Scan (Other Scans)</label>
           </div>
 
           {projectId && (
@@ -123,11 +124,14 @@ export function SupplyChainSection({ data, updateField, projectId }: SupplyChain
 
           {/* L2: recon pipeline harvest */}
           <div className={styles.fieldGroup}>
-            <Toggle
-              label="Supply-Chain Recon (live target harvest, runs in recon pipeline)"
-              checked={!!d.supplyChainReconEnabled}
-              onChange={(v) => updateField('supplyChainReconEnabled' as keyof FormData, v as never)}
-            />
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <Toggle
+                checked={!!d.supplyChainReconEnabled}
+                onChange={(v) => updateField('supplyChainReconEnabled' as keyof FormData, v as never)}
+                aria-label="Supply-Chain Recon"
+              />
+              <label className={styles.fieldLabel} style={{ margin: 0 }}>Supply-Chain Recon (live target harvest, runs in recon pipeline)</label>
+            </div>
             <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
               Infers the npm package set the target serves (source maps, imports, technologies) and verdicts it offline. Requires JS Recon.
             </p>

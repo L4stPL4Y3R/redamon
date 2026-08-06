@@ -3087,3 +3087,56 @@ scan, whichever version is active.
 ## 🔮 Future Extensions (Not Implemented Yet)
 - GVMScan, GVMVulnerability, DetectedProduct, OSFingerprint nodes (GVM integration - designed but not yet created by code; GVM vulns currently stored as Vulnerability nodes with source="gvm"; Traceroute nodes now implemented)
 - `Screenshot` nodes linking to stored images
+
+---
+
+## 📦 Supply-Chain Nodes (Malicious-Package Detection)
+
+Shared by L1 (standalone SBOM/repo scan) and L2 (live-target recon harvest), so
+both sources dedup into the same nodes. See `readmes/README.SUPPLY_CHAIN.md`.
+
+### Package (a discovered dependency)
+
+```
+(:Package {
+  purl,          // canonical package URL, e.g. pkg:npm/lodash@4.17.21  (MERGE key)
+  ecosystem,     // npm | PyPI | Go | Maven | crates.io | Packagist | RubyGems | NuGet
+  name,
+  version,       // nullable (L2 black-box may not know the version)
+  source,        // sbom | lockfile | sourcemap | retirejs | import | wappalyzer | osv | finding
+  user_id, project_id,
+  first_seen, last_seen
+})
+```
+
+Uniqueness: `(purl, user_id, project_id)` (tenant-scoped).
+
+### MalPackageFinding (a verdict about a package)
+
+```
+(:MalPackageFinding {
+  finding_id,    // sha256(purl + ':' + advisory_or_rule)[:16]  (MERGE key)
+  verdict,       // malicious (OSV MAL-) | suspicious (GuardDog)
+  source_tool,   // osv | guarddog
+  advisory_id,   // MAL-.../CVE-.../GHSA-... or a GuardDog rule name
+  severity,      // high | medium | low | unknown
+  confidence,    // malicious | suspicious
+  title, detail,
+  user_id, project_id,
+  first_seen, last_seen
+})
+```
+
+Uniqueness: `(finding_id, user_id, project_id)` (tenant-scoped).
+Only OSV `MAL-` ids produce `verdict=malicious`; `CVE-`/`GHSA-` are kept in raw
+JSON only, never written as malicious.
+
+### Relationships
+
+- `(GithubRepository|BaseURL)-[:DEPENDS_ON]->(Package)` (L1 anchors to the repo,
+  L2 to the served BaseURL; an uploaded SBOM has no anchor and the Package floats).
+- `(Package)-[:FLAGGED_AS]->(MalPackageFinding)`.
+
+All writes MERGE (`ON CREATE SET first_seen`, unconditional `SET last_seen`).
+Constraints live in `graph_db/schema.py` (`package_unique`, `malpackagefinding_unique`);
+the writer is `graph_db/mixins/supply_chain_mixin.py`.
