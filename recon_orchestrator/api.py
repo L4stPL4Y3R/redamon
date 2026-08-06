@@ -127,7 +127,6 @@ TRUFFLEHOG_IMAGE = os.getenv("TRUFFLEHOG_IMAGE", "redamon-trufflehog:latest")
 # webapp stores an uploaded SBOM/lockfile; mounted read-only into the scan.
 SUPPLY_CHAIN_PATH = _get_host_path(_host_mounts, "/app/supply_chain_scan", "SUPPLY_CHAIN_PATH")
 SUPPLY_CHAIN_IMAGE = os.getenv("SUPPLY_CHAIN_IMAGE", "redamon-supply-chain:latest")
-SUPPLY_CHAIN_UPLOADS_PATH = os.getenv("SUPPLY_CHAIN_UPLOADS_PATH", "/tmp/redamon/supply-chain-uploads")
 try:
     AI_ATTACK_SURFACE_PATH = _get_host_path(_host_mounts, "/app/ai_attack_surface_scan", "AI_ATTACK_SURFACE_PATH")
 except RuntimeError:
@@ -1687,7 +1686,6 @@ async def start_supply_chain(project_id: str, request: SupplyChainStartRequest):
             user_id=request.user_id,
             webapp_api_url=_spawned_webapp_url(),
             supply_chain_path=SUPPLY_CHAIN_PATH,
-            uploads_host_path=SUPPLY_CHAIN_UPLOADS_PATH,
         )
     except ValueError as e:
         raise _value_error_http(e)

@@ -3,7 +3,7 @@
 import { Play, Pause, Square, Terminal, Download, Loader2, Github, Search, AlertTriangle } from 'lucide-react'
 import Link from 'next/link'
 import { Modal } from '@/components/ui'
-import type { GithubHuntStatus, TrufflehogStatus } from '@/lib/recon-types'
+import type { GithubHuntStatus, TrufflehogStatus, SupplyChainStatus } from '@/lib/recon-types'
 import styles from './OtherScansModal.module.css'
 
 interface OtherScansModalProps {
@@ -36,6 +36,18 @@ interface OtherScansModalProps {
   trufflehogStatus?: TrufflehogStatus
   hasTrufflehogData?: boolean
   isTrufflehogLogsOpen?: boolean
+
+  // Supply Chain (L1)
+  onStartSupplyChain?: () => void
+  onPauseSupplyChain?: () => void
+  onResumeSupplyChain?: () => void
+  onStopSupplyChain?: () => void
+  onDownloadSupplyChainJSON?: () => void
+  onToggleSupplyChainLogs?: () => void
+  supplyChainStatus?: SupplyChainStatus
+  hasSupplyChainData?: boolean
+  isSupplyChainLogsOpen?: boolean
+  hasSupplyChainInput?: boolean
 }
 
 function StatusBadge({ status }: { status: string }) {
@@ -82,6 +94,18 @@ export function OtherScansModal({
   trufflehogStatus = 'idle',
   hasTrufflehogData = false,
   isTrufflehogLogsOpen = false,
+
+  // Supply Chain (L1)
+  onStartSupplyChain,
+  onPauseSupplyChain,
+  onResumeSupplyChain,
+  onStopSupplyChain,
+  onDownloadSupplyChainJSON,
+  onToggleSupplyChainLogs,
+  supplyChainStatus = 'idle',
+  hasSupplyChainData = false,
+  isSupplyChainLogsOpen = false,
+  hasSupplyChainInput = false,
 }: OtherScansModalProps) {
   // GitHub Hunt derived state
   const isGHBusy = githubHuntStatus === 'running' || githubHuntStatus === 'starting' || githubHuntStatus === 'pausing'
@@ -98,6 +122,14 @@ export function OtherScansModal({
   const isTHRunning = isTHBusy || isTHStopping
   const isTHPaused = trufflehogStatus === 'paused'
   const isTHActive = isTHRunning || isTHPaused
+
+  // Supply Chain derived state
+  const isSCBusy = supplyChainStatus === 'running' || supplyChainStatus === 'starting' || supplyChainStatus === 'pausing'
+  const isSCStopping = supplyChainStatus === 'stopping'
+  const isSCPausing = supplyChainStatus === 'pausing'
+  const isSCRunning = isSCBusy || isSCStopping
+  const isSCPaused = supplyChainStatus === 'paused'
+  const isSCActive = isSCRunning || isSCPaused
 
   // Read-only past version (or an in-flight swap): no scan may start/resume, and the
   // JSON download is disabled because it would return the latest scan, not this view.
@@ -314,6 +346,64 @@ export function OtherScansModal({
             >
               <Download size={12} />
               <span>Download</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Supply Chain Scanner Card (L1) */}
+        <div className={styles.card}>
+          <div className={styles.cardHeader}>
+            <Search size={18} className={styles.cardIcon} />
+            <h3 className={styles.cardTitle}>Supply Chain Scanner</h3>
+            <StatusBadge status={supplyChainStatus} />
+          </div>
+          <p className={styles.cardDescription}>
+            Audit an uploaded SBOM / lockfile against the offline OSV database for known-malicious (MAL) and known-vulnerable packages. Fully offline.
+          </p>
+          {!hasSupplyChainInput && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px',
+              background: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.3)', borderRadius: '6px',
+            }}>
+              <AlertTriangle size={14} style={{ color: '#f59e0b', flexShrink: 0 }} />
+              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                Upload an SBOM / lockfile in{' '}
+                <Link href="/settings" style={{ color: 'var(--accent-primary)', fontWeight: 500 }}>Project Settings</Link>{' '}first.
+              </span>
+            </div>
+          )}
+          <div className={styles.cardActions}>
+            {isSCPaused ? (
+              <button className={styles.resumeButton} onClick={onResumeSupplyChain} disabled={scanBlocked}
+                title={scanBlocked ? blockedTitle : 'Resume Supply-Chain scan'}>
+                <Play size={12} /><span>Resume</span>
+              </button>
+            ) : (
+              <button className={styles.startButton} onClick={onStartSupplyChain}
+                disabled={!hasSupplyChainInput || isSCRunning || scanBlocked}
+                title={scanBlocked ? blockedTitle : !hasSupplyChainInput ? 'Upload an SBOM/lockfile first' : isSCRunning ? 'In progress...' : 'Start Supply-Chain scan'}>
+                {isSCRunning ? <Loader2 size={12} className={styles.spinner} /> : <Play size={12} />}
+                <span>{isSCPausing ? 'Pausing...' : isSCBusy ? 'Running...' : isSCStopping ? 'Stopping...' : 'Start'}</span>
+              </button>
+            )}
+            {isSCBusy && (
+              <button className={styles.pauseButton} onClick={onPauseSupplyChain} disabled={isSCPausing} title="Pause">
+                {isSCPausing ? <Loader2 size={12} className={styles.spinner} /> : <Pause size={12} />}<span>Pause</span>
+              </button>
+            )}
+            {isSCActive && (
+              <button className={styles.stopButton} onClick={onStopSupplyChain} disabled={isSCStopping} title="Stop">
+                <Square size={12} /><span>Stop</span>
+              </button>
+            )}
+            <button className={`${styles.logsButton} ${isSupplyChainLogsOpen ? styles.logsButtonActive : ''}`}
+              onClick={onToggleSupplyChainLogs} disabled={!isSCActive} title="View Logs">
+              <Terminal size={12} /><span>Logs</span>
+            </button>
+            <button className={styles.downloadButton} onClick={onDownloadSupplyChainJSON}
+              disabled={!hasSupplyChainData || isSCActive || viewingPastVersion}
+              title={viewingPastVersion ? 'Download reflects the active version, not this saved view' : hasSupplyChainData ? 'Download JSON' : 'No data available'}>
+              <Download size={12} /><span>Download</span>
             </button>
           </div>
         </div>

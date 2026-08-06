@@ -49,7 +49,7 @@ import { useStableGraphData } from './hooks/useStableGraphData'
 import { exportToCsv, exportToJson, exportToMarkdown } from './utils/exportCsv'
 import { clusterGraphData } from './utils/clusterNodes'
 import { isOverNodeCap } from './utils/nodeCap'
-import { useTheme, useSession, useReconStatus, useReconSSE, useGvmStatus, useGvmSSE, useGithubHuntStatus, useGithubHuntSSE, useTrufflehogStatus, useTrufflehogSSE, useActiveSessions, useMultiPartialReconStatus, useMultiPartialReconSSE } from '@/hooks'
+import { useTheme, useSession, useReconStatus, useReconSSE, useGvmStatus, useGvmSSE, useGithubHuntStatus, useGithubHuntSSE, useTrufflehogStatus, useTrufflehogSSE, useSupplyChainStatus, useActiveSessions, useMultiPartialReconStatus, useMultiPartialReconSSE } from '@/hooks'
 import { useProjectById } from '@/hooks/useProjects'
 import { useGraphTypeFilterPrefs, useGraphViewPrefs } from '@/hooks/useUserPreferences'
 import { useProject } from '@/providers/ProjectProvider'
@@ -464,6 +464,23 @@ export default function GraphPage() {
     projectId,
     enabled: trufflehogState?.status === 'running' || trufflehogState?.status === 'starting' || trufflehogState?.status === 'paused' || trufflehogState?.status === 'stopping' || trufflehogState?.status === 'pausing',
   })
+
+  // Supply-Chain scan (L1) status + logs
+  const {
+    state: supplyChainState,
+    startSupplyChain,
+    stopSupplyChain,
+    pauseSupplyChain,
+    resumeSupplyChain,
+  } = useSupplyChainStatus({ projectId, enabled: !!projectId })
+  const [hasSupplyChainInput, setHasSupplyChainInput] = useState(false)
+  useEffect(() => {
+    if (!projectId) { setHasSupplyChainInput(false); return }
+    fetch(`/api/supply-chain/${projectId}/upload`)
+      .then(r => r.ok ? r.json() : { files: [] })
+      .then(d => setHasSupplyChainInput((d.files || []).length > 0))
+      .catch(() => setHasSupplyChainInput(false))
+  }, [projectId, isOtherScansModalOpen])
 
   // Active sessions hook - polls kali-sandbox session list
   const activeSessions = useActiveSessions({
@@ -1382,6 +1399,13 @@ export default function GraphPage() {
         trufflehogStatus={trufflehogState?.status || 'idle'}
         hasTrufflehogData={hasTrufflehogData}
         isTrufflehogLogsOpen={activeLogsDrawer === 'trufflehog'}
+        // Supply Chain (L1)
+        onStartSupplyChain={() => { void startSupplyChain() }}
+        onPauseSupplyChain={() => { void pauseSupplyChain() }}
+        onResumeSupplyChain={() => { void resumeSupplyChain() }}
+        onStopSupplyChain={() => { void stopSupplyChain() }}
+        supplyChainStatus={supplyChainState?.status || 'idle'}
+        hasSupplyChainInput={hasSupplyChainInput}
       />
 
       <ViewTabs

@@ -112,6 +112,21 @@ export interface TrufflehogState {
   container_id?: string | null
 }
 
+// Supply-Chain scan (L1 "Other Scans") - same lifecycle shape as trufflehog.
+export type SupplyChainStatus = 'idle' | 'starting' | 'running' | 'paused' | 'pausing' | 'completed' | 'error' | 'stopping'
+
+export interface SupplyChainState {
+  project_id: string
+  status: SupplyChainStatus
+  current_phase: string | null
+  phase_number: number | null
+  total_phases: number
+  started_at: string | null
+  completed_at: string | null
+  error: string | null
+  container_id?: string | null
+}
+
 export const TRUFFLEHOG_PHASES = [
   'Loading Settings',
   'Scanning Repositories',

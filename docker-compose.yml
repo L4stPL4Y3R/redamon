@@ -955,6 +955,8 @@ services:
       - ./ai_attack_surface_scan/output:/data/ai-attack-output:ro
       - report_data:/data/reports
       - js_recon_uploads:/data/js-recon-uploads
+      # Supply-chain SBOM/lockfile uploads: webapp writes, the scan reads (ro).
+      - supply_chain_uploads:/data/supply-chain-uploads
       - js_recon_custom:/data/js-recon-custom
       - ./VERSION:/app/VERSION:ro
       # HTTP traffic capture (Phase 1): read offloaded bodies for the /traffic
@@ -1181,3 +1183,7 @@ volumes:
   # referenced by the docker-broker volume allowlist and container_manager.py.
   osv_db:
     name: redamon-osv-db
+  # Operator-uploaded SBOMs/lockfiles for L1 supply-chain scans. Shared between
+  # the webapp (writes) and the spawned scan container (reads, read-only).
+  supply_chain_uploads:
+    name: redamon_supply_chain_uploads

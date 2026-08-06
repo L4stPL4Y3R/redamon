@@ -213,6 +213,10 @@ class ContainerManager:
         self.supply_chain_analyzer_pids = int(os.environ.get("SUPPLY_CHAIN_ANALYZER_PIDS", "512"))
         self.supply_chain_osv_db_volume = os.environ.get(
             "SUPPLY_CHAIN_OSV_DB_VOLUME", "redamon-osv-db")
+        # Named volume shared with the webapp: the operator's uploaded SBOM/
+        # lockfile lands at <volume>/<project_id>/<filename>.
+        self.supply_chain_uploads_volume = os.environ.get(
+            "SUPPLY_CHAIN_UPLOADS_VOLUME", "redamon_supply_chain_uploads")
 
         # Memory governor (Part 1): reserves each scan job's expected RAM envelope
         # before spawning so concurrent scans can never sum past the host's scan
@@ -3187,8 +3191,7 @@ class ContainerManager:
         return f"redamon-supply-chain-{safe_id}"
 
     async def start_supply_chain(self, project_id: str, user_id: str,
-                                 webapp_api_url: str, supply_chain_path: str,
-                                 uploads_host_path: str) -> "SupplyChainState":
+                                 webapp_api_url: str, supply_chain_path: str) -> "SupplyChainState":
         current = await self.get_supply_chain_status(project_id)
         if current.status in (SupplyChainStatus.RUNNING, SupplyChainStatus.PAUSED):
             raise ValueError(f"Supply-chain scan already active for project {project_id}")
@@ -3232,7 +3235,8 @@ class ContainerManager:
                     "WEBAPP_API_URL": webapp_api_url,
                     "PYTHONUNBUFFERED": "1",
                     "OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY": "/osv-db",
-                    "SUPPLY_CHAIN_UPLOADS_DIR": "/data/supply-chain-uploads",
+                    # Per-project subdir inside the shared uploads volume.
+                    "SUPPLY_CHAIN_UPLOADS_DIR": f"/data/supply-chain-uploads/{project_id}",
                     "NEO4J_URI": os.environ.get("NEO4J_URI", "bolt://localhost:7687"),
                     "NEO4J_USER": os.environ.get("NEO4J_USER", "neo4j"),
                     "NEO4J_PASSWORD": os.environ.get("NEO4J_PASSWORD", ""),
@@ -3243,7 +3247,7 @@ class ContainerManager:
                     f"{supply_chain_path}": {"bind": "/app/supply_chain_scan", "mode": "rw"},
                     sibling_host_path(supply_chain_path, "graph_db"): {"bind": "/app/graph_db", "mode": "ro"},
                     sibling_host_path(supply_chain_path, "supply_chain_common"): {"bind": "/app/supply_chain_common", "mode": "ro"},
-                    uploads_host_path: {"bind": "/data/supply-chain-uploads", "mode": "ro"},
+                    self.supply_chain_uploads_volume: {"bind": "/data/supply-chain-uploads", "mode": "ro"},
                     self.supply_chain_osv_db_volume: {"bind": "/osv-db", "mode": "ro"},
                 },
                 command="python supply_chain_scan/main.py",
