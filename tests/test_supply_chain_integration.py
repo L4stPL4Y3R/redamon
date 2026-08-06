@@ -48,6 +48,23 @@ class TestOsvIntegration(unittest.TestCase):
                 "expected a MAL- verdict for arpan-package")
 
 
+    def test_sbom_mode_detects_malicious(self):
+        # The L3 purl path synthesizes a CycloneDX SBOM; osv-scanner must detect
+        # a MAL- component from it (verified: works via both -L and positional).
+        with tempfile.TemporaryDirectory() as d:
+            bom = os.path.join(d, "bom.cdx.json")
+            with open(bom, "w") as fh:
+                fh.write('{"bomFormat":"CycloneDX","specVersion":"1.5",'
+                         '"components":[{"type":"library",'
+                         '"purl":"pkg:npm/arpan-package@2.0.5"}]}')
+            res = osv_runner.run_osv_scan(bom, mode="sbom", db_path=_OSV_DB)
+            self.assertIsNone(res["error"], res["error"])
+            self.assertTrue(
+                any(m["advisory_id"].startswith("MAL-")
+                    for m in res["parsed"]["malicious"]),
+                "expected a MAL- verdict from the SBOM")
+
+
 @unittest.skipUnless(_HAS_GUARDDOG, "guarddog required")
 class TestGuarddogIntegration(unittest.TestCase):
     def test_benign_package_wellformed(self):
