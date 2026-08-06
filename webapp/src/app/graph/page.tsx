@@ -61,6 +61,13 @@ import { OtherScansModal } from './components/OtherScansModal/OtherScansModal'
 import { useAlertModal, useToast } from '@/components/ui'
 import styles from './page.module.css'
 
+// A saved (past) version is read-only, and GVM/GitHub-Hunt/TruffleHog write to the
+// LIVE/active graph. Starting one while viewing an old version would silently add
+// findings to the active version, not the one on screen - so block it (matches
+// node-delete). Module-scoped so it is not a hook dependency.
+const PAST_VERSION_SCAN_MSG =
+  'You are viewing a saved version, which is read-only. Switch back to the active version to run this scan.'
+
 export default function GraphPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -1090,10 +1097,18 @@ export default function GraphPage() {
   }, [])
 
   const handleStartGvm = useCallback(() => {
+    if (isViewingPastVersion) {
+      alertError(PAST_VERSION_SCAN_MSG, 'Read-only version')
+      return
+    }
     setIsGvmModalOpen(true)
-  }, [])
+  }, [isViewingPastVersion, alertError])
 
   const handleConfirmGvm = useCallback(async () => {
+    if (isViewingPastVersion) {
+      alertError(PAST_VERSION_SCAN_MSG, 'Read-only version')
+      return
+    }
     clearGvmLogs()
     const result = await startGvm()
     if (result) {
@@ -1101,7 +1116,7 @@ export default function GraphPage() {
       setActiveLogsDrawer('gvm')
       toast.info('GVM scan started')
     }
-  }, [startGvm, clearGvmLogs, toast])
+  }, [startGvm, clearGvmLogs, toast, isViewingPastVersion, alertError])
 
   const handleDownloadGvmJSON = useCallback(async () => {
     if (!projectId) return
@@ -1113,6 +1128,10 @@ export default function GraphPage() {
   }, [])
 
   const handleStartGithubHunt = useCallback(async () => {
+    if (isViewingPastVersion) {
+      alertError(PAST_VERSION_SCAN_MSG, 'Read-only version')
+      return
+    }
     try {
       clearGithubHuntLogs()
       const result = await startGithubHunt()
@@ -1124,7 +1143,7 @@ export default function GraphPage() {
       console.error('Failed to start GitHub Hunt:', err)
       toast.error('Failed to start GitHub Hunt')
     }
-  }, [startGithubHunt, clearGithubHuntLogs, toast])
+  }, [startGithubHunt, clearGithubHuntLogs, toast, isViewingPastVersion, alertError])
 
   const handleDownloadGithubHuntJSON = useCallback(async () => {
     if (!projectId) return
@@ -1136,6 +1155,10 @@ export default function GraphPage() {
   }, [])
 
   const handleStartTrufflehog = useCallback(async () => {
+    if (isViewingPastVersion) {
+      alertError(PAST_VERSION_SCAN_MSG, 'Read-only version')
+      return
+    }
     try {
       clearTrufflehogLogs()
       const result = await startTrufflehog()
@@ -1147,7 +1170,7 @@ export default function GraphPage() {
       console.error('Failed to start Trufflehog:', err)
       toast.error('Failed to start Trufflehog')
     }
-  }, [startTrufflehog, clearTrufflehogLogs, toast])
+  }, [startTrufflehog, clearTrufflehogLogs, toast, isViewingPastVersion, alertError])
 
   const handleDownloadTrufflehogJSON = useCallback(async () => {
     if (!projectId) return
@@ -1336,6 +1359,9 @@ export default function GraphPage() {
         onClose={() => setIsOtherScansModalOpen(false)}
         hasReconData={hasReconData}
         hasGithubToken={hasGithubToken}
+        // Scan Timeline: past versions are read-only; the raw JSON is latest-only.
+        viewingPastVersion={isViewingPastVersion}
+        isActivatingVersion={isActivatingVersion}
         // GitHub Hunt
         onStartGithubHunt={handleStartGithubHunt}
         onPauseGithubHunt={handlePauseGithubHunt}

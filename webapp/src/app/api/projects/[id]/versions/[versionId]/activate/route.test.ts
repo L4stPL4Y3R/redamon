@@ -184,6 +184,10 @@ describe('preconditions', () => {
     'a full recon scan is running',
     'a partial recon run is active',
     'an agent session is running',
+    // Secondary graph writers must block activation too (alignment fix).
+    'a GVM vulnerability scan is running',
+    'a GitHub Secret Hunt is running',
+    'a TruffleHog scan is running',
   ])('refused while %s (4A.3)', async reason => {
     h.describeWriters.mockResolvedValue(reason)
     const res = await POST(req(), params('p1', 'v1'))

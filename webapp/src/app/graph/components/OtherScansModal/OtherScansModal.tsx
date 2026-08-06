@@ -11,6 +11,11 @@ interface OtherScansModalProps {
   onClose: () => void
   hasReconData: boolean
   hasGithubToken: boolean
+  /** True while a PAST version is being viewed: these scans write the LIVE graph,
+   *  and the downloadable JSON is always the latest scan, so both are disabled. */
+  viewingPastVersion?: boolean
+  /** True while a version activation (graph swap) is in flight. */
+  isActivatingVersion?: boolean
   // GitHub Hunt
   onStartGithubHunt?: () => void
   onPauseGithubHunt?: () => void
@@ -55,6 +60,8 @@ export function OtherScansModal({
   onClose,
   hasReconData,
   hasGithubToken,
+  viewingPastVersion = false,
+  isActivatingVersion = false,
   // GitHub Hunt
   onStartGithubHunt,
   onPauseGithubHunt,
@@ -91,6 +98,13 @@ export function OtherScansModal({
   const isTHRunning = isTHBusy || isTHStopping
   const isTHPaused = trufflehogStatus === 'paused'
   const isTHActive = isTHRunning || isTHPaused
+
+  // Read-only past version (or an in-flight swap): no scan may start/resume, and the
+  // JSON download is disabled because it would return the latest scan, not this view.
+  const scanBlocked = viewingPastVersion || isActivatingVersion
+  const blockedTitle = viewingPastVersion
+    ? 'Viewing a saved version - switch back to the active version to run scans'
+    : 'A version activation is in progress'
 
   return (
     <Modal
@@ -134,8 +148,8 @@ export function OtherScansModal({
               <button
                 className={styles.resumeButton}
                 onClick={onResumeGithubHunt}
-                disabled={!hasGithubToken}
-                title={!hasGithubToken ? 'GitHub token required' : 'Resume GitHub Hunt'}
+                disabled={!hasGithubToken || scanBlocked}
+                title={scanBlocked ? blockedTitle : !hasGithubToken ? 'GitHub token required' : 'Resume GitHub Hunt'}
               >
                 <Play size={12} />
                 <span>Resume</span>
@@ -144,8 +158,8 @@ export function OtherScansModal({
               <button
                 className={styles.startButton}
                 onClick={onStartGithubHunt}
-                disabled={!hasGithubToken || isGHRunning || (!hasReconData && !isGHPaused)}
-                title={!hasGithubToken ? 'GitHub token required' : !hasReconData ? 'Run recon first' : isGHRunning ? 'In progress...' : 'Start GitHub Hunt'}
+                disabled={!hasGithubToken || isGHRunning || (!hasReconData && !isGHPaused) || scanBlocked}
+                title={scanBlocked ? blockedTitle : !hasGithubToken ? 'GitHub token required' : !hasReconData ? 'Run recon first' : isGHRunning ? 'In progress...' : 'Start GitHub Hunt'}
               >
                 {isGHRunning ? (
                   <Loader2 size={12} className={styles.spinner} />
@@ -193,8 +207,8 @@ export function OtherScansModal({
             <button
               className={styles.downloadButton}
               onClick={onDownloadGithubHuntJSON}
-              disabled={!hasGithubHuntData || isGHActive}
-              title={hasGithubHuntData ? 'Download JSON' : 'No data available'}
+              disabled={!hasGithubHuntData || isGHActive || viewingPastVersion}
+              title={viewingPastVersion ? 'Download reflects the active version, not this saved view' : hasGithubHuntData ? 'Download JSON' : 'No data available'}
             >
               <Download size={12} />
               <span>Download</span>
@@ -236,8 +250,8 @@ export function OtherScansModal({
               <button
                 className={styles.resumeButton}
                 onClick={onResumeTrufflehog}
-                disabled={!hasGithubToken}
-                title={!hasGithubToken ? 'GitHub token required' : 'Resume TruffleHog'}
+                disabled={!hasGithubToken || scanBlocked}
+                title={scanBlocked ? blockedTitle : !hasGithubToken ? 'GitHub token required' : 'Resume TruffleHog'}
               >
                 <Play size={12} />
                 <span>Resume</span>
@@ -246,8 +260,8 @@ export function OtherScansModal({
               <button
                 className={styles.startButton}
                 onClick={onStartTrufflehog}
-                disabled={!hasGithubToken || isTHRunning || (!hasReconData && !isTHPaused)}
-                title={!hasGithubToken ? 'GitHub token required' : !hasReconData ? 'Run recon first' : isTHRunning ? 'In progress...' : 'Start TruffleHog'}
+                disabled={!hasGithubToken || isTHRunning || (!hasReconData && !isTHPaused) || scanBlocked}
+                title={scanBlocked ? blockedTitle : !hasGithubToken ? 'GitHub token required' : !hasReconData ? 'Run recon first' : isTHRunning ? 'In progress...' : 'Start TruffleHog'}
               >
                 {isTHRunning ? (
                   <Loader2 size={12} className={styles.spinner} />
@@ -295,8 +309,8 @@ export function OtherScansModal({
             <button
               className={styles.downloadButton}
               onClick={onDownloadTrufflehogJSON}
-              disabled={!hasTrufflehogData || isTHActive}
-              title={hasTrufflehogData ? 'Download JSON' : 'No data available'}
+              disabled={!hasTrufflehogData || isTHActive || viewingPastVersion}
+              title={viewingPastVersion ? 'Download reflects the active version, not this saved view' : hasTrufflehogData ? 'Download JSON' : 'No data available'}
             >
               <Download size={12} />
               <span>Download</span>

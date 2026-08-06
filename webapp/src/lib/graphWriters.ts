@@ -20,6 +20,10 @@ const RECON_ORCHESTRATOR_URL = process.env.RECON_ORCHESTRATOR_URL || 'http://loc
 
 const ACTIVE_RECON_STATUSES = new Set(['running', 'starting', 'paused', 'stopping'])
 const ACTIVE_PARTIAL_STATUSES = new Set(['running', 'starting', 'stopping'])
+// GVM / GitHub-secret / TruffleHog share one status enum; these are the states in
+// which the scan is still writing (or about to write) finding nodes into the live
+// graph. 'paused' counts: a paused scan holds its place and will resume writing.
+const ACTIVE_SECONDARY_STATUSES = new Set(['running', 'starting', 'paused', 'stopping'])
 
 /**
  * Returns a human phrase describing what is holding the live graph
@@ -39,7 +43,47 @@ export async function describeLiveGraphWriters(projectId: string): Promise<strin
     return 'the agent session state could not be verified'
   }
 
-  return describeScanWriters(projectId)
+  const scan = await describeScanWriters(projectId)
+  if (scan) return scan
+
+  // GVM / GitHub-secret / TruffleHog also write finding nodes into the live graph
+  // (Section 9A graph WRITERS). Activation deletes+rebuilds that graph, so it must
+  // wait for these too - otherwise a swap can half-delete a scan's findings or graft
+  // a newer scan's findings onto the restored older version.
+  return describeSecondaryScanWriters(projectId)
+}
+
+/**
+ * The GVM / GitHub-secret / TruffleHog subset. Each runs in its own container and
+ * writes findings into the live graph keyed by project_id. Used by ACTIVATION only
+ * (a full scan legitimately runs alongside these today, same as an agent session,
+ * so describeScanWriters deliberately omits them).
+ *
+ * FAIL CLOSED: an unverifiable status is reported as busy, never assumed idle.
+ */
+export async function describeSecondaryScanWriters(projectId: string): Promise<string | null> {
+  const checks: Array<{ path: string; label: string }> = [
+    { path: `/gvm/${projectId}/status`, label: 'a GVM vulnerability scan is running' },
+    { path: `/github-hunt/${projectId}/status`, label: 'a GitHub Secret Hunt is running' },
+    { path: `/trufflehog/${projectId}/status`, label: 'a TruffleHog scan is running' },
+  ]
+
+  for (const { path, label } of checks) {
+    try {
+      const res = await orchestratorFetch(`${RECON_ORCHESTRATOR_URL}${path}`, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+      })
+      if (!res.ok) return `${label.replace(' is running', '')} status could not be verified`
+      const status = (await res.json())?.status
+      if (status && ACTIVE_SECONDARY_STATUSES.has(status)) return label
+    } catch (err) {
+      console.error(`[graphWriters] ${path} check failed (treating as busy):`, err)
+      return `${label.replace(' is running', '')} status could not be verified`
+    }
+  }
+
+  return null
 }
 
 /**

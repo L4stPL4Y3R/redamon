@@ -361,8 +361,8 @@ export function GraphToolbar({
               <button
                 className={styles.downloadButton}
                 onClick={onDownloadJSON}
-                disabled={!hasReconData || isReconActive}
-                title={hasReconData ? 'Download Recon JSON' : 'No data available'}
+                disabled={!hasReconData || isReconActive || viewingPastVersion}
+                title={viewingPastVersion ? 'Download reflects the active version, not this saved view' : hasReconData ? 'Download Recon JSON' : 'No data available'}
               >
                 <Download size={14} />
               </button>
@@ -383,9 +383,13 @@ export function GraphToolbar({
               <button
                 className={`${styles.gvmButton} ${isGvmActive ? styles.gvmButtonActive : ''}`}
                 onClick={isGvmPaused ? onResumeGvm : onStartGvm}
-                disabled={!gvmAvailable || isGvmRunning || (!hasReconData && !isGvmPaused) || (stealthMode && !isGvmPaused)}
+                disabled={!gvmAvailable || isGvmRunning || (!hasReconData && !isGvmPaused) || (stealthMode && !isGvmPaused) || viewingPastVersion || isActivatingVersion}
                 title={
-                  !gvmAvailable
+                  viewingPastVersion
+                    ? 'Viewing a saved version - switch back to the active version to scan'
+                    : isActivatingVersion
+                    ? 'A version activation is in progress'
+                    : !gvmAvailable
                     ? 'GVM is not installed. Run ./redamon.sh install --gvm to enable vulnerability scanning'
                     : stealthMode && !isGvmPaused
                     ? 'GVM scanning is disabled in Stealth Mode (generates ~50,000 active probes per target)'
@@ -443,8 +447,8 @@ export function GraphToolbar({
               <button
                 className={styles.downloadButton}
                 onClick={onDownloadGvmJSON}
-                disabled={!hasGvmData || isGvmActive}
-                title={hasGvmData ? 'Download GVM JSON' : 'No GVM data available'}
+                disabled={!hasGvmData || isGvmActive || viewingPastVersion}
+                title={viewingPastVersion ? 'Download reflects the active version, not this saved view' : hasGvmData ? 'Download GVM JSON' : 'No GVM data available'}
               >
                 <Download size={14} />
               </button>

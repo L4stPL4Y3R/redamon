@@ -47,10 +47,19 @@ vi.mock('@/lib/scanTimeline', async orig => ({
   createScanJob: async () => ({ id: 'job1' }),
 }))
 vi.mock('@/lib/auth', () => ({ createWsTicket: (...a: unknown[]) => h.createTicket(...a) }))
+// GVM/GitHub-Hunt/TruffleHog start routes gate on a recon-output file; make it present
+// so the only thing that can refuse them here is the activation lock.
+vi.mock('fs', async orig => ({ ...(await orig<typeof import('fs')>()), existsSync: () => true }))
+vi.mock('@/lib/orchestratorError', () => ({
+  normalizeOrchestratorStartError: (d: { error?: string }, fb: string) => ({ error: d?.error ?? fb }),
+}))
 
 import { POST as startScan } from '@/app/api/recon/[projectId]/start/route'
 import { POST as startPartial } from '@/app/api/recon/[projectId]/partial/route'
 import { POST as wsTicket } from '@/app/api/agent/ws-ticket/route'
+import { POST as startGvm } from '@/app/api/gvm/[projectId]/start/route'
+import { POST as startGithubHunt } from '@/app/api/github-hunt/[projectId]/start/route'
+import { POST as startTrufflehog } from '@/app/api/trufflehog/[projectId]/start/route'
 
 const CONFLICT = () => NextResponse.json(
   { error: 'A version activation is in progress', activationInProgress: true },
@@ -130,5 +139,33 @@ describe('agent session start (ws ticket)', () => {
     const res = await wsTicket(ticketReq())
     expect(res.status).toBe(200)
     expect((await res.json()).ticket).toBe('ticket123')
+  })
+})
+
+// GVM / GitHub-Hunt / TruffleHog write finding nodes into the live graph, so they
+// must also refuse to start into an in-flight swap (the alignment gap this fixes).
+describe.each([
+  { name: 'GVM scan', run: startGvm, path: 'gvm' },
+  { name: 'GitHub Secret Hunt', run: startGithubHunt, path: 'github-hunt' },
+  { name: 'TruffleHog scan', run: startTrufflehog, path: 'trufflehog' },
+])('$name start', ({ run, path }) => {
+  const req = () => new NextRequest(`http://x/api/${path}/p1/start`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+  })
+
+  test('refused while an activation is swapping the graph', async () => {
+    h.activating.mockResolvedValue(CONFLICT())
+    const res = await run(req(), params)
+    expect(res.status).toBe(409)
+    expect((await res.json()).activationInProgress).toBe(true)
+    // No spawn request may reach the orchestrator.
+    expect(h.orchestratorFetch).not.toHaveBeenCalled()
+  })
+
+  test('allowed when the graph is free', async () => {
+    h.orchestratorFetch.mockResolvedValue({ ok: true, json: async () => ({ status: 'starting' }) })
+    const res = await run(req(), params)
+    expect(res.status).toBe(200)
+    expect(h.orchestratorFetch).toHaveBeenCalled()
   })
 })

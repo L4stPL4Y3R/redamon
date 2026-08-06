@@ -5,6 +5,7 @@ import { existsSync } from 'fs'
 import path from 'path'
 import { orchestratorFetch } from '@/lib/orchestrator'
 import { normalizeOrchestratorStartError } from '@/lib/orchestratorError'
+import { assertGraphNotActivating } from '@/lib/activationLock'
 
 const RECON_ORCHESTRATOR_URL = process.env.RECON_ORCHESTRATOR_URL || 'http://localhost:8010'
 const WEBAPP_URL = process.env.WEBAPP_URL || 'http://localhost:3000'
@@ -19,6 +20,11 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const { projectId } = await params
     const __denied = await guardProject(projectId)
     if (__denied) return __denied
+
+    // Scan Timeline (Section 4A.3): a GitHub Secret Hunt writes finding nodes into
+    // the live graph, so it must not start into an in-flight version swap.
+    const __activating = await assertGraphNotActivating(projectId)
+    if (__activating) return __activating
 
     // Verify project exists
     const project = await prisma.project.findUnique({

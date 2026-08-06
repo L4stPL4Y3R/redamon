@@ -15,7 +15,7 @@ const fetchMock = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/prisma', () => ({ default: prismaMock }))
 vi.mock('@/lib/orchestrator', () => ({ orchestratorFetch: (...a: unknown[]) => fetchMock(...a) }))
 
-import { describeLiveGraphWriters } from './graphWriters'
+import { describeLiveGraphWriters, describeSecondaryScanWriters } from './graphWriters'
 
 const okJson = (body: unknown) => ({ ok: true, json: async () => body })
 
@@ -79,5 +79,78 @@ describe('describeLiveGraphWriters', () => {
   test('FAIL CLOSED: an unreadable agent-session state reads as busy', async () => {
     prismaMock.conversation.findFirst.mockRejectedValue(new Error('db down'))
     expect(await describeLiveGraphWriters('p1')).toMatch(/agent session state could not be verified/)
+  })
+
+  // GVM / GitHub-secret / TruffleHog also write finding nodes into the live graph,
+  // so activation must wait for them too (they were the alignment gap this fixes).
+  const secondary = (over: { gvm?: string; github?: string; trufflehog?: string }) =>
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes('/partial/all')) return okJson({ runs: [] })
+      if (url.includes('/gvm/')) return okJson({ status: over.gvm ?? 'idle' })
+      if (url.includes('/github-hunt/')) return okJson({ status: over.github ?? 'idle' })
+      if (url.includes('/trufflehog/')) return okJson({ status: over.trufflehog ?? 'idle' })
+      return okJson({ status: 'idle' }) // full recon
+    })
+
+  test.each(['running', 'starting', 'paused', 'stopping'])('a GVM scan (%s) blocks', async status => {
+    secondary({ gvm: status })
+    expect(await describeLiveGraphWriters('p1')).toBe('a GVM vulnerability scan is running')
+  })
+
+  test('a running GitHub Secret Hunt blocks', async () => {
+    secondary({ github: 'running' })
+    expect(await describeLiveGraphWriters('p1')).toBe('a GitHub Secret Hunt is running')
+  })
+
+  test('a running TruffleHog scan blocks', async () => {
+    secondary({ trufflehog: 'running' })
+    expect(await describeLiveGraphWriters('p1')).toBe('a TruffleHog scan is running')
+  })
+
+  test.each(['idle', 'completed', 'error'])('a finished secondary scan (%s) does not block', async status => {
+    secondary({ gvm: status, github: status, trufflehog: status })
+    expect(await describeLiveGraphWriters('p1')).toBeNull()
+  })
+
+  test('FAIL CLOSED: an unverifiable secondary status reads as busy', async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes('/partial/all')) return okJson({ runs: [] })
+      if (url.includes('/gvm/')) return { ok: false, json: async () => ({}) }
+      return okJson({ status: 'idle' })
+    })
+    expect(await describeLiveGraphWriters('p1')).toMatch(/could not be verified/)
+  })
+
+  test('EFFICIENCY: a running full recon short-circuits before the secondary checks', async () => {
+    fetchMock.mockImplementation(async (url: string) =>
+      url.includes('/partial/all') ? okJson({ runs: [] }) : okJson({ status: 'running' }))
+    expect(await describeLiveGraphWriters('p1')).toBe('a full recon scan is running')
+    // The GVM/GitHub/TruffleHog status endpoints must not have been polled at all.
+    const polled = fetchMock.mock.calls.map(c => String(c[0]))
+    expect(polled.some(u => u.includes('/gvm/') || u.includes('/github-hunt/') || u.includes('/trufflehog/'))).toBe(false)
+  })
+})
+
+// The secondary subset in isolation (used only by activation).
+describe('describeSecondaryScanWriters', () => {
+  test('all three idle → null', async () => {
+    fetchMock.mockImplementation(async () => okJson({ status: 'idle' }))
+    expect(await describeSecondaryScanWriters('p1')).toBeNull()
+  })
+
+  test('polls in order GVM → GitHub → TruffleHog and returns the first active', async () => {
+    fetchMock.mockImplementation(async (url: string) =>
+      url.includes('/trufflehog/') ? okJson({ status: 'running' }) : okJson({ status: 'idle' }))
+    expect(await describeSecondaryScanWriters('p1')).toBe('a TruffleHog scan is running')
+  })
+
+  test('a 200 response with no status field is treated as idle, not busy', async () => {
+    fetchMock.mockImplementation(async () => okJson({}))
+    expect(await describeSecondaryScanWriters('p1')).toBeNull()
+  })
+
+  test('FAIL CLOSED: a thrown fetch reads as busy', async () => {
+    fetchMock.mockRejectedValue(new Error('ECONNREFUSED'))
+    expect(await describeSecondaryScanWriters('p1')).toMatch(/could not be verified/)
   })
 })
