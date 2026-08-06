@@ -55,6 +55,10 @@ describe('PARTIAL_RECON_SUPPORTED_TOOLS', () => {
     expect(PARTIAL_RECON_SUPPORTED_TOOLS.has('JsRecon')).toBe(true)
   })
 
+  test('contains SupplyChainRecon', () => {
+    expect(PARTIAL_RECON_SUPPORTED_TOOLS.has('SupplyChainRecon')).toBe(true)
+  })
+
   test('contains Shodan', () => {
     expect(PARTIAL_RECON_SUPPORTED_TOOLS.has('Shodan')).toBe(true)
   })
@@ -163,6 +167,18 @@ describe('PARTIAL_RECON_PHASE_MAP', () => {
   test('has JsRecon phases', () => {
     expect(PARTIAL_RECON_PHASE_MAP['JsRecon']).toHaveLength(1)
     expect(PARTIAL_RECON_PHASE_MAP['JsRecon'][0]).toBe('JS Recon')
+  })
+
+  test('has SupplyChainRecon phases', () => {
+    expect(PARTIAL_RECON_PHASE_MAP['SupplyChainRecon']).toHaveLength(2)
+    expect(PARTIAL_RECON_PHASE_MAP['SupplyChainRecon'][0]).toBe('Package Harvest')
+    expect(PARTIAL_RECON_PHASE_MAP['SupplyChainRecon'][1]).toBe('Offline OSV Verdict')
+  })
+
+  test('every supported tool has a phase map entry', () => {
+    for (const tool of PARTIAL_RECON_SUPPORTED_TOOLS) {
+      expect(PARTIAL_RECON_PHASE_MAP[tool], `${tool} missing from PARTIAL_RECON_PHASE_MAP`).toBeDefined()
+    }
   })
 
   test('has Shodan phases', () => {

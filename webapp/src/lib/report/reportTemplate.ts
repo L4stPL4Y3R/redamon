@@ -441,6 +441,7 @@ ${renderGithubSecrets(data)}
 ${renderTrufflehog(data)}
 ${renderSecrets(data)}
 ${renderJsRecon(data)}
+${renderSupplyChain(data)}
 ${renderGraphqlScan(data)}
 ${renderVhostSni(data)}
 ${renderWebCachePoison(data)}
@@ -503,6 +504,9 @@ function renderTOC(data: ReportData): string {
   }
   if (data.jsRecon.totalFindings > 0) {
     dynamicSections.push({ id: 'js-recon', label: 'JavaScript Reconnaissance' })
+  }
+  if (data.supplyChain && (data.supplyChain.totalPackages > 0 || data.supplyChain.findings.length > 0)) {
+    dynamicSections.push({ id: 'supply-chain', label: 'Supply Chain (Dependencies)' })
   }
   if (data.graphqlScan.endpointsTested > 0 || data.graphqlScan.totalFindings > 0) {
     dynamicSections.push({ id: 'graphql-scan', label: 'GraphQL Security' })
@@ -1207,6 +1211,60 @@ function renderJsRecon(data: ReportData): string {
     <tbody>${findingRows}</tbody>
   </table>
   ${js.findings.length >= 50 ? '<p class="muted">Showing first 50 findings.</p>' : ''}
+</div>`
+}
+
+function renderSupplyChain(data: ReportData): string {
+  const sc = data.supplyChain
+  // Defensive: older payloads / partial fixtures may not carry this section.
+  if (!sc || (sc.totalPackages === 0 && (sc.findings?.length ?? 0) === 0)) return ''
+
+  const ecoRows = sc.byEcosystem.map(e => `
+    <tr><td>${esc(e.ecosystem)}</td><td>${e.count}</td></tr>`).join('')
+
+  const findingRows = sc.findings.map(f => `
+    <tr>
+      <td>${esc(f.name || f.purl)}</td>
+      <td>${esc(f.version || '')}</td>
+      <td>${f.verdict === 'malicious'
+        ? '<span class="badge badge-critical">MALICIOUS</span>'
+        : '<span class="badge badge-medium">suspicious</span>'}</td>
+      <td>${esc(f.advisoryId || '')}</td>
+      <td>${esc(f.ecosystem || '')}</td>
+      <td style="font-size:11px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.baseUrl || '')}</td>
+    </tr>`).join('')
+
+  return `
+<div class="page-break"></div>
+<div class="section" id="supply-chain">
+  <h2 class="section-title">Supply Chain (Dependencies)</h2>
+  <p style="margin-bottom:12px">${sc.totalPackages} dependency/dependencies were identified from what the target actually serves (source maps, module imports, and the detected technology stack) and checked against an offline copy of the OSV vulnerability database. ${sc.maliciousCount} were flagged as <strong>malicious</strong> and ${sc.suspiciousCount} as suspicious. A malicious verdict means the dependency itself is malware, typically a typosquat of a popular package, and should be treated as critical: it executes with the same trust as first-party code.</p>
+  <div class="two-col">
+    <div>
+      <h3>Packages by Ecosystem</h3>
+      <table class="data-table">
+        <thead><tr><th>Ecosystem</th><th>Count</th></tr></thead>
+        <tbody>${ecoRows}</tbody>
+      </table>
+    </div>
+    <div>
+      <h3>Verdicts</h3>
+      <table class="data-table">
+        <thead><tr><th>Verdict</th><th>Count</th></tr></thead>
+        <tbody>
+          <tr><td>Malicious</td><td>${sc.maliciousCount}</td></tr>
+          <tr><td>Suspicious</td><td>${sc.suspiciousCount}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  ${sc.findings.length > 0 ? `
+  <h3>Flagged Dependencies</h3>
+  <table class="data-table">
+    <thead><tr><th>Package</th><th>Version</th><th>Verdict</th><th>Advisory</th><th>Ecosystem</th><th>Served By</th></tr></thead>
+    <tbody>${findingRows}</tbody>
+  </table>
+  ${sc.findings.length >= 50 ? '<p class="muted">Showing first 50 findings.</p>' : ''}` : ''}
 </div>`
 }
 

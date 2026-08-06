@@ -3589,6 +3589,171 @@ class TestRunJsluice(unittest.TestCase):
         self.assertEqual(call_args[0][1], {})
 
 
+class TestRunSupplyChain(unittest.TestCase):
+    """Tests for run_supply_chain (partial SupplyChainRecon).
+
+    The partial module reuses the JS-recon fetch to obtain the served JS, then
+    runs the harvest + offline OSV verdict and writes Package /
+    MalPackageFinding nodes. Both stages are mocked here.
+    """
+
+    def _run_with_mocks(self, config, neo4j_connected=True, graph_baseurls=None):
+        mock_settings = MagicMock()
+        mock_settings.return_value = {"JS_RECON_ENABLED": False, "SUBDOMAIN_LIST": ["."]}
+
+        def mock_js_recon_fn(combined_result, settings=None):
+            combined_result['js_recon'] = {
+                'scan_metadata': {'mode': 'post_recon', 'js_files_analyzed': 1},
+                'source_maps': [{'source_files': ['node_modules/arpan-package/index.js']}],
+                'secrets': [], 'endpoints': [], 'summary': {},
+            }
+            return combined_result
+
+        def mock_supply_chain_fn(combined_result, settings=None):
+            combined_result['supply_chain_recon'] = {
+                'artifact': {
+                    'schema_version': 1, 'mode': 'js-dir',
+                    'packages': [{'purl': 'pkg:npm/arpan-package@2.0.5',
+                                  'name': 'arpan-package', 'version': '2.0.5',
+                                  'ecosystem': 'npm', 'source': 'sourcemap'}],
+                    'malicious': [{'purl': 'pkg:npm/arpan-package@2.0.5',
+                                   'name': 'arpan-package', 'advisory_id': 'MAL-2022-1122',
+                                   'ecosystem': 'npm', 'confidence': 'malicious'}],
+                    'vulnerable': [], 'suspicious': [], 'errors': [],
+                },
+                'base_urls': ['https://example.com'],
+                'summary': {'packages': 1, 'malicious': 1, 'vulnerable': 0},
+            }
+            return combined_result
+
+        mock_run_js_recon = MagicMock(side_effect=mock_js_recon_fn)
+        mock_run_supply_chain = MagicMock(side_effect=mock_supply_chain_fn)
+
+        mock_client = MagicMock()
+        mock_client.verify_connection.return_value = neo4j_connected
+        mock_client.update_graph_from_supply_chain_recon.return_value = {
+            "packages_merged": 1, "malicious_merged": 1, "suspicious_merged": 0,
+            "relationships_created": 1, "errors": [],
+        }
+
+        _graph_baseurls = graph_baseurls if graph_baseurls is not None else [
+            {"url": "https://example.com"},
+        ]
+
+        def mock_session_run(query, **kwargs):
+            result = MagicMock()
+            if "BaseURL" in query and "b.url" in query:
+                records = []
+                for bu in _graph_baseurls:
+                    rec = MagicMock()
+                    rec.__getitem__ = lambda self, key, d=bu: d.get(key)
+                    records.append(rec)
+                result.__iter__ = lambda self, r=records: iter(r)
+            else:
+                result.__iter__ = lambda self: iter([])
+                result.single.return_value = None
+            return result
+
+        mock_session = MagicMock()
+        mock_session.run = mock_session_run
+        mock_driver = MagicMock()
+        mock_driver.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_driver.session.return_value.__exit__ = MagicMock(return_value=False)
+        mock_client.driver = mock_driver
+
+        mock_neo4j_cls = MagicMock()
+        mock_neo4j_cls.return_value.__enter__ = MagicMock(return_value=mock_client)
+        mock_neo4j_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+        mock_project_settings = MagicMock()
+        mock_project_settings.get_settings = mock_settings
+        mock_js_recon_module = MagicMock()
+        mock_js_recon_module.run_js_recon = mock_run_js_recon
+        mock_sc_module = MagicMock()
+        mock_sc_module.run_supply_chain_recon = mock_run_supply_chain
+        mock_graph_db = MagicMock()
+        mock_graph_db.Neo4jClient = mock_neo4j_cls
+
+        saved = {}
+        modules_to_mock = {
+            'recon.project_settings': mock_project_settings,
+            'recon.main_recon_modules.js_recon': mock_js_recon_module,
+            'recon.main_recon_modules.supply_chain_recon': mock_sc_module,
+            'graph_db': mock_graph_db,
+        }
+        for name, mod in modules_to_mock.items():
+            saved[name] = sys.modules.get(name)
+            sys.modules[name] = mod
+
+        saved_env = {"USER_ID": os.environ.get("USER_ID"), "PROJECT_ID": os.environ.get("PROJECT_ID")}
+        os.environ["USER_ID"] = "user1"
+        os.environ["PROJECT_ID"] = "proj1"
+        try:
+            import importlib
+            import partial_recon as pr
+            importlib.reload(pr)
+            pr.run_supply_chain(config)
+        finally:
+            for name, mod in saved.items():
+                if mod is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = mod
+            for k, v in saved_env.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+        return {
+            "run_js_recon": mock_run_js_recon,
+            "run_supply_chain": mock_run_supply_chain,
+            "neo4j_client": mock_client,
+        }
+
+    def test_runs_js_recon_then_supply_chain(self):
+        m = self._run_with_mocks({"domain": "example.com", "include_graph_targets": True})
+        self.assertTrue(m["run_js_recon"].called, "JS Recon must run first to fetch the served JS")
+        self.assertTrue(m["run_supply_chain"].called, "Supply-chain harvest must run after it")
+
+    def test_force_enables_both_stages(self):
+        m = self._run_with_mocks({"domain": "example.com", "include_graph_targets": True})
+        settings = m["run_supply_chain"].call_args.kwargs.get("settings") or {}
+        self.assertTrue(settings.get("JS_RECON_ENABLED"))
+        self.assertTrue(settings.get("SUPPLY_CHAIN_RECON_ENABLED"))
+
+    def test_writes_supply_chain_graph(self):
+        m = self._run_with_mocks({"domain": "example.com", "include_graph_targets": True})
+        self.assertTrue(m["neo4j_client"].update_graph_from_supply_chain_recon.called)
+        args = m["neo4j_client"].update_graph_from_supply_chain_recon.call_args[0]
+        self.assertIn("supply_chain_recon", args[0])
+        self.assertEqual(args[1], "user1")
+        self.assertEqual(args[2], "proj1")
+
+    def test_skips_graph_write_when_neo4j_down(self):
+        # Neo4j unreachable: the scan still runs on user-supplied URLs, but the
+        # graph write is skipped rather than crashing. (With no user URLs either,
+        # the module correctly bails out - covered by test_bails_with_no_targets.)
+        m = self._run_with_mocks({
+            "domain": "example.com", "include_graph_targets": True,
+            "user_targets": {"urls": ["https://custom.example/app.js"]},
+        }, neo4j_connected=False)
+        self.assertFalse(m["neo4j_client"].update_graph_from_supply_chain_recon.called)
+
+    def test_bails_with_no_targets(self):
+        # No graph targets, no user URLs, no uploads -> refuse to run (exit 1),
+        # same contract as the JsRecon partial.
+        with self.assertRaises(SystemExit):
+            self._run_with_mocks({"domain": "example.com", "include_graph_targets": False})
+
+    def test_user_urls_are_used_without_graph_targets(self):
+        m = self._run_with_mocks({
+            "domain": "example.com", "include_graph_targets": False,
+            "user_targets": {"urls": ["https://custom.example/app.js"]},
+        })
+        self.assertTrue(m["run_supply_chain"].called)
+
+
 class TestRunJsRecon(unittest.TestCase):
     """Tests for run_jsrecon using module-level mocks."""
 

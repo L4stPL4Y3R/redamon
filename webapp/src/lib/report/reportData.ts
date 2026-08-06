@@ -133,6 +133,19 @@ export interface JsReconFindingRecord {
   sourceUrl: string | null
 }
 
+export interface SupplyChainFindingRecord {
+  purl: string
+  name: string | null
+  version: string | null
+  ecosystem: string | null
+  verdict: string
+  sourceTool: string | null
+  advisoryId: string | null
+  severity: string | null
+  title: string | null
+  baseUrl: string | null
+}
+
 export interface GraphqlFindingRecord {
   endpoint: string
   vulnerabilityType: string   // native: 'graphql_introspection_enabled' | 'graphql_sensitive_data_exposure'
@@ -294,6 +307,15 @@ export interface ReportData {
     findings: JsReconFindingRecord[]
   }
 
+  // Supply Chain (malicious / vulnerable dependencies)
+  supplyChain: {
+    totalPackages: number
+    maliciousCount: number
+    suspiciousCount: number
+    byEcosystem: { ecosystem: string; count: number }[]
+    findings: SupplyChainFindingRecord[]
+  }
+
   // GraphQL Security Scanner
   graphqlScan: {
     totalFindings: number
@@ -442,6 +464,7 @@ export async function gatherReportData(projectId: string): Promise<ReportData> {
     trufflehogData,
     secretsData,
     jsReconData,
+    supplyChainData,
     graphqlData,
     vhostSniData,
     webCachePoisonData,
@@ -456,6 +479,7 @@ export async function gatherReportData(projectId: string): Promise<ReportData> {
     withSession(s => queryTrufflehog(s, projectId)),
     withSession(s => querySecrets(s, projectId)),
     withSession(s => queryJsRecon(s, projectId)),
+    withSession(s => querySupplyChain(s, projectId)),
     withSession(s => queryGraphql(s, projectId)),
     withSession(s => queryVhostSni(s, projectId)),
     withSession(s => queryWebCachePoison(s, projectId)),
@@ -528,6 +552,10 @@ export async function gatherReportData(projectId: string): Promise<ReportData> {
     const jsReconScore = jsReconData.bySeverity
       .filter((d: { severity: string; count: number }) => d.severity === 'critical' || d.severity === 'high')
       .reduce((sum: number, d: { severity: string; count: number }) => sum + d.count, 0) * 40
+    // Supply chain: a MALICIOUS dependency is malware the target actually ships,
+    // so it is weighted like a verified secret (80). A GuardDog 'suspicious' hit
+    // is heuristic evidence only, so it is weighted well below that.
+    const supplyChainScore = supplyChainData.maliciousCount * 80 + supplyChainData.suspiciousCount * 20
     const graphqlScore = graphqlData.bySeverity.reduce((sum: number, d: { severity: string; count: number }) => {
       const w = d.severity === 'critical' ? 60 : d.severity === 'high' ? 30 : d.severity === 'medium' ? 10 : d.severity === 'low' ? 3 : 1
       return sum + d.count * w
@@ -579,7 +607,7 @@ export async function gatherReportData(projectId: string): Promise<ReportData> {
       + secretsScore + sensitiveFilesScore + injectableScore
       + expiredCertScore + missingHeaderScore
       + trufflehogScore + jsReconScore + graphqlScore + otxScore + vhostSniScore
-      + webCachePoisonScore + aiSurfaceScore
+      + webCachePoisonScore + aiSurfaceScore + supplyChainScore
     const riskScore = Math.min(100, Math.round(15 * Math.log(rawRisk + 1)))
     const riskLabel: 'Critical' | 'High' | 'Medium' | 'Low' | 'Minimal' =
       riskScore >= 80 ? 'Critical' : riskScore >= 60 ? 'High'
@@ -681,6 +709,7 @@ export async function gatherReportData(projectId: string): Promise<ReportData> {
       trufflehog: trufflehogData,
       secrets: secretsData,
       jsRecon: jsReconData,
+      supplyChain: supplyChainData,
       graphqlScan: graphqlData,
       vhostSni: vhostSniData,
       webCachePoison: webCachePoisonData,
@@ -1237,6 +1266,58 @@ async function querySecrets(session: any, pid: string) {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function querySupplyChain(session: any, pid: string) {
+  // Tenant-scoped: every match filters {project_id: $pid}.
+  const pkgRes = await session.run(
+    `MATCH (p:Package {project_id: $pid})
+     RETURN p.ecosystem AS ecosystem, count(p) AS count ORDER BY count DESC`,
+    { pid }
+  )
+  const verdictRes = await session.run(
+    `MATCH (:Package {project_id: $pid})-[:FLAGGED_AS]->(f:MalPackageFinding {project_id: $pid})
+     RETURN f.verdict AS verdict, count(f) AS count`,
+    { pid }
+  )
+  const findingsRes = await session.run(
+    `MATCH (p:Package {project_id: $pid})-[:FLAGGED_AS]->(f:MalPackageFinding {project_id: $pid})
+     OPTIONAL MATCH (b:BaseURL {project_id: $pid})-[:DEPENDS_ON]->(p)
+     RETURN p.purl AS purl, p.name AS name, p.version AS version,
+            p.ecosystem AS ecosystem, f.verdict AS verdict,
+            f.source_tool AS sourceTool, f.advisory_id AS advisoryId,
+            f.severity AS severity, f.title AS title, b.url AS baseUrl
+     ORDER BY CASE f.verdict WHEN 'malicious' THEN 0 ELSE 1 END,
+              CASE f.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END
+     LIMIT 50`,
+    { pid }
+  )
+
+  const verdictCounts = new Map<string, number>(
+    verdictRes.records.map((r: any) => [String(r.get('verdict') || 'unknown'), toNum(r.get('count'))] as [string, number])
+  )
+
+  return {
+    totalPackages: pkgRes.records.reduce((s: number, r: any) => s + toNum(r.get('count')), 0),
+    maliciousCount: verdictCounts.get('malicious') || 0,
+    suspiciousCount: verdictCounts.get('suspicious') || 0,
+    byEcosystem: pkgRes.records.map((r: any) => ({
+      ecosystem: (r.get('ecosystem') as string) || 'unknown',
+      count: toNum(r.get('count')),
+    })),
+    findings: findingsRes.records.map((r: any) => ({
+      purl: (r.get('purl') as string) || '',
+      name: (r.get('name') as string) ?? null,
+      version: (r.get('version') as string) ?? null,
+      ecosystem: (r.get('ecosystem') as string) ?? null,
+      verdict: (r.get('verdict') as string) || 'unknown',
+      sourceTool: (r.get('sourceTool') as string) ?? null,
+      advisoryId: (r.get('advisoryId') as string) ?? null,
+      severity: (r.get('severity') as string) ?? null,
+      title: (r.get('title') as string) ?? null,
+      baseUrl: (r.get('baseUrl') as string) ?? null,
+    })),
+  }
+}
+
 async function queryJsRecon(session: any, pid: string) {
   const bySevRes = await session.run(
     `MATCH (jf:JsReconFinding {project_id: $pid})

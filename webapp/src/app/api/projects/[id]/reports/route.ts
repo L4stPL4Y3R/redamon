@@ -248,6 +248,21 @@ function condenseForAgent(data: ReturnType<typeof gatherReportData> extends Prom
         confidence: f.confidence,
       })),
     },
+    supplyChain: {
+      totalPackages: data.supplyChain.totalPackages,
+      maliciousCount: data.supplyChain.maliciousCount,
+      suspiciousCount: data.supplyChain.suspiciousCount,
+      byEcosystem: data.supplyChain.byEcosystem,
+      // Malicious first (the query already orders that way), capped for the LLM.
+      findings: data.supplyChain.findings.slice(0, 20).map(f => ({
+        name: f.name,
+        version: f.version,
+        ecosystem: f.ecosystem,
+        verdict: f.verdict,
+        advisoryId: f.advisoryId,
+        severity: f.severity,
+      })),
+    },
     graphqlScan: {
       totalFindings: data.graphqlScan.totalFindings,
       endpointsTested: data.graphqlScan.endpointsTested,
