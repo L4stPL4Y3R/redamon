@@ -1583,6 +1583,22 @@ RETURN svc.name, svc.port_number, t.name, c.id
 
 ---
 
+### Supply-Chain Relationships
+
+```cypher
+// A live target serves this dependency (Supply-Chain Recon, L2). Created only
+// when the BaseURL already exists; an uploaded-SBOM Package has no anchor.
+(BaseURL)-[:DEPENDS_ON]->(Package)
+
+// A scanned repository depends on this package (Supply-Chain scan, repo input)
+(GithubRepository)-[:DEPENDS_ON]->(Package)
+
+// A package carries a malicious (OSV MAL-) or suspicious (GuardDog) verdict
+(Package)-[:FLAGGED_AS]->(MalPackageFinding)
+```
+
+---
+
 ## 📐 Complete Graph Visualization
 
 ```
@@ -1847,6 +1863,8 @@ RETURN s.name AS host, svc.name AS service, u.url AS url,
 | TrufflehogFinding | id, detector_name, verified, file, commit, line, repository | ✅ Unique (global), ✅ Tenant index |
 | Secret | id, secret_type, severity, source, source_url, base_url, sample | ✅ Unique (global), ✅ Tenant index |
 | JsReconFinding | id, finding_type, severity, confidence, title, detail, source_url | ✅ Unique (global), ✅ Tenant index |
+| Package | purl, ecosystem, name, version, source, first_seen, last_seen | ✅ Unique (purl, user_id, project_id) |
+| MalPackageFinding | finding_id, verdict, source_tool, advisory_id, severity, confidence, title, detail | ✅ Unique (finding_id, user_id, project_id) |
 
 ---
 
@@ -2528,6 +2546,20 @@ FOR (jf:JsReconFinding) REQUIRE jf.id IS UNIQUE;
 
 CREATE INDEX idx_jsreconfinding_tenant IF NOT EXISTS
 FOR (jf:JsReconFinding) ON (jf.user_id, jf.project_id);
+```
+
+### Supply-Chain Constraints
+
+Tenant-scoped composite keys (unlike the global-id scanner nodes above), so the
+same package discovered by different layers in the same project dedups, while
+two projects keep independent copies. Mirrors `graph_db/schema.py`.
+
+```cypher
+CREATE CONSTRAINT package_unique IF NOT EXISTS
+FOR (p:Package) REQUIRE (p.purl, p.user_id, p.project_id) IS UNIQUE;
+
+CREATE CONSTRAINT malpackagefinding_unique IF NOT EXISTS
+FOR (mf:MalPackageFinding) REQUIRE (mf.finding_id, mf.user_id, mf.project_id) IS UNIQUE;
 ```
 
 ### Example Queries

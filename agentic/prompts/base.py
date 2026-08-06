@@ -1899,6 +1899,36 @@ Web cache poisoning properties (source="cache_poisoning"):
 - timestamp (string): commit timestamp
 - extra_data (string): JSON string with additional detector-specific data
 
+### Supply-Chain Nodes (Malicious / vulnerable dependencies)
+
+Written by BOTH the standalone Supply-Chain scan (uploaded SBOM/lockfile) and the
+Supply-Chain Recon pipeline module (black-box harvest of packages a live target
+serves). Both MERGE on the same keys, so the two sources dedup into one set.
+
+**Package** - a software dependency discovered on the target
+- purl (string): canonical package URL, the identity (e.g. "pkg:npm/lodash@4.17.21")
+- ecosystem (string): "npm", "PyPI", "Go", "Maven", "crates.io", "Packagist", "RubyGems", "NuGet"
+- name (string), version (string): version may be NULL for a black-box (source-map) sighting
+- source (string): how it was discovered - "sbom", "lockfile", "sourcemap", "retirejs", "import", "wappalyzer", "osv", "finding"
+- first_seen, last_seen (datetime)
+
+**MalPackageFinding** - a verdict about a Package
+- finding_id (string): sha256(purl + ':' + advisory)[:16], the identity
+- verdict (string): "malicious" (OSV MAL- hit, the package IS malware) or "suspicious" (GuardDog behavioural hit)
+- source_tool (string): "osv" or "guarddog"
+- advisory_id (string): "MAL-2022-1122", "CVE-...", "GHSA-..." or a GuardDog rule name
+- severity (string): "high", "medium", "low", "unknown"
+- confidence (string), title (string), detail (string)
+- first_seen, last_seen (datetime)
+
+IMPORTANT for triage: a verdict of "malicious" (advisory_id starting with MAL-) means
+the dependency itself is malware (e.g. a typosquat) - treat it as a critical finding.
+"suspicious" is a heuristic behavioural hit, NOT a confirmation. Known-vulnerable
+CVE/GHSA advisories are NOT stored as MalPackageFinding nodes.
+
+- Typical query: "list malicious packages" -> `MATCH (p:Package)-[:FLAGGED_AS]->(f:MalPackageFinding {verdict: 'malicious'}) RETURN p.purl, p.ecosystem, f.advisory_id, f.title`
+- Typical query: "which URLs depend on a malicious package" -> `MATCH (b:BaseURL)-[:DEPENDS_ON]->(p:Package)-[:FLAGGED_AS]->(f:MalPackageFinding {verdict: 'malicious'}) RETURN b.url, p.purl, f.advisory_id`
+
 ### JS Recon Scanner Nodes
 
 **JsReconFinding** - JavaScript reconnaissance findings. Two sub-types:
@@ -2082,6 +2112,9 @@ When user asks about "AI SDKs in JS", "leaked AI keys", "AnythingLLM/Open WebUI/
 - `(d:Domain)-[:HAS_TRUFFLEHOG_SCAN]->(ts:TrufflehogScan)` - Domain has TruffleHog scan
 - `(ts:TrufflehogScan)-[:HAS_REPOSITORY]->(tr:TrufflehogRepository)` - Scan scanned repository
 - `(tr:TrufflehogRepository)-[:HAS_FINDING]->(tf:TrufflehogFinding)` - Repository has secret finding
+- `(b:BaseURL)-[:DEPENDS_ON]->(p:Package)` - Live target serves this dependency (Supply-Chain Recon). An uploaded-SBOM Package has NO anchor and floats
+- `(gr:GithubRepository)-[:DEPENDS_ON]->(p:Package)` - Repository depends on this package (Supply-Chain scan, repo input)
+- `(p:Package)-[:FLAGGED_AS]->(mf:MalPackageFinding)` - Package has a malicious/suspicious verdict
 
 ### JS Recon Relationships (hierarchical: parent -> file -> findings)
 - `(b:BaseURL)-[:HAS_JS_FILE]->(jf:JsReconFinding {finding_type: 'js_file'})` - BaseURL has analyzed JS file (pipeline crawl)
