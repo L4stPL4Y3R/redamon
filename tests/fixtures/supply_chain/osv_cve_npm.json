@@ -1,0 +1,25 @@
+{
+  "results": [
+    {
+      "source": { "path": "/scan/package-lock.json", "type": "lockfile" },
+      "packages": [
+        {
+          "package": { "name": "lodash", "version": "4.17.15", "ecosystem": "npm" },
+          "vulnerabilities": [
+            {
+              "id": "GHSA-p6mc-m468-83gg",
+              "aliases": ["CVE-2020-8203"],
+              "summary": "Prototype Pollution in lodash"
+            },
+            {
+              "id": "CVE-2021-23337",
+              "aliases": [],
+              "summary": "Command Injection in lodash"
+            }
+          ],
+          "groups": [ { "ids": ["GHSA-p6mc-m468-83gg", "CVE-2021-23337"], "aliases": ["CVE-2020-8203"] } ]
+        }
+      ]
+    }
+  ]
+}

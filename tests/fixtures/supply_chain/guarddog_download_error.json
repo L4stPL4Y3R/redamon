@@ -1,0 +1,7 @@
+{
+  "package": "does-not-exist-pkg",
+  "path": "",
+  "issues": 0,
+  "errors": { "download-package": "Could not download package: 404 Not Found" },
+  "results": {}
+}

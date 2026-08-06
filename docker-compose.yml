@@ -1145,3 +1145,11 @@ volumes:
     name: redamon_capture_bodies
   capture_ca:
     name: redamon_capture_ca
+  # Offline OSV vulnerability + malicious-package database (supply-chain feature).
+  # Populated lazily per-ecosystem by `redamon.sh supply-chain-sync` (osv-scanner
+  # --download-offline-databases from the official GCS bucket); NOT downloaded at
+  # install time. Mounted read-only into every supply-chain scan container and
+  # into the dirty analyzer; the sync step is the only writer. The name is
+  # referenced by the docker-broker volume allowlist and container_manager.py.
+  osv_db:
+    name: redamon-osv-db

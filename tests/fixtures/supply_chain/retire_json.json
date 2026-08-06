@@ -1,0 +1,39 @@
+{
+  "version": "5.4.3",
+  "start": "2026-08-06T10:00:00.000Z",
+  "data": [
+    {
+      "file": "/downloaded/js/jquery-1.12.4.min.js",
+      "results": [
+        {
+          "component": "jquery",
+          "version": "1.12.4",
+          "detection": "filecontent",
+          "vulnerabilities": [
+            {
+              "atOrAbove": "1.0.0",
+              "below": "3.0.0",
+              "severity": "medium",
+              "identifiers": {
+                "CVE": ["CVE-2015-9251"],
+                "issue": "XSS via cross-domain ajax",
+                "summary": "jQuery before 3.0.0 is vulnerable to XSS"
+              },
+              "info": ["https://blog.jquery.com/2016/01/08/jquery-2-2-and-1-12-released/"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file": "/downloaded/js/app.bundle.js",
+      "results": [
+        {
+          "component": "lodash",
+          "version": "4.17.21",
+          "detection": "hash"
+        }
+      ]
+    }
+  ]
+}

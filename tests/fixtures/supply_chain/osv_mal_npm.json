@@ -1,0 +1,21 @@
+{
+  "results": [
+    {
+      "source": { "path": "/scan/package-lock.json", "type": "lockfile" },
+      "packages": [
+        {
+          "package": { "name": "lodahs", "version": "1.0.0", "ecosystem": "npm" },
+          "vulnerabilities": [
+            {
+              "id": "MAL-2025-25502",
+              "aliases": ["GHSA-xxxx-yyyy-zzzz"],
+              "summary": "Malicious code in lodahs (npm typosquat of lodash)",
+              "database_specific": { "malicious-packages-origins": [] }
+            }
+          ],
+          "groups": [ { "ids": ["MAL-2025-25502"], "aliases": ["GHSA-xxxx-yyyy-zzzz"] } ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "package": "evil-pkg",
+  "path": "/tmp/guarddog/evil-pkg",
+  "version": "6.6.6",
+  "issues": 3,
+  "errors": {},
+  "results": {
+    "typosquatting": "This package name is similar to the popular package 'event-pkg'",
+    "npm-install-script": [
+      {
+        "location": "package.json",
+        "code": "\"postinstall\": \"node exfil.js\"",
+        "message": "This package has a suspicious install script"
+      }
+    ],
+    "npm-obfuscation": [
+      {
+        "location": "index.js:1",
+        "code": "eval(atob('...'))",
+        "message": "Obfuscated code detected"
+      }
+    ],
+    "empty_information": null,
+    "release_zero": null
+  }
+}

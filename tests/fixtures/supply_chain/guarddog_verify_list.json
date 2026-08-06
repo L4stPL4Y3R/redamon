@@ -1,0 +1,21 @@
+[
+  {
+    "dependency": "clean-dep",
+    "version": "1.0.0",
+    "result": { "issues": 0, "errors": {}, "results": { "typosquatting": null }, "path": "/tmp/clean-dep" }
+  },
+  {
+    "dependency": "sketchy-dep",
+    "version": "2.1.0",
+    "result": {
+      "issues": 1,
+      "errors": {},
+      "results": {
+        "npm-exec-base64": [
+          { "location": "index.js:4", "code": "Buffer.from(x,'base64')", "message": "base64 exec" }
+        ]
+      },
+      "path": "/tmp/sketchy-dep"
+    }
+  }
+]

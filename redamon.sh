@@ -1819,6 +1819,36 @@ cmd_update() {
     ensure_capture_proxy_running
 }
 
+# Populate the offline OSV database volume (supply-chain feature). Lazy and
+# per-ecosystem: never downloaded at install time, only on explicit request or
+# first scan. Mirrors the GVM-pull step. Runs osv-scanner's own download inside
+# the analyzer image, writing into the read-only-everywhere-else osv_db volume.
+cmd_supply_chain_sync() {
+    local ecos="${*:-npm}"
+    local analyzer_img="redamon-supply-chain-analyzer:latest"
+    export_version
+    if ! docker image inspect "$analyzer_img" &>/dev/null; then
+        info "Supply-chain analyzer image not found, building it (first time only)..."
+        if ! compose_build --profile tools build supply-chain-analyzer; then
+            error "Could not build $analyzer_img. Build the tool images first: ./redamon.sh update"
+            exit 1
+        fi
+    fi
+    docker volume inspect redamon-osv-db &>/dev/null || docker volume create redamon-osv-db >/dev/null
+    info "Syncing offline OSV database (ecosystems: $ecos). First npm sync is ~208 MB."
+    if docker run --rm \
+        -v redamon-osv-db:/osv-db \
+        -e OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY=/osv-db \
+        --entrypoint python3 \
+        "$analyzer_img" \
+        -m supply_chain_common.osv_db_sync --db-path /osv-db --ecosystems "$ecos"; then
+        success "OSV database sync complete."
+    else
+        error "OSV database sync failed."
+        exit 1
+    fi
+}
+
 ensure_tool_images() {
     local missing=false
     for img in $TOOL_IMAGES; do
@@ -2315,6 +2345,7 @@ cmd_help() {
     echo -e "  ${GREEN}create-admin${NC}     Create the admin login (or reset it); use if no prompt appeared at install"
     echo -e "  ${GREEN}reset-password${NC}   Reset an existing user's password"
     echo -e "  ${GREEN}kb <command>${NC}     Knowledge Base management (build/update/rebuild/stats)"
+    echo -e "  ${GREEN}supply-chain-sync [ecos]${NC}  Populate the offline OSV DB (default: npm; e.g. 'npm PyPI Go')"
     echo -e "  ${GREEN}help${NC}             Show this help message"
     echo ""
     echo -e "${BOLD}Examples:${NC}"
@@ -2385,6 +2416,7 @@ case "${1:-help}" in
         ;;
     reset-password) cmd_reset_password ;;
     create-admin)   cmd_create_admin ;;
+    supply-chain-sync) shift; cmd_supply_chain_sync "$@" ;;
     help|--help|-h) cmd_help ;;
     *)
         error "Unknown command: $1"
