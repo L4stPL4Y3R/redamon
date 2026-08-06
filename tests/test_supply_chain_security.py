@@ -23,10 +23,57 @@ if _REPO not in sys.path:
     sys.path.insert(0, _REPO)
 
 from supply_chain_common.security import (
-    sanitize_name, SanitizeError,
+    sanitize_name, sanitize_version, SanitizeError,
     validate_artifact, ArtifactError,
     ARTIFACT_SCHEMA_VERSION, MAX_PACKAGES, MAX_STRING_LEN,
 )
+
+
+class TestReviewRegressions(unittest.TestCase):
+    """Named regression tests for bugs found in the deep-review pass."""
+
+    def _base(self, **o):
+        a = {"schema_version": ARTIFACT_SCHEMA_VERSION, "mode": "lockfile",
+             "packages": [], "malicious": [], "vulnerable": [],
+             "suspicious": [], "errors": []}
+        a.update(o)
+        return a
+
+    def test_F1_boundary_rejects_hostile_purl_version_ecosystem(self):
+        # F1: validate_artifact must charset-check purl/version/ecosystem/advisory,
+        # not only `name`, or a compromised analyzer smuggles path/shell chars.
+        hostile = [
+            {"packages": [{"name": "lodash", "purl": "pkg:npm/../../etc/passwd"}]},
+            {"packages": [{"name": "lodash", "purl": "pkg:npm/x; rm -rf"}]},
+            {"packages": [{"name": "lodash", "version": "1;rm -rf /"}]},
+            {"packages": [{"name": "lodash", "ecosystem": "npm|evil"}]},
+            {"malicious": [{"name": "lodash", "advisory_id": "MAL-1;id"}]},
+            {"suspicious": [{"name": "lodash", "rule": "npm|evil"}]},
+        ]
+        for h in hostile:
+            with self.assertRaises(ArtifactError, msg=repr(h)):
+                validate_artifact(self._base(**h))
+
+    def test_F1_valid_purl_still_accepted(self):
+        # percent-encoded scoped purl (%40) and crates.io ecosystem must pass.
+        out = validate_artifact(self._base(packages=[{
+            "name": "core", "purl": "pkg:npm/%40angular/core@12.0.0",
+            "version": "12.0.0", "ecosystem": "crates.io"}]))
+        self.assertEqual(len(out["packages"]), 1)
+
+    def test_F2_trailing_newline_rejected(self):
+        # F2: `$` anchor let "evil\n" through; `\Z` fixes it.
+        for bad in ["evil\n", "evil\r", "pkg\n"]:
+            with self.assertRaises(SanitizeError):
+                sanitize_name(bad)
+        with self.assertRaises(SanitizeError):
+            sanitize_version("1.0.0\n")
+
+    def test_F6_non_list_aliases_coerced(self):
+        # F6: a string aliases must become a list, never a bare string downstream.
+        out = validate_artifact(self._base(
+            malicious=[{"name": "x", "aliases": "GHSA-1"}]))
+        self.assertEqual(out["malicious"][0]["aliases"], ["GHSA-1"])
 
 # Directories/files that make up the supply-chain feature. Extend as phases add
 # code; the no-install grep must cover every supply-chain source tree.
@@ -136,10 +183,14 @@ class TestArtifactSchemaFuzz(unittest.TestCase):
         with self.assertRaises(ArtifactError):
             validate_artifact(self._base(schema_version=999))
 
-    def test_oversized_array_rejected(self):
-        huge = [{"name": "p{}".format(i)} for i in range(MAX_PACKAGES + 1)]
-        with self.assertRaises(ArtifactError):
-            validate_artifact(self._base(packages=huge))
+    def test_oversized_array_truncated_not_dropped(self):
+        # F4 regression: an oversized array is TRUNCATED to the cap (blast radius
+        # still bounded) and the loss recorded in errors - NOT rejected whole,
+        # which would silently drop a MAL- verdict anywhere in the list.
+        huge = [{"name": "p{}".format(i)} for i in range(MAX_PACKAGES + 5)]
+        out = validate_artifact(self._base(packages=huge))
+        self.assertEqual(len(out["packages"]), MAX_PACKAGES)
+        self.assertTrue(any("packages truncated" in e for e in out["errors"]))
 
     def test_oversized_string_is_capped_not_stored_whole(self):
         art = self._base(packages=[{"name": "lodash", "title": "x" * (MAX_STRING_LEN * 4)}])

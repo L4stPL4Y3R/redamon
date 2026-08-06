@@ -53,8 +53,12 @@ class SupplyChainMixin:
         has_anchor = anchor_label is not None
         if has_anchor and anchor_label not in ("GithubRepository", "BaseURL"):
             raise ValueError("unsupported anchor_label: {}".format(anchor_label))
-        if has_anchor and (not anchor_key or anchor_value is None):
-            raise ValueError("anchor_key and anchor_value required with anchor_label")
+        # L2-4: anchor_key is string-interpolated into the Cypher (labels/keys
+        # can't be parameterized), so whitelist it too, not just anchor_label.
+        if has_anchor and anchor_key not in ("id", "url"):
+            raise ValueError("unsupported anchor_key: {}".format(anchor_key))
+        if has_anchor and anchor_value is None:
+            raise ValueError("anchor_value required with anchor_label")
 
         stats = {"packages_merged": 0, "malicious_merged": 0,
                  "suspicious_merged": 0, "relationships_created": 0,

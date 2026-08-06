@@ -124,9 +124,11 @@ class TestOsvParserDeep(unittest.TestCase):
             return {"stdout": "{}", "stderr": "", "exit_code": 0,
                     "timed_out": False, "error": None}
         osv_runner.run_argv = fake
+        import tempfile
         try:
-            osv_runner.run_osv_scan("/tmp/package-lock.json", mode="lockfile",
-                                    db_path="/osv-db")
+            with tempfile.TemporaryDirectory() as db:  # F5: db_path must exist
+                osv_runner.run_osv_scan("/tmp/package-lock.json", mode="lockfile",
+                                        db_path=db)
         finally:
             osv_runner.run_argv = orig
         self.assertIn("--offline", captured["argv"])
@@ -137,6 +139,24 @@ class TestOsvParserDeep(unittest.TestCase):
 # --------------------------------------------------------------------------
 # GuardDog parser
 # --------------------------------------------------------------------------
+class TestReviewRegressions2(unittest.TestCase):
+    def test_F5_offline_without_db_is_hard_error_not_clean(self):
+        # F5: offline scan with a missing DB dir must error, not report clean.
+        res = osv_runner.run_osv_scan("/tmp/package-lock.json", mode="lockfile",
+                                      db_path="/nonexistent-osv-db", offline=True)
+        self.assertIsNotNone(res["error"])
+        self.assertIn("OSV DB not found", res["error"])
+        res2 = osv_runner.run_osv_scan("/tmp/x", mode="lockfile", db_path=None, offline=True)
+        self.assertIsNotNone(res2["error"])
+
+    def test_F8_guarddog_errors_as_list_no_crash(self):
+        # F8: errors emitted as a list must not raise AttributeError.
+        findings = guarddog_runner.parse_guarddog(
+            {"package": "x", "issues": 0, "errors": ["boom"], "results": {}})
+        self.assertEqual(len(findings), 1)
+        self.assertTrue(findings[0]["soft_error"])
+
+
 class TestGuarddogDeep(unittest.TestCase):
     def test_empty_string_metadata_does_not_fire(self):
         # A metadata rule that returns "" (falsy) must NOT create a finding.

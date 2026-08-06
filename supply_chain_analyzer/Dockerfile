@@ -53,7 +53,7 @@ RUN pip install --no-cache-dir guarddog==3.0.1   # no-install-ok
 # refresh succeed on a non-read-only runtime. Best-effort: a build without net
 # just leaves guarddog to fetch at first opt-in scan.
 RUN python3 -c "import guarddog" 2>/dev/null || true; \
-    chmod -R a+rwX /usr/local/lib/python3.11/site-packages/guarddog/analyzer/metadata/resources 2>/dev/null || true
+    chmod -R a+rX /usr/local/lib/python3.11/site-packages/guarddog/analyzer/metadata/resources 2>/dev/null || true
 
 # Non-root user that runs every analysis command (uid 1001 matches the spawner).
 RUN useradd --create-home --uid 1001 --shell /bin/bash analyzer

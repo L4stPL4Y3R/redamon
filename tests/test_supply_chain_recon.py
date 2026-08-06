@@ -48,14 +48,33 @@ class TestExtraction(unittest.TestCase):
         self.assertEqual(scr._extract_source_maps({}), [])
 
     def test_extract_base_urls(self):
-        cr = {"http_probe": {"results": [{"url": "https://a"}, {"url": "https://b"}]}}
+        cr = {"http_probe": {"by_url": {"https://a": {"url": "https://a"},
+                                        "https://b": {"url": "https://b"}}}}
         self.assertEqual(scr._extract_base_urls(cr), ["https://a", "https://b"])
 
     def test_extract_technologies(self):
-        cr = {"http_probe": {"results": [
-            {"technologies": [{"name": "React", "version": "17.0.2"}]}]}}
+        cr = {"http_probe": {"by_url": {"https://a": {
+            "technologies": [{"name": "React", "version": "17.0.2"}]}}}}
         techs = scr._extract_technologies(cr)
         self.assertEqual(techs[0]["name"], "React")
+
+    def test_L2_1_base_urls_from_by_url_normalized(self):
+        # L2-1 regression: real key is by_url (not results); normalize to
+        # scheme://netloc so it matches BaseURL nodes.
+        cr = {"http_probe": {"by_url": {
+            "https://a.example/path": {"url": "https://a.example/path"},
+            "https://b.example": {"url": "https://b.example"}}}}
+        self.assertEqual(scr._extract_base_urls(cr),
+                         ["https://a.example", "https://b.example"])
+        self.assertEqual(scr._extract_base_urls({"http_probe": {"results": []}}), [])
+
+    def test_L2_2_technologies_as_name_colon_version_strings(self):
+        # L2-2 regression: httpx techs are "Name:Version" strings in by_url.
+        cr = {"http_probe": {"by_url": {"https://a": {
+            "technologies": ["React:18.2.0", "Nginx"]}}}}
+        techs = {t["name"]: t["version"] for t in scr._extract_technologies(cr)}
+        self.assertEqual(techs["React"], "18.2.0")
+        self.assertIsNone(techs["Nginx"])
 
 
 class TestVerdict(unittest.TestCase):

@@ -98,7 +98,7 @@ export function SupplyChainSection({ data, updateField, projectId }: SupplyChain
               <label className={styles.uploadButton} style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
                 <Upload size={14} />
                 <span>{uploading ? 'Uploading...' : 'Upload SBOM / lockfile'}</span>
-                <input type="file" accept=".json,.xml,.txt,.lock,.toml,.mod,.sum,.yaml" style={{ display: 'none' }} onChange={onUpload} disabled={uploading} />
+                <input type="file" accept=".json,.xml,.txt,.lock,.toml,.mod,.sum,.yaml,.yml" style={{ display: 'none' }} onChange={onUpload} disabled={uploading} />
               </label>
               {error && <p style={{ color: '#ef4444', fontSize: '12px', marginTop: '6px' }}>{error}</p>}
               {files.length > 0 && (

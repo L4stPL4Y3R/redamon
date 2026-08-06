@@ -161,6 +161,14 @@ class TestSupplyChainMixin(unittest.TestCase):
             Writer(FakeSession()).update_graph_from_supply_chain(
                 artifact(), "u1", "p1", anchor_label="BaseURL")
 
+    def test_L2_4_anchor_key_whitelisted(self):
+        # L2-4 regression: anchor_key is interpolated into Cypher, so a value
+        # outside {id,url} must be rejected (injection surface).
+        with self.assertRaises(ValueError):
+            Writer(FakeSession()).update_graph_from_supply_chain(
+                artifact(), "u1", "p1", anchor_label="BaseURL",
+                anchor_key="url} DETACH DELETE n //", anchor_value="x")
+
     def test_bad_anchor_label_raises(self):
         with self.assertRaises(ValueError):
             Writer(FakeSession()).update_graph_from_supply_chain(

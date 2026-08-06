@@ -75,7 +75,14 @@ def run_job(job):
             name = spec.get("name")
             if not eco or not name:
                 continue
-            gd = guarddog_runner.scan_package(eco, name, spec.get("version"))
+            # F3: one hostile coordinate (scan_package raises SanitizeError on a
+            # bad name/version) must NOT abort the whole job and discard the OSV
+            # verdicts already collected. Isolate each package.
+            try:
+                gd = guarddog_runner.scan_package(eco, name, spec.get("version"))
+            except Exception as exc:
+                artifact["errors"].append("guarddog {}: {}".format(name, exc))
+                continue
             if gd["error"]:
                 artifact["errors"].append("guarddog {}: {}".format(name, gd["error"]))
             add_guarddog_findings(artifact, gd["findings"], ecosystem=eco, name=name)

@@ -313,6 +313,14 @@ class ContainerManager:
                 await self.get_trufflehog_status(pid)
             except Exception:
                 pass
+        # L1-1: sweep supply-chain too, or a finished scan whose tab is closed
+        # keeps its RUNNING state forever -> its 900 MB reservation never releases
+        # -> governor falsely denies later scans.
+        for pid in list(self.supply_chain_states.keys()):
+            try:
+                await self.get_supply_chain_status(pid)
+            except Exception:
+                pass
 
     def _container_mem_limit(self, kind: str) -> Optional[int]:
         """Hard per-container memory ceiling (bytes) for a spawned scan, sized from
@@ -1335,6 +1343,13 @@ class ContainerManager:
                 await self.stop_trufflehog(project_id, timeout=5)
             except Exception as e:
                 logger.error(f"Error cleaning up TruffleHog {project_id}: {e}")
+        # L1-3: stop supply-chain scans too, or a running redamon-supply-chain-<pid>
+        # (holding Neo4j creds + its mem envelope) orphans on orchestrator shutdown.
+        for project_id in list(self.supply_chain_states.keys()):
+            try:
+                await self.stop_supply_chain(project_id, timeout=5)
+            except Exception as e:
+                logger.error(f"Error cleaning up Supply-Chain {project_id}: {e}")
         # AI Attack Surface scan containers are spawned per-run; stop them too,
         # otherwise they orphan on orchestrator shutdown (and keep the judge lease).
         for project_id, runs in list(self.ai_attack_states.items()):
@@ -3338,24 +3353,50 @@ class ContainerManager:
                 logger.warning(f"Error stopping Supply-Chain container: {e}")
         state.status = SupplyChainStatus.IDLE
         state.completed_at = datetime.now(timezone.utc)
-        self.supply_chain_states[project_id] = state
+        # L1-2: DROP the state (like trufflehog) instead of leaving a stale entry
+        # with a dead container_id. Otherwise the very next status poll does
+        # containers.get(<gone>) -> NotFound and, since IDLE is not terminal,
+        # flips a clean stop to ERROR "Container not found" permanently.
+        self.supply_chain_states.pop(project_id, None)
         return state
 
     async def stream_supply_chain_logs(self, project_id: str) -> AsyncGenerator["SupplyChainLogEvent", None]:
+        # L1-4: the blocking container.logs(follow=True) iterator must run in the
+        # log-stream executor and bridge via an asyncio.Queue, or it blocks the
+        # single event loop between log lines (freezing every other request -
+        # the exact hazard the dual-threadpool design prevents). Mirrors
+        # stream_trufflehog_logs / stream_logs.
         state = await self.get_supply_chain_status(project_id)
         if not state.container_id:
             return
-        try:
-            container = self.client.containers.get(state.container_id)
-        except (NotFound, APIError):
-            return
-        for raw in container.logs(stream=True, follow=True):
+        container_id = state.container_id
+        loop = asyncio.get_event_loop()
+        queue: asyncio.Queue = asyncio.Queue()
+        _SENTINEL = object()
+
+        def _reader():
             try:
-                line = raw.decode("utf-8", errors="replace").rstrip("\n")
-            except Exception:
-                continue
-            if line:
-                yield SupplyChainLogEvent(log=line, timestamp=datetime.now(timezone.utc))
+                container = self.client.containers.get(container_id)
+                for raw in container.logs(stream=True, follow=True):
+                    try:
+                        line = raw.decode("utf-8", errors="replace").rstrip("\n")
+                    except Exception:
+                        continue
+                    if line:
+                        loop.call_soon_threadsafe(queue.put_nowait, line)
+            except (NotFound, APIError):
+                pass
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning(f"[supply-chain] log reader error: {exc}")
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, _SENTINEL)
+
+        self._log_stream_executor.submit(_reader)
+        while True:
+            item = await queue.get()
+            if item is _SENTINEL:
+                break
+            yield SupplyChainLogEvent(log=item, timestamp=datetime.now(timezone.utc))
 
     def get_supply_chain_running_count(self) -> int:
         return sum(1 for st in self.supply_chain_states.values()

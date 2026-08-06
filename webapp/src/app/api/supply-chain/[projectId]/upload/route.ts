@@ -9,7 +9,7 @@ import path from 'path'
 const SUPPLY_CHAIN_UPLOAD_PATH = process.env.SUPPLY_CHAIN_UPLOAD_PATH || '/data/supply-chain-uploads'
 const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10 MB
 // SBOMs + committed lockfiles only. NEVER an archive/script (S1/S7).
-const ALLOWED_EXTENSIONS = ['.json', '.xml', '.txt', '.lock', '.toml', '.mod', '.sum', '.yaml']
+const ALLOWED_EXTENSIONS = ['.json', '.xml', '.txt', '.lock', '.toml', '.mod', '.sum', '.yaml', '.yml']
 
 const PROJECT_ID_RE = /^[a-zA-Z0-9_-]+$/
 
@@ -96,16 +96,32 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     const { projectId } = await params
     const __denied = await guardProject(projectId)
     if (__denied) return __denied
+    if (!PROJECT_ID_RE.test(projectId)) {  // W3: same guard as GET/POST
+      return NextResponse.json({ error: 'Invalid project ID' }, { status: 400 })
+    }
     const { searchParams } = new URL(request.url)
     const filename = sanitizeFilename(searchParams.get('filename') || '')
     if (!filename) return NextResponse.json({ error: 'No filename' }, { status: 400 })
 
-    const filePath = path.join(SUPPLY_CHAIN_UPLOAD_PATH, projectId, filename)
+    const projectDir = path.join(SUPPLY_CHAIN_UPLOAD_PATH, projectId)
+    const filePath = path.join(projectDir, filename)
     if (existsSync(filePath)) await unlink(filePath)
     try {
       const current = await prisma.project.findUnique({ where: { id: projectId }, select: { supplyChainSbomFile: true } })
       if (current?.supplyChainSbomFile === filename) {
-        await prisma.project.update({ where: { id: projectId }, data: { supplyChainSbomFile: '' } })
+        // W1: don't leave the active file empty while other uploads still exist -
+        // the Start button (gated on disk file count) would then 400. Promote the
+        // most-recently-modified remaining file, else clear.
+        let next = ''
+        try {
+          const remaining = existsSync(projectDir) ? await readdir(projectDir) : []
+          const withTimes = await Promise.all(remaining.map(async (n) => ({
+            n, m: (await stat(path.join(projectDir, n))).mtimeMs,
+          })))
+          withTimes.sort((a, b) => b.m - a.m)
+          next = withTimes[0]?.n || ''
+        } catch { /* fall back to clearing */ }
+        await prisma.project.update({ where: { id: projectId }, data: { supplyChainSbomFile: next } })
       }
     } catch { /* skip */ }
     return NextResponse.json({ success: true })

@@ -126,6 +126,11 @@ def _parse_one_result(result, package, version):
         return out
 
     errors = result.get("errors") or {}
+    # F8: GuardDog normally emits errors as a dict, but tolerate a list/other
+    # shape rather than raising AttributeError on .items() (which would drop the
+    # whole run). Normalize non-dict errors into a single soft error.
+    if errors and not isinstance(errors, dict):
+        errors = {"error": str(errors)[:2000]}
     if errors:
         # A rule failed to run (e.g. download-package failure). Surface as a
         # soft error so the caller does not treat this package as clean.

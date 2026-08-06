@@ -49,7 +49,7 @@ import { useStableGraphData } from './hooks/useStableGraphData'
 import { exportToCsv, exportToJson, exportToMarkdown } from './utils/exportCsv'
 import { clusterGraphData } from './utils/clusterNodes'
 import { isOverNodeCap } from './utils/nodeCap'
-import { useTheme, useSession, useReconStatus, useReconSSE, useGvmStatus, useGvmSSE, useGithubHuntStatus, useGithubHuntSSE, useTrufflehogStatus, useTrufflehogSSE, useSupplyChainStatus, useActiveSessions, useMultiPartialReconStatus, useMultiPartialReconSSE } from '@/hooks'
+import { useTheme, useSession, useReconStatus, useReconSSE, useGvmStatus, useGvmSSE, useGithubHuntStatus, useGithubHuntSSE, useTrufflehogStatus, useTrufflehogSSE, useSupplyChainStatus, useSupplyChainSSE, useActiveSessions, useMultiPartialReconStatus, useMultiPartialReconSSE } from '@/hooks'
 import { useProjectById } from '@/hooks/useProjects'
 import { useGraphTypeFilterPrefs, useGraphViewPrefs } from '@/hooks/useUserPreferences'
 import { useProject } from '@/providers/ProjectProvider'
@@ -90,7 +90,7 @@ export default function GraphPage() {
   const [isAIOpen, setIsAIOpen] = useState(false)
   const [isFileSystemOpen, setIsFileSystemOpen] = useState(false)
   const [isReconModalOpen, setIsReconModalOpen] = useState(false)
-  const [activeLogsDrawer, setActiveLogsDrawer] = useState<'recon' | 'gvm' | 'githubHunt' | 'trufflehog' | `partialRecon:${string}` | null>(null)
+  const [activeLogsDrawer, setActiveLogsDrawer] = useState<'recon' | 'gvm' | 'githubHunt' | 'trufflehog' | 'supplyChain' | `partialRecon:${string}` | null>(null)
   const [hasReconData, setHasReconData] = useState(false)
   const [hasGvmData, setHasGvmData] = useState(false)
   const [hasGithubHuntData, setHasGithubHuntData] = useState(false)
@@ -473,6 +473,29 @@ export default function GraphPage() {
     pauseSupplyChain,
     resumeSupplyChain,
   } = useSupplyChainStatus({ projectId, enabled: !!projectId })
+  const {
+    logs: supplyChainLogs,
+    clearLogs: clearSupplyChainLogs,
+  } = useSupplyChainSSE({
+    projectId,
+    enabled: supplyChainState?.status === 'running' || supplyChainState?.status === 'starting' || supplyChainState?.status === 'paused' || supplyChainState?.status === 'stopping' || supplyChainState?.status === 'pausing',
+  })
+  const handleStartSupplyChain = useCallback(async () => {
+    try {
+      clearSupplyChainLogs()
+      const result = await startSupplyChain()
+      if (result) {
+        setActiveLogsDrawer('supplyChain')
+        toast.info('Supply-Chain scan started')
+      }
+    } catch (err) {
+      console.error('Failed to start Supply-Chain scan:', err)
+      toast.error('Failed to start Supply-Chain scan')
+    }
+  }, [startSupplyChain, clearSupplyChainLogs, toast])
+  const handleToggleSupplyChainLogs = useCallback(() => {
+    setActiveLogsDrawer(prev => prev === 'supplyChain' ? null : 'supplyChain')
+  }, [])
   const [hasSupplyChainInput, setHasSupplyChainInput] = useState(false)
   useEffect(() => {
     if (!projectId) { setHasSupplyChainInput(false); return }
@@ -1400,12 +1423,14 @@ export default function GraphPage() {
         hasTrufflehogData={hasTrufflehogData}
         isTrufflehogLogsOpen={activeLogsDrawer === 'trufflehog'}
         // Supply Chain (L1)
-        onStartSupplyChain={() => { void startSupplyChain() }}
+        onStartSupplyChain={handleStartSupplyChain}
         onPauseSupplyChain={() => { void pauseSupplyChain() }}
         onResumeSupplyChain={() => { void resumeSupplyChain() }}
         onStopSupplyChain={() => { void stopSupplyChain() }}
+        onToggleSupplyChainLogs={handleToggleSupplyChainLogs}
         supplyChainStatus={supplyChainState?.status || 'idle'}
         hasSupplyChainInput={hasSupplyChainInput}
+        isSupplyChainLogsOpen={activeLogsDrawer === 'supplyChain'}
       />
 
       <ViewTabs
@@ -1659,6 +1684,22 @@ export default function GraphPage() {
         title="TruffleHog Secret Scanner Logs"
         phases={TRUFFLEHOG_PHASES}
         totalPhases={3}
+      />
+
+      <ReconLogsDrawer
+        isOpen={activeLogsDrawer === 'supplyChain'}
+        onClose={() => setActiveLogsDrawer(null)}
+        logs={supplyChainLogs}
+        currentPhase={null}
+        currentPhaseNumber={null}
+        status={supplyChainState?.status || 'idle'}
+        errorMessage={supplyChainState?.error}
+        onClearLogs={clearSupplyChainLogs}
+        onPause={() => { void pauseSupplyChain() }}
+        onResume={() => { void resumeSupplyChain() }}
+        onStop={() => { void stopSupplyChain() }}
+        title="Supply Chain Scanner Logs"
+        totalPhases={1}
       />
 
       {allPartialReconRuns.map(run => (

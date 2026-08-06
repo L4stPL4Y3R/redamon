@@ -59,6 +59,13 @@ def run_osv_scan(target, *, mode="lockfile", db_path=None, offline=True,
         return {"raw": None, "parsed": _empty_parsed(),
                 "exit_code": None, "error": "unknown mode: {}".format(mode)}
 
+    if offline and (not db_path or not os.path.isdir(str(db_path))):
+        # F5: running --offline with no local DB returns an EMPTY result with
+        # exit 0 - a silent false-clean where a genuinely malicious package
+        # passes. Fail hard instead of reporting a misleading clean verdict.
+        return {"raw": None, "parsed": _empty_parsed(), "exit_code": None,
+                "error": "offline OSV DB not found at {!r}".format(db_path)}
+
     argv = [binary, "scan", "source"]
     flag = _MODE_FLAG[mode]
     if flag:

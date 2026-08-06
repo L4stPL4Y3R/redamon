@@ -13,7 +13,8 @@ this module already exists so the Phase-0 runners can import `sanitize_name`.
 import re
 
 __all__ = [
-    "sanitize_name", "sanitize_version", "SanitizeError", "MAX_NAME_LEN",
+    "sanitize_name", "sanitize_version", "sanitize_purl", "sanitize_ecosystem",
+    "sanitize_advisory", "SanitizeError", "MAX_NAME_LEN",
     "validate_artifact", "ArtifactError", "ARTIFACT_SCHEMA_VERSION",
     "MAX_PACKAGES", "MAX_FINDINGS", "MAX_STRING_LEN",
 ]
@@ -38,10 +39,21 @@ MAX_NAME_LEN = 256
 #   crates/gems    hyphen/underscore
 # Explicitly EXCLUDES shell metacharacters, whitespace, and anything that could
 # start a path escape. '..' is rejected separately below.
-_NAME_RE = re.compile(r"^[A-Za-z0-9._@/:+-]+$")
+# NOTE: anchors are ^...\Z, NOT ^...$ - in Python `$` also matches just before a
+# single trailing newline, which would let "evil\n" slip through the gate (F2).
+_NAME_RE = re.compile(r"^[A-Za-z0-9._@/:+-]+\Z")
 
 # Version strings: semver + PEP 440 + Maven qualifiers. No metacharacters.
-_VERSION_RE = re.compile(r"^[A-Za-z0-9._+~:-]+$")
+_VERSION_RE = re.compile(r"^[A-Za-z0-9._+~:-]+\Z")
+
+# purl charset: like a name plus '%' (percent-encoding, e.g. pkg:npm/%40scope/x).
+_PURL_RE = re.compile(r"^[A-Za-z0-9._@/:+%-]+\Z")
+
+# ecosystem: OSV brands like npm, PyPI, crates.io, Go, Maven. No path/shell chars.
+_ECOSYSTEM_RE = re.compile(r"^[A-Za-z0-9._-]+\Z")
+
+# advisory id / rule name: MAL-2022-1122, CVE-..., GHSA-..., npm-install-script.
+_ADVISORY_RE = re.compile(r"^[A-Za-z0-9._:-]+\Z")
 
 
 def sanitize_name(value):
@@ -80,6 +92,34 @@ def sanitize_version(value):
     return value
 
 
+def _check_field(value, regex, label, max_len=MAX_NAME_LEN):
+    """Validate an optional structured string field against a regex. None is
+    allowed (returns None); anything present must match, be within length, and
+    contain no '..'. Raises SanitizeError."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise SanitizeError(f"{label} must be a string, got {type(value).__name__}")
+    if not value or len(value) > max_len or ".." in value:
+        raise SanitizeError(f"{label} length/'..' out of range")
+    if not regex.match(value):
+        raise SanitizeError(f"{label} contains disallowed characters")
+    return value
+
+
+def sanitize_purl(value):
+    # Purls carry namespace + name + version, so allow more length than a name.
+    return _check_field(value, _PURL_RE, "purl", max_len=512)
+
+
+def sanitize_ecosystem(value):
+    return _check_field(value, _ECOSYSTEM_RE, "ecosystem")
+
+
+def sanitize_advisory(value):
+    return _check_field(value, _ADVISORY_RE, "advisory_id")
+
+
 # ---------------------------------------------------------------------------
 # DIRTY -> CLEAN artifact boundary
 # ---------------------------------------------------------------------------
@@ -116,18 +156,35 @@ def _cap_str(value):
     return value[:MAX_STRING_LEN]
 
 
+# Structured (identity/subprocess-bound) fields validated by their own charset,
+# NOT just capped. Free-text fields (title/detail/message/summary) stay _cap_str
+# and are neutralized at their sink (escapeHtml / wrap_untrusted). (F1)
+def _validate_structured(entry, label):
+    """Charset-validate purl/version/ecosystem/advisory_id; raises ArtifactError
+    on a hostile value so a compromised analyzer cannot smuggle path/shell
+    metacharacters past the DIRTY->CLEAN boundary."""
+    try:
+        if "name" in entry and entry["name"] is not None:
+            sanitize_name(entry["name"])
+        sanitize_purl(entry.get("purl"))
+        sanitize_version(entry.get("version"))
+        sanitize_ecosystem(entry.get("ecosystem"))
+        sanitize_advisory(entry.get("advisory_id"))
+        if entry.get("rule") is not None:
+            sanitize_advisory(entry.get("rule"))
+        if entry.get("source") is not None:
+            sanitize_ecosystem(entry.get("source"))
+    except SanitizeError as exc:
+        raise ArtifactError("hostile {} field: {}".format(label, exc))
+
+
 def _clean_package(entry):
     if not isinstance(entry, dict):
         return None
     if not set(entry).issubset(_PKG_FIELDS):
         raise ArtifactError("package has unknown fields: {}".format(
             set(entry) - _PKG_FIELDS))
-    name = entry.get("name")
-    if name is not None:
-        try:
-            sanitize_name(name)  # hostile name -> whole artifact rejected
-        except SanitizeError as exc:
-            raise ArtifactError("hostile package name: {}".format(exc))
+    _validate_structured(entry, "package")
     out = {k: _cap_str(entry.get(k)) for k in _PKG_FIELDS if k in entry}
     return out
 
@@ -138,12 +195,7 @@ def _clean_finding(entry):
     if not set(entry).issubset(_FINDING_FIELDS):
         raise ArtifactError("finding has unknown fields: {}".format(
             set(entry) - _FINDING_FIELDS))
-    name = entry.get("name")
-    if name is not None:
-        try:
-            sanitize_name(name)
-        except SanitizeError as exc:
-            raise ArtifactError("hostile finding name: {}".format(exc))
+    _validate_structured(entry, "finding")
     sev = entry.get("severity")
     if sev not in _ALLOWED_SEVERITY:
         raise ArtifactError("finding has invalid severity: {!r}".format(sev))
@@ -152,7 +204,10 @@ def _clean_finding(entry):
         if k not in entry:
             continue
         v = entry[k]
-        if k == "aliases" and isinstance(v, list):
+        if k == "aliases":
+            # F6: coerce a non-list aliases to a list so downstream never sees a
+            # string where it expects a list.
+            v = v if isinstance(v, list) else ([] if v is None else [v])
             out[k] = [_cap_str(a) for a in v[:100]]
         elif k == "soft_error":
             out[k] = bool(v)
@@ -179,13 +234,19 @@ def validate_artifact(artifact):
     if mode is not None and mode not in _ALLOWED_MODES:
         raise ArtifactError("invalid mode: {!r}".format(mode))
 
+    truncations = []
+
     def _array(key, limit):
         val = artifact.get(key) or []
         if not isinstance(val, list):
             raise ArtifactError("{} must be a list".format(key))
         if len(val) > limit:
-            raise ArtifactError("{} exceeds cap ({} > {})".format(
-                key, len(val), limit))
+            # F4: TRUNCATE to the cap instead of rejecting the whole artifact.
+            # Rejecting would silently drop a MAL- verdict that may sit anywhere
+            # in a large list; truncation still bounds the blast radius (the
+            # security intent) and records the loss as an error, never silent.
+            truncations.append("{} truncated {}->{}".format(key, len(val), limit))
+            val = val[:limit]
         return val
 
     packages = [p for p in (_clean_package(e) for e in _array("packages", MAX_PACKAGES)) if p]
@@ -193,7 +254,7 @@ def validate_artifact(artifact):
     vulnerable = [f for f in (_clean_finding(e) for e in _array("vulnerable", MAX_FINDINGS)) if f]
     suspicious = [f for f in (_clean_finding(e) for e in _array("suspicious", MAX_FINDINGS)) if f]
 
-    errors = _array("errors", MAX_ERRORS)
+    errors = _array("errors", MAX_ERRORS) + truncations
     errors = [_cap_str(e) for e in errors]
 
     return {

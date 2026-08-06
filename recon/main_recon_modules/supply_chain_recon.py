@@ -32,34 +32,65 @@ def _extract_source_maps(combined_result):
 
 
 def _extract_technologies(combined_result):
-    """Best-effort {name, version} list from httpx/wappalyzer output."""
+    """{name, version} list from httpx/wappalyzer output.
+
+    L2-2: the real http_probe shape is `by_url` (dict url->entry) with a
+    `technologies` list of "Name:Version" STRINGS (plus a top-level
+    `technologies_found` dict keyed by the same strings) - NOT a `results` list
+    of {name,version} dicts. Read the right keys and split "Name:Version".
+    """
     techs = []
+    seen = set()
     http = combined_result.get("http_probe") or {}
-    # http_probe results vary; scan common shapes for tech lists.
-    for key in ("results", "live_urls", "probes"):
-        for entry in (http.get(key) or []):
-            if not isinstance(entry, dict):
-                continue
-            for t in (entry.get("technologies") or entry.get("tech") or []):
-                if isinstance(t, dict):
+
+    def _add_str(s):
+        if not isinstance(s, str) or not s or s in seen:
+            return
+        seen.add(s)
+        name, _, ver = s.partition(":")
+        name = name.strip()
+        if name:
+            techs.append({"name": name, "version": (ver.strip() or None)})
+
+    for entry in (http.get("by_url") or {}).values():
+        if not isinstance(entry, dict):
+            continue
+        for t in (entry.get("technologies") or entry.get("tech") or []):
+            if isinstance(t, str):
+                _add_str(t)
+            elif isinstance(t, dict) and t.get("name"):
+                key = "{}:{}".format(t.get("name"), t.get("version") or "")
+                if key not in seen:
+                    seen.add(key)
                     techs.append({"name": t.get("name"), "version": t.get("version")})
-                elif isinstance(t, str):
-                    techs.append({"name": t, "version": None})
+    for t in (http.get("technologies_found") or {}):
+        _add_str(t)
     return techs
 
 
 def _extract_base_urls(combined_result):
-    """Base URLs that the harvested packages should be anchored to (DEPENDS_ON)."""
+    """Base URLs (scheme://netloc) to anchor harvested packages to (DEPENDS_ON).
+
+    L2-1: reads the real `by_url` key. Normalizes each probed URL down to
+    scheme://netloc so it matches the BaseURL node's `url` property (probed URLs
+    may carry a path; BaseURL nodes do not).
+    """
+    from urllib.parse import urlparse
     urls = set()
     http = combined_result.get("http_probe") or {}
-    for key in ("results", "live_urls", "probes"):
-        for entry in (http.get(key) or []):
-            if isinstance(entry, dict):
-                u = entry.get("url") or entry.get("base_url")
-                if u:
-                    urls.add(u)
-            elif isinstance(entry, str):
-                urls.add(entry)
+    for key, entry in (http.get("by_url") or {}).items():
+        raw = None
+        if isinstance(entry, dict):
+            raw = entry.get("url") or entry.get("base_url")
+        if not raw and isinstance(key, str):
+            raw = key
+        if not raw:
+            continue
+        try:
+            p = urlparse(raw)
+            urls.add("{}://{}".format(p.scheme, p.netloc) if p.scheme and p.netloc else raw)
+        except Exception:
+            urls.add(raw)
     return sorted(urls)
 
 

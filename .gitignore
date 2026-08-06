@@ -111,10 +111,12 @@ recon/output/*.json
 gvm_scan/output/*.json
 github_secret_hunt/output/*.json
 trufflehog_scan/output/*.json
+supply_chain_scan/output/*.json
 !recon/output/.gitkeep
 !gvm_scan/output/.gitkeep
 !github_secret_hunt/output/.gitkeep
 !trufflehog_scan/output/.gitkeep
+!supply_chain_scan/output/.gitkeep
 # AI Attack Surface scan output (garak/pyrit/giskard/promptfoo reports + transcripts)
 ai_attack_surface_scan/output/
 

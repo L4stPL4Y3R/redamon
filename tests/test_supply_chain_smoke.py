@@ -77,6 +77,16 @@ class TestAnalyzerEntrypointSmoke(unittest.TestCase):
             art = self.ep.run_job({"mode": "js-dir", "target": d})
         self._assert_valid(art)
 
+    def test_F3_hostile_guarddog_name_does_not_abort_job(self):
+        # F3: a hostile guarddog package coordinate must NOT crash run_job or
+        # discard the artifact; it becomes a soft error, run_job still returns a
+        # boundary-valid artifact.
+        art = self.ep.run_job({
+            "mode": "bogus", "target": "/x", "deep_analysis": True,
+            "guarddog_packages": [{"ecosystem": "npm", "name": "evil;rm -rf /"}]})
+        self._assert_valid(art)
+        self.assertTrue(any("guarddog" in e for e in art["errors"]))
+
     def test_deep_analysis_capped_and_valid(self):
         # 200 guarddog packages requested; entrypoint caps at 100 and still
         # returns a valid artifact (binaries absent -> errors, never a crash).
