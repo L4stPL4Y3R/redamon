@@ -116,7 +116,33 @@ def download_databases(db_path, ecosystems=None, *, force=False,
             continue
         result["synced"].append(eco)
 
+    # osv-scanner writes the DB tree 0750 (dirs) as root. The scan containers run
+    # NON-root and mount this volume read-only; without world-traverse they can't
+    # reach all.zip and osv-scanner then silently returns empty results (no error).
+    # Make the whole tree world-readable/traversable so a hardened, non-root,
+    # read-only scanner can load it.
+    if result["synced"]:
+        _make_world_readable(db_path)
+
     return result
+
+
+def _make_world_readable(db_path):
+    """Add o+rX across the DB tree so non-root read-only scanners can load it."""
+    import stat as _stat
+    for root, dirs, files in os.walk(db_path):
+        for d in [root] + [os.path.join(root, x) for x in dirs]:
+            try:
+                os.chmod(d, os.stat(d).st_mode | _stat.S_IROTH | _stat.S_IXOTH
+                         | _stat.S_IRGRP | _stat.S_IXGRP)
+            except OSError:
+                pass
+        for f in files:
+            fp = os.path.join(root, f)
+            try:
+                os.chmod(fp, os.stat(fp).st_mode | _stat.S_IROTH | _stat.S_IRGRP)
+            except OSError:
+                pass
 
 
 def _download_one(ecosystem, db_path, env, timeout, binary):

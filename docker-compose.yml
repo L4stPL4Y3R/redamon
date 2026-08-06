@@ -303,6 +303,16 @@ services:
     image: redamon-codefix-sandbox:latest
     profiles: ["tools"]
 
+  # Supply-chain DIRTY analyzer (plan Phase 0.5): the secret-free box that
+  # processes untrusted supply-chain input (tarballs, target JS, manifests).
+  # Build-only (spawned per-job by the orchestrator, hardened, network-isolated).
+  supply-chain-analyzer:
+    build:
+      context: .
+      dockerfile: supply_chain_analyzer/Dockerfile
+    image: redamon-supply-chain-analyzer:latest
+    profiles: ["tools"]
+
   # BadDNS (AGPL-3.0) runs isolated in its own container. RedAmon never
   # imports or links against it -- the recon container spawns this image
   # via Docker-in-Docker and receives NDJSON on stdout. See baddns_scan/

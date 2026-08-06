@@ -18,7 +18,7 @@ CORE_SERVICES="postgres neo4j docker-broker recon-orchestrator kali-sandbox agen
 # AI Attack Surface scanner (garak/pyrit/giskard/promptfoo). wcvs is the Web Cache
 # Vulnerability Scanner, run docker-in-docker by the recon container for the web
 # cache poisoning module.
-TOOL_IMAGES="redamon-recon:latest redamon-vuln-scanner:latest redamon-github-hunter:latest redamon-trufflehog:latest redamon-baddns:latest redamon-ai-attack-surface:latest redamon-codefix-sandbox:latest redamon-wcvs:latest"
+TOOL_IMAGES="redamon-recon:latest redamon-vuln-scanner:latest redamon-github-hunter:latest redamon-trufflehog:latest redamon-baddns:latest redamon-ai-attack-surface:latest redamon-codefix-sandbox:latest redamon-wcvs:latest redamon-supply-chain-analyzer:latest"
 DEV_COMPOSE="-f docker-compose.yml -f docker-compose.dev.yml"
 
 # Orchestrator-spawned containers that docker compose does NOT manage (they are
@@ -1836,9 +1836,13 @@ cmd_supply_chain_sync() {
     fi
     docker volume inspect redamon-osv-db &>/dev/null || docker volume create redamon-osv-db >/dev/null
     info "Syncing offline OSV database (ecosystems: $ecos). First npm sync is ~208 MB."
-    if docker run --rm \
+    # Runs as root: the DB volume is root-owned and read-only to every scan
+    # container; the sync is the one privileged writer. supply_chain_common is
+    # baked into the analyzer image at /app, so no source mount is needed.
+    if docker run --rm --user root \
         -v redamon-osv-db:/osv-db \
         -e OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY=/osv-db \
+        -e PYTHONPATH=/app \
         --entrypoint python3 \
         "$analyzer_img" \
         -m supply_chain_common.osv_db_sync --db-path /osv-db --ecosystems "$ecos"; then

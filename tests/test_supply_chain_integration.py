@@ -29,20 +29,23 @@ _OSV_DB = os.environ.get("OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY")
 @unittest.skipUnless(_HAS_OSV and _OSV_DB, "osv-scanner + offline DB required")
 class TestOsvIntegration(unittest.TestCase):
     def test_known_malicious_npm_lockfile(self):
-        # A lockfile pinning a known-malicious npm typosquat from the corpus.
+        # A lockfile pinning a known-malicious npm package from the OSV corpus
+        # (arpan-package@2.0.5 -> MAL-2022-1122, confirmed present in the DB).
+        # NOTE: the file MUST be named package-lock.json - osv-scanner selects
+        # its extractor by basename.
         with tempfile.TemporaryDirectory() as d:
             lock = os.path.join(d, "package-lock.json")
             with open(lock, "w") as fh:
                 fh.write(
                     '{"name":"t","version":"1.0.0","lockfileVersion":3,'
-                    '"packages":{"":{"dependencies":{"lodahs":"1.0.0"}},'
-                    '"node_modules/lodahs":{"version":"1.0.0"}}}')
+                    '"packages":{"":{"dependencies":{"arpan-package":"2.0.5"}},'
+                    '"node_modules/arpan-package":{"version":"2.0.5"}}}')
             res = osv_runner.run_osv_scan(lock, mode="lockfile", db_path=_OSV_DB)
             self.assertIsNone(res["error"], res["error"])
             self.assertTrue(
                 any(m["advisory_id"].startswith("MAL-")
                     for m in res["parsed"]["malicious"]),
-                "expected a MAL- verdict for lodahs")
+                "expected a MAL- verdict for arpan-package")
 
 
 @unittest.skipUnless(_HAS_GUARDDOG, "guarddog required")

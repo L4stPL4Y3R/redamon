@@ -367,6 +367,7 @@ _FALLBACK_PROFILE = {
         "gvm": 2_684_354_560,             # 2.5 GB openvas is the heaviest scanner
         "github_hunt": 805_306_368,       # 768 MB clone + regex sweep
         "trufflehog": 805_306_368,        # 768 MB clone + verifier sweep
+        "supply_chain": 943_718_400,      # 900 MB clean writer + dirty analyzer sibling
         "_default": 2_147_483_648,        # 2 GB   unknown type: assume full-pipeline size
     },
     "agent_session_envelope_bytes": 512_000_000,

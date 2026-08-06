@@ -6,10 +6,19 @@ Verified against OSV-Scanner v2.4.0 (2026-08-06):
   - Scan an SBOM:       osv-scanner scan source <bom.cdx.json> --format json
                         (v2 auto-detects CycloneDX/SPDX by content; there is no
                          separate --sbom flag in v2, unlike v1)
-  - OFFLINE (mandatory for passivity): pass --offline-vulnerabilities and point
-    the scanner at the pre-downloaded local DB via the environment variable
-    OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY=<db_path>. The DB is fetched ONCE by
-    the Phase-0 updater with --download-offline-databases; scans never download.
+  - OFFLINE (mandatory for passivity): pass --offline and point the scanner at
+    the pre-downloaded local DB via the environment variable
+    OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY=<db_path>. The DB is fetched ONCE by the
+    Phase-0 updater with --download-offline-databases; scans never download.
+    VERIFIED 2026-08-06 against v2.4.0: --offline loads the local DB (logs
+    "Loaded npm local db from <path>/osv-scanner/npm/all.zip") and matches MAL-
+    ids. --offline-vulnerabilities did NOT load the local DB in this build and
+    returned empty results; do not use it for the offline path. The plan's §2
+    said --offline-vulnerabilities; this corrects it.
+  - LOCKFILE NAME MATTERS: osv-scanner picks the extractor from the file's
+    BASENAME (package-lock.json, requirements.txt, ...). A path like /work/pl.json
+    fails with "could not determine extractor". Callers MUST name the scanned
+    file with a recognized lockfile name (or pass lockfile_type to force it).
   - Exit codes: 0 = no findings, 1 = findings present, 127/128/... = tool error.
     We never gate on exit code alone; anything outside {0,1} is a runner error
     but we still attempt to parse stdout.
@@ -59,7 +68,9 @@ def run_osv_scan(target, *, mode="lockfile", db_path=None, offline=True,
 
     env = dict(os.environ)
     if offline:
-        argv.append("--offline-vulnerabilities")
+        # --offline (NOT --offline-vulnerabilities) is what loads the local DB
+        # and matches MAL- ids in v2.4.0. Verified 2026-08-06; see module docstring.
+        argv.append("--offline")
         if db_path:
             env["OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY"] = str(db_path)
     argv += ["--format", "json"]

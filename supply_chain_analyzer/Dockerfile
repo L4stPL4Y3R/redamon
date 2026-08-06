@@ -15,8 +15,8 @@
 #   retire.js   5.4.3   (Node CLI)
 
 # Stage 1: build the osv-scanner binary from the pinned tag (reliable across
-# release-asset naming changes).
-FROM golang:1.24-bookworm AS osv-builder
+# release-asset naming changes). osv-scanner v2.4.0 requires Go >= 1.26.4.
+FROM golang:1-bookworm AS osv-builder
 RUN GOBIN=/out go install github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.4.0
 
 # Stage 2: runtime. Python base (guarddog) + Node (retire.js) + the osv binary.
@@ -45,6 +45,15 @@ RUN npm install -g retire@5.4.3   # no-install-ok
 # GuardDog (behavioural analysis) pinned; pulls semgrep + yara.
 # no-install-ok: our tool, not a target manifest.
 RUN pip install --no-cache-dir guarddog==3.0.1   # no-install-ok
+
+# Warm GuardDog's typosquatting top-packages cache at build time (network is
+# available here). The hardened runtime is read-only and may be network-isolated,
+# and the non-root user cannot write into root-owned site-packages, so importing
+# guarddog here (as root) pre-populates the cache, and the chmod lets a later
+# refresh succeed on a non-read-only runtime. Best-effort: a build without net
+# just leaves guarddog to fetch at first opt-in scan.
+RUN python3 -c "import guarddog" 2>/dev/null || true; \
+    chmod -R a+rwX /usr/local/lib/python3.11/site-packages/guarddog/analyzer/metadata/resources 2>/dev/null || true
 
 # Non-root user that runs every analysis command (uid 1001 matches the spawner).
 RUN useradd --create-home --uid 1001 --shell /bin/bash analyzer

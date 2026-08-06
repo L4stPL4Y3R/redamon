@@ -195,6 +195,22 @@ class ContainerManager:
         self.codefix_work_host_base: Optional[str] = None
         self.codefix_sandboxes: dict[str, dict] = {}
 
+        # Supply-chain DIRTY analyzer (plan section 5.2): ephemeral, hardened,
+        # SECRET-FREE container that processes untrusted supply-chain input
+        # (tarballs, target-served JS, manifests/SBOMs). OSV path is fully
+        # network-isolated; GuardDog (opt-in) needs registry egress. Modeled on
+        # the codefix sandbox, NOT on trufflehog (which holds Neo4j creds).
+        self.supply_chain_analyzer_image = os.environ.get(
+            "SUPPLY_CHAIN_ANALYZER_IMAGE", "redamon-supply-chain-analyzer:latest")
+        self.supply_chain_analyzer_network = os.environ.get(
+            "SUPPLY_CHAIN_ANALYZER_NETWORK", "redamon-supply-chain-net")
+        self.supply_chain_analyzer_mem = os.environ.get("SUPPLY_CHAIN_ANALYZER_MEM", "1500m")
+        self.supply_chain_analyzer_nanocpus = int(
+            os.environ.get("SUPPLY_CHAIN_ANALYZER_NANOCPUS", str(2_000_000_000)))
+        self.supply_chain_analyzer_pids = int(os.environ.get("SUPPLY_CHAIN_ANALYZER_PIDS", "512"))
+        self.supply_chain_osv_db_volume = os.environ.get(
+            "SUPPLY_CHAIN_OSV_DB_VOLUME", "redamon-osv-db")
+
         # Memory governor (Part 1): reserves each scan job's expected RAM envelope
         # before spawning so concurrent scans can never sum past the host's scan
         # pool. Fail-open: with the governor disabled, try_admit always admits.
@@ -3050,6 +3066,100 @@ class ContainerManager:
             project_id=project_id,
             status=TrufflehogStatus.IDLE,
         )
+
+    # ------------------------------------------------------------------
+    # Supply-chain DIRTY analyzer (plan Phase 0.5) - the secret-free box
+    # ------------------------------------------------------------------
+    def _ensure_supply_chain_network(self) -> None:
+        """Create the isolated supply-chain analyzer network if missing.
+
+        Same rationale as _ensure_codefix_network: Compose never creates it
+        because no service is attached (the analyzer must have no RedAmon peer).
+        The OSV verdict path needs ZERO egress; this bridge provides none of its
+        own to the RedAmon services. Idempotent, tolerates the create race."""
+        name = self.supply_chain_analyzer_network
+        try:
+            self.client.networks.get(name)
+            return
+        except NotFound:
+            pass
+        try:
+            self.client.networks.create(name, driver="bridge", check_duplicate=True)
+            logger.info(f"[supply-chain] created isolated network {name}")
+        except APIError as e:
+            logger.warning(f"[supply-chain] network ensure for {name}: {e}")
+
+    def run_supply_chain_analyzer(
+        self,
+        job_scratch_host_path: str,
+        sc_common_host_path: str,
+        *,
+        allow_registry_egress: bool = False,
+        timeout: int = 600,
+    ) -> dict:
+        """Run ONE dirty-analyzer job to completion and return its outcome.
+
+        The CALLER (a clean, creds-holding container or the orchestrator) has
+        already written ``job.json`` and any input bytes into
+        ``job_scratch_host_path`` (a shared scratch dir). We bind that dir rw at
+        /work, the shared runners read-only at /app/supply_chain_common, and the
+        offline OSV DB read-only at /osv-db. The analyzer writes ``out.json``.
+
+        HARDENING (plan section 5.2): cap_drop=ALL, read_only rootfs + tmpfs
+        scratch, non-root, mem/pids/cpu caps, and CRITICALLY no secrets in env
+        (a full RCE in here finds no Neo4j/Internal/GitHub credential). The OSV
+        path is fully network-isolated; GuardDog registry egress is opt-in and
+        fails closed to the isolated net unless an egress network is configured.
+
+        Returns {exit_code, out_path, error}. Never raises on a tool-level
+        failure; the caller validates out.json via validate_artifact regardless.
+        """
+        self._ensure_supply_chain_network()
+
+        network = self.supply_chain_analyzer_network
+        if allow_registry_egress:
+            # Opt-in GuardDog path. Fails closed: without an explicitly configured
+            # egress network the analyzer stays on the isolated bridge (GuardDog
+            # simply finds no registry, rather than silently getting host egress).
+            network = os.environ.get("SUPPLY_CHAIN_EGRESS_NETWORK", network)
+
+        container = None
+        try:
+            container = self.client.containers.run(
+                self.supply_chain_analyzer_image,
+                detach=True,
+                network=network,
+                cap_drop=["ALL"],
+                read_only=True,
+                tmpfs={"/tmp": "size=1g,exec"},
+                mem_limit=self._container_mem_limit("supply_chain") or self.supply_chain_analyzer_mem,
+                nano_cpus=self._container_cpu_limit() or self.supply_chain_analyzer_nanocpus,
+                pids_limit=self.supply_chain_analyzer_pids,
+                # CRITICAL: NO secrets. Only the offline DB pointer.
+                environment={
+                    "OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY": "/osv-db",
+                    "PYTHONUNBUFFERED": "1",
+                    "PYTHONPATH": "/app",
+                },
+                volumes={
+                    job_scratch_host_path: {"bind": "/work", "mode": "rw"},
+                    sc_common_host_path: {"bind": "/app/supply_chain_common", "mode": "ro"},
+                    self.supply_chain_osv_db_volume: {"bind": "/osv-db", "mode": "ro"},
+                },
+                command=["sc-analyze", "--job", "/work/job.json", "--out", "/work/out.json"],
+            )
+            result = container.wait(timeout=timeout)
+            exit_code = result.get("StatusCode", -1) if isinstance(result, dict) else -1
+            return {"exit_code": exit_code, "out_path": "/work/out.json", "error": None}
+        except Exception as e:  # spawn/timeout/daemon error: caller falls back
+            logger.error(f"[supply-chain] analyzer run failed: {e}")
+            return {"exit_code": None, "out_path": "/work/out.json", "error": str(e)}
+        finally:
+            if container is not None:
+                try:
+                    container.remove(force=True)
+                except APIError:
+                    pass
 
     async def start_trufflehog(
         self,

@@ -65,6 +65,11 @@ _DEFAULT_ALLOWED_IMAGES = [
     "ghcr.io/zaproxy/zaproxy:stable",
     "dolevf/graphql-cop:1.14",
     "redamon-baddns:latest",
+    # Supply-chain feature (plan Phase 0.5/2): the DIRTY analyzer and the CLEAN
+    # standalone scanner. The analyzer may be spawned by a broker-socket caller
+    # (recon in L2), so it must be allowlisted or the spawn fails closed.
+    "redamon-supply-chain-analyzer:latest",
+    "redamon-supply-chain:latest",
     "alpine",          # temp-file cleanup helper
     "alpine:latest",
 ]
@@ -116,7 +121,7 @@ _CANONICAL_ALLOWED = {_canonical_image(i) for i in ALLOWED_IMAGES}
 # as named volumes and checked against ALLOWED_VOLUMES.
 _DEFAULT_BIND_PREFIXES = ["/tmp/redamon"]
 ALLOWED_BIND_PREFIXES = _DEFAULT_BIND_PREFIXES + _csv_env("DOCKER_BROKER_ALLOWED_BIND_PREFIXES")
-ALLOWED_VOLUMES = set(_csv_env("DOCKER_BROKER_ALLOWED_VOLUMES")) | {"nuclei-templates"}
+ALLOWED_VOLUMES = set(_csv_env("DOCKER_BROKER_ALLOWED_VOLUMES")) | {"nuclei-templates", "redamon-osv-db"}
 
 # T1/T2: host paths a tool container may bind READ-WRITE. Any other allowed
 # host path (e.g. the source tree under ${PWD}, which is an allowed *read*

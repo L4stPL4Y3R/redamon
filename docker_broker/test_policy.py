@@ -56,6 +56,12 @@ allow("NET_RAW capability", {"Image": NAABU, "HostConfig": {"CapAdd": ["NET_RAW"
 allow("alpine cleanup helper", {"Image": "alpine", "HostConfig": {"Binds": ["/tmp/redamon/c:/cleanup"]}})
 allow("bind via Mounts type=bind under prefix", {"Image": NAABU,
       "HostConfig": {"Mounts": [{"Type": "bind", "Source": "/tmp/redamon/o", "Target": "/output"}]}})
+# Supply-chain feature (plan Phase 0.5): the DIRTY analyzer image + the offline
+# OSV DB volume are allowlisted; a look-alike image is not.
+allow("supply-chain analyzer image", {"Image": "redamon-supply-chain-analyzer:latest"})
+allow("supply-chain clean scanner image", {"Image": "redamon-supply-chain:latest"})
+allow("offline OSV DB volume (ro)", {"Image": "redamon-supply-chain-analyzer:latest",
+      "HostConfig": {"Mounts": [{"Type": "volume", "Source": "redamon-osv-db", "Target": "/osv-db", "ReadOnly": True}]}})
 
 print("=== DENY: host-escape attempts ===")
 deny("mount host root /", {"Image": NAABU, "HostConfig": {"Binds": ["/:/host"]}}, "bind")
