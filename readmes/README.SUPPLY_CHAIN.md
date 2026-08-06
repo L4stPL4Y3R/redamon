@@ -162,10 +162,20 @@ scan-spawn path**, TTL-guarded:
 | L1 Supply-Chain scan (`start_supply_chain`) | Yes |
 | L3 agent tools | No - `kali-sandbox` is deliberately off the orchestrator network; it rides the L1/L2 refreshes |
 
-Semantics: if the DB was synced **< TTL** ago (default 24h) the check is a **~1s
-no-op**; if it is older, the feed re-downloads before the scan starts. It is
-**best-effort** - a refresh failure (offline host, GCS unreachable) is logged and
-the scan proceeds against the existing DB, never blocked.
+Semantics:
+
+- **Cold DB (never synced): the scan path does NOT bootstrap it.** The first
+  download is ~208 MB and would otherwise block the first recon spawn for minutes
+  for a feature that is off by default. Cold population stays explicit
+  (`redamon.sh supply-chain-sync`), matching the "images are eager, the data is
+  lazy" contract. The refresh returns `skipped` in ~0.4s.
+- **Populated + fresh (< TTL, default 24h):** a **~1s no-op** (`skipped`).
+- **Populated + stale (> TTL):** the feed re-downloads before the scan starts
+  (`synced`).
+- **Best-effort:** a refresh failure (offline host, GCS unreachable) is logged and
+  the scan proceeds against the existing DB, never blocked.
+- **Serialized:** concurrent scan starts do not spawn two sidecars writing the
+  same volume; the second caller gets `skipped` and proceeds.
 
 **Why the orchestrator does it:** `redamon-osv-db` is mounted **read-only** into
 every scan container, which also runs non-root, so a scanner physically cannot

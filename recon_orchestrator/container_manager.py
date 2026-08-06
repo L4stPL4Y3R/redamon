@@ -5,6 +5,7 @@ import asyncio
 import functools
 import json
 import logging
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 import os
@@ -221,6 +222,9 @@ class ContainerManager:
         # download can never stall a scan spawn (npm is ~208 MB on a cold volume).
         self.osv_db_refresh_timeout = int(
             os.environ.get("OSV_DB_REFRESH_TIMEOUT", "900"))
+        # Serializes OSV DB refreshes (see ensure_osv_db_fresh): concurrent scan
+        # starts must not spawn two sidecars writing the same volume.
+        self._osv_db_refresh_lock = threading.Lock()
 
         # Memory governor (Part 1): reserves each scan job's expected RAM envelope
         # before spawning so concurrent scans can never sum past the host's scan
@@ -3215,7 +3219,13 @@ class ContainerManager:
     # ------------------------------------------------------------------
     # Offline OSV database freshness (lazy-on-scan refresh)
     # ------------------------------------------------------------------
-    def ensure_osv_db_fresh(self, ecosystems=None, ttl_seconds=None) -> dict:
+    # OSV ecosystems this sidecar knows how to seed. Also the INJECTION GATE:
+    # the ecosystem string is interpolated into a shell script, so anything not
+    # on this list is refused rather than escaped (same posture as sanitize_name).
+    _OSV_SYNC_ECOSYSTEMS = ("npm", "PyPI", "Go", "crates.io", "Packagist", "RubyGems")
+
+    def ensure_osv_db_fresh(self, ecosystems=None, ttl_seconds=None,
+                            bootstrap: bool = False) -> dict:
         """Refresh the offline OSV DB if it is older than the TTL (default 24h).
 
         Called on the scan-spawn path (L1 + L2) so the malicious-package feed is
@@ -3228,9 +3238,15 @@ class ContainerManager:
         this process holds the Docker socket, so the refresh runs as a short-lived
         root sidecar off the analyzer image writing the volume rw.
 
-        Cheap by design: `download_databases` is TTL-guarded per ecosystem, so a
-        within-TTL call is a no-op that exits in ~1s. Best-effort - a failure
-        (offline host, registry down) NEVER blocks the scan; the scan proceeds
+        `bootstrap=False` (the scan-path default) REFUSES to populate a cold/empty
+        DB: the initial download is ~208 MB and would otherwise block the first
+        recon spawn for minutes, for a feature that is OFF by default. Cold
+        population stays explicit (`redamon.sh supply-chain-sync`), matching the
+        documented "images are eager, the data is lazy" contract. Only an
+        already-populated DB is kept fresh here.
+
+        Cheap by design: within-TTL calls are a ~1s no-op. Best-effort - a failure
+        (offline host, GCS unreachable) NEVER blocks the scan; the scan proceeds
         against the existing DB.
 
         Returns {"status": skipped|synced|failed|disabled, "detail": ...}.
@@ -3238,9 +3254,19 @@ class ContainerManager:
         if os.environ.get("OSV_DB_AUTO_REFRESH", "true").lower() in ("0", "false", "no"):
             return {"status": "disabled", "detail": "OSV_DB_AUTO_REFRESH is off"}
 
-        ecos = ecosystems or os.environ.get("OSV_DB_ECOSYSTEMS", "npm")
-        if isinstance(ecos, (list, tuple, set)):
-            ecos = ",".join(sorted(ecos))
+        ecos_raw = ecosystems or os.environ.get("OSV_DB_ECOSYSTEMS", "npm")
+        if isinstance(ecos_raw, (list, tuple, set)):
+            ecos_list = list(ecos_raw)
+        else:
+            ecos_list = [e.strip() for e in str(ecos_raw).replace(",", " ").split() if e.strip()]
+        # Injection gate: refuse anything not on the allowlist (never escape it).
+        unknown = [e for e in ecos_list if e not in self._OSV_SYNC_ECOSYSTEMS]
+        if unknown:
+            logger.warning(f"[osv-db] refusing unknown ecosystem(s): {unknown}")
+            ecos_list = [e for e in ecos_list if e in self._OSV_SYNC_ECOSYSTEMS]
+        if not ecos_list:
+            return {"status": "disabled", "detail": "no valid ecosystems configured"}
+        ecos = ",".join(ecos_list)
         ttl = int(ttl_seconds or os.environ.get("OSV_DB_TTL_SECONDS", 24 * 3600))
 
         # The sidecar shells out to the osv-scanner BINARY baked into the analyzer
@@ -3250,8 +3276,14 @@ class ContainerManager:
         # world-readable chmod (the DB is consumed by non-root read-only scanners).
         script = r'''
 set -u
-DB=/osv-db; TTL=__TTL__; RC=0; DID=0
+DB=/osv-db; TTL=__TTL__; RC=0; DID=0; BOOTSTRAP=__BOOTSTRAP__
 mkdir -p "$DB"
+# Cold-DB guard: without an existing DB tree this would be a ~208 MB first
+# download on the scan-spawn path. Refuse unless explicitly bootstrapping.
+if [ "$BOOTSTRAP" != "1" ] && [ ! -d "$DB/osv-scanner" ]; then
+  echo "cold-db: not populated, skipping auto-refresh (run redamon.sh supply-chain-sync)"
+  exit 0
+fi
 for ECO in $(echo "__ECOS__" | tr ',' ' '); do
   MARK="$DB/.redamon_synced_$(echo "$ECO" | tr './' '__')"
   if [ -f "$MARK" ]; then
@@ -3274,8 +3306,17 @@ for ECO in $(echo "__ECOS__" | tr ',' ' '); do
   rm -rf "$SEED"
 done
 [ "$DID" = "1" ] && chmod -R a+rX "$DB" 2>/dev/null
+[ "$DID" = "1" ] && echo "__DID_SYNC__"
 exit $RC
-'''.replace("__TTL__", str(ttl)).replace("__ECOS__", str(ecos))
+'''.replace("__TTL__", str(ttl)).replace("__ECOS__", ecos).replace(
+            "__BOOTSTRAP__", "1" if bootstrap else "0")
+
+        # Serialize refreshes: two scans starting at once would otherwise spawn two
+        # sidecars writing the same volume (racing on all.zip). One orchestrator
+        # process owns the socket, so a threading lock is sufficient. Non-blocking
+        # acquire - if a refresh is already in flight, this caller just proceeds.
+        if not self._osv_db_refresh_lock.acquire(blocking=False):
+            return {"status": "skipped", "detail": "refresh already in progress"}
 
         container = None
         try:
@@ -3284,6 +3325,9 @@ exit $RC
                 detach=True,
                 user="root",  # the DB tree is root-owned; the sync is the one writer
                 network_mode="bridge",  # needs egress to the OSV GCS bucket
+                # Root is needed to write the root-owned DB tree, but no capability
+                # is: drop them all so the sidecar cannot do anything but download.
+                cap_drop=["ALL"],
                 mem_limit="1g",
                 pids_limit=256,
                 environment={
@@ -3304,8 +3348,15 @@ exit $RC
             except Exception:
                 pass
             if code == 0:
-                logger.info(f"[osv-db] freshness check ok (ttl={ttl}s): {logs}")
-                return {"status": "synced", "detail": logs}
+                # Distinguish an actual download from a TTL/cold-db no-op so logs
+                # and telemetry do not claim a sync that never happened.
+                did_sync = "__DID_SYNC__" in logs
+                detail = logs.replace("__DID_SYNC__", "").strip()
+                if did_sync:
+                    logger.info(f"[osv-db] refreshed (ttl={ttl}s): {detail}")
+                    return {"status": "synced", "detail": detail}
+                logger.debug(f"[osv-db] no refresh needed (ttl={ttl}s): {detail}")
+                return {"status": "skipped", "detail": detail}
             logger.warning(f"[osv-db] refresh exited {code}: {logs}")
             return {"status": "failed", "detail": logs}
         except Exception as e:
@@ -3313,6 +3364,7 @@ exit $RC
             logger.warning(f"[osv-db] refresh skipped (non-fatal): {e}")
             return {"status": "failed", "detail": str(e)}
         finally:
+            self._osv_db_refresh_lock.release()
             if container is not None:
                 try:
                     container.remove(force=True)
