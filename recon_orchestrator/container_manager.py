@@ -217,6 +217,10 @@ class ContainerManager:
         # lockfile lands at <volume>/<project_id>/<filename>.
         self.supply_chain_uploads_volume = os.environ.get(
             "SUPPLY_CHAIN_UPLOADS_VOLUME", "redamon_supply_chain_uploads")
+        # Lazy-on-scan OSV DB refresh: hard ceiling on the sync sidecar so a slow
+        # download can never stall a scan spawn (npm is ~208 MB on a cold volume).
+        self.osv_db_refresh_timeout = int(
+            os.environ.get("OSV_DB_REFRESH_TIMEOUT", "900"))
 
         # Memory governor (Part 1): reserves each scan job's expected RAM envelope
         # before spawning so concurrent scans can never sum past the host's scan
@@ -541,6 +545,13 @@ class ContainerManager:
 
         # Memory admission (Part 1): reserve this scan's RAM envelope or reject.
         await self._admit_scan("full_recon", project_id, user_id=user_id)
+
+        # Lazy-on-scan OSV DB refresh for the L2 supply-chain module (GROUP 5.5).
+        # TTL-guarded, so this is a ~1s no-op unless the feed is >24h old, and
+        # best-effort so a refresh failure never blocks recon. Runs unconditionally
+        # rather than gating on supplyChainReconEnabled: the check is nearly free
+        # and keeps the spawn path decoupled from a webapp settings fetch.
+        await self.ensure_osv_db_fresh_async()
 
         # Mint a run id for this full-recon scan. Full recon had no run id (unlike
         # partial/ai-attack); the HTTP traffic-capture layer tags every captured
@@ -1492,6 +1503,12 @@ class ContainerManager:
 
         # Memory admission (Part 1): reserve this run's RAM envelope or reject.
         await self._admit_scan("partial_recon", project_id, run_id, user_id=config.get("user_id"))
+
+        # Lazy-on-scan OSV DB refresh, but ONLY for the supply-chain partial tool -
+        # other partial tools have nothing to do with the OSV feed. TTL-guarded +
+        # best-effort (see ensure_osv_db_fresh).
+        if tool_id == "SupplyChainRecon":
+            await self.ensure_osv_db_fresh_async()
 
         state = PartialReconState(
             project_id=project_id,
@@ -3196,6 +3213,117 @@ class ContainerManager:
                     pass
 
     # ------------------------------------------------------------------
+    # Offline OSV database freshness (lazy-on-scan refresh)
+    # ------------------------------------------------------------------
+    def ensure_osv_db_fresh(self, ecosystems=None, ttl_seconds=None) -> dict:
+        """Refresh the offline OSV DB if it is older than the TTL (default 24h).
+
+        Called on the scan-spawn path (L1 + L2) so the malicious-package feed is
+        current without the operator remembering `redamon.sh supply-chain-sync`.
+        OSV publishes new MAL-/CVE advisories daily, so a DB frozen at install
+        time silently misses newly-published malware.
+
+        WHY HERE: `redamon-osv-db` is mounted READ-ONLY (and non-root) into every
+        scan container, so a scanner physically cannot refresh its own DB. Only
+        this process holds the Docker socket, so the refresh runs as a short-lived
+        root sidecar off the analyzer image writing the volume rw.
+
+        Cheap by design: `download_databases` is TTL-guarded per ecosystem, so a
+        within-TTL call is a no-op that exits in ~1s. Best-effort - a failure
+        (offline host, registry down) NEVER blocks the scan; the scan proceeds
+        against the existing DB.
+
+        Returns {"status": skipped|synced|failed|disabled, "detail": ...}.
+        """
+        if os.environ.get("OSV_DB_AUTO_REFRESH", "true").lower() in ("0", "false", "no"):
+            return {"status": "disabled", "detail": "OSV_DB_AUTO_REFRESH is off"}
+
+        ecos = ecosystems or os.environ.get("OSV_DB_ECOSYSTEMS", "npm")
+        if isinstance(ecos, (list, tuple, set)):
+            ecos = ",".join(sorted(ecos))
+        ttl = int(ttl_seconds or os.environ.get("OSV_DB_TTL_SECONDS", 24 * 3600))
+
+        # The sidecar shells out to the osv-scanner BINARY baked into the analyzer
+        # image rather than importing supply_chain_common (that package is mounted
+        # at scan-spawn time, and this sidecar has no source mount). It mirrors
+        # osv_db_sync: TTL marker check -> seed manifest -> tool's own download ->
+        # world-readable chmod (the DB is consumed by non-root read-only scanners).
+        script = r'''
+set -u
+DB=/osv-db; TTL=__TTL__; RC=0; DID=0
+mkdir -p "$DB"
+for ECO in $(echo "__ECOS__" | tr ',' ' '); do
+  MARK="$DB/.redamon_synced_$(echo "$ECO" | tr './' '__')"
+  if [ -f "$MARK" ]; then
+    AGE=$(( $(date +%s) - $(stat -c %Y "$MARK" 2>/dev/null || echo 0) ))
+    if [ "$AGE" -lt "$TTL" ]; then echo "skip $ECO (age ${AGE}s < ${TTL}s)"; continue; fi
+  fi
+  SEED=$(mktemp -d)
+  case "$ECO" in
+    npm)   printf '%s' '{"name":"s","version":"1.0.0","lockfileVersion":3,"packages":{"":{"dependencies":{"left-pad":"1.3.0"}},"node_modules/left-pad":{"version":"1.3.0"}}}' > "$SEED/package-lock.json"; F="$SEED/package-lock.json" ;;
+    PyPI)  printf 'pip==24.0\n' > "$SEED/requirements.txt"; F="$SEED/requirements.txt" ;;
+    Go)    printf 'module s\n\ngo 1.21\n\nrequire golang.org/x/text v0.3.0\n' > "$SEED/go.mod"; F="$SEED/go.mod" ;;
+    crates.io) printf '[[package]]\nname = "libc"\nversion = "0.2.150"\n' > "$SEED/Cargo.lock"; F="$SEED/Cargo.lock" ;;
+    Packagist) printf '%s' '{"packages":[{"name":"monolog/monolog","version":"2.0.0"}]}' > "$SEED/composer.lock"; F="$SEED/composer.lock" ;;
+    RubyGems)  printf 'GEM\n  specs:\n    rake (13.0.0)\n\nPLATFORMS\n  ruby\n' > "$SEED/Gemfile.lock"; F="$SEED/Gemfile.lock" ;;
+    *) echo "unknown ecosystem $ECO"; RC=1; rm -rf "$SEED"; continue ;;
+  esac
+  echo "sync $ECO ..."
+  osv-scanner scan source --offline --download-offline-databases -L "$F" --format json >/dev/null 2>&1
+  if [ -d "$DB/osv-scanner" ]; then date +%s > "$MARK"; DID=1; echo "synced $ECO"; else echo "sync $ECO produced no DB"; RC=1; fi
+  rm -rf "$SEED"
+done
+[ "$DID" = "1" ] && chmod -R a+rX "$DB" 2>/dev/null
+exit $RC
+'''.replace("__TTL__", str(ttl)).replace("__ECOS__", str(ecos))
+
+        container = None
+        try:
+            container = self.client.containers.run(
+                self.supply_chain_analyzer_image,
+                detach=True,
+                user="root",  # the DB tree is root-owned; the sync is the one writer
+                network_mode="bridge",  # needs egress to the OSV GCS bucket
+                mem_limit="1g",
+                pids_limit=256,
+                environment={
+                    "OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY": "/osv-db",
+                    "HOME": "/tmp",
+                },
+                volumes={
+                    self.supply_chain_osv_db_volume: {"bind": "/osv-db", "mode": "rw"},
+                },
+                entrypoint="sh",
+                command=["-c", script],
+            )
+            result = container.wait(timeout=self.osv_db_refresh_timeout)
+            code = result.get("StatusCode", -1) if isinstance(result, dict) else -1
+            logs = ""
+            try:
+                logs = container.logs().decode("utf-8", errors="replace").strip()[-500:]
+            except Exception:
+                pass
+            if code == 0:
+                logger.info(f"[osv-db] freshness check ok (ttl={ttl}s): {logs}")
+                return {"status": "synced", "detail": logs}
+            logger.warning(f"[osv-db] refresh exited {code}: {logs}")
+            return {"status": "failed", "detail": logs}
+        except Exception as e:
+            # Never block a scan on a refresh failure.
+            logger.warning(f"[osv-db] refresh skipped (non-fatal): {e}")
+            return {"status": "failed", "detail": str(e)}
+        finally:
+            if container is not None:
+                try:
+                    container.remove(force=True)
+                except APIError:
+                    pass
+
+    async def ensure_osv_db_fresh_async(self, ecosystems=None) -> dict:
+        """Async wrapper: runs the (blocking) refresh off the event loop."""
+        return await self._run_blocking(self.ensure_osv_db_fresh, ecosystems)
+
+    # ------------------------------------------------------------------
     # Supply-Chain scan (L1 "Other Scans") lifecycle - the CLEAN writer.
     # Mirrors the trufflehog lifecycle: a creds-holding container that runs a
     # static OFFLINE osv-scanner pass on an uploaded SBOM/lockfile and writes
@@ -3212,6 +3340,11 @@ class ContainerManager:
             raise ValueError(f"Supply-chain scan already active for project {project_id}")
 
         await self._admit_scan("supply_chain", project_id, user_id=user_id)
+
+        # Lazy-on-scan: refresh the offline OSV DB if it is stale (TTL-guarded, so
+        # this is a ~1s no-op when already fresh). Best-effort - never blocks the
+        # scan. The scan container mounts the DB read-only and cannot do this itself.
+        await self.ensure_osv_db_fresh_async()
 
         container_name = self._get_supply_chain_container_name(project_id)
         try:

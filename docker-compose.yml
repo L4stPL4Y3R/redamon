@@ -499,6 +499,14 @@ services:
       CONTAINER_CPU_FRACTION: ${CONTAINER_CPU_FRACTION:-}
       PER_CONTAINER_CPUS: ${PER_CONTAINER_CPUS:-}
       CONTAINER_PIDS_MAX: ${CONTAINER_PIDS_MAX:-}
+      # Offline OSV database: lazy-on-scan auto-refresh (supply-chain feature).
+      # Same env_file caveat as above - wired explicitly or .env is inert. Safe
+      # defaults need no .env edit: refresh ON, npm only, 24h TTL, 15m ceiling.
+      # Set OSV_DB_AUTO_REFRESH=false for a strictly air-gapped deployment.
+      OSV_DB_AUTO_REFRESH: ${OSV_DB_AUTO_REFRESH:-true}
+      OSV_DB_ECOSYSTEMS: ${OSV_DB_ECOSYSTEMS:-npm}
+      OSV_DB_TTL_SECONDS: ${OSV_DB_TTL_SECONDS:-86400}
+      OSV_DB_REFRESH_TIMEOUT: ${OSV_DB_REFRESH_TIMEOUT:-900}
       # Memory-governor admission knobs (scan reservation ledger). Same rationale
       # as the D1 CPU/PID caps above: the orchestrator has NO env_file, so these
       # are wired explicitly or setting them in .env is silently inert. All pass

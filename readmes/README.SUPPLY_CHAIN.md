@@ -149,6 +149,40 @@ The verdict path makes **zero network calls**. A shared Docker volume
 The DB is **not** downloaded at install time (the container images are eager, the
 data is lazy). `redamon.sh purge` removes the volume; `clean` keeps it.
 
+### Automatic refresh (lazy-on-scan)
+
+OSV publishes new `MAL-`/`CVE` advisories daily, so a DB frozen at install time
+silently misses new malware. The orchestrator therefore **refreshes the DB on the
+scan-spawn path**, TTL-guarded:
+
+| Trigger | Refreshes? |
+|---|---|
+| Full recon (`start_recon`) | Yes - the L2 module runs in GROUP 5.5 |
+| Partial recon | Only for `tool_id == SupplyChainRecon` |
+| L1 Supply-Chain scan (`start_supply_chain`) | Yes |
+| L3 agent tools | No - `kali-sandbox` is deliberately off the orchestrator network; it rides the L1/L2 refreshes |
+
+Semantics: if the DB was synced **< TTL** ago (default 24h) the check is a **~1s
+no-op**; if it is older, the feed re-downloads before the scan starts. It is
+**best-effort** - a refresh failure (offline host, GCS unreachable) is logged and
+the scan proceeds against the existing DB, never blocked.
+
+**Why the orchestrator does it:** `redamon-osv-db` is mounted **read-only** into
+every scan container, which also runs non-root, so a scanner physically cannot
+refresh its own DB. Only the orchestrator holds the Docker socket, so it runs a
+short-lived root sidecar (off the analyzer image) that writes the volume rw, then
+re-applies the world-readable perms the non-root scanners need.
+
+| Knob (orchestrator env) | Default | Meaning |
+|---|---|---|
+| `OSV_DB_AUTO_REFRESH` | `true` | Set `false` for a strictly air-gapped deploy (manual `supply-chain-sync` only) |
+| `OSV_DB_ECOSYSTEMS` | `npm` | Ecosystems kept fresh automatically |
+| `OSV_DB_TTL_SECONDS` | `86400` | Freshness window (24h) |
+| `OSV_DB_REFRESH_TIMEOUT` | `900` | Hard ceiling so a slow download cannot stall a scan spawn |
+
+All four are wired explicitly in `docker-compose.yml` (the orchestrator has **no
+`env_file`**, so an unwired var would be silently inert) and need no `.env` edit.
+
 ---
 
 ## The shared engine (`supply_chain_common`)
@@ -247,7 +281,7 @@ sequenceDiagram
     participant AN as supply-chain-analyzer (hardened)
 
     AG->>KALI: execute_osv_scanner("pkg:npm/lodash@4.17.21")
-    KALI->>KALI: sanitize name/purl; synthesize 1-component CycloneDX SBOM
+    KALI->>KALI: sanitize name/purl, then synthesize 1-component CycloneDX SBOM
     KALI->>OSVDB: osv-scanner scan source --offline -L bom.cdx.json
     OSVDB-->>KALI: JSON (MAL- / CVE- ids)
     KALI-->>AG: "[DATA] MALICIOUS: lodash -> MAL-..." (compact summary)
