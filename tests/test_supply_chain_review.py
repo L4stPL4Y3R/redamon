@@ -157,6 +157,25 @@ class TestReviewRegressions2(unittest.TestCase):
             self.assertIsNotNone(res3["error"])
             self.assertIn("missing or empty", res3["error"])
 
+    def test_missing_ecosystem_db_gives_actionable_error(self):
+        # A lockfile whose ecosystem was never synced makes osv-scanner exit 127
+        # with the real cause buried AFTER a filesystem-walk log. The explainer
+        # must surface an instruction, not 500 chars of walk noise.
+        msg = osv_runner._explain_osv_stderr(
+            "Starting filesystem walk for root: /\n"
+            "Scanned /tmp/requirements.txt file and found 1 package\n"
+            "End status: 0 dirs visited, 1 inodes visited\n"
+            "could not load db for PyPI ecosystem: unable to fetch OSV database", 127)
+        self.assertIn("no 'PyPI' ecosystem", msg)
+        self.assertIn("supply-chain-sync PyPI", msg)
+        self.assertNotIn("filesystem walk", msg)
+
+    def test_generic_osv_error_keeps_the_tail_not_the_walk_log(self):
+        msg = osv_runner._explain_osv_stderr(
+            "Starting filesystem walk for root: /\nEnd status: 0 dirs\nboom: real cause", 127)
+        self.assertIn("boom: real cause", msg)
+        self.assertNotIn("Starting filesystem walk", msg)
+
     def test_F8_guarddog_errors_as_list_no_crash(self):
         # F8: errors emitted as a list must not raise AttributeError.
         findings = guarddog_runner.parse_guarddog(

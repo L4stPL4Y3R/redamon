@@ -29,6 +29,7 @@ CVE-/GHSA- ids are known-vulnerable (not malicious) and are routed to the
 """
 
 import json
+import re
 import os
 
 from ._run import run_argv
@@ -92,10 +93,10 @@ def run_osv_scan(target, *, mode="lockfile", db_path=None, offline=True,
 
     error = res["error"]
     if error is None and res["exit_code"] not in OSV_OK_EXIT_CODES:
-        # Non-{0,1} exit is a tool/usage error. Keep stderr context but still try
-        # to parse whatever stdout we got.
-        error = "osv-scanner exit {}: {}".format(
-            res["exit_code"], (res["stderr"] or "").strip()[:500])
+        # Non-{0,1} exit is a tool/usage error. osv-scanner prints a filesystem
+        # walk log BEFORE the real cause, so surface the meaningful lines (and
+        # the TAIL, not the head) instead of 500 chars of walk noise.
+        error = _explain_osv_stderr(res["stderr"], res["exit_code"])
 
     raw = None
     if res["stdout"]:
@@ -111,6 +112,29 @@ def run_osv_scan(target, *, mode="lockfile", db_path=None, offline=True,
         "exit_code": res["exit_code"],
         "error": error,
     }
+
+
+# "could not load db for PyPI ecosystem: ..." - the ecosystem was never synced
+# into the offline DB. Turn it into an actionable instruction.
+_MISSING_DB_RE = re.compile(r"could not load db for (\S+) ecosystem")
+
+# Lines worth showing the operator; everything else is walk/progress noise.
+_NOISE_PREFIXES = ("Starting filesystem walk", "End status:", "Scanned ",
+                   "Filesystem walk", "Loaded ")
+
+
+def _explain_osv_stderr(stderr, exit_code):
+    """Turn raw osv-scanner stderr into one actionable error line."""
+    text = (stderr or "").strip()
+    missing = _MISSING_DB_RE.search(text)
+    if missing:
+        eco = missing.group(1)
+        return ("offline OSV database has no '{}' ecosystem; run "
+                "'./redamon.sh supply-chain-sync {}' to add it".format(eco, eco))
+    meaningful = [ln.strip() for ln in text.splitlines()
+                  if ln.strip() and not ln.strip().startswith(_NOISE_PREFIXES)]
+    detail = " | ".join(meaningful[-3:]) if meaningful else text[-300:]
+    return "osv-scanner exit {}: {}".format(exit_code, detail[:400])
 
 
 def _empty_parsed():
