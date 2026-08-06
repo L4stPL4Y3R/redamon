@@ -30,6 +30,12 @@ RUN printf '#!/bin/sh\nmax=5; n=0; until "$@"; do n=$((n+1)); [ $n -ge $max ] &&
 # T17: pinned to a specific commit (subjack publishes no stable release tags).
 RUN CGO_ENABLED=0 retry go install github.com/haccer/subjack@b53899ce6230767beb1c4a9f879c6ebba23a98fa
 
+# Stage 1e: Build osv-scanner (Go). Supply-Chain recon (L2) runs it OFFLINE
+# against the mounted redamon-osv-db to verdict harvested packages. Needs Go
+# >= 1.26.4 (v2.4.0), newer than the other builders, so use golang:1-bookworm.
+FROM golang:1-bookworm AS osv-builder
+RUN GOBIN=/out go install github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.4.0
+
 # Stage 1c: Build masscan from source (C project, requires libpcap)
 FROM debian:bookworm-slim AS masscan-builder
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -131,6 +137,8 @@ RUN pip install --no-cache-dir --upgrade pip && \
 COPY --from=jsluice-builder /go/bin/jsluice /usr/local/bin/jsluice
 COPY --from=ffuf-builder /go/bin/ffuf /usr/local/bin/ffuf
 COPY --from=subjack-builder /go/bin/subjack /usr/local/bin/subjack
+# osv-scanner for Supply-Chain recon (L2); reads the mounted redamon-osv-db.
+COPY --from=osv-builder /out/osv-scanner /usr/local/bin/osv-scanner
 
 # Install SecLists wordlists for FFuf directory fuzzing
 # T17: pinned to an immutable SecLists commit (was mutable master).

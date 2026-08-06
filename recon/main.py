@@ -931,6 +931,18 @@ def run_ip_recon(target_ips: list, settings: dict) -> dict:
         except Exception as e:
             print(f"[!][JsRecon] Error: {e}")
 
+    # GROUP 5.5 -- Supply-Chain Recon (L2): runs AFTER JS-recon (consumes its
+    # source_maps + technologies). Black-box package harvest + offline OSV verdict.
+    if settings.get('SUPPLY_CHAIN_RECON_ENABLED', False):
+        try:
+            from recon.main_recon_modules.supply_chain_recon import run_supply_chain_recon
+            combined_result = run_supply_chain_recon(combined_result, settings=settings)
+            combined_result["metadata"]["modules_executed"].append("supply_chain_recon")
+            save_recon_file(combined_result, output_file)
+            _graph_update_bg("update_graph_from_supply_chain_recon", combined_result, USER_ID, PROJECT_ID)
+        except Exception as e:
+            print(f"[!][SupplyChainRecon] Error: {e}")
+
     if not skip_active_scans:
         if "vuln_scan" in SCAN_MODULES:
             try:

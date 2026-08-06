@@ -461,6 +461,16 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # js_recon already harvested, sends no additional traffic.
     'JS_RECON_AI_SDK_DETECTION_ENABLED': True,
 
+    # ========== SUPPLY-CHAIN RECON (L2) ==========
+    # Black-box package harvest from JS-recon output + offline OSV verdict.
+    # Runs in GROUP 5.5 after JS-recon; off by default.
+    'SUPPLY_CHAIN_RECON_ENABLED': False,
+    # Comma-separated OSV ecosystem allow-filter for the graph write.
+    'SUPPLY_CHAIN_RECON_ECOSYSTEMS': 'npm',
+    # GuardDog deep analysis (downloads untrusted tarballs). OFF by default
+    # (S5.5); dispatch to the DIRTY analyzer is v2.
+    'SUPPLY_CHAIN_RECON_DEEP_ANALYSIS_ENABLED': False,
+
     # FFuf Directory Fuzzer
     'FFUF_ENABLED': False,
     'FFUF_WORDLIST': '/usr/share/seclists/Discovery/Web-Content/common.txt',
@@ -1130,6 +1140,9 @@ def fetch_project_settings(project_id: str, webapp_url: str) -> dict[str, Any]:
     settings['JSLUICE_EXCLUDE_PATTERNS'] = exclude_patterns
 
     # JS Recon Scanner
+    settings['SUPPLY_CHAIN_RECON_ENABLED'] = project.get('supplyChainReconEnabled', DEFAULT_SETTINGS['SUPPLY_CHAIN_RECON_ENABLED'])
+    settings['SUPPLY_CHAIN_RECON_ECOSYSTEMS'] = project.get('supplyChainReconEcosystems', DEFAULT_SETTINGS['SUPPLY_CHAIN_RECON_ECOSYSTEMS'])
+    settings['SUPPLY_CHAIN_RECON_DEEP_ANALYSIS_ENABLED'] = project.get('supplyChainReconDeepAnalysisEnabled', DEFAULT_SETTINGS['SUPPLY_CHAIN_RECON_DEEP_ANALYSIS_ENABLED'])
     settings['JS_RECON_ENABLED'] = project.get('jsReconEnabled', DEFAULT_SETTINGS['JS_RECON_ENABLED'])
     settings['JS_RECON_MAX_FILES'] = project.get('jsReconMaxFiles', DEFAULT_SETTINGS['JS_RECON_MAX_FILES'])
     settings['JS_RECON_TIMEOUT'] = project.get('jsReconTimeout', DEFAULT_SETTINGS['JS_RECON_TIMEOUT'])

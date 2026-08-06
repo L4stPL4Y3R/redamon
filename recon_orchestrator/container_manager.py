@@ -616,6 +616,9 @@ class ContainerManager:
                     f"{recon_path}": {"bind": "/app/recon", "mode": "rw"},
                     # Mount graph_db module
                     sibling_host_path(recon_path, "graph_db"): {"bind": "/app/graph_db", "mode": "ro"},
+                    # Supply-Chain recon (L2): shared runners + offline OSV DB.
+                    sibling_host_path(recon_path, "supply_chain_common"): {"bind": "/app/supply_chain_common", "mode": "ro"},
+                    self.supply_chain_osv_db_volume: {"bind": "/osv-db", "mode": "ro"},
                     # Mount /tmp for Docker-in-Docker temp files (avoids spaces in paths)
                     "/tmp/redamon": {"bind": "/tmp/redamon", "mode": "rw"},
                     # JS Recon shared volumes with webapp
@@ -1547,6 +1550,9 @@ class ContainerManager:
                     BROKER_SOCKET_VOLUME: {"bind": "/var/run/broker", "mode": "rw"},
                     f"{recon_path}": {"bind": "/app/recon", "mode": "rw"},
                     sibling_host_path(recon_path, "graph_db"): {"bind": "/app/graph_db", "mode": "ro"},
+                    # Supply-Chain recon (L2): shared runners + offline OSV DB.
+                    sibling_host_path(recon_path, "supply_chain_common"): {"bind": "/app/supply_chain_common", "mode": "ro"},
+                    self.supply_chain_osv_db_volume: {"bind": "/osv-db", "mode": "ro"},
                     "/tmp/redamon": {"bind": "/tmp/redamon", "mode": "rw"},
                     # JS Recon shared volumes with webapp (uploaded files + custom patterns)
                     "redamon_js_recon_uploads": {"bind": "/data/js-recon-uploads", "mode": "ro"},
@@ -2340,6 +2346,9 @@ class ContainerManager:
                     f"{gvm_scan_path}/output": {"bind": "/app/gvm_scan/output", "mode": "rw"},
                     # Mount graph_db module for Neo4j updates
                     sibling_host_path(recon_path, "graph_db"): {"bind": "/app/graph_db", "mode": "ro"},
+                    # Supply-Chain recon (L2): shared runners + offline OSV DB.
+                    sibling_host_path(recon_path, "supply_chain_common"): {"bind": "/app/supply_chain_common", "mode": "ro"},
+                    self.supply_chain_osv_db_volume: {"bind": "/osv-db", "mode": "ro"},
                     # Mount gvm_scan source for development (no rebuild needed)
                     f"{gvm_scan_path}": {"bind": "/app/gvm_scan", "mode": "rw"},
                 },
