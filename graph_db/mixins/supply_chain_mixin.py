@@ -161,3 +161,30 @@ class SupplyChainMixin:
                     stats["errors"].append("finding {}: {}".format(fid, exc))
 
         return stats
+
+    def update_graph_from_supply_chain_recon(self, combined_result, user_id, project_id):
+        """L2 pipeline graph-write entry point (matches the _graph_update_bg
+        signature). Reads combined_result['supply_chain_recon'] {artifact,
+        base_urls} and MERGEs, anchoring packages to each target BaseURL that
+        already exists. Falls back to a floating write when no BaseURL is known.
+        """
+        block = (combined_result or {}).get("supply_chain_recon") or {}
+        artifact = block.get("artifact")
+        if not artifact:
+            return {"skipped": "no supply_chain_recon artifact"}
+        base_urls = block.get("base_urls") or []
+
+        if not base_urls:
+            return self.update_graph_from_supply_chain(artifact, user_id, project_id)
+
+        agg = {"packages_merged": 0, "malicious_merged": 0,
+               "suspicious_merged": 0, "relationships_created": 0, "errors": []}
+        for url in base_urls:
+            stats = self.update_graph_from_supply_chain(
+                artifact, user_id, project_id,
+                anchor_label="BaseURL", anchor_key="url", anchor_value=url)
+            for k in ("packages_merged", "malicious_merged", "suspicious_merged",
+                      "relationships_created"):
+                agg[k] += stats.get(k, 0)
+            agg["errors"].extend(stats.get("errors", []))
+        return agg

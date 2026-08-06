@@ -8,7 +8,7 @@ The result is always run through security.validate_artifact before use.
 from .security import ARTIFACT_SCHEMA_VERSION
 
 __all__ = ["empty_artifact", "add_osv_findings", "add_guarddog_findings",
-           "osv_mode_for_path"]
+           "osv_mode_for_path", "to_cyclonedx"]
 
 _VALID_MODES = {"lockfile", "sbom", "dir", "purls", "js-dir"}
 
@@ -61,6 +61,22 @@ def add_guarddog_findings(artifact, findings, *, ecosystem=None, name=None):
             "soft_error": f.get("soft_error", False),
         })
     return artifact
+
+
+def to_cyclonedx(packages):
+    """Synthesize a minimal CycloneDX 1.5 SBOM from packages (each with a purl),
+    for an OSV verdict pass (osv-scanner detects components by purl)."""
+    components = []
+    for pkg in packages or []:
+        purl = pkg.get("purl")
+        if not purl:
+            continue
+        comp = {"type": "library", "name": pkg.get("name"), "purl": purl}
+        if pkg.get("version"):
+            comp["version"] = pkg["version"]
+        components.append(comp)
+    return {"bomFormat": "CycloneDX", "specVersion": "1.5",
+            "version": 1, "components": components}
 
 
 def osv_mode_for_path(path, is_dir=False):
