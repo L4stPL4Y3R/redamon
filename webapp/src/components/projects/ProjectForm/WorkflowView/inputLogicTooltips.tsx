@@ -547,6 +547,42 @@ const Jsluice = (
   </div>
 )
 
+const SupplyChainRecon = (
+  <div style={wrapperStyle}>
+    <div style={firstSectionTitleStyle}>How input is generated</div>
+    <p style={paraStyle}>
+      Supply Chain Recon works out which software packages the target actually ships, without ever seeing a
+      manifest. It runs straight after JS Recon and re-uses what that scan already downloaded, so it sends no
+      extra traffic of its own. Three sources, combined and deduplicated:
+    </p>
+    <ol style={listStyle}>
+      <li><strong>Source maps</strong> - package names are mined out of the <span style={codeStyle}>node_modules</span> paths a published source map leaks. The most reliable source, and it covers nested and scoped packages.</li>
+      <li><strong>JavaScript imports</strong> - module names referenced inside the bundles.</li>
+      <li><strong>Technology nodes</strong> - the stack detected during HTTP probing, which is the source that usually carries a version number.</li>
+    </ol>
+    <p style={paraStyle}>
+      From the partial recon modal you can add <strong>custom URLs</strong>; they are analysed alongside the
+      BaseURL and Endpoint nodes already in the graph. The scan stops early if there is nothing to analyse
+      (no URLs in the graph, none supplied, and no uploaded JavaScript).
+    </p>
+    <p style={{ ...paraStyle, margin: 0 }}>
+      The verdict step needs the offline vulnerability database to be present on the host. If it is missing or
+      empty the scan reports a clear error instead of a misleading clean result.
+    </p>
+
+    <div style={sectionTitleStyle}>How output transforms the graph</div>
+    <ul style={listStyle}>
+      <li>Every harvested dependency becomes a <strong>Package</strong> node, identified by its package URL (for example <span style={codeStyle}>pkg:npm/lodash@4.17.21</span>) and tagged with how it was discovered. Packages found from a source-map path have no version, and are kept for inventory even though a version-specific advisory cannot match them.</li>
+      <li>Each Package is linked to the <strong>BaseURL</strong> that serves it with <span style={codeStyle}>DEPENDS_ON</span>, so you can see which host ships which dependency. The BaseURL itself is only enriched with that link, never modified.</li>
+      <li>A package that matches the offline database gets a <strong>MalPackageFinding</strong> node attached via <span style={codeStyle}>FLAGGED_AS</span>. A <span style={codeStyle}>malicious</span> verdict means the dependency itself is malware, typically a typosquat, and should be treated as critical. Known-vulnerable advisories are reported separately and are not written as findings.</li>
+      <li>Running the scan again updates the same nodes instead of duplicating them, and packages found by the standalone Supply Chain scan merge into the same set.</li>
+    </ul>
+    <p style={{ ...paraStyle, margin: 0 }}>
+      The whole verdict path is offline: the dependency list is never sent to a third-party service.
+    </p>
+  </div>
+)
+
 const JsRecon = (
   <div style={wrapperStyle}>
     <div style={firstSectionTitleStyle}>How input is generated</div>
@@ -967,6 +1003,7 @@ export const INPUT_LOGIC_TOOLTIPS: Record<string, ReactNode> = {
   Ffuf,
   Jsluice,
   JsRecon,
+  SupplyChainRecon,
   Arjun,
   EndpointAiClassifier,
   AiSurfaceRecon,

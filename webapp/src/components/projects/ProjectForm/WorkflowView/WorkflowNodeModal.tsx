@@ -27,6 +27,7 @@ import { ArjunSection } from '../sections/ArjunSection'
 import { ResourceEnumAiSection } from '../sections/ResourceEnumAiSection'
 import { AiSurfaceReconSection } from '../sections/AiSurfaceReconSection'
 import { JsReconSection } from '../sections/JsReconSection'
+import { SupplyChainReconSection } from '../sections/SupplyChainReconSection'
 import { NucleiSection } from '../sections/NucleiSection'
 import { GraphqlScanSection } from '../sections/GraphqlScanSection'
 import { TakeoverSection } from '../sections/TakeoverSection'
@@ -104,6 +105,7 @@ export function WorkflowNodeModal({
       case 'EndpointAiClassifier': return <ResourceEnumAiSection {...baseProps} />
       case 'AiSurfaceRecon':    return <AiSurfaceReconSection {...baseProps} />
       case 'JsRecon':           return <JsReconSection {...extendedProps} />
+      case 'SupplyChainRecon':  return <SupplyChainReconSection {...baseProps} />
       case 'Nuclei':            return <NucleiSection {...baseProps} />
       case 'GraphqlScan':       return <GraphqlScanSection {...extendedProps} />
       case 'SubdomainTakeover': return <TakeoverSection {...baseProps} />

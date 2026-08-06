@@ -25,7 +25,6 @@ export function SupplyChainSection({ data, updateField, projectId }: SupplyChain
   const d = data as unknown as {
     supplyChainEnabled?: boolean
     supplyChainSbomFile?: string
-    supplyChainReconEnabled?: boolean
     supplyChainDeepAnalysisEnabled?: boolean
   }
 
@@ -68,18 +67,20 @@ export function SupplyChainSection({ data, updateField, projectId }: SupplyChain
       <div className={styles.sectionHeader} onClick={() => setIsOpen(!isOpen)}>
         <h2 className={styles.sectionTitle}>
           <PackageSearch size={16} />
-          Supply Chain (Malicious Packages)
+          Supply Chain Scan (SBOM / lockfile)
           <WikiInfoButton target="SupplyChain" />
           <span className={styles.badgePassive}>Passive</span>
         </h2>
-        <ChevronDown size={16} className={`${styles.sectionIcon} ${isOpen ? styles.sectionIconOpen : ''}`} />
+        <div className={styles.sectionHeaderRight}>
+          <ChevronDown size={16} className={`${styles.sectionIcon} ${isOpen ? styles.sectionIconOpen : ''}`} />
+        </div>
       </div>
 
       {isOpen && (
         <div className={styles.sectionContent}>
           <p className={styles.sectionDescription}>
             Detect known-malicious (MAL) and known-vulnerable packages, fully offline against the local OSV database.
-            L1 audits an uploaded SBOM / lockfile (Other Scans). L2 harvests packages a live target serves during recon.
+Audits an uploaded SBOM or lockfile. The live-target harvest is a separate module in the JS Recon stage of the recon pipeline.
           </p>
 
           {/* L1: standalone SBOM scan */}
@@ -89,7 +90,7 @@ export function SupplyChainSection({ data, updateField, projectId }: SupplyChain
               onChange={(v) => updateField('supplyChainEnabled' as keyof FormData, v as never)}
               aria-label="Supply-Chain Scan"
             />
-            <label className={styles.fieldLabel} style={{ margin: 0 }}>Supply-Chain Scan (Other Scans)</label>
+            <label className={styles.fieldLabel} style={{ margin: 0 }}>Enable Supply-Chain Scan</label>
           </div>
 
           {projectId && (
@@ -122,20 +123,6 @@ export function SupplyChainSection({ data, updateField, projectId }: SupplyChain
             </div>
           )}
 
-          {/* L2: recon pipeline harvest */}
-          <div className={styles.fieldGroup}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <Toggle
-                checked={!!d.supplyChainReconEnabled}
-                onChange={(v) => updateField('supplyChainReconEnabled' as keyof FormData, v as never)}
-                aria-label="Supply-Chain Recon"
-              />
-              <label className={styles.fieldLabel} style={{ margin: 0 }}>Supply-Chain Recon (live target harvest, runs in recon pipeline)</label>
-            </div>
-            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-              Infers the npm package set the target serves (source maps, imports, technologies) and verdicts it offline. Requires JS Recon.
-            </p>
-          </div>
         </div>
       )}
     </div>

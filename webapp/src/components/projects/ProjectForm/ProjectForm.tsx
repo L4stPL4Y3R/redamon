@@ -47,6 +47,7 @@ import { SecurityChecksSection } from './sections/SecurityChecksSection'
 import { GithubSection } from './sections/GithubSection'
 import { TrufflehogSection } from './sections/TrufflehogSection'
 import { SupplyChainSection } from './sections/SupplyChainSection'
+import { SupplyChainReconSection } from './sections/SupplyChainReconSection'
 import { AgentBehaviourSection } from './sections/AgentBehaviourSection'
 import { AttackSkillsSection } from './sections/AttackSkillsSection'
 import { ShodanSection } from './sections/ShodanSection'
@@ -941,7 +942,10 @@ export function ProjectForm({
         )}
 
         {activeTab === 'jsrecon' && viewMode === 'tabs' && (
-          <JsReconSection data={formData} updateField={updateField} projectId={projectId} mode={mode} onRun={mode === 'edit' && projectId ? () => setPartialReconToolId('JsRecon') : undefined} />
+          <>
+            <JsReconSection data={formData} updateField={updateField} projectId={projectId} mode={mode} onRun={mode === 'edit' && projectId ? () => setPartialReconToolId('JsRecon') : undefined} />
+            <SupplyChainReconSection data={formData} updateField={updateField} onRun={mode === 'edit' && projectId ? () => setPartialReconToolId('SupplyChainRecon') : undefined} />
+          </>
         )}
 
         {activeTab === 'vuln' && viewMode === 'tabs' && (
