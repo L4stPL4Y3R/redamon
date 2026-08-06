@@ -25,6 +25,7 @@ export const SECTION_INPUT_MAP: Record<string, string[]> = {
   SecurityChecks:     ['BaseURL', 'IP', 'Subdomain', 'Domain'],
   Uncover:            ['Domain'],
   JsRecon:            ['BaseURL', 'Endpoint'],
+  SupplyChainRecon:   ['BaseURL', 'Endpoint', 'Technology'],
   GraphqlScan:        ['BaseURL', 'Endpoint'],
   Mitre:              ['CVE'],
   SubdomainTakeover:  ['Subdomain', 'BaseURL', 'Domain'],
@@ -59,6 +60,7 @@ export const SECTION_NODE_MAP: Record<string, string[]> = {
   SecurityChecks:     ['Vulnerability'],
   Uncover:            ['IP', 'Subdomain', 'Port', 'Endpoint'],
   JsRecon:            ['Secret', 'Endpoint'],
+  SupplyChainRecon:   ['Package', 'MalPackageFinding'],
   GraphqlScan:        ['Vulnerability', 'Endpoint'],
   Mitre:              ['MitreData', 'Capec'],
   SubdomainTakeover:  ['Vulnerability'],
@@ -67,6 +69,7 @@ export const SECTION_NODE_MAP: Record<string, string[]> = {
 }
 
 export const SECTION_ENRICH_MAP: Record<string, string[]> = {
+  SupplyChainRecon:   ['BaseURL'],
   SubdomainDiscovery: ['Domain'],
   Shodan:             ['IP'],
   Urlscan:            ['Domain', 'IP', 'BaseURL'],

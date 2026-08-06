@@ -159,6 +159,15 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
     'Targets are loaded from the graph (BaseURLs + Endpoints from prior crawling). ' +
     'You can also provide custom URLs below. ' +
     'Secret, Endpoint, and JsReconFinding nodes are merged into the existing graph.',
+  SupplyChainRecon:
+    'Black-box supply-chain audit. Infers the npm package set the target actually serves - ' +
+    'mining node_modules paths out of source maps, module imports, and the technology stack detected during HTTP probing - ' +
+    'then verdicts that set against a LOCAL copy of the OSV database. ' +
+    'Fully passive and offline: it re-uses the JavaScript JS Recon already downloaded (no extra traffic to the target) ' +
+    'and the verdict makes zero network calls. ' +
+    'Targets are loaded from the graph (BaseURLs + Endpoints); you can also provide custom URLs below. ' +
+    'Creates Package and MalPackageFinding nodes (MAL- = malicious, e.g. a typosquat; CVE/GHSA = known-vulnerable) ' +
+    'and links them to the serving BaseURL. Requires the offline OSV database: ./redamon.sh supply-chain-sync npm',
   Nuclei:
     'Template-based vulnerability scanner detecting CVEs, misconfigurations, exposed panels, and web application vulnerabilities (SQLi, XSS, RCE). ' +
     'Targets are built as the UNION of every available source in the graph (deduplicated): Endpoints with parameters from resource_enum, BaseURLs verified by httpx, and http(s)://<sub> for any Subdomain whose host is not already covered by the first two sources - so newly discovered subdomains get scanned even before httpx has probed them. IPs are excluded by default (toggle "Scan All IPs" to include). ' +
@@ -429,7 +438,7 @@ export function PartialReconModal({
   const isNuclei = toolId === 'Nuclei'
   const isGraphql = toolId === 'GraphqlScan'
   const isSecurityChecks = toolId === 'SecurityChecks'
-  const isResourceEnum = toolId === 'Katana' || toolId === 'ZapAjaxSpider' || toolId === 'Hakrawler' || toolId === 'Jsluice' || toolId === 'Ffuf' || toolId === 'Kiterunner' || toolId === 'JsRecon' || isNuclei
+  const isResourceEnum = toolId === 'Katana' || toolId === 'ZapAjaxSpider' || toolId === 'Hakrawler' || toolId === 'Jsluice' || toolId === 'Ffuf' || toolId === 'Kiterunner' || toolId === 'JsRecon' || toolId === 'SupplyChainRecon' || isNuclei
   const isArjun = toolId === 'Arjun'
   const isGau = toolId === 'Gau'
   const isParamSpider = toolId === 'ParamSpider'

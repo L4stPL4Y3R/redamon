@@ -267,7 +267,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       }
     }
 
-    else if (toolId === 'JsRecon') {
+    // SupplyChainRecon consumes the same graph inputs as JsRecon (BaseURLs +
+    // Endpoints); it re-uses the JS-recon fetch to harvest packages.
+    else if (toolId === 'JsRecon' || toolId === 'SupplyChainRecon') {
       try {
         const session = getGraphSession()
         try {
@@ -301,7 +303,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
           await session.close()
         }
       } catch (err) {
-        console.warn('Neo4j query failed for JsRecon graph-inputs, falling back to settings:', err)
+        console.warn(`Neo4j query failed for ${toolId} graph-inputs, falling back to settings:`, err)
       }
     }
 

@@ -45,6 +45,9 @@ export const WORKFLOW_TOOLS: WorkflowToolDef[] = [
   // Group 5.5 - JS Recon
   { id: 'JsRecon', label: 'JS Recon', enabledField: 'jsReconEnabled', group: 5.5, badge: 'both' },
   { id: 'AiSurfaceRecon', label: 'AI Surface Recon', enabledField: 'aiSurfaceReconEnabled', group: 5.5, badge: 'active' },
+  // Runs after JS Recon (consumes its source maps + the detected technologies);
+  // the harvest sends no traffic of its own and the OSV verdict is offline.
+  { id: 'SupplyChainRecon', label: 'Supply Chain', enabledField: 'supplyChainReconEnabled', group: 5.5, badge: 'passive' },
 
   // Group 6 - Vulnerability Scanning
   { id: 'Nuclei',             label: 'Nuclei',             enabledField: 'nucleiEnabled',               group: 6, badge: 'active' },
@@ -71,6 +74,7 @@ export const TRANSITIONAL_DATA_NODES = new Set([
   'BaseURL', 'Endpoint', 'Parameter', 'Header', 'Certificate',
   'Technology',
   'Vulnerability', 'CVE', 'MitreData', 'Capec', 'Secret',
+  'Package', 'MalPackageFinding',
   'ExternalDomain',
 ])
 
@@ -97,6 +101,8 @@ export const DATA_NODE_CATEGORIES: Record<string, DataNodeCategory> = {
   MitreData: 'security',
   Capec: 'security',
   Secret: 'security',
+  Package: 'technology',
+  MalPackageFinding: 'security',
   ExternalDomain: 'external',
 }
 

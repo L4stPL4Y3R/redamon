@@ -31,6 +31,8 @@ export const NODE_COLORS: Record<string, string> = {
 
   // CONTEXT & METADATA (Neutral family) - Supporting information
   Technology: '#22c55e',     // Green - Tech stack (good to know)
+  Package: '#a855f7',        // Purple - a dependency the target ships
+  MalPackageFinding: '#dc2626', // Red - malicious/suspicious dependency verdict
   Certificate: '#d97706',    // Amber - TLS/security context
   Header: '#78716c',         // Stone gray - HTTP metadata
 

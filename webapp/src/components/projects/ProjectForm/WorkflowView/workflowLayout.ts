@@ -116,6 +116,8 @@ function getDataPlacement(nodeType: string): { band: 'upper' | 'lower'; row: num
     Vulnerability:   { band: 'lower', row: 0 },
     MitreData:       { band: 'lower', row: 3 },
     Capec:           { band: 'lower', row: 1 },
+    Package:            { band: 'lower', row: 2 },
+    MalPackageFinding:  { band: 'lower', row: 3 },
   }
 
   return placements[nodeType] ?? { band: 'lower', row: 0 }
