@@ -41,6 +41,7 @@ interface VerdictRow {
   sourcePath: string | null
   baseUrls: string[]
   repos: string[]
+  sboms: string[]
 }
 
 interface PackageRow {
@@ -54,6 +55,7 @@ interface PackageRow {
   lastSeen: string | null
   baseUrls: string[]
   repos: string[]
+  sboms: string[]
   maliciousCount: number
   suspiciousCount: number
   notAnalysedCount: number
@@ -77,6 +79,7 @@ interface AdvisoryRow {
   updatedAt: string | null
   baseUrls: string[]
   repos: string[]
+  sboms: string[]
 }
 
 interface ScaMeta {
@@ -154,19 +157,24 @@ function StatusChip({ status }: { status: PkgStatus }) {
 /**
  * Which layer put this package in the graph. Derived rather than stored: the
  * anchor label is the discriminator (L1 repo scans anchor to GithubRepository,
- * L2 to every served BaseURL, an uploaded SBOM to nothing at all).
+ * L1 uploads to the SbomDocument for the file, L2 to every served BaseURL).
+ *
+ * harvestSource stays only as a fallback for packages written before uploads
+ * were anchored - it is a guess, the anchors are evidence.
  */
-export function originOf(r: { repos: string[]; baseUrls: string[]; harvestSource: string | null }): string {
+export function originOf(r: { repos: string[]; baseUrls: string[]; sboms: string[]; harvestSource: string | null }): string {
   if (r.repos.length > 0) return 'L1 repo'
   if (r.baseUrls.length > 0) return 'L2 live'
+  if (r.sboms.length > 0) return 'L1 SBOM'
   if (r.harvestSource === 'osv') return 'L1 SBOM'
   if (r.harvestSource === 'finding') return 'from finding'
   return 'unanchored'
 }
 
-function AnchorCell({ row }: { row: { repos: string[]; baseUrls: string[] } }) {
+function AnchorCell({ row }: { row: { repos: string[]; baseUrls: string[]; sboms: string[] } }) {
   if (row.repos.length > 0) return <ListCell items={row.repos} max={2} />
   if (row.baseUrls.length > 0) return <LinkedListCell items={row.baseUrls} max={2} />
+  if (row.sboms.length > 0) return <ListCell items={row.sboms} max={2} />
   return <span className={rowStyles.nullCell}>floating</span>
 }
 
@@ -209,6 +217,7 @@ const EXPORT_COLUMNS: Record<SheetKey, { key: string; header: string }[]> = {
     { key: 'sourcePath', header: 'Manifest Path' },
     { key: 'baseUrls', header: 'Served By' },
     { key: 'repos', header: 'Repository' },
+    { key: 'sboms', header: 'SBOM File' },
     { key: 'firstSeen', header: 'First Seen' },
     { key: 'lastSeen', header: 'Last Seen' },
   ],
@@ -225,6 +234,7 @@ const EXPORT_COLUMNS: Record<SheetKey, { key: string; header: string }[]> = {
     { key: 'advisoryCount', header: 'Advisories' },
     { key: 'baseUrls', header: 'Served By' },
     { key: 'repos', header: 'Repository' },
+    { key: 'sboms', header: 'SBOM File' },
     { key: 'firstSeen', header: 'First Seen' },
     { key: 'lastSeen', header: 'Last Seen' },
   ],
@@ -242,6 +252,7 @@ const EXPORT_COLUMNS: Record<SheetKey, { key: string; header: string }[]> = {
     { key: 'sourcePath', header: 'Manifest Path' },
     { key: 'baseUrls', header: 'Served By' },
     { key: 'repos', header: 'Repository' },
+    { key: 'sboms', header: 'SBOM File' },
     { key: 'firstSeen', header: 'First Seen' },
     { key: 'updatedAt', header: 'Updated' },
   ],

@@ -134,7 +134,7 @@ class SupplyChainMixin:
         Returns a stats dict.
         """
         has_anchor = anchor_label is not None
-        if has_anchor and anchor_label not in ("GithubRepository", "BaseURL"):
+        if has_anchor and anchor_label not in ("GithubRepository", "BaseURL", "SbomDocument"):
             raise ValueError("unsupported anchor_label: {}".format(anchor_label))
         # L2-4: anchor_key is string-interpolated into the Cypher (labels/keys
         # can't be parameterized), so whitelist it too, not just anchor_label.
@@ -349,6 +349,33 @@ class SupplyChainMixin:
                 id=repo_id, name=repo_slug, uid=user_id, pid=project_id)
         return repo_id
 
+    def ensure_sbom_document(self, user_id, project_id, filename):
+        """MERGE the SbomDocument anchor for an UPLOADED SBOM/lockfile.
+
+        Without it the packages from an upload had no parent at all and sat in
+        the graph as an island - a Package plus its Vulnerabilities, reachable
+        from nothing. That contradicts the schema's own rule (GRAPH.SCHEMA.md,
+        "No Isolated Nodes") and it is visibly odd next to a repo scan, which
+        anchors to GithubRepository.
+
+        An uploaded file has no target to hang off, so the file ITSELF is the
+        parent: it is what the operator supplied and what the packages were
+        read out of. It also recovers information that was previously lost -
+        every upload collapsed into an indistinguishable pile of source='osv'
+        packages, with no way to tell which file contributed which.
+        """
+        doc_id = "sbom-{}-{}-{}".format(user_id, project_id, filename)
+        with self.driver.session() as session:
+            session.run(
+                """
+                MERGE (d:SbomDocument {id: $id})
+                ON CREATE SET d.first_seen = datetime()
+                SET d.name = $name, d.user_id = $uid, d.project_id = $pid,
+                    d.updated_at = datetime()
+                """,
+                id=doc_id, name=filename, uid=user_id, pid=project_id)
+        return doc_id
+
     def update_graph_from_supply_chain_recon(self, combined_result, user_id, project_id):
         """L2 pipeline graph-write entry point (matches the _graph_update_bg
         signature). Reads combined_result['supply_chain_recon'] {artifact,
@@ -398,7 +425,7 @@ class SupplyChainMixin:
         The anchor is MATCHed, never created - inventing a BaseURL the scan did
         not actually observe would put a fabricated target in the graph.
         """
-        if anchor_label not in ("GithubRepository", "BaseURL"):
+        if anchor_label not in ("GithubRepository", "BaseURL", "SbomDocument"):
             raise ValueError("unsupported anchor_label: {}".format(anchor_label))
         if anchor_key not in ("id", "url"):
             raise ValueError("unsupported anchor_key: {}".format(anchor_key))

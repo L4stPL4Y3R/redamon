@@ -426,5 +426,70 @@ class TestSourceProvenanceIsNotClobbered(unittest.TestCase):
         self.assertIn("sourcemap", kw["overridable"])
 
 
+class TestUploadedSbomIsNotAnIsland(unittest.TestCase):
+    """REGRESSION: uploaded packages had no parent and floated.
+
+    A repo scan anchors to GithubRepository and a recon scan to BaseURL, but an
+    UPLOAD passed anchor_label=None - so every package it produced, plus all
+    of their Vulnerability nodes, sat in the graph reachable from nothing.
+    Observed live: 4 PyPI packages and 68 vulnerabilities as a disconnected
+    island after uploading requirements.txt.
+
+    GRAPH.SCHEMA.md states the opposite rule outright ("No Isolated Nodes"),
+    and the inconsistency was visible the moment repo scans started anchoring.
+    The file itself is the honest parent: it is what the operator supplied and
+    what the packages were read out of.
+    """
+
+    def test_sbom_document_id_is_tenant_scoped(self):
+        sess = FakeSession()
+        doc_id = Writer(sess).ensure_sbom_document("u1", "p1", "requirements.txt")
+        self.assertEqual(doc_id, "sbom-u1-p1-requirements.txt")
+        q, kw = sess.queries[0]
+        self.assertIn("MERGE (d:SbomDocument", q)
+        self.assertEqual((kw["uid"], kw["pid"], kw["name"]),
+                         ("u1", "p1", "requirements.txt"))
+
+    def test_two_projects_do_not_share_one_document_node(self):
+        w = Writer(FakeSession())
+        self.assertNotEqual(w.ensure_sbom_document("u1", "p1", "bom.cdx.json"),
+                            w.ensure_sbom_document("u1", "p2", "bom.cdx.json"))
+
+    def test_each_upload_gets_its_own_node(self):
+        """Recovers information that was lost: every upload used to collapse
+        into an indistinguishable pile of source='osv' packages."""
+        w = Writer(FakeSession())
+        self.assertNotEqual(w.ensure_sbom_document("u1", "p1", "yarn.lock"),
+                            w.ensure_sbom_document("u1", "p1", "bom.spdx.json"))
+
+    def test_sbom_document_is_an_accepted_anchor(self):
+        sess = FakeSession()
+        stats = Writer(sess).update_graph_from_supply_chain(
+            artifact(packages=[{"purl": "pkg:pypi/flask@0.12.2", "name": "flask",
+                                "version": "0.12.2", "ecosystem": "PyPI",
+                                "source": "osv"}]),
+            "u1", "p1", anchor_label="SbomDocument", anchor_key="id",
+            anchor_value="sbom-u1-p1-requirements.txt")
+        self.assertEqual(stats["relationships_created"], 1)
+        self.assertTrue(any("DEPENDS_ON" in q for q, _ in sess.queries))
+
+    def test_unknown_anchor_labels_are_still_rejected(self):
+        """The label is interpolated into Cypher, so widening the whitelist
+        must not widen it to anything."""
+        w = Writer(FakeSession())
+        with self.assertRaises(ValueError):
+            w.update_graph_from_supply_chain(
+                artifact(), "u1", "p1", anchor_label="Evil",
+                anchor_key="id", anchor_value="x")
+
+    def test_l1_main_anchors_uploads(self):
+        """Source guard: the upload branch must not go back to anchor=None."""
+        src = open(os.path.join(_REPO, "supply_chain_scan", "main.py")).read()
+        code = "\n".join(l for l in src.splitlines()
+                          if not l.lstrip().startswith("#"))
+        self.assertIn("ensure_sbom_document", code)
+        self.assertIn('anchor_label="SbomDocument"', code)
+
+
 if __name__ == "__main__":
     unittest.main()

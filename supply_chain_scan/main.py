@@ -173,18 +173,16 @@ def run_supply_chain_scan(project_id: str) -> dict:
         }, fh, indent=2)
     print(f"[+] Saved artifact to {out_file}")
 
-    # Write the graph (CLEAN writer holds Neo4j creds). An uploaded SBOM has no
-    # repo/URL parent so its packages float; a repo scan anchors to the
-    # GithubRepository node below.
+    # Write the graph (CLEAN writer holds Neo4j creds). Every package gets a
+    # parent: a repo scan anchors to its GithubRepository, an upload to the
+    # SbomDocument for the file it came from.
     try:
         from graph_db import Neo4jClient
 
         with Neo4jClient() as client:
             if client.verify_connection():
                 if repo_slug:
-                    # A repo scan HAS a graph parent, unlike an uploaded SBOM:
-                    # anchor the packages to it so they are reachable instead
-                    # of floating.
+                    # A repo scan anchors to the repository it cloned.
                     repo_id = client.ensure_github_repository(
                         USER_ID, project_id, repo_slug)
                     gstats = client.update_graph_from_supply_chain(
@@ -192,8 +190,18 @@ def run_supply_chain_scan(project_id: str) -> dict:
                         anchor_label="GithubRepository", anchor_key="id",
                         anchor_value=repo_id)
                 else:
+                    # An UPLOAD anchors to the file itself. It used to anchor
+                    # to nothing, which left every uploaded package - and its
+                    # vulnerabilities - as an island in the graph, against the
+                    # schema's own "No Isolated Nodes" rule. The file is the
+                    # honest parent: it is what the operator supplied and what
+                    # the packages were read out of.
+                    doc_id = client.ensure_sbom_document(
+                        USER_ID, project_id, sbom_file)
                     gstats = client.update_graph_from_supply_chain(
-                        artifact, USER_ID, project_id)
+                        artifact, USER_ID, project_id,
+                        anchor_label="SbomDocument", anchor_key="id",
+                        anchor_value=doc_id)
                 print(f"[+] Graph updated: {gstats}")
             else:
                 print("[!] Could not connect to Neo4j - skipping graph update")

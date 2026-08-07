@@ -97,9 +97,23 @@ describe('supplyChainSca: anchor fan-out', () => {
     for (const c of runCalls.slice(0, 3)) {
       expect(c.cypher).not.toContain('OPTIONAL MATCH (b:BaseURL')
       expect(c.cypher).not.toContain('OPTIONAL MATCH (gr:GithubRepository')
+      expect(c.cypher).not.toContain('OPTIONAL MATCH (d:SbomDocument')
     }
     expect(runCalls[0].cypher).toContain('[(b:BaseURL)-[:DEPENDS_ON]->(p)')
     expect(runCalls[0].cypher).toContain('[(gr:GithubRepository)-[:DEPENDS_ON]->(p)')
+    expect(runCalls[0].cypher).toContain('[(d:SbomDocument)-[:DEPENDS_ON]->(p)')
+  })
+
+  // All three sheets must collect the upload anchor, not just the first: an
+  // uploaded package shows up in packages and advisories too, and a sheet that
+  // skipped it would report the package as floating.
+  test('every sheet collects all three anchor kinds', async () => {
+    setDatasets({})
+    await route.GET(makeRequest('p1'))
+    for (const c of runCalls.slice(0, 3)) {
+      expect(c.cypher).toContain('[(d:SbomDocument)-[:DEPENDS_ON]->(p)')
+      expect(c.cypher).toContain('AS sboms')
+    }
   })
 })
 
@@ -114,7 +128,7 @@ describe('supplyChainSca: verdicts sheet', () => {
         lastSeen: '2026-08-07T00:00:00Z', purl: 'pkg:npm/evil@1.0.0',
         name: 'evil', version: '1.0.0', ecosystem: 'npm',
         harvestSource: 'retirejs', sourcePath: 'app/package-lock.json',
-        baseUrls: ['https://target.tld'], repos: [],
+        baseUrls: ['https://target.tld'], repos: [], sboms: [],
       }],
     })
     const res = await route.GET(makeRequest('p1'))
@@ -126,7 +140,21 @@ describe('supplyChainSca: verdicts sheet', () => {
     expect(row.sourcePath).toBe('app/package-lock.json')
     expect(row.baseUrls).toEqual(['https://target.tld'])
     expect(row.repos).toEqual([])
+    expect(row.sboms).toEqual([])
     expect(row.softError).toBe(false)
+  })
+
+  test('the uploaded-SBOM anchor reaches the row as the filename', async () => {
+    setDatasets({
+      verdicts: [{
+        findingId: 'd1', verdict: 'malicious', purl: 'pkg:pypi/evil@1',
+        name: 'evil', ecosystem: 'PyPI', harvestSource: 'osv',
+        baseUrls: [], repos: [], sboms: ['requirements.txt'],
+      }],
+    })
+    const res = await route.GET(makeRequest('p1'))
+    const body = await res.json()
+    expect(body.sheets.verdicts[0].sboms).toEqual(['requirements.txt'])
   })
 
   test('softError survives as a boolean, not a truthy string', async () => {

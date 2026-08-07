@@ -35,7 +35,8 @@ function toStrList(val: unknown): string[] {
 // would fan out into 30 identical rows.
 const ANCHORS = `
   [(b:BaseURL)-[:DEPENDS_ON]->(p) WHERE b.project_id = $pid | b.url]        AS baseUrls,
-  [(gr:GithubRepository)-[:DEPENDS_ON]->(p) WHERE gr.project_id = $pid | gr.name] AS repos`
+  [(gr:GithubRepository)-[:DEPENDS_ON]->(p) WHERE gr.project_id = $pid | gr.name] AS repos,
+  [(d:SbomDocument)-[:DEPENDS_ON]->(p) WHERE d.project_id = $pid | d.name]  AS sboms`
 
 const SEV_ORDER = `CASE $sev WHEN 'critical' THEN 0 WHEN 'high' THEN 1
                              WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END`
@@ -88,7 +89,7 @@ export async function GET(request: NextRequest) {
               p.ecosystem       AS ecosystem,
               p.source          AS harvestSource,
               p.source_path     AS sourcePath,
-              baseUrls, repos
+              baseUrls, repos, sboms
        ORDER BY CASE WHEN f.verdict = 'malicious' THEN 0
                      WHEN ${NOT_ANALYSED} THEN 2 ELSE 1 END,
                 ${sevOrder('f.severity')},
@@ -110,7 +111,7 @@ export async function GET(request: NextRequest) {
               p.source_path AS sourcePath,
               toString(p.first_seen) AS firstSeen,
               toString(p.last_seen)  AS lastSeen,
-              baseUrls, repos,
+              baseUrls, repos, sboms,
               size([f IN findings WHERE f.verdict = 'malicious']) AS maliciousCount,
               size([f IN findings WHERE f.verdict = 'suspicious'
                     AND NOT (coalesce(f.soft_error, false)
@@ -143,7 +144,7 @@ export async function GET(request: NextRequest) {
               p.source_path  AS sourcePath,
               toString(v.first_seen) AS firstSeen,
               toString(v.updated_at) AS updatedAt,
-              baseUrls, repos
+              baseUrls, repos, sboms
        ORDER BY ${sevOrder('v.severity')}, p.name, v.id
        LIMIT ${SHEET_LIMIT}`,
       { pid })
@@ -183,6 +184,7 @@ export async function GET(request: NextRequest) {
         sourcePath: (r.get('sourcePath') as string) ?? null,
         baseUrls: toStrList(r.get('baseUrls')),
         repos: toStrList(r.get('repos')),
+        sboms: toStrList(r.get('sboms')),
       })),
       packages: packages.records.map((r: Neo4jRecord) => ({
         purl: (r.get('purl') as string) || '',
@@ -195,6 +197,7 @@ export async function GET(request: NextRequest) {
         lastSeen: (r.get('lastSeen') as string) ?? null,
         baseUrls: toStrList(r.get('baseUrls')),
         repos: toStrList(r.get('repos')),
+        sboms: toStrList(r.get('sboms')),
         maliciousCount: toNum(r.get('maliciousCount')),
         suspiciousCount: toNum(r.get('suspiciousCount')),
         notAnalysedCount: toNum(r.get('notAnalysedCount')),
@@ -217,6 +220,7 @@ export async function GET(request: NextRequest) {
         updatedAt: (r.get('updatedAt') as string) ?? null,
         baseUrls: toStrList(r.get('baseUrls')),
         repos: toStrList(r.get('repos')),
+        sboms: toStrList(r.get('sboms')),
       })),
     }
 

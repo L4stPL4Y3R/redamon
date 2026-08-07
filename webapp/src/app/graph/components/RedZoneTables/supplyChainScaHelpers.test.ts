@@ -48,23 +48,35 @@ describe('packageStatus', () => {
 
 describe('originOf', () => {
   test('a repo anchor means the L1 repository scan', () => {
-    expect(originOf({ repos: ['acme/app'], baseUrls: [], harvestSource: 'osv' })).toBe('L1 repo')
+    expect(originOf({ repos: ['acme/app'], baseUrls: [], sboms: [], harvestSource: 'osv' })).toBe('L1 repo')
   })
 
   test('a BaseURL anchor means the L2 live harvest', () => {
-    expect(originOf({ repos: [], baseUrls: ['https://t.tld'], harvestSource: 'retirejs' })).toBe('L2 live')
+    expect(originOf({ repos: [], baseUrls: ['https://t.tld'], sboms: [], harvestSource: 'retirejs' })).toBe('L2 live')
   })
 
-  test('no anchor with an osv harvest source is the uploaded SBOM path', () => {
-    expect(originOf({ repos: [], baseUrls: [], harvestSource: 'osv' })).toBe('L1 SBOM')
+  test('an SbomDocument anchor means the L1 upload path', () => {
+    expect(originOf({ repos: [], baseUrls: [], sboms: ['requirements.txt'], harvestSource: 'osv' })).toBe('L1 SBOM')
+  })
+
+  test('the SBOM anchor wins over a harvestSource that says otherwise', () => {
+    // Uploads are anchored now, so the anchor is evidence and harvestSource is
+    // only a guess. Without this the branch could be deleted and every test
+    // above would still pass via the 'osv' fallback.
+    expect(originOf({ repos: [], baseUrls: [], sboms: ['bom.cdx.json'], harvestSource: 'sourcemap' })).toBe('L1 SBOM')
+  })
+
+  test('no anchor with an osv harvest source still reads as the SBOM path', () => {
+    // Backfill case: packages written before uploads were anchored.
+    expect(originOf({ repos: [], baseUrls: [], sboms: [], harvestSource: 'osv' })).toBe('L1 SBOM')
   })
 
   test('a package invented by the finding path is labelled as such', () => {
-    expect(originOf({ repos: [], baseUrls: [], harvestSource: 'finding' })).toBe('from finding')
+    expect(originOf({ repos: [], baseUrls: [], sboms: [], harvestSource: 'finding' })).toBe('from finding')
   })
 
   test('anything else is unanchored', () => {
-    expect(originOf({ repos: [], baseUrls: [], harvestSource: 'sourcemap' })).toBe('unanchored')
+    expect(originOf({ repos: [], baseUrls: [], sboms: [], harvestSource: 'sourcemap' })).toBe('unanchored')
   })
 })
 

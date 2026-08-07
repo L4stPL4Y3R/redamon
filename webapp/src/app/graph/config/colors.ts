@@ -33,6 +33,9 @@ export const NODE_COLORS: Record<string, string> = {
   Technology: '#22c55e',     // Green - Tech stack (good to know)
   Package: '#a855f7',        // Purple - a dependency the target ships
   MalPackageFinding: '#dc2626', // Red - malicious/suspicious dependency verdict
+  SbomDocument: '#7c3aed',   // Violet - an uploaded SBOM/lockfile; parent of
+                             // the packages read out of it (without it those
+                             // packages float as an island in the graph)
   Certificate: '#d97706',    // Amber - TLS/security context
   Header: '#78716c',         // Stone gray - HTTP metadata
 

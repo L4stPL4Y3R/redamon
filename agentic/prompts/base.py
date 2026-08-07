@@ -1940,11 +1940,25 @@ source = "osv", reached from the package:
 So: MALICIOUS -> MalPackageFinding, VULNERABLE -> Vulnerability. A package can
 have both.
 
+**Where a Package came from** - every Package hangs off exactly one of three
+parents via DEPENDS_ON, and which one tells you how much the finding is worth:
+- **BaseURL** - observed on the LIVE target during recon. The dependency is
+  actually being served, so a malicious verdict here is live exposure.
+- **GithubRepository** - read out of a cloned repo's lockfiles (`gr.name` is
+  "owner/repo"). Declared, not observed running.
+- **SbomDocument** - read out of an SBOM/lockfile the operator UPLOADED
+  (`d.name` is the filename, e.g. "requirements.txt"). Offline evidence only:
+  it says nothing about whether the target actually runs that code.
+Use the parent to qualify severity, and to answer "where did this come from" -
+never report an uploaded-SBOM hit as something found on the target.
+
 - Typical query: "list malicious packages" -> `MATCH (p:Package)-[:FLAGGED_AS]->(f:MalPackageFinding {verdict: 'malicious'}) RETURN p.purl, p.ecosystem, f.advisory_id, f.title`
 - Typical query: "which URLs depend on a malicious package" -> `MATCH (b:BaseURL)-[:DEPENDS_ON]->(p:Package)-[:FLAGGED_AS]->(f:MalPackageFinding {verdict: 'malicious'}) RETURN b.url, p.purl, f.advisory_id`
 - Typical query: "vulnerable dependencies" -> `MATCH (p:Package)-[:HAS_VULNERABILITY]->(v:Vulnerability {source: 'osv'}) RETURN p.purl, v.id, v.severity ORDER BY v.severity`
 - Typical query: "critical/high CVEs in dependencies" -> `MATCH (p:Package)-[:HAS_VULNERABILITY]->(v:Vulnerability {source: 'osv'}) WHERE v.severity IN ['critical','high'] RETURN p.purl, v.id, v.severity, v.name`
 - Typical query: "which packages did retire.js find on the target" -> `MATCH (p:Package {source: 'retirejs'}) RETURN p.purl, p.version`
+- Typical query: "what did the uploaded SBOM contain" -> `MATCH (d:SbomDocument)-[:DEPENDS_ON]->(p:Package) RETURN d.name, p.purl, p.ecosystem`
+- Typical query: "where does this package come from" -> `MATCH (src)-[:DEPENDS_ON]->(p:Package {purl: $purl}) RETURN labels(src)[0] AS origin, coalesce(src.url, src.name) AS source`
 
 ### JS Recon Scanner Nodes
 
@@ -2129,8 +2143,9 @@ When user asks about "AI SDKs in JS", "leaked AI keys", "AnythingLLM/Open WebUI/
 - `(d:Domain)-[:HAS_TRUFFLEHOG_SCAN]->(ts:TrufflehogScan)` - Domain has TruffleHog scan
 - `(ts:TrufflehogScan)-[:HAS_REPOSITORY]->(tr:TrufflehogRepository)` - Scan scanned repository
 - `(tr:TrufflehogRepository)-[:HAS_FINDING]->(tf:TrufflehogFinding)` - Repository has secret finding
-- `(b:BaseURL)-[:DEPENDS_ON]->(p:Package)` - Live target serves this dependency (Supply-Chain Recon). An uploaded-SBOM Package has NO anchor and floats
+- `(b:BaseURL)-[:DEPENDS_ON]->(p:Package)` - Live target serves this dependency (Supply-Chain Recon)
 - `(gr:GithubRepository)-[:DEPENDS_ON]->(p:Package)` - Repository depends on this package (Supply-Chain scan, repo input)
+- `(d:SbomDocument)-[:DEPENDS_ON]->(p:Package)` - An UPLOADED SBOM/lockfile listed this package (Supply-Chain scan, upload input). `d.name` is the filename
 - `(p:Package)-[:FLAGGED_AS]->(mf:MalPackageFinding)` - Package has a malicious/suspicious verdict
 - `(p:Package)-[:HAS_VULNERABILITY]->(v:Vulnerability)` - Package has a known CVE/GHSA (source='osv')
 

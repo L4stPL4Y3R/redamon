@@ -1588,11 +1588,17 @@ RETURN svc.name, svc.port_number, t.name, c.id
 
 ```cypher
 // A live target serves this dependency (Supply-Chain Recon, L2). Created only
-// when the BaseURL already exists; an uploaded-SBOM Package has no anchor.
+// when the BaseURL already exists - the writer never invents a target node.
 (BaseURL)-[:DEPENDS_ON]->(Package)
 
 // A scanned repository depends on this package (Supply-Chain scan, repo input)
 (GithubRepository)-[:DEPENDS_ON]->(Package)
+
+// An uploaded SBOM / lockfile listed this package (Supply-Chain scan, upload
+// input). EVERY Package has one of these three parents: uploaded packages used
+// to have none, which left them - and all of their Vulnerability nodes -
+// unreachable, against the "No Isolated Nodes" rule above.
+(SbomDocument)-[:DEPENDS_ON]->(Package)
 
 // A package carries a malicious (OSV MAL-) or suspicious (GuardDog) verdict
 (Package)-[:FLAGGED_AS]->(MalPackageFinding)
@@ -1856,6 +1862,7 @@ RETURN s.name AS host, svc.name AS service, u.url AS url,
 | ExploitGvm | id, source | ✅ Unique (global) |
 | GithubHunt | id, target, scan_start_time, status, repos_scanned, secrets_found | ✅ Unique (global), ✅ Tenant index |
 | GithubRepository | id, name | ✅ Unique (global), ✅ Tenant index |
+| SbomDocument | id, name | ✅ Unique (global), ✅ Tenant index |
 | GithubPath | id, repository, path | ✅ Unique (global), ✅ Tenant index |
 | GithubSecret | id, repository, path, secret_type, sample | ✅ Unique (global), ✅ Tenant index |
 | GithubSensitiveFile | id, repository, path, secret_type | ✅ Unique (global), ✅ Tenant index |
@@ -2206,6 +2213,32 @@ Findings are deduplicated across commit history (same repo + path + secret_type 
 ```
 
 **Relationship:** `GithubHunt -[:HAS_REPOSITORY]-> GithubRepository`
+
+### SbomDocument (Uploaded SBOM / lockfile)
+
+The parent of every package read out of a file the operator uploaded in
+**Other Scans -> Supply Chain**. One node per uploaded filename per project.
+
+```cypher
+(:SbomDocument {
+    id: "sbom-<user_id>-<project_id>-<filename>",
+    name: "requirements.txt",
+    user_id: "samgiam",
+    project_id: "first_test"
+})
+```
+
+**Relationship:** `SbomDocument -[:DEPENDS_ON]-> Package`
+
+Why it exists: an upload has no target to hang off, so its packages originally
+floated - they and their `Vulnerability` nodes were reachable from nothing,
+contradicting the "No Isolated Nodes" rule. The file itself is the honest
+parent: it is what the operator supplied and what the packages were read out
+of. It also keeps per-file attribution, which was otherwise lost - every upload
+collapsed into an indistinguishable set of `source='osv'` packages.
+
+Note this node is NOT created for the repository input; that anchors to
+`GithubRepository` instead.
 
 ### GithubPath (File Path Within Repository)
 
