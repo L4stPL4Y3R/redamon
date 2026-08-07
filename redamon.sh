@@ -622,11 +622,22 @@ ensure_osv_db() {
     ecos="${ecos:-$OSV_ALL_ECOSYSTEMS}"
     ecos="${ecos//,/ }"
     if ! docker image inspect redamon-supply-chain-analyzer:latest &>/dev/null; then
-        return 0   # tool images not built yet; up/install builds them first
+        # cmd_supply_chain_sync builds it on demand, so this is only reachable
+        # when the caller runs before any image exists. Say so rather than
+        # skipping in silence - an empty OSV DB makes every supply-chain scan
+        # report a missing ecosystem.
+        warn "Analyzer image not built yet; skipping OSV database sync (run './redamon.sh supply-chain-sync' after the build)"
+        return 0
     fi
     info "Ensuring offline OSV database (${ecos})"
+    # SUBSHELL on purpose: cmd_supply_chain_sync calls `exit 1` when the
+    # analyzer build or the download fails, and a bare `|| warn` does NOT catch
+    # an exit - it would abort the entire install/update. Containing it in a
+    # subshell keeps this step genuinely best-effort, which is the whole point:
+    # a missing OSV database degrades supply-chain scanning to an actionable
+    # error, it must never stop the stack from coming up.
     # shellcheck disable=SC2086
-    cmd_supply_chain_sync $ecos || warn "OSV database sync incomplete; supply-chain scans will report which ecosystems are missing"
+    ( cmd_supply_chain_sync $ecos ) || warn "OSV database sync incomplete; supply-chain scans will report which ecosystems are missing"
 }
 
 ensure_volume_ownership() {
@@ -1538,7 +1549,6 @@ cmd_install() {
     # Generate auth secrets if not present
     ensure_auth_secrets
     ensure_volume_ownership
-    ensure_osv_db
     ensure_db_secrets
 
     # Build all images (tools + core services + the on-demand capture proxy).
@@ -1549,6 +1559,12 @@ cmd_install() {
     # guarantees a fresh install can start capture without any extra step.
     info "Building all images (this may take a while on first run)..."
     compose_build --profile tools --profile capture build
+
+    # AFTER the tool build: the sync runs inside the analyzer image, so calling
+    # it earlier silently skipped on a fresh install and left the offline OSV
+    # database empty - the supply-chain feature would then report "no <eco>
+    # ecosystem" on every scan until someone ran supply-chain-sync by hand.
+    ensure_osv_db
 
     # Pull GVM images with retry (large images, unreliable registry)
     if [[ "$gvm_mode" == "true" ]]; then
@@ -1799,7 +1815,6 @@ cmd_update() {
     # Both are idempotent (append-if-absent), so this is a no-op once present.
     ensure_auth_secrets
     ensure_volume_ownership
-    ensure_osv_db
     ensure_db_secrets
 
     # Rebuild tool-profile images. A tool image is build-only (not a running core
@@ -1812,6 +1827,11 @@ cmd_update() {
             warn "One or more tool images failed to build (${rebuild_tools[*]}); continuing with the core update. Re-run the build later: docker compose --profile tools build ${rebuild_tools[*]}"
         fi
     fi
+
+    # AFTER the tool rebuild: the sync runs inside the analyzer image, so a
+    # release that rebuilds it (or a prior `clean` that removed it) must not be
+    # synced against a missing image.
+    ensure_osv_db
 
     # Rebuild the capture-proxy image if its source changed, then refresh a running
     # proxy onto it. Build-only + best-effort: a failure must not abort the update.
