@@ -2,7 +2,7 @@
 
 import { memo, useState, useRef, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { CalendarClock, GitCompare, Waypoints, Table2, Terminal, Shield, Search, Download, Loader2, SquareTerminal, Filter, Plus, Trash2, X, ChevronDown, Code, Target, Zap, Flag, Key, Server, Boxes, LockKeyhole, Bug, Network, Mail, ShieldAlert, Package, History, Layers, Bot, Radiation, Swords, Droplets } from 'lucide-react'
+import { CalendarClock, GitCompare, Waypoints, Table2, Terminal, Shield, Search, Download, Loader2, SquareTerminal, Filter, Plus, Trash2, X, ChevronDown, Code, Target, Zap, Flag, Key, Server, Boxes, LockKeyhole, Bug, Network, Mail, ShieldAlert, Package, PackageSearch, History, Layers, Bot, Radiation, Swords, Droplets } from 'lucide-react'
 import { Toggle } from '@/components/ui'
 import { AUTO_2D_THRESHOLD } from '../GraphCanvas'
 import styles from './ViewTabs.module.css'
@@ -26,7 +26,8 @@ export type TableViewMode =
   | 'sharedInfra'
   | 'dnsEmail'
   | 'threatIntel'
-  | 'supplyChain'
+  | 'jsDepSignals'
+  | 'supplyChainSca'
   | 'dnsDrift'
   | 'webCachePoison'
   | 'reconDelta'
@@ -49,11 +50,39 @@ const TABLE_MODE_LABELS: Record<TableViewMode, string> = {
   sharedInfra: 'Shared Infra',
   dnsEmail: 'DNS & Email',
   threatIntel: 'Threat Intel',
-  supplyChain: 'Supply-Chain',
+  jsDepSignals: 'JS Dep Signals',
+  supplyChainSca: 'Supply-Chain SCA',
   dnsDrift: 'DNS Drift',
   webCachePoison: 'Web Cache Poisoning',
   reconDelta: 'Recon Delta',
   scanSchedule: 'Scan Scheduler',
+}
+
+const TABLE_VIEW_MODES = new Set<string>(Object.keys(TABLE_MODE_LABELS))
+
+/**
+ * Deep links carry the table mode as a raw query param (`/graph?table=aiRisk`),
+ * so the value is untrusted and may be stale. Two failure modes this closes:
+ *
+ *  1. An unknown value used to be cast straight to TableViewMode, matched no
+ *     render branch, and silently fell through to All Nodes - the deep link
+ *     appeared to work while showing the wrong table.
+ *  2. `supplyChain` was renamed to `jsDepSignals` when the package/OSV feature
+ *     took the "Supply-Chain" name, which would break every bookmark pointing
+ *     at the old table. The alias keeps them working.
+ */
+// A Map, not an object literal: an object literal inherits from
+// Object.prototype, so `?table=constructor` would look up a truthy function and
+// be returned as if it were a valid mode - in a parser whose only job is to
+// reject unknown input.
+const LEGACY_TABLE_MODES = new Map<string, TableViewMode>([
+  ['supplyChain', 'jsDepSignals'],
+])
+
+export function parseTableViewMode(raw: string | null | undefined): TableViewMode | null {
+  if (!raw) return null
+  if (TABLE_VIEW_MODES.has(raw)) return raw as TableViewMode
+  return LEGACY_TABLE_MODES.get(raw) ?? null
 }
 
 export interface TunnelInfo {
@@ -332,7 +361,8 @@ export const ViewTabs = memo(function ViewTabs({
                 : mode === 'sharedInfra' ? Network
                 : mode === 'dnsEmail' ? Mail
                 : mode === 'threatIntel' ? ShieldAlert
-                : mode === 'supplyChain' ? Package
+                : mode === 'jsDepSignals' ? Package
+                : mode === 'supplyChainSca' ? PackageSearch
                 : mode === 'dnsDrift' ? History
                 : mode === 'webCachePoison' ? Droplets
                 : Table2
@@ -445,10 +475,17 @@ export const ViewTabs = memo(function ViewTabs({
                 <ShieldAlert size={12} /> Threat Intel Overlay
               </button>
               <button
-                className={`${styles.tableDropdownItem} ${tableViewMode === 'supplyChain' ? styles.tableDropdownItemActive : ''}`}
-                onClick={() => { onTableViewModeChange?.('supplyChain'); setTableMenuOpen(false); onViewChange('table') }}
+                className={`${styles.tableDropdownItem} ${tableViewMode === 'jsDepSignals' ? styles.tableDropdownItemActive : ''}`}
+                onClick={() => { onTableViewModeChange?.('jsDepSignals'); setTableMenuOpen(false); onViewChange('table') }}
               >
-                <Package size={12} /> Supply-Chain
+                <Package size={12} /> JS Dep Signals
+              </button>
+              <button
+                className={`${styles.tableDropdownItem} ${tableViewMode === 'supplyChainSca' ? styles.tableDropdownItemActive : ''}`}
+                onClick={() => { onTableViewModeChange?.('supplyChainSca'); setTableMenuOpen(false); onViewChange('table') }}
+              >
+                <PackageSearch size={12} /> Supply-Chain SCA
+                <span className={styles.newBadge}>NEW</span>
               </button>
               <button
                 className={`${styles.tableDropdownItem} ${tableViewMode === 'dnsDrift' ? styles.tableDropdownItemActive : ''}`}

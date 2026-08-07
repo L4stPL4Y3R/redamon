@@ -142,9 +142,13 @@ _ALLOWED_TOP = {"schema_version", "mode", "packages", "malicious",
                 "vulnerable", "suspicious", "errors"}
 _ALLOWED_MODES = {"lockfile", "sbom", "dir", "purls", "js-dir"}
 _PKG_FIELDS = {"purl", "name", "version", "ecosystem", "source", "source_path"}
+# cvss_vector is free text (a "CVSS:3.1/AV:N/..." string), so it is capped like
+# title/detail rather than charset-gated - it never reaches a subprocess or a
+# filename, only a display field.
 _FINDING_FIELDS = {"purl", "name", "version", "ecosystem", "advisory_id",
                    "rule", "severity", "confidence", "title", "detail",
-                   "message", "summary", "aliases", "soft_error"}
+                   "message", "summary", "aliases", "soft_error",
+                   "cvss_vector"}
 _ALLOWED_SEVERITY = {"high", "medium", "low", "critical", "unknown", None}
 
 

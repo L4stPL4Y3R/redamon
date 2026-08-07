@@ -192,6 +192,18 @@ describe('/api/analytics/redzone/supplyChain', () => {
     expect(r0.version).toBe('1.0.0')
     expect(r0.parentJsUrl).toBe('https://a/app.js')
   })
+
+  // The Package and Version columns of this table (now surfaced as "JS Dep
+  // Signals") read j.name / j.version, which the js_recon writer NEVER set -
+  // both columns rendered "-" on every row. The writer now stores
+  // package_name / package_version (not name/version, which would relabel the
+  // graph node), and the query coalesces so rows written before that still work.
+  test('reads package_name/package_version with a fallback to the legacy fields', async () => {
+    await supplyChainRoute.GET(makeRequest('p1'))
+    const c = runCalls[0].cypher
+    expect(c).toMatch(/coalesce\(j\.package_name,\s*j\.name\)\s+AS packageName/)
+    expect(c).toMatch(/coalesce\(j\.package_version,\s*j\.version\)\s+AS version/)
+  })
 })
 
 // ---------------------------------------------------------------------------

@@ -56,6 +56,25 @@ class TestArtifactHelpers(unittest.TestCase):
         self.assertEqual(art["vulnerable"][0]["confidence"], "suspicious")
         validate_artifact(art)  # must stay boundary-valid
 
+    def test_cvss_vector_survives_to_the_graph_writer(self):
+        # osv_runner.cvss_vector_for_vuln extracted this and add_osv_findings
+        # dropped it, so Vulnerability.cvss_metrics was always null even though
+        # the writer asks for the field.
+        art = empty_artifact("lockfile")
+        add_osv_findings(art, {
+            "packages": [],
+            "malicious": [],
+            "vulnerable": [{"purl": "pkg:npm/x@1", "name": "x", "ecosystem": "npm",
+                            "advisory_id": "GHSA-1",
+                            "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}]})
+        self.assertEqual(art["vulnerable"][0]["cvss_vector"],
+                         "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H")
+        # The vector contains '/' and ':' - it must clear the boundary gate as
+        # capped free text, not be rejected as a hostile structured field.
+        clean = validate_artifact(art)
+        self.assertEqual(clean["vulnerable"][0]["cvss_vector"],
+                         "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H")
+
     def test_osv_mode_for_path(self):
         self.assertEqual(osv_mode_for_path("/x/package-lock.json"), "lockfile")
         self.assertEqual(osv_mode_for_path("/x/bom.cdx.json"), "sbom")

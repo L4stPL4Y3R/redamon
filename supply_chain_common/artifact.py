@@ -49,6 +49,10 @@ def add_osv_findings(artifact, parsed, *, source="osv"):
             "severity": vul.get("severity") or "unknown",
             "confidence": "suspicious",
             "title": vul.get("summary") or vul.get("advisory_id"),
+            # osv_runner.cvss_vector_for_vuln already extracted this; dropping it
+            # here is why Vulnerability.cvss_metrics was always null even though
+            # the graph writer asks for it.
+            "cvss_vector": vul.get("cvss_vector"),
         })
     return artifact
 

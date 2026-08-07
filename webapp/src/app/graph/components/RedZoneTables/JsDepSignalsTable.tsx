@@ -17,7 +17,20 @@ import {
 import { normalizeSeverity } from './types'
 import rowStyles from './RedZoneTableRow.module.css'
 
-interface SupplyChainRow {
+/**
+ * JS Dep Signals: JsReconFinding nodes that carry dependency/build-hygiene
+ * signal (exposed source maps, dev comments, dependency confusion, detected
+ * frameworks, referenced cloud assets).
+ *
+ * This is NOT the package supply-chain feature. Malicious/vulnerable package
+ * verdicts (Package / MalPackageFinding / OSV advisories) live in
+ * SupplyChainScaTable. This table used to be labelled "Supply-Chain", which
+ * made the two indistinguishable in the UI.
+ *
+ * The API slug stays `supplyChain` - the route and its tests predate the
+ * rename and renaming the endpoint would buy nothing.
+ */
+interface JsDepSignalsRow {
   id: string
   findingType: string
   severity: string
@@ -54,8 +67,8 @@ function TypeChip({ t }: { t: string }) {
 
 interface Props { projectId: string | null }
 
-export const SupplyChainTable = memo(function SupplyChainTable({ projectId }: Props) {
-  const { data, isLoading, error, refetch } = useRedZoneTable<SupplyChainRow>('supplyChain', projectId)
+export const JsDepSignalsTable = memo(function JsDepSignalsTable({ projectId }: Props) {
+  const { data, isLoading, error, refetch } = useRedZoneTable<JsDepSignalsRow>('supplyChain', projectId)
   const [search, setSearch] = useState('')
   const [limit, setLimit] = useState(PAGE_SIZE)
 
@@ -67,8 +80,8 @@ export const SupplyChainTable = memo(function SupplyChainTable({ projectId }: Pr
     rows.length > 0
       ? {
           rows: filtered,
-          sheetName: 'Supply-Chain',
-          fileSlug: 'redzone-supply-chain',
+          sheetName: 'JS-Dep-Signals',
+          fileSlug: 'redzone-js-dep-signals',
           columns: [
             { key: 'findingType', header: 'Type' },
             { key: 'severity', header: 'Severity' },
@@ -98,7 +111,7 @@ export const SupplyChainTable = memo(function SupplyChainTable({ projectId }: Pr
 
   return (
     <RedZoneTableShell
-      title="Supply-Chain & Dependency Panel"
+      title="JS Dep Signals (source maps, dev comments, dependency confusion)"
       meta={meta}
       search={search}
       onSearchChange={setSearch}
@@ -109,7 +122,7 @@ export const SupplyChainTable = memo(function SupplyChainTable({ projectId }: Pr
       error={error}
       rowCount={rows.length}
       filteredRowCount={filtered.length}
-      emptyLabel="No supply-chain findings yet. Enable js_recon with dependency-confusion + source-map + framework detection."
+      emptyLabel="No JS dependency signals yet. Enable js_recon with dependency-confusion + source-map + framework detection. Malicious/vulnerable package verdicts live in the Supply-Chain SCA table."
     >
       <table className={rowStyles.table}>
         <thead>

@@ -227,6 +227,16 @@ class JsReconMixin:
                             "title": finding.get("title", finding.get("type", finding_type)),
                             "detail": finding.get("detail", finding.get("content", finding.get("description", ""))),
                             "evidence": finding.get("evidence", finding.get("pattern", finding.get("content", "")))[:500],
+                            # package_name / package_version, NOT name / version:
+                            # `name` is what the graph viewer displays as the node
+                            # label (format.ts falls back to `title` only when
+                            # `name` is absent), so writing it there would silently
+                            # relabel every framework node from "React 18.2.0" to
+                            # "React". These fed the JS Dep Signals table's
+                            # Package + Version columns, which read as empty on
+                            # every row because nothing ever wrote them.
+                            "package_name": finding.get("package_name"),
+                            "package_version": finding.get("version"),
                             "source_url": source_url,
                             "base_url": base_url or 'upload',
                             "source": "js_recon",
@@ -266,6 +276,10 @@ class JsReconMixin:
                         "title": f"{fw['name']}{version_str}",
                         "detail": f"Framework detected: {fw['name']}{version_str}",
                         "evidence": fw.get("name", ""),
+                        # See the note in the generic finding block above: these
+                        # are deliberately NOT `name`/`version`.
+                        "package_name": fw.get("name"),
+                        "package_version": fw.get("version"),
                         "source_url": source_url,
                         "base_url": base_url or 'upload',
                         "source": "js_recon",

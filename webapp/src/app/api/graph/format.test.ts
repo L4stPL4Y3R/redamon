@@ -290,15 +290,18 @@ describe('node name truncation', () => {
     Array.from({ length: 40 }, (_, i) =>
       `  @next/swc-${i}: Manifest("13.4.7"), package.json("None") \n`).join('')
 
+  // getNodeName takes a NODE, not (label, props). Called with two arguments it
+  // threw on `node.labels[0]` and the assertions below never ran, so the guard
+  // they exist to protect was effectively untested.
   test('keeps a long multi-line title from becoming the node name', () => {
-    const name = getNodeName('MalPackageFinding', { title: dump })
+    const name = getNodeName(makeNode('MalPackageFinding', { title: dump }))
     expect(dump.length).toBeGreaterThan(1000)
     expect(name.length).toBeLessThanOrEqual(80)
     expect(name).not.toContain('\n')
   })
 
   test('leaves a short name untouched', () => {
-    expect(getNodeName('Package', { name: 'pkg:npm/axios@1.14.1' }))
+    expect(getNodeName(makeNode('Package', { name: 'pkg:npm/axios@1.14.1' })))
       .toBe('pkg:npm/axios@1.14.1')
   })
 })

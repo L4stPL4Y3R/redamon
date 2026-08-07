@@ -20,6 +20,7 @@ of RedAmon.
 - [Layer L1 - Standalone scan (Other Scans)](#layer-l1--standalone-scan-other-scans)
 - [Layer L2 - Recon pipeline module](#layer-l2--recon-pipeline-module)
 - [Graph model](#graph-model)
+- [The Supply-Chain SCA table](#the-supply-chain-sca-table)
 - [Container topology](#container-topology)
 - [Integration with RedAmon components](#integration-with-redamon-components)
 - [v1 scope and v2 roadmap](#v1-scope-and-v2-roadmap)
@@ -521,6 +522,7 @@ flowchart LR
 | `ecosystem` | `npm`, `PyPI`, `Go`, `Maven`, `crates.io`, `Packagist`, `RubyGems`, `NuGet` |
 | `name`, `version` | `version` nullable (L2 black-box may not know it) |
 | `source` | `sbom` / `lockfile` / `sourcemap` / `retirejs` / `import` / `wappalyzer` / `osv` / `finding` |
+| `source_path` | which manifest the package came from (an L1 repo scan walks every lockfile in the tree). Written with `coalesce`, so a later versionless L2 sighting of the same purl cannot erase it |
 | `user_id`, `project_id` | tenant scope |
 | `first_seen`, `last_seen` | `ON CREATE SET first_seen`; `SET last_seen` unconditional |
 
@@ -535,6 +537,8 @@ Merge key: `(purl, user_id, project_id)`.
 | `source_tool` | `osv` or `guarddog` |
 | `advisory_id` | `MAL-...` / `CVE-...` / `GHSA-...` or a GuardDog rule name |
 | `severity`, `confidence`, `title`, `detail` | display fields |
+| `soft_error` | `true` when the behavioural pass produced **no** verdict (download failed, budget exhausted, dispatch error). The distinction "GuardDog ran and found nothing" vs "GuardDog never ran" only survives to the UI because this is persisted |
+| `aliases` | OSV alias ids for the advisory (a `MAL-` usually also carries a `GHSA-`), capped at 50 |
 | `user_id`, `project_id` | tenant scope |
 | `first_seen`, `last_seen` | as above |
 
@@ -556,6 +560,41 @@ Merge key: `(finding_id, user_id, project_id)`.
 **create-or-enrich** (MERGE), which is how the three layers converge. The only
 existing nodes L2/L1 touch are `BaseURL` (L2) and, in v2, `GithubRepository` (L1),
 which they **enrich with a `DEPENDS_ON` edge** but never mutate.
+
+---
+
+## The Supply-Chain SCA table
+
+Everything above writes into the graph; this is where an operator reads it. The
+**Supply-Chain SCA** entry in the graph page's table dropdown
+(`webapp/src/app/graph/components/RedZoneTables/SupplyChainScaTable.tsx`, served
+by `/api/analytics/redzone/supplyChainSca`) is the only view that joins the three
+node types together, and it has three sheets:
+
+| Sheet | One row per | Answers |
+|---|---|---|
+| **Verdicts** | `MalPackageFinding` | what is on fire right now |
+| **Packages** | `Package`, with rolled-up counts | what am I running, and how much of it was actually checked |
+| **Advisories** | `Vulnerability {source:'osv'}` | the `CVE`/`GHSA` half, which has no other UI |
+
+Three things the table derives rather than reads:
+
+- **Verdict is three-state, not two.** `malicious` / `suspicious` / **`not analysed`**.
+  A finding with `soft_error` (or the legacy `advisory_id = 'guarddog-not-run'`)
+  is a package GuardDog never verdicted, and it is rendered as unchecked rather
+  than as a low-severity suspicious hit.
+- **`unverdictable`** is a first-class package status and a headline count.
+  osv-scanner needs a version to match a version-specific advisory, so a
+  package harvested without one (source-map and import mining never yield a
+  version) was **never checked**. A short verdict list next to a large
+  `unversioned` count means "mostly unchecked", not "mostly clean".
+- **Origin** (L1 repo / L1 SBOM / L2 live) comes from the anchor label, since
+  the layer is not stored on the node.
+
+Query shape worth knowing: `update_graph_from_supply_chain_recon` writes the whole
+artifact **once per BaseURL**, so a target with 30 probed base URLs gives every
+package 30 `DEPENDS_ON` edges. The route therefore collects anchors with pattern
+comprehensions; a row-wise `OPTIONAL MATCH` would fan every finding out 30 times.
 
 ---
 
@@ -614,6 +653,7 @@ no rebuild) into recon / scan / analyzer at spawn.
 | **docker-broker** | The two images + the `redamon-osv-db` volume are allowlisted; a look-alike image is denied. |
 | **Neo4j / graph_db** | `SupplyChainMixin` is added to `Neo4jClient`; two `CREATE CONSTRAINT`s in `graph_db/schema.py`. The agent's `query_graph` sees `Package` / `MalPackageFinding` like any other node. |
 | **Webapp** | Prisma fields (`supplyChain*`, `supplyChainRecon*`); `/api/supply-chain/[projectId]/*` proxy routes + SBOM upload; `useSupplyChainStatus` / `useSupplyChainSSE` hooks; a Supply Chain card in the Other Scans modal (with a logs drawer) and a Supply Chain settings section. |
+| **Graph tables** | The **Supply-Chain SCA** table (`/api/analytics/redzone/supplyChainSca`) reads this model directly: three sheets (Verdicts / Packages / Advisories) over `Package`, `MalPackageFinding` and `Vulnerability {source:'osv'}`. Not to be confused with **JS Dep Signals** (formerly labelled "Supply-Chain"), which reads `JsReconFinding` nodes. See [the table section](#the-supply-chain-sca-table). |
 | **Settings (5 layers)** | Prisma default -> `recon/project_settings.py` (L2) / `supply_chain_scan/project_settings.py` (L1) -> `/defaults` -> webapp section, using the `x_enabled` / `xEnabled` / `X_ENABLED` naming. |
 | **redamon.sh** | `supply-chain-sync` populates the DB; `TOOL_IMAGES` + `cmd_update` build/rebuild the two images; `cmd_install`/`up` build them via `--profile tools`. |
 | **SCANNER_API_KEY (S3/E6)** | The L1 scan container fetches settings with the scoped `SCANNER_API_KEY` (falling back to `INTERNAL_API_KEY` on pre-secret installs); the analyzer holds no key at all. |
@@ -685,5 +725,7 @@ mcp/servers/network_recon_server.py              # L3 execute_osv_scanner / exec
 recon_orchestrator/{container_manager,api,models}.py  # L1 lifecycle + REST
 webapp/src/app/api/supply-chain/                 # proxy routes + SBOM upload
 webapp/src/components/projects/ProjectForm/sections/SupplyChainSection.tsx
+webapp/src/app/api/analytics/redzone/supplyChainSca/route.ts    # SCA table API (3 sheets)
+webapp/src/app/graph/components/RedZoneTables/SupplyChainScaTable.tsx  # the table
 readmes/GRAPH.SCHEMA.md                           # node documentation
 ```

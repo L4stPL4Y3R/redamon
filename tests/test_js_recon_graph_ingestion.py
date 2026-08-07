@@ -201,5 +201,68 @@ class TestJsReconGraphIngestion(unittest.TestCase):
         self.assertEqual(stats["errors"], [])
 
 
+class TestJsReconFindingPackageFields(unittest.TestCase):
+    """package_name / package_version on JsReconFinding nodes.
+
+    The JS Dep Signals table has had Package and Version columns since it was
+    written, reading `name` and `version` - properties nothing ever set, so both
+    columns rendered empty on every row. They are written under a `package_`
+    prefix because `name` is what the graph viewer displays as the node label
+    (format.ts falls back to `title` only when `name` is absent), so using it
+    would relabel every framework node from "React 18.2.0" to "React".
+    """
+
+    @staticmethod
+    def _finding_props(client, finding_type):
+        for query, kwargs in client.driver.session_obj.calls:
+            if "MERGE (jf:JsReconFinding" not in query:
+                continue
+            props = kwargs.get("props") or {}
+            if props.get("finding_type") == finding_type:
+                return props
+        return None
+
+    def test_dependency_confusion_carries_the_package_name(self):
+        client = GraphClient()
+        client.update_graph_from_js_recon({
+            "domain": "example.com",
+            "js_recon": {
+                "scan_metadata": {"scan_timestamp": "2026-08-07T00:00:00Z"},
+                "dependencies": [{
+                    "id": "dep1",
+                    "finding_type": "dependency_confusion",
+                    "package_name": "@acme/internal-utils",
+                    "severity": "critical",
+                    "title": "Dependency confusion: @acme/internal-utils not on public npm",
+                    "source_url": "https://example.com/app.js",
+                }],
+            },
+        }, "u1", "p1")
+        props = self._finding_props(client, "dependency_confusion")
+        self.assertIsNotNone(props)
+        self.assertEqual(props["package_name"], "@acme/internal-utils")
+        # `name` stays unset so the graph node label keeps using `title`.
+        self.assertNotIn("name", props)
+
+    def test_framework_carries_name_and_version_separately_from_the_label(self):
+        client = GraphClient()
+        client.update_graph_from_js_recon({
+            "domain": "example.com",
+            "js_recon": {
+                "scan_metadata": {"scan_timestamp": "2026-08-07T00:00:00Z"},
+                "frameworks": [{
+                    "id": "fw1", "name": "React", "version": "18.2.0",
+                    "source_url": "https://example.com/app.js",
+                }],
+            },
+        }, "u1", "p1")
+        props = self._finding_props(client, "framework")
+        self.assertIsNotNone(props)
+        self.assertEqual(props["package_name"], "React")
+        self.assertEqual(props["package_version"], "18.2.0")
+        self.assertEqual(props["title"], "React 18.2.0")
+        self.assertNotIn("name", props)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -11,7 +11,7 @@ import { PageBottomBar } from './components/PageBottomBar'
 import { ReconConfirmModal } from './components/ReconConfirmModal'
 import { GvmConfirmModal } from './components/GvmConfirmModal'
 import { ReconLogsDrawer } from './components/ReconLogsDrawer'
-import { ViewTabs, type ViewMode, type TunnelStatus, type TableViewMode } from './components/ViewTabs'
+import { ViewTabs, parseTableViewMode, type ViewMode, type TunnelStatus, type TableViewMode } from './components/ViewTabs'
 import { DataTable } from './components/DataTable'
 import { NodeDetailsTable } from './components/NodeDetailsTable'
 import { JsReconTable, exportJsReconCsv, exportJsReconJson, exportJsReconMarkdown } from './components/JsReconTable'
@@ -28,7 +28,8 @@ import {
   SharedInfraTable,
   DnsEmailTable,
   ThreatIntelTable,
-  SupplyChainTable,
+  JsDepSignalsTable,
+  SupplyChainScaTable,
   DnsDriftTable,
   AiSurfaceTable,
   AiRiskTable,
@@ -1063,10 +1064,12 @@ export default function GraphPage() {
     }
     // Deep-link into a specific Red Zone table (e.g. ?table=aiRisk from the AI
     // Attack Surface page's "Show findings" button).
-    const tableParam = searchParams.get('table')
+    // Validated, not cast: an unknown ?table= value used to fall through to All
+    // Nodes while looking like the link worked. Legacy names are aliased.
+    const tableParam = parseTableViewMode(searchParams.get('table'))
     if (tableParam && projectId) {
       setActiveView('table')
-      setTableViewMode(tableParam as TableViewMode)
+      setTableViewMode(tableParam)
       setDeepLinkSheet(searchParams.get('sheet'))   // optional sub-sheet to open
       router.replace(`/graph?project=${projectId}`)
     }
@@ -1577,8 +1580,10 @@ export default function GraphPage() {
               <DnsEmailTable projectId={projectId} />
             ) : tableViewMode === 'threatIntel' ? (
               <ThreatIntelTable projectId={projectId} />
-            ) : tableViewMode === 'supplyChain' ? (
-              <SupplyChainTable projectId={projectId} />
+            ) : tableViewMode === 'jsDepSignals' ? (
+              <JsDepSignalsTable projectId={projectId} />
+            ) : tableViewMode === 'supplyChainSca' ? (
+              <SupplyChainScaTable projectId={projectId} initialSheet={deepLinkSheet} />
             ) : tableViewMode === 'dnsDrift' ? (
               <DnsDriftTable projectId={projectId} />
             ) : tableViewMode === 'webCachePoison' ? (

@@ -1863,9 +1863,9 @@ RETURN s.name AS host, svc.name AS service, u.url AS url,
 | TrufflehogRepository | id, name | ✅ Unique (global), ✅ Tenant index |
 | TrufflehogFinding | id, detector_name, verified, file, commit, line, repository | ✅ Unique (global), ✅ Tenant index |
 | Secret | id, secret_type, severity, source, source_url, base_url, sample | ✅ Unique (global), ✅ Tenant index |
-| JsReconFinding | id, finding_type, severity, confidence, title, detail, source_url | ✅ Unique (global), ✅ Tenant index |
-| Package | purl, ecosystem, name, version, source, first_seen, last_seen | ✅ Unique (purl, user_id, project_id) |
-| MalPackageFinding | finding_id, verdict, source_tool, advisory_id, severity, confidence, title, detail | ✅ Unique (finding_id, user_id, project_id) |
+| JsReconFinding | id, finding_type, severity, confidence, title, detail, source_url, package_name, package_version | ✅ Unique (global), ✅ Tenant index |
+| Package | purl, ecosystem, name, version, source, source_path, first_seen, last_seen | ✅ Unique (purl, user_id, project_id) |
+| MalPackageFinding | finding_id, verdict, source_tool, advisory_id, severity, confidence, title, detail, soft_error, aliases | ✅ Unique (finding_id, user_id, project_id) |
 
 ---
 
@@ -3137,6 +3137,7 @@ both sources dedup into the same nodes. See `readmes/README.SUPPLY_CHAIN.md`.
   name,
   version,       // nullable (L2 black-box may not know the version)
   source,        // sbom | lockfile | sourcemap | retirejs | import | wappalyzer | osv | finding
+  source_path,   // manifest the package came from (L1 repo scans walk many lockfiles); coalesced, a later versionless sighting never erases it
 
 // Verdict routing for a Package (the two are NOT interchangeable):
 //   MALICIOUS  (OSV MAL-)        -> (:Package)-[:FLAGGED_AS]->(:MalPackageFinding {verdict:'malicious'})
@@ -3163,6 +3164,8 @@ Uniqueness: `(purl, user_id, project_id)` (tenant-scoped).
   severity,      // high | medium | low | unknown
   confidence,    // malicious | suspicious
   title, detail,
+  soft_error,    // true = the behavioural pass produced NO verdict (UNCHECKED, not clean)
+  aliases,       // OSV alias ids for the advisory (a MAL- often also has a GHSA-)
   user_id, project_id,
   first_seen, last_seen
 })

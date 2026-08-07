@@ -32,7 +32,11 @@ export type RedZoneTableSlug =
   | 'sharedInfra'
   | 'dnsEmail'
   | 'threatIntel'
+  // JS Dep Signals (JsReconFinding). The slug predates the "Supply-Chain" ->
+  // "JS Dep Signals" rename and stays as-is; the package/OSV feature is
+  // supplyChainSca.
   | 'supplyChain'
+  | 'supplyChainSca'
   | 'dnsDrift'
   | 'webCachePoison'
 
