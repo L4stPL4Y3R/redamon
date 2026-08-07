@@ -82,7 +82,7 @@ class TestLatsSettingsMapping(unittest.TestCase):
     def test_defaults_when_keys_absent(self):
         s = _fetch_with_project({})   # project has no agentLats* fields
         self.assertIs(s["LATS_ENABLED"], False)
-        self.assertIs(s["LATS_SHADOW_MODE"], True)
+        self.assertIs(s["LATS_SHADOW_MODE"], False)  # default is drive, not observe-only
         self.assertEqual(s["LATS_MAX_DEPTH"], 6)
         self.assertEqual(s["LATS_ALLOWED_PHASES"], ["exploitation"])
 

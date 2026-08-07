@@ -28,6 +28,7 @@ export function SupplyChainReconSection({ data, updateField, onRun }: SupplyChai
     supplyChainReconEcosystems?: string
     supplyChainReconDeepAnalysisEnabled?: boolean
   }
+  const enabled = !!d.supplyChainReconEnabled
 
   return (
     <div className={styles.section}>
@@ -40,7 +41,7 @@ export function SupplyChainReconSection({ data, updateField, onRun }: SupplyChai
           <span className={styles.badgePassive}>Passive</span>
         </h2>
         <div className={styles.sectionHeaderRight}>
-          {onRun && d.supplyChainReconEnabled && (
+          {onRun && enabled && (
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onRun() }}
@@ -56,6 +57,13 @@ export function SupplyChainReconSection({ data, updateField, onRun }: SupplyChai
               <Play size={10} /> Run partial recon
             </button>
           )}
+          <div onClick={(e) => e.stopPropagation()}>
+            <Toggle
+              checked={enabled}
+              onChange={(checked) => updateField('supplyChainReconEnabled' as keyof FormData, checked as never)}
+              aria-label="Enable Supply Chain Recon"
+            />
+          </div>
           <ChevronDown size={16} className={`${styles.sectionIcon} ${isOpen ? styles.sectionIconOpen : ''}`} />
         </div>
       </div>
@@ -69,45 +77,42 @@ export function SupplyChainReconSection({ data, updateField, onRun }: SupplyChai
             downloaded, so it sends no extra traffic to the target, and the verdict is fully offline.
           </p>
 
-          <div className={styles.fieldGroup} style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <Toggle
-              checked={!!d.supplyChainReconEnabled}
-              onChange={(v) => updateField('supplyChainReconEnabled' as keyof FormData, v as never)}
-              aria-label="Enable Supply Chain Recon"
-            />
-            <label className={styles.fieldLabel} style={{ margin: 0 }}>Enable Supply Chain Recon</label>
-          </div>
+          {enabled && (
+            <div className={styles.subSection}>
+              <h3 className={styles.subSectionTitle}>Configuration</h3>
 
-          <div className={styles.fieldGroup}>
-            <label className={styles.fieldLabel}>Ecosystems</label>
-            <input
-              type="text"
-              className={styles.input}
-              value={d.supplyChainReconEcosystems ?? 'npm'}
-              onChange={(e) => updateField('supplyChainReconEcosystems' as keyof FormData, e.target.value as never)}
-              placeholder="npm"
-            />
-            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-              Comma-separated ecosystems to report. Each must be present in the offline database, populated with{' '}
-              <code>./redamon.sh supply-chain-sync npm</code>. Valid: npm, PyPI, Go, Maven, crates.io, Packagist, RubyGems, NuGet.
-            </p>
-          </div>
+              <div className={styles.fieldGroup}>
+                <label className={styles.fieldLabel}>Ecosystems</label>
+                <input
+                  type="text"
+                  className="textInput"
+                  value={d.supplyChainReconEcosystems ?? 'npm'}
+                  onChange={(e) => updateField('supplyChainReconEcosystems' as keyof FormData, e.target.value as never)}
+                  placeholder="npm"
+                />
+                <span className={styles.fieldHint}>
+                  Comma-separated ecosystems to report. Each must be present in the offline database, populated with{' '}
+                  <code>./redamon.sh supply-chain-sync npm</code>. Valid: npm, PyPI, Go, Maven, crates.io, Packagist, RubyGems, NuGet.
+                </span>
+              </div>
 
-          <div className={styles.fieldGroup}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <Toggle
-                checked={!!d.supplyChainReconDeepAnalysisEnabled}
-                onChange={(v) => updateField('supplyChainReconDeepAnalysisEnabled' as keyof FormData, v as never)}
-                aria-label="Deep behavioural analysis"
-              />
-              <label className={styles.fieldLabel} style={{ margin: 0 }}>Deep behavioural analysis (GuardDog)</label>
+              <div className={styles.toggleRow}>
+                <div style={{ flex: 1, paddingRight: '12px' }}>
+                  <span className={styles.toggleLabel}>Deep behavioural analysis (GuardDog)</span>
+                  <p className={styles.toggleDescription} style={{ color: 'var(--status-warning)' }}>
+                    Downloads the package archive of a flagged dependency and inspects it inside a hardened,
+                    network-isolated sandbox. This reaches out to public package registries, so it stays off unless
+                    you specifically need behavioural evidence.
+                  </p>
+                </div>
+                <Toggle
+                  checked={!!d.supplyChainReconDeepAnalysisEnabled}
+                  onChange={(v) => updateField('supplyChainReconDeepAnalysisEnabled' as keyof FormData, v as never)}
+                  aria-label="Deep behavioural analysis"
+                />
+              </div>
             </div>
-            <p style={{ fontSize: '12px', color: '#f59e0b', marginTop: '4px' }}>
-              Downloads the package archive of a flagged dependency and inspects it inside a hardened,
-              network-isolated sandbox. This reaches out to public package registries, so it stays off unless you
-              specifically need behavioural evidence.
-            </p>
-          </div>
+          )}
         </div>
       )}
     </div>

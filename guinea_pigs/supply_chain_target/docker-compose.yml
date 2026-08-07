@@ -1,0 +1,59 @@
+# RedAmon Supply-Chain recon (L2) guinea pig
+#
+# Bring up:    docker compose up -d --build
+# Bring down:  docker compose down
+# Target URL:  http://192.88.99.10/
+#
+# WHY NOT 127.0.0.1 (unlike the other guinea pigs):
+#
+#   L2's harvest is fed by js_recon, which is PYTHON and routes every JS URL
+#   and every source-map URL through is_url_safe_to_probe()
+#   (recon/main_recon_modules/ip_filter.py). That guard fails closed on any
+#   non-routable address - loopback, RFC1918, CGNAT, link-local, and every
+#   TEST-NET range (Python marks 192.0.2/198.51.100/203.0.113/198.18 as
+#   is_private). A target on 127.0.0.1 therefore yields ZERO downloaded JS,
+#   ZERO source maps, and an empty harvest.
+#
+#   ai_surface_target gets away with network_mode: host because port_scan and
+#   http_probe are Go binaries that never see this Python guard.
+#
+#   192.88.99.0/24 is the deprecated 6to4 relay anycast prefix (RFC 7526).
+#   Python's ipaddress reports it as global/non-private, so the guard passes
+#   and the E2E run exercises the REAL production code path with the SSRF
+#   control intact. Docker adds a local route for it; nothing leaves the host,
+#   and the prefix is unrouted on the real internet.
+#
+# The recon container runs network_mode: host, so it reaches 192.88.99.10
+# through the bridge route this network installs.
+
+services:
+
+  supply-chain-target:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: redamon-supply-chain-target:latest
+    container_name: redamon-supply-chain-target
+    restart: unless-stopped
+    # Source bind for fast iteration; the CMD runs /app/server.py from the
+    # image, so this just overlays it.
+    volumes:
+      - ./server.py:/app/server.py:ro
+    networks:
+      sc_lab:
+        ipv4_address: 192.88.99.10
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1/robots.txt', timeout=2).status==200 else 1)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+networks:
+  sc_lab:
+    name: redamon_sc_lab
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.88.99.0/24
+          gateway: 192.88.99.1

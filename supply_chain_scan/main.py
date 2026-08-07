@@ -34,8 +34,15 @@ except ImportError:
 
 
 def run_supply_chain_scan(project_id: str) -> dict:
-    enabled = get_setting("SUPPLY_CHAIN_ENABLED", False)
+    # There is no SUPPLY_CHAIN_ENABLED gate. The scan is launched explicitly
+    # from Other Scans, so reaching this code IS the operator's intent; a second
+    # switch that had to be flipped first only ever produced a scan that
+    # silently did nothing. (The setting existed, was parsed, and was never
+    # read - it gated nothing even when it was present.)
+    input_mode = get_setting("SUPPLY_CHAIN_INPUT_MODE", "upload")
     sbom_file = get_setting("SUPPLY_CHAIN_SBOM_FILE", "")
+    repo_url = get_setting("SUPPLY_CHAIN_REPO_URL", "")
+    repo_ref = get_setting("SUPPLY_CHAIN_REPO_REF", "")
     ecosystems_raw = get_setting("SUPPLY_CHAIN_ECOSYSTEMS", "")
     ecosystems = [e.strip() for e in (ecosystems_raw or "").split(",") if e.strip()]
 
@@ -47,19 +54,95 @@ def run_supply_chain_scan(project_id: str) -> dict:
     print("\n" + "=" * 70)
     print("           RedAmon - Supply-Chain Scan (L1)")
     print("=" * 70)
-    print(f"  Input file:     {sbom_file or '(not set)'}")
+    if input_mode == "github":
+        print(f"  Repository:     {repo_url or '(not set)'}")
+        print(f"  Ref:            {repo_ref or '(default branch)'}")
+    else:
+        print(f"  Input file:     {sbom_file or '(not set)'}")
     print(f"  Ecosystems:     {', '.join(ecosystems) or '(all)'}")
     print(f"  OSV DB:         {db_path}")
     print("=" * 70 + "\n")
 
-    if not sbom_file:
+    # Repository input: clone first, then scan the checkout as a directory so
+    # osv-scanner picks up EVERY lockfile in the tree, not just one file.
+    repo_dir = None
+    repo_scratch = None
+    repo_slug = None
+    if input_mode == "github":
+        if not repo_url:
+            print("[!] ERROR: no repository configured (set one in Other Scans -> Supply Chain)")
+            return {"error": "no repository configured"}
+        try:
+            from supply_chain_scan.repo_clone import clone_repo, parse_repo, RepoCloneError
+        except ImportError:
+            from repo_clone import clone_repo, parse_repo, RepoCloneError
+        try:
+            owner, name = parse_repo(repo_url)
+            repo_slug = f"{owner}/{name}"
+            token = get_setting("GITHUB_ACCESS_TOKEN", "") or None
+            print(f"[*] Cloning {repo_slug}"
+                  f"{' @ ' + repo_ref if repo_ref else ''}"
+                  f"{' (authenticated)' if token else ' (anonymous)'}...")
+            repo_dir = clone_repo(repo_url, ref=repo_ref or None, token=token)
+            repo_scratch = os.path.dirname(repo_dir)
+            print(f"[+] Cloned to {repo_dir}")
+        except RepoCloneError as exc:
+            # Never a silent empty scan: a clone that did not happen is an
+            # error, not a repository with no dependencies.
+            print(f"[!] ERROR: {exc}")
+            return {"error": f"clone failed: {exc}"}
+    elif not sbom_file:
         print("[!] ERROR: no SBOM/lockfile configured (upload one in Other Scans -> Supply Chain)")
         return {"error": "no input file configured"}
 
-    runner = SupplyChainRunner(
-        uploads_dir=uploads_dir, sbom_file=sbom_file, db_path=db_path,
-        project_id=project_id, ecosystems=ecosystems)
-    artifact = runner.run()
+    try:
+        runner = SupplyChainRunner(
+            uploads_dir=uploads_dir, sbom_file=sbom_file, db_path=db_path,
+            project_id=project_id, ecosystems=ecosystems, repo_dir=repo_dir)
+        artifact = runner.run()
+    finally:
+        # The checkout is attacker-authored content on a shared filesystem.
+        # Remove it whether or not the scan succeeded.
+        if repo_scratch:
+            import shutil as _shutil
+            _shutil.rmtree(repo_scratch, ignore_errors=True)
+
+    # Deep behavioural analysis (GuardDog), opt-in. Dispatched to the DIRTY
+    # analyzer over the broker socket: this process holds the Neo4j creds and
+    # must never unpack an attacker-authored tarball itself.
+    deep_stats = None
+    if get_setting("SUPPLY_CHAIN_DEEP_ANALYSIS_ENABLED", False):
+        try:
+            # Same dual-context dance as the project_settings import at the top
+            # of this module: the container runs main.py both as a package
+            # member and as a plain script. Without the fallback the import
+            # raises, the outer `except Exception` swallows it, and deep
+            # analysis silently never runs.
+            try:
+                from supply_chain_scan.deep_analysis import (
+                    deep_analyze, flagged_specs, _soft_error,
+                )
+            except ImportError:
+                from deep_analysis import deep_analyze, flagged_specs, _soft_error
+            from supply_chain_common.security import validate_artifact, ArtifactError
+            from supply_chain_common.deep_recovery import recover_invalid_deep_artifact
+            artifact, deep_stats = deep_analyze(artifact)
+            try:
+                # GuardDog output quotes attacker-authored package source, so it
+                # must clear the boundary gate too.
+                artifact = validate_artifact(artifact)
+            except ArtifactError as exc:
+                # This used to do `artifact["suspicious"] = []`, which erased the
+                # soft-error markers for packages GuardDog never analysed and so
+                # reported them as behaviourally CLEAN. L2 was fixed for exactly
+                # that (D1); L1 was not. Both now share one implementation.
+                print(f"[!] deep analysis artifact invalid: {exc}")
+                artifact = recover_invalid_deep_artifact(
+                    artifact, exc, validate=validate_artifact,
+                    flagged_specs=flagged_specs, add_soft_error=_soft_error)
+        except Exception as exc:
+            print(f"[!] deep analysis failed: {exc}")
+            artifact.setdefault("errors", []).append(f"deep analysis failed: {exc}")
 
     print("\n" + "=" * 70)
     print("                    SCAN SUMMARY")
@@ -67,6 +150,10 @@ def run_supply_chain_scan(project_id: str) -> dict:
     print(f"  Packages:       {runner.stats['packages']}")
     print(f"  MALICIOUS:      {runner.stats['malicious']}")
     print(f"  Vulnerable:     {runner.stats['vulnerable']}")
+    if deep_stats:
+        print(f"  Deep analysis:  scanned={deep_stats['scanned']} "
+              f"suspicious={deep_stats['suspicious']} "
+              f"soft_errors={deep_stats['soft_errors']} failed={deep_stats['failed']}")
     if artifact.get("errors"):
         print(f"  Errors:         {artifact['errors']}")
     print("=" * 70 + "\n")
@@ -78,20 +165,35 @@ def run_supply_chain_scan(project_id: str) -> dict:
         json.dump({
             "project_id": project_id,
             "scanned_at": datetime.now(timezone.utc).isoformat(),
-            "input_file": sbom_file,
+            "input_mode": input_mode,
+            "input_file": repo_slug or sbom_file,
+            "repository": repo_slug,
+            "repository_ref": repo_ref if repo_slug else None,
             "artifact": artifact,
         }, fh, indent=2)
     print(f"[+] Saved artifact to {out_file}")
 
-    # Write the graph (CLEAN writer holds Neo4j creds). Anchor is None: an
-    # uploaded SBOM has no repo/URL parent, so packages float (plan Phase 2a).
+    # Write the graph (CLEAN writer holds Neo4j creds). An uploaded SBOM has no
+    # repo/URL parent so its packages float; a repo scan anchors to the
+    # GithubRepository node below.
     try:
         from graph_db import Neo4jClient
 
         with Neo4jClient() as client:
             if client.verify_connection():
-                gstats = client.update_graph_from_supply_chain(
-                    artifact, USER_ID, project_id)
+                if repo_slug:
+                    # A repo scan HAS a graph parent, unlike an uploaded SBOM:
+                    # anchor the packages to it so they are reachable instead
+                    # of floating.
+                    repo_id = client.ensure_github_repository(
+                        USER_ID, project_id, repo_slug)
+                    gstats = client.update_graph_from_supply_chain(
+                        artifact, USER_ID, project_id,
+                        anchor_label="GithubRepository", anchor_key="id",
+                        anchor_value=repo_id)
+                else:
+                    gstats = client.update_graph_from_supply_chain(
+                        artifact, USER_ID, project_id)
                 print(f"[+] Graph updated: {gstats}")
             else:
                 print("[!] Could not connect to Neo4j - skipping graph update")
@@ -101,7 +203,8 @@ def run_supply_chain_scan(project_id: str) -> dict:
         print(f"[!] Graph update failed (non-fatal): {e}")
 
     return {
-        "input_file": sbom_file,
+        "input_mode": input_mode,
+        "input_file": repo_slug or sbom_file,
         "statistics": runner.stats,
         "output_file": out_file,
     }

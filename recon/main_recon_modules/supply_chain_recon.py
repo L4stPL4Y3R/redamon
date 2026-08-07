@@ -10,25 +10,28 @@ graph write (Package/MalPackageFinding MERGE, anchored to the target BaseURLs).
 osv-scanner (static, offline) always runs here. GuardDog deep analysis runs too
 when SUPPLY_CHAIN_RECON_DEEP_ANALYSIS_ENABLED is on: it is dispatched INTO the
 hardened DIRTY analyzer image over the broker socket this container already
-holds, and only ever over packages the OSV pass already flagged. retire.js over
-target-served JS is still v2.
+holds, and only ever over packages the OSV pass already flagged. retire.js runs
+there too, over the JS that JS-recon already downloaded - it is the only source
+that yields versioned components, so it is where most verdicts come from.
 
 This module itself never downloads or unpacks a tarball - it holds the Neo4j
 creds, the analyzer does not.
 """
 
-import copy
 import os
+import shutil
 import tempfile
 import time
 
 # supply_chain_common is mounted into the recon container like graph_db.
 from supply_chain_common import osv_runner as _osv_runner
 from supply_chain_common import guarddog_runner as _guarddog_runner
+from supply_chain_common import analyzer_dispatch as _analyzer_dispatch
 from supply_chain_common.artifact import (
     empty_artifact, add_osv_findings, add_guarddog_findings, to_cyclonedx,
 )
 from supply_chain_common.security import validate_artifact, ArtifactError
+from supply_chain_common.deep_recovery import recover_invalid_deep_artifact
 
 _OSV_DB = os.environ.get("OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY", "/osv-db")
 
@@ -41,6 +44,11 @@ _DEEP_TIMEOUT = int(os.environ.get("SUPPLY_CHAIN_DEEP_TIMEOUT", "180"))
 # (10 x 180s = 30 min) of a recon scan blocked on a registry that is slow or
 # hanging, with no way for the pipeline to make progress.
 _DEEP_TOTAL_BUDGET = int(os.environ.get("SUPPLY_CHAIN_DEEP_TOTAL_BUDGET", "900"))
+# retire.js pass over the served JS, inside the DIRTY analyzer.
+_RETIRE_TIMEOUT = int(os.environ.get("SUPPLY_CHAIN_RETIRE_TIMEOUT", "300"))
+# supply_chain_common as the DOCKER DAEMON sees it (recon mounts it read-only
+# at /app/supply_chain_common; the analyzer needs the host-side path).
+_SC_COMMON_PATH = os.environ.get("SUPPLY_CHAIN_COMMON_HOST_PATH", "/app/supply_chain_common")
 _ANALYZER_IMAGE = os.environ.get("SUPPLY_CHAIN_ANALYZER_IMAGE",
                                  _guarddog_runner.ANALYZER_IMAGE)
 
@@ -228,7 +236,7 @@ def _add_soft_error(artifact, spec, message):
 
 def deep_analyze(artifact, *, image=None, timeout=_DEEP_TIMEOUT,
                  limit=_DEEP_MAX_PACKAGES, budget=_DEEP_TOTAL_BUDGET,
-                 guarddog=None):
+                 guarddog=None, dispatch=None):
     """Behavioural (GuardDog) pass over the OSV-flagged packages.
 
     Runs guarddog INSIDE the hardened dirty analyzer image, spawned through the
@@ -249,7 +257,6 @@ def deep_analyze(artifact, *, image=None, timeout=_DEEP_TIMEOUT,
     if not specs:
         return artifact, stats
 
-    prefix = gd_mod.hardened_docker_argv(image or _ANALYZER_IMAGE)
     started = time.monotonic()
 
     for spec in specs:
@@ -268,10 +275,10 @@ def deep_analyze(artifact, *, image=None, timeout=_DEEP_TIMEOUT,
 
         print("[*][SupplyChainRecon] deep analysis: {}".format(label))
         try:
-            res = gd_mod.scan_package(spec["ecosystem"], spec["name"],
-                                      spec["version"],
-                                      timeout=min(timeout, max(1, int(budget - elapsed))) if budget else timeout,
-                                      argv_prefix=prefix)
+            res = _guarddog_via_analyzer(
+                spec,
+                timeout=min(timeout, max(1, int(budget - elapsed))) if budget else timeout,
+                image=image, gd_mod=gd_mod, dispatch=dispatch)
         except Exception as exc:
             # A hostile coordinate (SanitizeError) or a spawn failure must not
             # discard the OSV verdicts already collected. Isolate per package,
@@ -307,6 +314,267 @@ def deep_analyze(artifact, *, image=None, timeout=_DEEP_TIMEOUT,
     return artifact, stats
 
 
+# Import mining reads the served JS itself. Capped so a target cannot make the
+# recon process hold an unbounded amount of attacker-controlled text: js_recon
+# already caps each file at 5 MB, but nothing caps the file COUNT here.
+_IMPORT_MAX_FILES = int(os.environ.get("SUPPLY_CHAIN_IMPORT_MAX_FILES", "200"))
+_IMPORT_MAX_BYTES = int(os.environ.get("SUPPLY_CHAIN_IMPORT_MAX_BYTES", str(64 * 1024 * 1024)))
+
+
+def _read_js_contents(combined_result):
+    """Raw JS text for import mining, from the dir js_recon preserved.
+
+    mine_import_packages was written and tested but never received any input:
+    run_supply_chain_recon called harvest_packages WITHOUT js_contents, so the
+    whole import-mining source was dead in the pipeline.
+
+    This is PURE string parsing (a regex for bare `import`/`require`
+    specifiers) - the same risk class as the source-map mining that already
+    happens in this process. Nothing is executed and nothing is fetched: the
+    bytes were downloaded by js_recon, so there is no new target traffic and no
+    SSRF surface (S4).
+    """
+    js = (combined_result or {}).get("js_recon") or {}
+    work_dir = js.get("work_dir")
+    if not work_dir or not os.path.isdir(work_dir):
+        return []
+
+    contents = []
+    total = 0
+    try:
+        names = sorted(os.listdir(work_dir))
+    except OSError:
+        return []
+    for name in names:
+        if len(contents) >= _IMPORT_MAX_FILES or total >= _IMPORT_MAX_BYTES:
+            break
+        if not name.lower().endswith(".js"):
+            continue
+        path = os.path.join(work_dir, name)
+        try:
+            if not os.path.isfile(path):
+                continue
+            size = os.path.getsize(path)
+            if total + size > _IMPORT_MAX_BYTES:
+                continue
+            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                contents.append(fh.read())
+            total += size
+        except OSError:
+            continue
+    return contents
+
+
+def _guarddog_via_analyzer(spec, *, timeout, image=None, gd_mod=None,
+                           dispatch=None, sc_common_path=None):
+    """One GuardDog package, through the SAME analyzer job contract as retire.js.
+
+    This replaces a hand-rolled `docker run --entrypoint guarddog`. Keeping two
+    definitions of the DIRTY spawn meant a security boundary that could drift;
+    now every hostile-byte operation goes through analyzer_dispatch, which also
+    gives GuardDog the egress-fails-closed behaviour.
+
+    Returns the same {findings, error} shape scan_package did, so the caller is
+    unchanged.
+    """
+    ad = dispatch or _analyzer_dispatch
+    gd = gd_mod or _guarddog_runner
+    job_dir = ad.new_work_dir(prefix="sc-guarddog")
+    try:
+        res = ad.run_analyzer_job(
+            {"mode": "purls", "target": "/work",
+             "deep_analysis": True,
+             "guarddog_packages": [{"ecosystem": spec["ecosystem"],
+                                    "name": spec["name"],
+                                    "version": spec["version"]}]},
+            job_dir, sc_common_path or _SC_COMMON_PATH,
+            image=image, allow_registry_egress=True, timeout=timeout)
+    finally:
+        shutil.rmtree(job_dir, ignore_errors=True)
+
+    artifact = res.get("artifact")
+    if artifact is None:
+        return {"findings": [], "error": res.get("error") or "analyzer produced no artifact"}
+
+    # The analyzer already normalized GuardDog output into `suspicious`; map it
+    # back to the finding shape deep_analyze folds in.
+    findings = []
+    for s in artifact.get("suspicious") or []:
+        findings.append({
+            "package": s.get("name"), "version": s.get("version"),
+            "rule": s.get("rule"), "severity": s.get("severity"),
+            "confidence": "suspicious", "message": s.get("message") or "",
+            "soft_error": bool(s.get("soft_error")),
+        })
+    inner = [e for e in (artifact.get("errors") or []) if str(e).startswith("guarddog")]
+    return {"findings": findings,
+            "error": res.get("error") or (inner[0][:300] if inner else None)}
+
+
+def _cleanup_js_work_dir(combined_result):
+    """Delete the JS dir js_recon preserved for us.
+
+    js_recon skips its own rmtree when supply-chain recon is enabled, so this
+    stage owns the bytes and must not leak them: they are attacker-served and
+    they sit in /tmp/redamon, which is shared with the host.
+    """
+    js = (combined_result or {}).get("js_recon") or {}
+    work_dir = js.get("work_dir")
+    if not work_dir:
+        return
+    try:
+        shutil.rmtree(work_dir, ignore_errors=True)
+    finally:
+        js["work_dir"] = None
+
+
+def retire_js_harvest(combined_result, *, sc_common_path=None, timeout=_RETIRE_TIMEOUT,
+                      dispatch=None):
+    """retire.js over the JS that JS-recon already downloaded, via the analyzer.
+
+    Returns (artifact_or_None, stats). The JS bytes are attacker-served, so they
+    are NEVER parsed in this process: the job runs inside the hardened DIRTY
+    analyzer, which holds no credentials, and only a boundary-validated artifact
+    comes back.
+
+    This is the one L2 source that produces a NAME **and a VERSION** from the
+    served bytes. Source-map mining yields names with no version (unverdictable)
+    and the technology path only covers the 15-entry alias table, so without
+    this most of a real target's dependency set can never be verdicted at all.
+    """
+    ad = dispatch or _analyzer_dispatch
+    stats = {"ran": False, "packages": 0, "malicious": 0, "vulnerable": 0,
+             "error": None}
+
+    js = combined_result.get("js_recon") or {}
+    work_dir = js.get("work_dir")
+    if not work_dir:
+        stats["error"] = ("no JS work dir (js_recon did not preserve it - is "
+                          "SUPPLY_CHAIN_RECON_ENABLED set before JS recon runs?)")
+        return None, stats
+    if not os.path.isdir(work_dir):
+        stats["error"] = "JS work dir vanished: {}".format(work_dir)
+        return None, stats
+
+    job_dir = ad.new_work_dir(prefix="sc-retire")
+    try:
+        res = ad.run_analyzer_job(
+            {"mode": "js-dir", "target": _in_work(job_dir, work_dir)},
+            job_dir, sc_common_path or _SC_COMMON_PATH, timeout=timeout)
+    except Exception as exc:
+        stats["error"] = "retire dispatch failed: {}".format(exc)
+        return None, stats
+    finally:
+        # The job dir holds a COPY of attacker-served JS on host-shared
+        # /tmp/redamon. Leaving it behind leaks target bytes and grows without
+        # bound across scans.
+        shutil.rmtree(job_dir, ignore_errors=True)
+
+    stats["error"] = res.get("error")
+    artifact = res.get("artifact")
+    if artifact is None:
+        return None, stats
+
+    stats["ran"] = True
+    # The analyzer exits 0 even when retire.js itself failed; that failure is
+    # recorded inside the artifact. Surface it, or the pass reports ran=True
+    # with no error and reads as "scanned, found nothing".
+    inner = [e for e in (artifact.get("errors") or []) if str(e).startswith("retire")]
+    if inner and not stats.get("error"):
+        stats["error"] = inner[0][:300]
+    stats["packages"] = len(artifact.get("packages") or [])
+    stats["malicious"] = len(artifact.get("malicious") or [])
+    stats["vulnerable"] = len(artifact.get("vulnerable") or [])
+    return artifact, stats
+
+
+def _in_work(job_dir, js_dir):
+    """Expose the JS dir to the analyzer under its /work mount.
+
+    The analyzer only ever sees `job_dir` bound at /work, so the downloaded JS
+    must live inside it. A symlink would dangle across the mount boundary, so
+    the files are copied - they are small (JS_RECON caps each file at 5 MB) and
+    this keeps the analyzer's view of the filesystem to exactly one directory.
+    """
+    dest = os.path.join(job_dir, "js")
+    shutil.copytree(js_dir, dest, dirs_exist_ok=True)
+    # retire.js writes its report (_retire_out.json) INTO the directory it
+    # scans, and the analyzer runs as non-root (uid 1001) while this process is
+    # root - so a default 0755 copy makes retire die with EACCES after doing all
+    # the work. Verified: "EACCES: permission denied, open
+    # '/work/js/_retire_out.json'" at reporting.js:110.
+    try:
+        os.chmod(dest, 0o777)
+    except OSError:
+        pass
+    return "/work/js"
+
+
+def _pkg_identity(pkg):
+    """The key a package is deduped on: (ecosystem, name) - NOT the purl.
+
+    A purl embeds the version, so purl-keying treats `pkg:npm/lodash` and
+    `pkg:npm/lodash@4.17.4` as two different packages. They are one library
+    seen by two sources, and keeping both puts two Package nodes in the graph
+    for it.
+    """
+    return (pkg.get("ecosystem"), pkg.get("name"))
+
+
+def merge_artifacts(base, extra):
+    """Fold an analyzer artifact into the running one, deduping by identity.
+
+    Packages dedup on (ecosystem, name) with the VERSIONED sighting winning;
+    findings dedup on (purl, advisory_id) - the same key the graph writer
+    MERGEs on, so what the graph would collapse is collapsed here too and the
+    summary counts stay honest.
+
+    The version-preferring rule mirrors harvest_packages, which already applies
+    it across its own three sources. It matters most exactly here: retire.js is
+    the only source that reads a version out of the served bytes, so the
+    package it upgrades is routinely one wappalyzer or source-map mining
+    already contributed WITHOUT a version. Deduping on the purl string would
+    keep both - an unverdictable `pkg:npm/lodash` next to the verdicted
+    `pkg:npm/lodash@4.17.4`.
+    """
+    if not extra:
+        return base
+    # Index by identity so a versioned sighting can REPLACE a versionless one
+    # that is already in the list, not merely be skipped or appended.
+    by_identity = {}
+    for idx, pkg in enumerate(base.get("packages") or []):
+        by_identity.setdefault(_pkg_identity(pkg), idx)
+
+    for pkg in extra.get("packages") or []:
+        key = _pkg_identity(pkg)
+        idx = by_identity.get(key)
+        if idx is None:
+            by_identity[key] = len(base["packages"])
+            base["packages"].append(pkg)
+            continue
+        prev = base["packages"][idx]
+        # Best evidence wins: a concrete version beats no version. Two
+        # DIFFERENT concrete versions keep first-seen - the harvest side is
+        # the one that already deduped its own sources, so it is not
+        # second-guessed here.
+        if pkg.get("version") and not prev.get("version"):
+            base["packages"][idx] = pkg
+
+    for bucket in ("malicious", "vulnerable", "suspicious"):
+        seen = {(f.get("purl"), f.get("advisory_id") or f.get("rule"))
+                for f in base.get(bucket) or []}
+        for f in extra.get(bucket) or []:
+            key = (f.get("purl"), f.get("advisory_id") or f.get("rule"))
+            if key in seen:
+                continue
+            seen.add(key)
+            base[bucket].append(f)
+
+    for err in extra.get("errors") or []:
+        base["errors"].append(err)
+    return base
+
+
 def run_supply_chain_recon(combined_result, settings=None):
     """Harvest + verdict; store combined_result['supply_chain_recon']. Returns
     the mutated combined_result (pipeline convention)."""
@@ -317,13 +585,45 @@ def run_supply_chain_recon(combined_result, settings=None):
     technologies = _extract_technologies(combined_result)
     base_urls = _extract_base_urls(combined_result)
 
-    packages = harvest_packages(source_maps=source_maps, technologies=technologies)
+    js_contents = _read_js_contents(combined_result)
+    packages = harvest_packages(source_maps=source_maps,
+                                technologies=technologies,
+                                js_contents=js_contents)
     ecos = settings.get("SUPPLY_CHAIN_RECON_ECOSYSTEMS")
     if ecos:
         allow = {e.strip() for e in ecos.split(",") if e.strip()} if isinstance(ecos, str) else set(ecos)
         packages = [p for p in packages if p.get("ecosystem") in allow]
 
     artifact = verdict_packages(packages, db_path=_OSV_DB)
+
+    # retire.js over the served JS, inside the DIRTY analyzer. This is the only
+    # source that yields versioned components, so it is where most real verdicts
+    # come from; it is folded in BEFORE the flagged-package selection below so
+    # deep analysis can triage what it finds.
+    retire_stats = None
+    if settings.get("SUPPLY_CHAIN_RECON_RETIRE_ENABLED", True):
+        try:
+            retire_art, retire_stats = retire_js_harvest(combined_result)
+            if retire_art:
+                artifact = merge_artifacts(artifact, retire_art)
+                artifact = validate_artifact(artifact)
+            elif retire_stats.get("error"):
+                # Never silently clean: if the pass could not run, say so.
+                artifact["errors"].append("retire: {}".format(retire_stats["error"]))
+        except Exception as exc:
+            print("[!][SupplyChainRecon] retire.js pass failed: {}".format(exc))
+            artifact["errors"].append("retire.js pass failed: {}".format(exc))
+        finally:
+            _cleanup_js_work_dir(combined_result)
+    else:
+        _cleanup_js_work_dir(combined_result)
+
+    if retire_stats:
+        print("[+][SupplyChainRecon] retire.js: ran={} packages={} malicious={} "
+              "vulnerable={}{}".format(
+                  retire_stats["ran"], retire_stats["packages"],
+                  retire_stats["malicious"], retire_stats["vulnerable"],
+                  " error=" + str(retire_stats["error"]) if retire_stats.get("error") else ""))
 
     # Deep behavioural analysis (GuardDog), opt-in. Runs only over packages the
     # offline OSV pass already flagged, inside the hardened dirty analyzer.
@@ -337,30 +637,13 @@ def run_supply_chain_recon(combined_result, settings=None):
         except ArtifactError as exc:
             # D1: dropping the WHOLE suspicious list here made every package the
             # deep pass touched read behaviourally clean again - including the
-            # soft-error markers that exist precisely to prevent that. Drop only
-            # the entries that cannot clear the gate, then re-mark every flagged
-            # package that lost its finding as UNANALYSED.
+            # soft-error markers that exist precisely to prevent that. The
+            # salvage logic is shared with L1 so the two cannot drift again;
+            # they already did once, and L1 kept the wholesale wipe.
             print("[!][SupplyChainRecon] deep analysis artifact invalid: {}".format(exc))
-            bad = artifact["suspicious"]
-            kept = []
-            for f in bad:
-                probe = dict(artifact, suspicious=[f])
-                try:
-                    validate_artifact(probe)
-                    kept.append(f)
-                except ArtifactError:
-                    pass
-            artifact["suspicious"] = kept
-            artifact["errors"].append(
-                "deep analysis: dropped {} unvalidatable finding(s): {}".format(
-                    len(bad) - len(kept), exc))
-            covered = {(f.get("name"), f.get("version")) for f in kept}
-            for spec in flagged_specs(artifact):
-                if (spec["name"], spec["version"]) not in covered:
-                    _add_soft_error(artifact, spec,
-                                    "deep analysis result failed validation and "
-                                    "was dropped; package NOT analysed")
-            artifact = validate_artifact(artifact)
+            artifact = recover_invalid_deep_artifact(
+                artifact, exc, validate=validate_artifact,
+                flagged_specs=flagged_specs, add_soft_error=_add_soft_error)
         except Exception as exc:
             print("[!][SupplyChainRecon] deep analysis failed: {}".format(exc))
             artifact["errors"].append("deep analysis failed: {}".format(exc))
@@ -386,9 +669,3 @@ def run_supply_chain_recon(combined_result, settings=None):
                   deep_stats["soft_errors"], deep_stats["failed"],
                   deep_stats["skipped_budget"]))
     return combined_result
-
-
-def run_supply_chain_recon_isolated(combined_result, settings=None):
-    """Deep-copy variant for thread-safe use inside the pipeline executor."""
-    local = copy.deepcopy(combined_result)
-    return run_supply_chain_recon(local, settings=settings)

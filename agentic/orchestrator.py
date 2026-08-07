@@ -100,9 +100,6 @@ class AgentOrchestrator:
         self._guidance_queues: dict[str, asyncio.Queue] = {}
         self._graph_view_cyphers: dict[str, str | None] = {}
 
-        # Metasploit prewarm: background restart tasks keyed by session_key
-        self._prewarm_tasks: dict[str, asyncio.Task] = {}
-
     async def initialize(self) -> None:
         """Initialize tools and graph (LLM setup deferred until project_id is known)."""
         if self._initialized:
@@ -200,46 +197,6 @@ class AgentOrchestrator:
     # =========================================================================
     # METASPLOIT PREWARM
     # =========================================================================
-
-    def start_msf_prewarm(self, session_key: str) -> None:
-        """
-        Start a background Metasploit restart so msfconsole is ready
-        by the time the agent needs it.
-
-        Called on WebSocket init (drawer open). Fire-and-forget.
-        If a prewarm is already running for this session, skip.
-        """
-        if not self._initialized or not self.tool_executor:
-            logger.debug("Orchestrator not initialized yet, skipping prewarm")
-            return
-
-        # Skip if already running for this session
-        existing = self._prewarm_tasks.get(session_key)
-        if existing and not existing.done():
-            logger.debug(f"Prewarm already running for {session_key}, skipping")
-            return
-
-        logger.info(f"[{session_key}] Starting Metasploit prewarm (background)")
-        task = asyncio.create_task(self._do_msf_prewarm(session_key))
-        self._prewarm_tasks[session_key] = task
-
-    async def _do_msf_prewarm(self, session_key: str) -> None:
-        """Background task: restart msfconsole for a clean state."""
-        try:
-            result = await self.tool_executor.execute(
-                "msf_restart", {}, "exploitation", skip_phase_check=True
-            )
-            if result and result.get("success"):
-                logger.info(f"[{session_key}] Metasploit prewarm complete")
-            else:
-                logger.warning(f"[{session_key}] Metasploit prewarm failed: {result}")
-        except asyncio.CancelledError:
-            logger.info(f"[{session_key}] Metasploit prewarm cancelled")
-        except Exception as e:
-            logger.warning(f"[{session_key}] Metasploit prewarm error: {e}")
-        finally:
-            # Clean up the task reference
-            self._prewarm_tasks.pop(session_key, None)
 
     # =========================================================================
     # LLM & PROJECT SETTINGS
@@ -1055,94 +1012,6 @@ class AgentOrchestrator:
             logger.error(f"[{user_id}/{project_id}/{session_id}] Error: {e}")
             return InvokeResponse(error=str(e))
 
-    async def resume_after_approval(
-        self,
-        session_id: str,
-        user_id: str,
-        project_id: str,
-        decision: str,
-        modification: Optional[str] = None
-    ) -> InvokeResponse:
-        """Resume execution after user provides approval response."""
-        if not self._initialized:
-            raise RuntimeError("Orchestrator not initialized. Call initialize() first.")
-
-        self._apply_project_settings(project_id)
-
-        if self.llm is None:
-            msg = "LLM not configured. Please add an API key in Global Settings."
-            logger.error(f"[{user_id}/{project_id}/{session_id}] {msg}")
-            return InvokeResponse(error=msg)
-
-        logger.info(f"[{user_id}/{project_id}/{session_id}] Resuming with approval: {decision}")
-
-        try:
-            config = create_config(user_id, project_id, session_id)
-
-            current_state = await self.graph.aget_state(config)
-
-            if not current_state or not current_state.values:
-                return InvokeResponse(error="No pending session found")
-
-            update_data = {
-                "user_approval_response": decision,
-                "user_modification": modification,
-            }
-
-            final_state = await self.graph.ainvoke(
-                update_data,
-                config,
-            )
-
-            return self._build_response(final_state)
-
-        except Exception as e:
-            logger.error(f"[{user_id}/{project_id}/{session_id}] Resume error: {e}")
-            return InvokeResponse(error=str(e))
-
-    async def resume_after_answer(
-        self,
-        session_id: str,
-        user_id: str,
-        project_id: str,
-        answer: str
-    ) -> InvokeResponse:
-        """Resume execution after user provides answer to a question."""
-        if not self._initialized:
-            raise RuntimeError("Orchestrator not initialized. Call initialize() first.")
-
-        self._apply_project_settings(project_id)
-
-        if self.llm is None:
-            msg = "LLM not configured. Please add an API key in Global Settings."
-            logger.error(f"[{user_id}/{project_id}/{session_id}] {msg}")
-            return InvokeResponse(error=msg)
-
-        logger.info(f"[{user_id}/{project_id}/{session_id}] Resuming with answer: {answer[:10000]}")
-
-        try:
-            config = create_config(user_id, project_id, session_id)
-
-            current_state = await self.graph.aget_state(config)
-
-            if not current_state or not current_state.values:
-                return InvokeResponse(error="No pending session found")
-
-            update_data = {
-                "user_question_answer": answer,
-            }
-
-            final_state = await self.graph.ainvoke(
-                update_data,
-                config,
-            )
-
-            return self._build_response(final_state)
-
-        except Exception as e:
-            logger.error(f"[{user_id}/{project_id}/{session_id}] Resume error: {e}")
-            return InvokeResponse(error=str(e))
-
     def _build_response(self, state: dict) -> InvokeResponse:
         """Build InvokeResponse from final state."""
         final_answer = ""
@@ -1434,51 +1303,6 @@ class AgentOrchestrator:
             self._streaming_callbacks.pop(session_id, None)
             self._guidance_queues.pop(session_id, None)
             self._graph_view_cyphers.pop(session_id, None)
-
-    async def resume_after_tool_confirmation(
-        self,
-        session_id: str,
-        user_id: str,
-        project_id: str,
-        decision: str,
-        modifications: Optional[dict] = None
-    ) -> InvokeResponse:
-        """Resume execution after user provides tool confirmation response."""
-        if not self._initialized:
-            raise RuntimeError("Orchestrator not initialized. Call initialize() first.")
-
-        self._apply_project_settings(project_id)
-
-        if self.llm is None:
-            msg = "LLM not configured. Please add an API key in Global Settings."
-            logger.error(f"[{user_id}/{project_id}/{session_id}] {msg}")
-            return InvokeResponse(error=msg)
-
-        logger.info(f"[{user_id}/{project_id}/{session_id}] Resuming with tool confirmation: {decision}")
-
-        try:
-            config = create_config(user_id, project_id, session_id)
-
-            current_state = await self.graph.aget_state(config)
-
-            if not current_state or not current_state.values:
-                return InvokeResponse(error="No pending session found")
-
-            update_data = {
-                "tool_confirmation_response": decision,
-                "tool_confirmation_modification": modifications,
-            }
-
-            final_state = await self.graph.ainvoke(
-                update_data,
-                config,
-            )
-
-            return self._build_response(final_state)
-
-        except Exception as e:
-            logger.error(f"[{user_id}/{project_id}/{session_id}] Resume error: {e}")
-            return InvokeResponse(error=str(e))
 
     async def resume_after_tool_confirmation_with_streaming(
         self,

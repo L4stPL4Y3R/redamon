@@ -199,6 +199,18 @@ def _is_js_url(url: str) -> bool:
     return False
 
 
+def _keep_work_dir(settings: dict) -> bool:
+    """Whether the downloaded-JS dir must survive this module.
+
+    Supply-chain recon (GROUP 5.5) runs after JS recon and needs the raw bytes
+    for retire.js. JS_RECON_KEEP_WORK_DIR forces it independently (useful for
+    debugging a harvest).
+    """
+    settings = settings or {}
+    return bool(settings.get('JS_RECON_KEEP_WORK_DIR')
+                or settings.get('SUPPLY_CHAIN_RECON_ENABLED'))
+
+
 def _should_include_url(url: str, settings: dict) -> bool:
     """Check if a JS URL should be included based on settings."""
     url_lower = url.lower()
@@ -1055,6 +1067,12 @@ def run_js_recon(combined_result: dict, settings: dict) -> dict:
                 'js_files_total_size_bytes': total_size,
                 'duration_seconds': round(duration, 1),
             },
+            # Where the downloaded JS lives. GROUP 5.5 (supply-chain recon)
+            # hands this path to the DIRTY analyzer so retire.js can read the
+            # served bytes - the only L2 source that yields a NAME **and a
+            # VERSION**. Set only when the dir is preserved (see the finally
+            # block); the supply-chain stage deletes it when it is done.
+            'work_dir': str(work_dir) if _keep_work_dir(settings) else None,
             **results,
         }
 
@@ -1083,22 +1101,14 @@ def run_js_recon(combined_result: dict, settings: dict) -> dict:
             'secrets': [], 'endpoints': [], 'summary': {},
         })
     finally:
-        # Cleanup temp files
-        if work_dir.exists():
+        # Cleanup temp files. NOT when supply-chain recon is enabled: GROUP 5.5
+        # runs after us and needs these exact bytes for the retire.js pass (it
+        # must never re-fetch - that would add target traffic and an SSRF
+        # surface, S4). That stage owns the cleanup from there.
+        if work_dir.exists() and not _keep_work_dir(settings):
             try:
                 shutil.rmtree(work_dir)
             except Exception:
                 pass
 
     return combined_result
-
-
-def run_js_recon_isolated(combined_result: dict, settings: dict) -> dict:
-    """
-    Thread-safe isolated version -- shallow-copies combined_result.
-
-    Returns only the js_recon payload dict.
-    """
-    snapshot = dict(combined_result)
-    run_js_recon(snapshot, settings)
-    return snapshot.get('js_recon', {})

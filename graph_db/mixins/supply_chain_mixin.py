@@ -32,6 +32,48 @@ def _finding_id(purl, advisory):
     return hashlib.sha256(raw.encode("utf-8", "replace")).hexdigest()[:16]
 
 
+# A finding's title is what the graph viewer shows as the node NAME (it has no
+# `name` property, so webapp/src/app/api/graph/format.ts falls back to `title`).
+# It must stay a short label.
+_MAX_TITLE = 120
+
+
+def _finding_title(finding, advisory):
+    """Short, human label for a finding node.
+
+    The advisory/rule id is preferred over the message because GuardDog
+    findings carry NO title and their `message` is the full evidence dump - for
+    npm `metadata_mismatch` that is a multi-line manifest diff over a thousand
+    characters long, which then became the node's displayed name. The evidence
+    still ships, in `detail`.
+    """
+    explicit = (finding.get("title") or "").strip()
+    if explicit and len(explicit) <= _MAX_TITLE and "\n" not in explicit:
+        return explicit
+    if advisory:
+        return advisory
+    if explicit:
+        # No advisory to fall back to: use the first line, truncated.
+        first = explicit.splitlines()[0].strip()
+        return first[:_MAX_TITLE - 1] + "…" if len(first) > _MAX_TITLE else first
+    message = (finding.get("message") or "").strip()
+    if message:
+        first = message.splitlines()[0].strip()
+        return first[:_MAX_TITLE - 1] + "…" if len(first) > _MAX_TITLE else first
+    return "finding"
+
+
+# The Vulnerability node's severity enum is critical|high|medium|low|info -
+# there is no "unknown". An ungraded advisory lands at info so it does not
+# inflate the alert stream.
+_GRAPH_SEVERITIES = {"critical", "high", "medium", "low", "info"}
+
+
+def _vuln_severity(value):
+    v = (value or "").strip().lower()
+    return v if v in _GRAPH_SEVERITIES else "info"
+
+
 class SupplyChainMixin:
     """Mixin adding supply-chain graph writes to the Neo4jClient."""
 
@@ -61,8 +103,8 @@ class SupplyChainMixin:
             raise ValueError("anchor_value required with anchor_label")
 
         stats = {"packages_merged": 0, "malicious_merged": 0,
-                 "suspicious_merged": 0, "relationships_created": 0,
-                 "errors": []}
+                 "suspicious_merged": 0, "vulnerabilities_merged": 0,
+                 "relationships_created": 0, "errors": []}
 
         packages = data.get("packages") or []
         # Map both malicious (OSV MAL-) and suspicious (GuardDog) into findings.
@@ -154,8 +196,10 @@ class SupplyChainMixin:
                         verdict=verdict, source_tool=source_tool,
                         advisory=advisory, severity=f.get("severity"),
                         confidence=f.get("confidence") or verdict,
-                        title=f.get("title") or f.get("message") or advisory,
-                        detail=f.get("detail") or f.get("message") or "",
+                        title=_finding_title(f, advisory),
+                        # None, not "": an absent detail should be an absent
+                        # property, not an empty string that reads as present.
+                        detail=f.get("detail") or f.get("message") or None,
                     )
                     if verdict == "malicious":
                         stats["malicious_merged"] += 1
@@ -164,7 +208,73 @@ class SupplyChainMixin:
                 except Exception as exc:
                     stats["errors"].append("finding {}: {}".format(fid, exc))
 
+            # ---- CVE/GHSA -> the EXISTING Vulnerability model --------------
+            # These are known-vulnerable, NOT malicious, so they must never become
+            # MalPackageFinding. They used to go nowhere at all: a package with 9
+            # advisories rendered as a clean node while the JSON artifact listed
+            # them. Reuse the Vulnerability node (no new label), exactly as the
+            # cache-poisoning and takeover modules do.
+            for vul in data.get("vulnerable") or []:
+                purl = vul.get("purl")
+                advisory = vul.get("advisory_id")
+                if not purl or not advisory:
+                    continue
+                try:
+                    session.run(
+                        """
+                        MERGE (v:Vulnerability {id: $advisory, user_id: $uid, project_id: $pid})
+                        ON CREATE SET v.first_seen = datetime()
+                        SET v.source = 'osv',
+                            v.name = $name,
+                            v.description = $description,
+                            v.severity = $severity,
+                            v.cvss_metrics = $cvss,
+                            v.updated_at = datetime()
+                        WITH v
+                        MERGE (p:Package {purl: $purl, user_id: $uid, project_id: $pid})
+                        ON CREATE SET p.first_seen = datetime(), p.name = $pname,
+                                      p.ecosystem = $peco, p.source = 'finding'
+                        SET p.last_seen = datetime()
+                        MERGE (p)-[:HAS_VULNERABILITY]->(v)
+                        """,
+                        advisory=advisory, uid=user_id, pid=project_id, purl=purl,
+                        name=vul.get("title") or advisory,
+                        description=vul.get("detail") or vul.get("title") or "",
+                        # The graph enum has no "unknown"; an advisory we cannot
+                        # grade lands at info so it stays out of the alert stream
+                        # rather than inflating it (same convention the takeover
+                        # module uses for manual_review).
+                        severity=_vuln_severity(vul.get("severity")),
+                        cvss=vul.get("cvss_vector"),
+                        pname=vul.get("name"), peco=vul.get("ecosystem"),
+                    )
+                    stats["vulnerabilities_merged"] += 1
+                except Exception as exc:
+                    stats["errors"].append("vulnerability {}: {}".format(advisory, exc))
+
         return stats
+
+    def ensure_github_repository(self, user_id, project_id, repo_slug):
+        """MERGE the GithubRepository anchor for an L1 repo scan, return its id.
+
+        update_graph_from_supply_chain only MATCHes an anchor (it must never
+        invent a target node), so a repo that no other scan has seen would
+        leave every package floating. A repository the operator explicitly
+        pointed the scanner at is not an invented node, so creating it here is
+        correct - and it is the SAME id format the GitHub secret hunter uses,
+        so scanning a repo both ways attaches to one node instead of two.
+        """
+        repo_id = "github-repo-{}-{}-{}".format(user_id, project_id, repo_slug)
+        with self.driver.session() as session:
+            session.run(
+                """
+                MERGE (gr:GithubRepository {id: $id})
+                ON CREATE SET gr.first_seen = datetime()
+                SET gr.name = $name, gr.user_id = $uid, gr.project_id = $pid,
+                    gr.updated_at = datetime()
+                """,
+                id=repo_id, name=repo_slug, uid=user_id, pid=project_id)
+        return repo_id
 
     def update_graph_from_supply_chain_recon(self, combined_result, user_id, project_id):
         """L2 pipeline graph-write entry point (matches the _graph_update_bg
@@ -182,13 +292,14 @@ class SupplyChainMixin:
             return self.update_graph_from_supply_chain(artifact, user_id, project_id)
 
         agg = {"packages_merged": 0, "malicious_merged": 0,
-               "suspicious_merged": 0, "relationships_created": 0, "errors": []}
+               "suspicious_merged": 0, "vulnerabilities_merged": 0,
+               "relationships_created": 0, "errors": []}
         for url in base_urls:
             stats = self.update_graph_from_supply_chain(
                 artifact, user_id, project_id,
                 anchor_label="BaseURL", anchor_key="url", anchor_value=url)
             for k in ("packages_merged", "malicious_merged", "suspicious_merged",
-                      "relationships_created"):
+                      "vulnerabilities_merged", "relationships_created"):
                 agg[k] += stats.get(k, 0)
             agg["errors"].extend(stats.get("errors", []))
         return agg

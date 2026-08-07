@@ -1,9 +1,16 @@
 # RedAmon Supply-Chain Scan (L1 CLEAN writer)
 # ============================================
-# Holds Neo4j creds and writes Package/MalPackageFinding graph nodes. Runs ONLY a
-# static, no-install, OFFLINE osv-scanner pass on an operator-uploaded SBOM/lockfile
-# (plan S1). It never clones a repo, downloads a tarball, or runs a package
-# manager. graph_db and supply_chain_common are volume-mounted at spawn time (like
+# Holds Neo4j creds and writes Package/MalPackageFinding graph nodes. Runs a
+# static, no-install, OFFLINE osv-scanner pass over its input (plan S1).
+#
+# The input is either an operator-uploaded SBOM/lockfile or a GitHub repository
+# it clones itself. It still NEVER downloads a tarball or runs a package
+# manager: `git clone` writes files without executing repository code (remote
+# hooks are not fetched, submodules and LFS smudge are disabled), and every
+# step that PARSES untrusted content happens in the dirty analyzer. The clone
+# lives here because this is the only side that may hold the GitHub token.
+#
+# graph_db and supply_chain_common are volume-mounted at spawn time (like
 # trufflehog mounts graph_db); the offline OSV DB is mounted read-only at /osv-db.
 
 # osv-scanner v2.4.0 needs Go >= 1.26.4; build it here and COPY the binary.
@@ -19,7 +26,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+# git is required by the GitHub repository input (supply_chain_scan/repo_clone.py).
+# Without it the clone fails at runtime with "could not run git" and the scan
+# reports an error instead of a result.
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=osv-builder /out/osv-scanner /usr/local/bin/osv-scanner

@@ -111,10 +111,6 @@ def budget_fraction() -> float:
     return _env_float("MEM_BUDGET_FRACTION", 0.10)
 
 
-def safety_tolerance() -> float:
-    return _env_float("MEM_SAFETY_TOLERANCE", 0.25)
-
-
 # ---------------------------------------------------------------------------
 # Test/override hook: let callers inject a synthetic (total, available) so unit
 # tests never depend on the real host. Set to None to use /proc.

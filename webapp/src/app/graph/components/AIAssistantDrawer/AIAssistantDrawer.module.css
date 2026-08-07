@@ -1187,7 +1187,7 @@
    ============================================================================= */
 
 .inputContainer {
-  padding: var(--space-3);
+  padding: var(--space-2) var(--space-3);
   background: var(--bg-primary);
   border-top: 1px solid var(--border-default);
   flex-shrink: 0;
@@ -1254,14 +1254,6 @@
 .sendButton:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-.inputHint {
-  display: block;
-  margin-top: var(--space-1);
-  font-size: 10px;
-  color: var(--text-tertiary);
-  text-align: center;
 }
 
 /* =============================================================================

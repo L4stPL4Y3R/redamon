@@ -1801,10 +1801,27 @@ cmd_update() {
         docker compose up -d --force-recreate gvm-redis gvm-postgres gvmd gvm-ospd
     fi
 
-    # Restart services with volume-mounted code changes (no rebuild needed)
+    # Restart services with volume-mounted code changes (no rebuild needed).
+    #
+    # `up -d --no-deps`, NOT `docker compose restart`: restart reuses the
+    # EXISTING container, and a container's environment is fixed at creation
+    # time. So a release that both changes orchestrator/mcp source AND adds a
+    # new secret would restart the service onto the new code with the OLD env -
+    # the new secret missing, its protection failing open until some unrelated
+    # later `up` happened to recreate the container. That silently defeats the
+    # "generate secrets before recreating" ordering above.
+    #
+    # Verified with a scratch compose project: after rewriting .env,
+    # `compose restart` still reported the old value and only `compose up -d`
+    # picked up the new one.
+    #
+    # Recreating also still picks up the volume-mounted source change, so this
+    # is strictly better; it costs one container recreate.
     if [[ ${#restart_only[@]} -gt 0 ]]; then
-        info "Restarting services for code changes: ${restart_only[*]}"
-        docker compose restart "${restart_only[@]}"
+        info "Recreating services for code changes: ${restart_only[*]}"
+        for svc in "${restart_only[@]}"; do
+            docker compose up -d --no-deps "$svc"
+        done
     fi
 
     echo ""
@@ -1851,10 +1868,19 @@ cmd_supply_chain_sync() {
     docker volume inspect redamon-osv-db &>/dev/null || docker volume create redamon-osv-db >/dev/null
     info "Syncing offline OSV database (ecosystems: $ecos). First npm sync is ~208 MB."
     # Runs as root: the DB volume is root-owned and read-only to every scan
-    # container; the sync is the one privileged writer. supply_chain_common is
-    # baked into the analyzer image at /app, so no source mount is needed.
+    # container; the sync is the one privileged writer.
+    #
+    # supply_chain_common MUST be bind-mounted. It is NOT baked into the
+    # analyzer image (see supply_chain_analyzer/Dockerfile - only the
+    # entrypoint is COPYed); every other caller mounts it at spawn, and this
+    # one did not. Without the mount the sync died with
+    #   ModuleNotFoundError: No module named 'supply_chain_common'
+    # which left the offline DB empty forever - and an empty DB makes every
+    # supply-chain scan fail with "run './redamon.sh supply-chain-sync' first",
+    # pointing at the command that could not work.
     if docker run --rm --user root \
         -v redamon-osv-db:/osv-db \
+        -v "$SCRIPT_DIR/supply_chain_common:/app/supply_chain_common:ro" \
         -e OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY=/osv-db \
         -e PYTHONPATH=/app \
         --entrypoint python3 \

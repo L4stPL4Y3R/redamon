@@ -90,63 +90,6 @@ def get_service_name(port: int, protocol: str = "tcp") -> str:
     return _IANA_CACHE.get((port, protocol), "unknown")
 
 
-def get_service_info(port: int, protocol: str = "tcp") -> Dict:
-    """
-    Get detailed service info from IANA registry.
-
-    Returns dict with service name and whether it was found.
-    """
-    _load_iana_cache()
-
-    protocol = protocol.lower()
-    service = _IANA_CACHE.get((port, protocol))
-
-    return {
-        "port": port,
-        "protocol": protocol,
-        "service": service or "unknown",
-        "found_in_iana": service is not None
-    }
-
-
-def get_all_services_for_port(port: int) -> Dict[str, str]:
-    """
-    Get all services registered for a port across all protocols.
-
-    Returns:
-        Dict mapping protocol to service name
-
-    Example:
-        >>> get_all_services_for_port(53)
-        {'tcp': 'domain', 'udp': 'domain'}
-    """
-    _load_iana_cache()
-
-    result = {}
-    for (p, proto), svc in _IANA_CACHE.items():
-        if p == port:
-            result[proto] = svc
-
-    return result
-
-
-def get_cache_stats() -> Dict:
-    """Get statistics about the loaded IANA cache."""
-    _load_iana_cache()
-
-    protocols = {}
-    for (port, proto), service in _IANA_CACHE.items():
-        protocols[proto] = protocols.get(proto, 0) + 1
-
-    return {
-        "total_entries": len(_IANA_CACHE),
-        "by_protocol": protocols,
-        "cache_loaded": _CACHE_LOADED,
-        "csv_path": str(IANA_CSV_PATH),
-        "csv_exists": IANA_CSV_PATH.exists()
-    }
-
-
 # Common port overrides for clarity (IANA names can be cryptic)
 # These take precedence over IANA when more descriptive
 _FRIENDLY_NAMES = {

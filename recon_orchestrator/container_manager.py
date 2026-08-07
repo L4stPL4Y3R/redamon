@@ -17,7 +17,6 @@ from typing import AsyncGenerator, Optional
 
 import docker
 from docker.errors import NotFound, APIError
-from docker.models.containers import Container
 
 import resource_governor as rg
 from admission_ledger import ReservationLedger, AdmissionError
@@ -631,6 +630,13 @@ class ContainerManager:
                     # all sibling-tool spawns flow through the broker socket served
                     # on the named volume below.
                     "DOCKER_HOST": "unix:///var/run/broker/docker.sock",
+                    # supply_chain_common as the DOCKER DAEMON sees it. L2's
+                    # retire.js and GuardDog legs bind-mount this into the dirty
+                    # analyzer, and the daemon resolves the source on the HOST -
+                    # so passing the in-container path (/app/supply_chain_common,
+                    # the default) makes the broker reject the spawn with
+                    # "bind mount not allowed" and the whole retire.js pass dies.
+                    "SUPPLY_CHAIN_COMMON_HOST_PATH": sibling_host_path(recon_path, "supply_chain_common"),
                 },
                 volumes={
                     # V4: mount the BROKER's filtered socket via a named volume,
@@ -1581,6 +1587,13 @@ class ContainerManager:
                     # all sibling-tool spawns flow through the broker socket served
                     # on the named volume below.
                     "DOCKER_HOST": "unix:///var/run/broker/docker.sock",
+                    # supply_chain_common as the DOCKER DAEMON sees it. L2's
+                    # retire.js and GuardDog legs bind-mount this into the dirty
+                    # analyzer, and the daemon resolves the source on the HOST -
+                    # so passing the in-container path (/app/supply_chain_common,
+                    # the default) makes the broker reject the spawn with
+                    # "bind mount not allowed" and the whole retire.js pass dies.
+                    "SUPPLY_CHAIN_COMMON_HOST_PATH": sibling_host_path(recon_path, "supply_chain_common"),
                 },
                 volumes={
                     # V4: mount the BROKER's filtered socket via a named volume,
@@ -3435,6 +3448,12 @@ exit $RC
                     "WEBAPP_API_URL": webapp_api_url,
                     "PYTHONUNBUFFERED": "1",
                     "OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY": "/osv-db",
+                    # The scan CLI shells out to `docker` for the analyzer job;
+                    # it must go through the broker, not a raw socket.
+                    "DOCKER_HOST": "unix:///var/run/broker/docker.sock",
+                    # supply_chain_common as the DAEMON sees it, so the analyzer
+                    # can bind-mount it read-only.
+                    "SUPPLY_CHAIN_COMMON_HOST_PATH": sibling_host_path(supply_chain_path, "supply_chain_common"),
                     # Per-project subdir inside the shared uploads volume.
                     "SUPPLY_CHAIN_UPLOADS_DIR": f"/data/supply-chain-uploads/{project_id}",
                     "NEO4J_URI": os.environ.get("NEO4J_URI", "bolt://localhost:7687"),
@@ -3447,6 +3466,13 @@ exit $RC
                     f"{supply_chain_path}": {"bind": "/app/supply_chain_scan", "mode": "rw"},
                     sibling_host_path(supply_chain_path, "graph_db"): {"bind": "/app/graph_db", "mode": "ro"},
                     sibling_host_path(supply_chain_path, "supply_chain_common"): {"bind": "/app/supply_chain_common", "mode": "ro"},
+                    # Deep analysis (GuardDog) dispatches a job to the DIRTY
+                    # analyzer. Same posture the recon container already has:
+                    # the BROKER socket, never the raw docker socket. The broker
+                    # allowlists image + mounts, so this is a NARROWER privilege
+                    # than an orchestrator API key would be, and this container
+                    # already holds the Neo4j creds exactly like recon does.
+                    BROKER_SOCKET_VOLUME: {"bind": "/var/run/broker", "mode": "rw"},
                     self.supply_chain_uploads_volume: {"bind": "/data/supply-chain-uploads", "mode": "ro"},
                     self.supply_chain_osv_db_volume: {"bind": "/osv-db", "mode": "ro"},
                 },

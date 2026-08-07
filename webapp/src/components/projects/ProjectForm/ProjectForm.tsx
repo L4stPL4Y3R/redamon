@@ -46,7 +46,6 @@ import { MitreSection } from './sections/MitreSection'
 import { SecurityChecksSection } from './sections/SecurityChecksSection'
 import { GithubSection } from './sections/GithubSection'
 import { TrufflehogSection } from './sections/TrufflehogSection'
-import { SupplyChainSection } from './sections/SupplyChainSection'
 import { SupplyChainReconSection } from './sections/SupplyChainReconSection'
 import { AgentBehaviourSection } from './sections/AgentBehaviourSection'
 import { AttackSkillsSection } from './sections/AttackSkillsSection'
@@ -974,7 +973,9 @@ export function ProjectForm({
             <GvmScanSection data={formData} updateField={updateField} />
             <GithubSection data={formData} updateField={updateField} hasGithubToken={hasGithubToken} />
             <TrufflehogSection data={formData} updateField={updateField} hasGithubToken={hasGithubToken} />
-            <SupplyChainSection data={formData} updateField={updateField} projectId={projectId} />
+            {/* Supply-Chain (L1) is configured where it is launched: the
+                Supply Chain Scanner card in Other Scans owns its input
+                (uploaded SBOM / lockfile, or a GitHub repository). */}
           </>
         )}
 

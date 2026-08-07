@@ -73,11 +73,6 @@ _failed_write_count = 0
 _failed_write_lock = threading.Lock()
 
 
-def get_failed_write_count() -> int:
-    """Return the cumulative count of permanently failed graph writes."""
-    return _failed_write_count
-
-
 def _increment_failed_writes():
     global _failed_write_count
     with _failed_write_lock:

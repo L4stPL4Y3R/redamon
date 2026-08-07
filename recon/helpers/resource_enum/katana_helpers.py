@@ -236,18 +236,35 @@ def run_katana_crawler(
                     process.kill()
                 process.wait()
 
-                # Surface stderr if Katana exited early with no discoveries
-                # (most common cause: -list file unreachable under DinD).
+                # Surface stderr WHENEVER the crawl found nothing.
+                #
+                # This used to also require `elapsed < 10` and a NON-ZERO exit
+                # code, which made it unreachable in the case it was written
+                # for: katana exits 0 when it crawls nothing, and a spawn that
+                # fails (broker denial, unreadable -list under DinD, DNS) can
+                # take longer than 10s. The result was a completely silent
+                # "Discovered 0 URLs" with the real cause captured in the
+                # stderr pipe and then thrown away - which is exactly how a
+                # zero-URL crawl became impossible to diagnose from the logs.
+                #
+                # A crawl that legitimately finds nothing prints a short,
+                # harmless note; a broken one finally prints its reason.
                 elapsed = time.time() - start_time
-                if not discovered_urls and elapsed < 10 and process.returncode not in (0, None):
+                if not discovered_urls:
                     try:
                         stderr_output = process.stderr.read() if process.stderr else ""
-                        if stderr_output:
-                            print(f"[!][Katana] Exited in {elapsed:.1f}s with code {process.returncode}, stderr:")
-                            for line in stderr_output.strip().splitlines()[:20]:
-                                print(f"[!][Katana]   {line}")
                     except Exception:
-                        pass
+                        stderr_output = ""
+                    print(f"[!][Katana] Found 0 URLs in {elapsed:.1f}s "
+                          f"(exit code {process.returncode}). Seed list: {url_file} "
+                          f"({len(valid_urls)} URL(s))")
+                    if stderr_output.strip():
+                        print("[!][Katana] stderr:")
+                        for line in stderr_output.strip().splitlines()[:20]:
+                            print(f"[!][Katana]   {line}")
+                    else:
+                        print("[!][Katana]   (no stderr output - the crawl ran "
+                              "but the target returned no crawlable links)")
 
         except Exception as e:
             print(f"[!][Katana] Error: {e}")

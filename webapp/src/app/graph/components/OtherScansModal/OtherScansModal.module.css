@@ -1,13 +1,26 @@
+/* Two rows: the secret hunters side by side, then Supply Chain full-width.
+   Supply Chain needs the extra width because it carries its own input
+   configuration (source toggle, upload, repository fields) rather than sending
+   the operator to Project Settings for it. */
 .content {
   display: flex;
+  flex-direction: column;
   gap: var(--space-4);
   min-width: 640px;
 }
 
+.row {
+  display: flex;
+  gap: var(--space-4);
+}
+
 @media (max-width: 768px) {
   .content {
-    flex-direction: column;
     min-width: auto;
+  }
+
+  .row {
+    flex-direction: column;
   }
 }
 
@@ -189,4 +202,113 @@
   to {
     transform: rotate(360deg);
   }
+}
+
+/* ---------------------------------------------------------------------------
+   Supply-Chain input configuration (lives in the card, not Project Settings).
+   The scan takes exactly ONE input, so the source is a mutually-exclusive
+   choice and the panel below always reflects the selected one.
+   --------------------------------------------------------------------------- */
+
+.sourceToggle {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.sourceOption {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-default);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.sourceOption:hover:not(:disabled) {
+  border-color: var(--accent-primary);
+}
+
+.sourceOption:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sourceOptionActive {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: white;
+}
+
+.inputPanel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-default);
+}
+
+.inputRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.textField {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-2);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-default);
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  font-family: inherit;
+}
+
+.textField:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+}
+
+.fieldLabel {
+  min-width: 78px;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.activeFile {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.activeFileName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, monospace);
+  color: var(--text-primary);
+}
+
+.hint {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.inlineError {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--status-error);
 }

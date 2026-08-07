@@ -8,8 +8,25 @@ Verified against retire.js v5.4.3 (2026-08-06):
     0 when none. Exit 13 is NOT an error; parse the JSON.
 
 This is the black-box capability L2 needs: it identifies component+version from
-file content/hash/filename/uri with ZERO manifest. A component with no
-`vulnerabilities` is still a harvested package (keep it; OSV decides malicious).
+file content/hash/filename/uri with ZERO manifest.
+
+TWO LIMITS worth knowing before trusting an empty result (both verified against
+v5.4.3, 2026-08-07):
+
+  1. The JSON reporter emits ONLY components that carry known vulnerabilities.
+     A file it positively identifies as a CLEAN version reports as `data: []`,
+     indistinguishable from a file it did not recognise at all. So retire.js is
+     a vulnerable-library detector, NOT a general inventory source: it can
+     never contribute a clean package, and the OSV pass that follows can only
+     ever re-verdict what retire already flagged. (OSV still earns its place -
+     it adds MAL- advisories, severity and CVSS that retire does not carry.)
+
+  2. It downloads its signature repository (jsrepository-v5.json) from
+     raw.githubusercontent.com on every run. The analyzer's /tmp is a tmpfs, so
+     nothing caches between runs and EVERY scan needs that egress. Without it
+     the run still writes well-formed JSON with an empty `data` - see the
+     errors handling in scan_js_dir, which is what keeps that from reading as
+     a clean result.
 """
 
 import json
@@ -56,6 +73,21 @@ def scan_js_dir(js_dir, *, out_path=None, timeout=300, binary="retire"):
     except (OSError, ValueError):
         if error is None:
             error = "retire output file missing or not JSON"
+
+    # A retire.js run that could not load its signature repository still writes
+    # a WELL-FORMED report - `data` is simply empty and the reason sits in
+    # `errors`. That is the false-clean shape: valid JSON, zero components, no
+    # parse failure. Verified against v5.4.3 with --network none:
+    #   {"data":[],"errors":["Error downloading: .../jsrepository-v5.json ..."]}
+    #
+    # The exit code happens to be 1 there, but it is NOT the guarantee it looks
+    # like: --exitwith already reassigns the findings exit code, so tying
+    # "did the scan work" to it is exactly the coupling that produced the
+    # GuardDog false-clean. Read the errors the tool reports instead.
+    if isinstance(raw, dict):
+        reported = [e for e in (raw.get("errors") or []) if e]
+        if reported and error is None:
+            error = "retire reported: {}".format("; ".join(str(e) for e in reported))[:500]
 
     parsed = parse_retire_json(raw)
     return {"raw": raw, "components": parsed["components"],

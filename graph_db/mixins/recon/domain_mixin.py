@@ -91,7 +91,6 @@ class DomainMixin:
                     "reseller": whois_data.get("reseller"),
                     "name_servers": whois_data.get("name_servers", []),
                     "whois_emails": whois_data.get("emails", []),
-                    "updated_at": datetime.now().isoformat()
                 }
 
                 # Handle date fields (can be list or single value)
@@ -116,7 +115,8 @@ class DomainMixin:
                 session.run(
                     """
                     MERGE (d:Domain {name: $name, user_id: $user_id, project_id: $project_id})
-                    SET d += $props
+                    SET d += $props,
+                        d.updated_at = datetime()
                     """,
                     name=root_domain, user_id=user_id, project_id=project_id, props=domain_props
                 )
@@ -310,14 +310,14 @@ class DomainMixin:
                     "target_ips": metadata.get("target_ips", []),
                     "expanded_ips": metadata.get("expanded_ips", []),
                     "modules_executed": metadata.get("modules_executed", []),
-                    "updated_at": datetime.now().isoformat()
                 }
                 domain_props = {k: v for k, v in domain_props.items() if v is not None}
 
                 session.run(
                     """
                     MERGE (d:Domain {name: $name, user_id: $user_id, project_id: $project_id})
-                    SET d += $props
+                    SET d += $props,
+                        d.updated_at = datetime()
                     """,
                     name=mock_domain, user_id=user_id, project_id=project_id, props=domain_props
                 )
@@ -344,7 +344,6 @@ class DomainMixin:
                         "has_records": sub_dns.get("has_records", False),
                         "is_mock": is_mock,
                         "ip_mode": True,
-                        "updated_at": datetime.now().isoformat()
                     }
                     if actual_ip:
                         sub_props["actual_ip"] = actual_ip
@@ -356,7 +355,7 @@ class DomainMixin:
                     session.run(
                         """
                         MERGE (s:Subdomain {name: $name, user_id: $user_id, project_id: $project_id})
-                        ON CREATE SET s += $props, s.status = 'resolved'
+                        ON CREATE SET s += $props, s.status = 'resolved', s.updated_at = datetime()
                         ON MATCH SET s += $props
                         WITH s
                         WHERE s.status IS NULL
@@ -392,7 +391,6 @@ class DomainMixin:
                             "project_id": project_id,
                             "version": "v6" if ":" in ip else "v4",
                             "ip_mode": True,
-                            "updated_at": datetime.now().isoformat()
                         }
                         if whois_info:
                             ip_props["organization"] = whois_info.get("org", "")
@@ -401,7 +399,8 @@ class DomainMixin:
                         session.run(
                             """
                             MERGE (i:IP {address: $addr, user_id: $uid, project_id: $pid})
-                            SET i += $props
+                            SET i += $props,
+                                i.updated_at = datetime()
                             """,
                             addr=ip, uid=user_id, pid=project_id, props=ip_props
                         )

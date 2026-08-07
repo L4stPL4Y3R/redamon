@@ -9,7 +9,9 @@ Run: python -m unittest tests.test_supply_chain_deep_review2
 
 import importlib.util
 import os
+import shutil
 import sys
+import tempfile
 import unittest
 from unittest.mock import MagicMock
 
@@ -19,6 +21,9 @@ if _REPO not in sys.path:
 
 sys.modules.setdefault("neo4j", MagicMock())
 sys.modules.setdefault("dotenv", MagicMock())
+
+from supply_chain_common import analyzer_dispatch
+from supply_chain_common.artifact import empty_artifact
 
 _spec = importlib.util.spec_from_file_location(
     "sc_recon_r2",
@@ -41,20 +46,66 @@ def _artifact_with_flagged(n=2):
 
 
 class _GD:
-    """Stand-in for supply_chain_common.guarddog_runner."""
+    """Stand-in for the ANALYZER DISPATCH, which is where GuardDog now runs.
+
+    This used to fake supply_chain_common.guarddog_runner, because deep_analyze
+    called gd_mod.scan_package directly. It no longer does: every hostile-byte
+    operation - retire.js, osv-scanner, GuardDog - goes through one analyzer job
+    contract, so the dispatch is the only seam that controls what comes back.
+
+    Faking the wrong seam did not fail loudly. deep_analyze quietly spawned REAL
+    docker, every package errored, and most assertions here were satisfied BY
+    THAT FAILURE - a download-failure test passes just as well when the failure
+    is "no such image". Two tests broke honestly; the rest passed for the wrong
+    reason and made the suite depend on a docker daemon.
+
+    `per_package` maps a package name to what the analyzer returns for it:
+      {"suspicious": [...], "error": "...", "no_artifact": True}
+    """
 
     def __init__(self, per_package):
-        self.per_package = per_package  # name -> {findings, error}
-        self.calls = []
+        self.per_package = per_package  # name -> analyzer outcome
+        self.calls = []                 # (ecosystem, name, version, timeout, argv)
+        self.jobs = []
+        self._dirs = []
 
-    def hardened_docker_argv(self, image=None, **kw):
-        return ["docker", "run", "--rm", "--cap-drop", "ALL", "--read-only",
-                "--entrypoint", "guarddog", image or "img"]
+    def new_work_dir(self, prefix="sc-job"):
+        d = tempfile.mkdtemp(prefix=prefix + "-")
+        self._dirs.append(d)
+        return d
 
-    def scan_package(self, ecosystem, name, version=None, *, timeout=None,
-                     argv_prefix=None):
-        self.calls.append((ecosystem, name, version, timeout, tuple(argv_prefix or ())))
-        return self.per_package.get(name, {"findings": [], "error": None})
+    def run_analyzer_job(self, job, work_dir, sc_common, *, image=None,
+                         allow_registry_egress=False, timeout=None, **kw):
+        self.jobs.append({"job": job, "image": image, "timeout": timeout,
+                          "allow_registry_egress": allow_registry_egress})
+        specs = job.get("guarddog_packages") or []
+        spec = specs[0] if specs else {}
+        # Build the argv the REAL dispatch would build for this job, so the
+        # hardening assertions below check the actual builder with the actual
+        # arguments deep_analyze passed - not a stub's idea of them.
+        argv = analyzer_dispatch.analyzer_docker_argv(
+            work_dir, sc_common, image=image,
+            allow_registry_egress=allow_registry_egress)
+        self.calls.append((spec.get("ecosystem"), spec.get("name"),
+                           spec.get("version"), timeout, tuple(argv)))
+
+        outcome = self.per_package.get(spec.get("name"), {})
+        if outcome.get("no_artifact"):
+            return {"artifact": None, "exit_code": 1,
+                    "error": outcome.get("error") or "analyzer produced no artifact"}
+        art = empty_artifact("purls")
+        art["suspicious"].extend(outcome.get("suspicious") or [])
+        art["errors"].extend(outcome.get("errors") or [])
+        return {"artifact": art, "exit_code": 0, "error": outcome.get("error")}
+
+
+def _suspicious(name, rule="r", severity="high", message="m", soft_error=False,
+                version="1.0.0"):
+    """One `suspicious` entry as the analyzer emits it (pre-mapping)."""
+    return {"name": name, "version": version, "ecosystem": "npm",
+            "purl": "pkg:npm/{}@{}".format(name, version), "rule": rule,
+            "severity": severity, "message": message,
+            "confidence": "suspicious", "soft_error": soft_error}
 
 
 class TestD1SoftErrorsSurviveInvalidArtifact(unittest.TestCase):
@@ -69,11 +120,10 @@ class TestD1SoftErrorsSurviveInvalidArtifact(unittest.TestCase):
         gd = _GD({
             # bad0: a finding whose severity is not in the allowed set -> the
             # artifact fails revalidation.
-            "bad0": {"findings": [{"package": "bad0", "rule": "npm-obfuscation",
-                                   "severity": "boom", "message": "x",
-                                   "soft_error": False}], "error": None},
+            "bad0": {"suspicious": [_suspicious("bad0", rule="npm-obfuscation",
+                                                severity="boom", message="x")]},
             # bad1: download failed -> must stay marked as NOT analysed.
-            "bad1": {"findings": [], "error": "download-package: 404"},
+            "bad1": {"error": "download-package: 404"},
         })
         art = _artifact_with_flagged(2)
         cr = {"js_recon": {}, "http_probe": {}}
@@ -91,7 +141,7 @@ class TestD1SoftErrorsSurviveInvalidArtifact(unittest.TestCase):
         sys.modules["recon.helpers.supply_chain.harvest"] = _h
 
         orig_deep = scr.deep_analyze
-        scr.deep_analyze = lambda a, **kw: orig_deep(a, guarddog=gd, **kw)
+        scr.deep_analyze = lambda a, **kw: orig_deep(a, dispatch=gd, **kw)
         orig_verdict = scr.verdict_packages
         scr.verdict_packages = lambda pkgs, **kw: art
         try:
@@ -117,25 +167,32 @@ class TestD1SoftErrorsSurviveInvalidArtifact(unittest.TestCase):
 
 class TestDeepAnalyzeContract(unittest.TestCase):
     def test_guarddog_never_claims_malicious(self):
-        gd = _GD({"bad0": {"findings": [{"package": "bad0", "rule": "r",
-                                         "severity": "high", "message": "m",
-                                         "soft_error": False}], "error": None}})
-        art, stats = scr.deep_analyze(_artifact_with_flagged(1), guarddog=gd)
+        gd = _GD({"bad0": {"suspicious": [_suspicious("bad0")]}})
+        art, stats = scr.deep_analyze(_artifact_with_flagged(1), dispatch=gd)
         self.assertTrue(all(f["confidence"] == "suspicious" for f in art["suspicious"]))
         self.assertEqual(stats["scanned"], 1)
 
     def test_download_failure_becomes_soft_error_not_clean(self):
-        gd = _GD({"bad0": {"findings": [], "error": "download-package: gone"}})
-        art, stats = scr.deep_analyze(_artifact_with_flagged(1), guarddog=gd)
+        gd = _GD({"bad0": {"error": "download-package: gone"}})
+        art, stats = scr.deep_analyze(_artifact_with_flagged(1), dispatch=gd)
         self.assertEqual(len(art["suspicious"]), 1)
         self.assertTrue(art["suspicious"][0]["soft_error"])
         self.assertEqual(stats["failed"], 1)
 
+    def test_analyzer_returning_no_artifact_is_not_clean(self):
+        """A dead socket / unpulled image yields no artifact at all. That must
+        read as 'not analysed', never as 'analysed and nothing found'."""
+        gd = _GD({"bad0": {"no_artifact": True, "error": "no such image"}})
+        art, stats = scr.deep_analyze(_artifact_with_flagged(1), dispatch=gd)
+        self.assertEqual(stats["scanned"], 0)
+        self.assertEqual(stats["failed"], 1)
+        self.assertTrue(art["suspicious"][0]["soft_error"])
+
     def test_dispatch_exception_isolated_per_package(self):
         class Boom(_GD):
-            def scan_package(self, *a, **kw):
+            def run_analyzer_job(self, *a, **kw):
                 raise RuntimeError("socket gone")
-        art, stats = scr.deep_analyze(_artifact_with_flagged(2), guarddog=Boom({}))
+        art, stats = scr.deep_analyze(_artifact_with_flagged(2), dispatch=Boom({}))
         # both packages recorded as not-analysed, OSV verdicts untouched
         self.assertEqual(len(art["suspicious"]), 2)
         self.assertEqual(len(art["malicious"]), 2)
@@ -143,7 +200,7 @@ class TestDeepAnalyzeContract(unittest.TestCase):
 
     def test_budget_exhaustion_marks_remaining_unanalysed(self):
         gd = _GD({})
-        art, stats = scr.deep_analyze(_artifact_with_flagged(3), guarddog=gd,
+        art, stats = scr.deep_analyze(_artifact_with_flagged(3), dispatch=gd,
                                       budget=-1)  # already over budget
         self.assertEqual(stats["skipped_budget"], 3)
         self.assertEqual(len(art["suspicious"]), 3)
@@ -152,11 +209,28 @@ class TestDeepAnalyzeContract(unittest.TestCase):
 
     def test_runs_inside_hardened_container(self):
         gd = _GD({})
-        scr.deep_analyze(_artifact_with_flagged(1), guarddog=gd)
+        scr.deep_analyze(_artifact_with_flagged(1), dispatch=gd)
         argv = gd.calls[0][4]
         self.assertIn("--cap-drop", argv)
         self.assertIn("ALL", argv)
         self.assertIn("--read-only", argv)
+        # No secret may ride along: a full RCE inside the analyzer must find no
+        # Neo4j password, no internal-API key, no GitHub token.
+        joined = " ".join(argv)
+        for leak in ("NEO4J", "PASSWORD", "TOKEN", "API_KEY", "SECRET"):
+            self.assertNotIn(leak, joined.upper())
+
+    def test_guarddog_gets_registry_egress_and_the_package_coordinates(self):
+        """GuardDog is the one leg that MUST reach the registry - it downloads
+        the tarball it analyses. The OSV/retire legs must not."""
+        gd = _GD({})
+        scr.deep_analyze(_artifact_with_flagged(1), dispatch=gd)
+        self.assertTrue(gd.jobs[0]["allow_registry_egress"])
+        job = gd.jobs[0]["job"]
+        self.assertTrue(job["deep_analysis"])
+        self.assertEqual([(p["ecosystem"], p["name"], p["version"])
+                          for p in job["guarddog_packages"]],
+                         [("npm", "bad0", "1.0.0")])
 
     def test_cap_reported_not_silently_truncated(self):
         art = _artifact_with_flagged(5)
@@ -178,10 +252,8 @@ class TestDeepAnalyzeContract(unittest.TestCase):
 
     def test_findings_carry_the_versioned_purl(self):
         # Without the purl the graph writer MERGEs a second, versionless Package.
-        gd = _GD({"bad0": {"findings": [{"package": "bad0", "rule": "r",
-                                         "severity": "low", "message": "m"}],
-                           "error": None}})
-        art, _ = scr.deep_analyze(_artifact_with_flagged(1), guarddog=gd)
+        gd = _GD({"bad0": {"suspicious": [_suspicious("bad0", severity="low")]}})
+        art, _ = scr.deep_analyze(_artifact_with_flagged(1), dispatch=gd)
         self.assertEqual(art["suspicious"][0]["purl"], "pkg:npm/bad0@1.0.0")
 
 

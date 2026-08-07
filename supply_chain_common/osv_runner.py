@@ -98,6 +98,31 @@ def run_osv_scan(target, *, mode="lockfile", db_path=None, offline=True,
         # the TAIL, not the head) instead of 500 chars of walk noise.
         error = _explain_osv_stderr(res["stderr"], res["exit_code"])
 
+    # A PARTIALLY loaded database is the dangerous case, and it exits 0/1 - so
+    # the check above never sees it. osv-scanner scans every lockfile it finds,
+    # loads whatever ecosystem DBs it has, and simply reports nothing for the
+    # rest:
+    #
+    #   Scanned .../requirements.txt file and found 2 packages
+    #   Loaded npm local db from /osv-db/osv-scanner/npm/all.zip
+    #   could not load db for PyPI ecosystem: ...
+    #   exit 1, results = [ the npm package only ]
+    #
+    # The Python half of that repo reads CLEAN. Verified against osv-scanner
+    # v2.4.0 on 2026-08-07 with an npm-only DB. This matters most for a
+    # directory/repository scan, where one input spans many ecosystems - a
+    # single uploaded lockfile has one, and a total DB miss exits 127.
+    #
+    # The findings that DID resolve are kept; the gap is reported alongside
+    # them, because "we could not check these" is not "these are fine".
+    missing = _missing_ecosystems(res["stderr"])
+    if missing:
+        gap = ("offline OSV database has no {} ecosystem(s); those packages "
+               "were NOT checked - run './redamon.sh supply-chain-sync {}'"
+               .format(", ".join("'{}'".format(e) for e in missing),
+                       " ".join(missing)))
+        error = gap if error is None else "{}; {}".format(error, gap)
+
     raw = None
     if res["stdout"]:
         try:
@@ -118,6 +143,20 @@ def run_osv_scan(target, *, mode="lockfile", db_path=None, offline=True,
 # into the offline DB. Turn it into an actionable instruction.
 _MISSING_DB_RE = re.compile(r"could not load db for (\S+) ecosystem")
 
+
+def _missing_ecosystems(stderr):
+    """Every ecosystem osv-scanner could not load a local DB for.
+
+    findall, not search: a DIRECTORY scan (a cloned repository) covers as many
+    ecosystems as the repo has lockfiles, and naming only the first would send
+    the operator to sync one ecosystem and hit the next on the following run.
+    """
+    seen = []
+    for eco in _MISSING_DB_RE.findall(stderr or ""):
+        if eco not in seen:
+            seen.append(eco)
+    return seen
+
 # Lines worth showing the operator; everything else is walk/progress noise.
 _NOISE_PREFIXES = ("Starting filesystem walk", "End status:", "Scanned ",
                    "Filesystem walk", "Loaded ")
@@ -126,11 +165,12 @@ _NOISE_PREFIXES = ("Starting filesystem walk", "End status:", "Scanned ",
 def _explain_osv_stderr(stderr, exit_code):
     """Turn raw osv-scanner stderr into one actionable error line."""
     text = (stderr or "").strip()
-    missing = _MISSING_DB_RE.search(text)
+    missing = _missing_ecosystems(text)
     if missing:
-        eco = missing.group(1)
-        return ("offline OSV database has no '{}' ecosystem; run "
-                "'./redamon.sh supply-chain-sync {}' to add it".format(eco, eco))
+        return ("offline OSV database has no {} ecosystem(s); run "
+                "'./redamon.sh supply-chain-sync {}' to add them"
+                .format(", ".join("'{}'".format(e) for e in missing),
+                        " ".join(missing)))
     meaningful = [ln.strip() for ln in text.splitlines()
                   if ln.strip() and not ln.strip().startswith(_NOISE_PREFIXES)]
     detail = " | ".join(meaningful[-3:]) if meaningful else text[-300:]
@@ -139,6 +179,46 @@ def _explain_osv_stderr(stderr, exit_code):
 
 def _empty_parsed():
     return {"packages": [], "malicious": [], "vulnerable": []}
+
+
+# GitHub advisory severity (OSV `database_specific.severity`) -> the graph's
+# lowercase Vulnerability enum. OSV also carries CVSS vectors in `severity[]`,
+# but the GitHub band is already the qualitative judgement we want and needs no
+# vector parsing.
+_OSV_SEVERITY_MAP = {
+    "CRITICAL": "critical",
+    "HIGH": "high",
+    "MODERATE": "medium",
+    "MEDIUM": "medium",
+    "LOW": "low",
+}
+
+
+def severity_for_vuln(vuln):
+    """Qualitative severity for one OSV advisory, or 'unknown'.
+
+    The parser used to hardcode "unknown" and drop this, which meant every
+    CVE/GHSA reached the graph with no way to triage it.
+    """
+    if not isinstance(vuln, dict):
+        return "unknown"
+    db = vuln.get("database_specific") or {}
+    raw = db.get("severity") if isinstance(db, dict) else None
+    if isinstance(raw, str):
+        mapped = _OSV_SEVERITY_MAP.get(raw.strip().upper())
+        if mapped:
+            return mapped
+    return "unknown"
+
+
+def cvss_vector_for_vuln(vuln):
+    """First CVSS vector string in an OSV advisory, or None."""
+    if not isinstance(vuln, dict):
+        return None
+    for entry in vuln.get("severity") or []:
+        if isinstance(entry, dict) and entry.get("score"):
+            return str(entry["score"])[:200]
+    return None
 
 
 def parse_osv_json(raw):
@@ -193,6 +273,8 @@ def parse_osv_json(raw):
                     "advisory_id": vid,
                     "aliases": vuln.get("aliases") or [],
                     "summary": vuln.get("summary") or "",
+                    "severity": severity_for_vuln(vuln),
+                    "cvss_vector": cvss_vector_for_vuln(vuln),
                 }
                 if vid.startswith("MAL-"):
                     out["malicious"].append(finding)

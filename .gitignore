@@ -241,3 +241,6 @@ DevergoLabs/
 deploy/DEPLOY_PLAN_EC2.md
 deploy/single-host/E2E_DEPLOY_TEST_PROMPT.md
 redamon-session-*.md
+
+# supply-chain guinea pig dry-run scratch output
+guinea_pigs/supply_chain_target/.dryrun/

@@ -50,7 +50,7 @@ GVM_PASSWORD = os.environ.get("GVM_PASSWORD", "admin")
 # GVM imports (handled gracefully if not installed)
 try:
     from gvm.connections import UnixSocketConnection
-    from gvm.protocols.gmp import Gmp, GMPv227
+    from gvm.protocols.gmp import GMPv227
     from gvm.protocols.gmp.requests.v224._targets import AliveTest
     from gvm.transforms import EtreeTransform
     from gvm.errors import GvmError

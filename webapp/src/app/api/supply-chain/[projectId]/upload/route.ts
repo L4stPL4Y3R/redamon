@@ -51,7 +51,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   }
 }
 
-// POST -- upload one SBOM/lockfile; becomes the scan input (supplyChainSbomFile).
+// POST -- upload one SBOM/lockfile. It REPLACES any previous upload and becomes
+// the scan input (supplyChainSbomFile).
 export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
     const { projectId } = await params
@@ -59,6 +60,19 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     if (__denied) return __denied
     if (!PROJECT_ID_RE.test(projectId)) {
       return NextResponse.json({ error: 'Invalid project ID' }, { status: 400 })
+    }
+
+    // Reject on the declared length BEFORE touching the body. `formData()`
+    // buffers the entire request into memory, so checking `file.size` after it
+    // resolves is too late to prevent the exhaustion it is meant to prevent: a
+    // 2 GB upload is fully resident before the 10 MB limit is ever consulted.
+    // Content-Length is attacker-supplied and so cannot be trusted as an
+    // upper bound, which is why the real size is still re-checked below - this
+    // is the cheap rejection, not the authoritative one.
+    const declared = Number(request.headers.get('content-length') || 0)
+    if (declared > MAX_FILE_SIZE) {
+      return NextResponse.json(
+        { error: `File too large. Max ${MAX_FILE_SIZE / 1024 / 1024}MB` }, { status: 413 })
     }
 
     const formData = await request.formData()
@@ -75,15 +89,46 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     const projectDir = path.join(SUPPLY_CHAIN_UPLOAD_PATH, projectId)
     await mkdir(projectDir, { recursive: true })
+
+    // ONE input file per project: the newest upload replaces everything before
+    // it. Without this the directory only grows - every upload left its
+    // predecessors behind on a volume shared by all projects, while only the
+    // single file named by supplyChainSbomFile was ever scanned. The rest were
+    // invisible, unscanned, and unbounded.
     const buffer = Buffer.from(await file.arrayBuffer())
+    let replaced = 0
+    try {
+      for (const stale of await readdir(projectDir)) {
+        if (stale === filename) continue
+        try {
+          if ((await stat(path.join(projectDir, stale))).isFile()) {
+            await unlink(path.join(projectDir, stale))
+            replaced += 1
+          }
+        } catch { /* another request may have removed it already */ }
+      }
+    } catch { /* directory was just created */ }
+
     await writeFile(path.join(projectDir, filename), buffer)
 
-    // The latest upload becomes the active scan input.
+    // The latest upload becomes the active scan input. A failure here is NOT
+    // cosmetic: the file is on disk but the project still points at the old
+    // one, so reporting success would send the operator to Start and silently
+    // scan the previous SBOM. The one benign case is a project row that does
+    // not exist yet (the form saves it later), which Prisma reports as P2025.
     try {
       await prisma.project.update({ where: { id: projectId }, data: { supplyChainSbomFile: filename } })
-    } catch { /* project may not exist yet during creation; DB update happens on save */ }
+    } catch (err) {
+      const code = (err as { code?: string })?.code
+      if (code !== 'P2025') {
+        console.error('Uploaded SBOM but failed to record it as the scan input:', err)
+        return NextResponse.json(
+          { error: 'File saved but could not be set as the scan input. Try again.' },
+          { status: 500 })
+      }
+    }
 
-    return NextResponse.json({ success: true, filename })
+    return NextResponse.json({ success: true, filename, replaced })
   } catch (error) {
     console.error('Error uploading SBOM:', error)
     return NextResponse.json({ error: 'Failed to upload file' }, { status: 500 })
@@ -109,19 +154,11 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     try {
       const current = await prisma.project.findUnique({ where: { id: projectId }, select: { supplyChainSbomFile: true } })
       if (current?.supplyChainSbomFile === filename) {
-        // W1: don't leave the active file empty while other uploads still exist -
-        // the Start button (gated on disk file count) would then 400. Promote the
-        // most-recently-modified remaining file, else clear.
-        let next = ''
-        try {
-          const remaining = existsSync(projectDir) ? await readdir(projectDir) : []
-          const withTimes = await Promise.all(remaining.map(async (n) => ({
-            n, m: (await stat(path.join(projectDir, n))).mtimeMs,
-          })))
-          withTimes.sort((a, b) => b.m - a.m)
-          next = withTimes[0]?.n || ''
-        } catch { /* fall back to clearing */ }
-        await prisma.project.update({ where: { id: projectId }, data: { supplyChainSbomFile: next } })
+        // Uploads replace each other, so deleting the active file leaves the
+        // project with no upload at all - there is no older file to promote.
+        // (This used to hunt for the most-recent survivor, which only made
+        // sense while uploads accumulated.)
+        await prisma.project.update({ where: { id: projectId }, data: { supplyChainSbomFile: '' } })
       }
     } catch { /* skip */ }
     return NextResponse.json({ success: true })

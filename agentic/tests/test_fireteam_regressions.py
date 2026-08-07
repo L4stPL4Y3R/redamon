@@ -1399,7 +1399,9 @@ class FormatChainContextPreservesPerToolDetailRegression(unittest.TestCase):
                       "older-tier output fingerprint missing; LLM cannot "
                       "tell that prior dig already returned this answer")
         # Format: `name(args) -> fingerprint`
-        self.assertRegex(rendered, r"kali_shell\([^)]*dig[^)]*\) -> 10\.0\.0\.",
+        # Fingerprint is framed in UNTRUSTED_PREVIEW markers (prompt_safety).
+        self.assertRegex(rendered,
+                         r"kali_shell\([^)]*dig[^)]*\) -> (?:<<<UNTRUSTED_PREVIEW id=[0-9a-f]+>>>)?10\.0\.0\.",
                          "expected `name(args) -> fingerprint` format in digest")
 
     def test_C_wave_recent_includes_per_tool_output_preview(self):
@@ -1445,7 +1447,8 @@ class FormatChainContextPreservesPerToolDetailRegression(unittest.TestCase):
         self.assertIn("HTTP/1.1 200 OK", rendered,
                       "C: curl output preview missing from wave rendering")
         # The preview must be on a continuation line, not folded into args.
-        self.assertRegex(rendered, r"->\s*203\.0\.113\.42",
+        # Preview is framed in UNTRUSTED_PREVIEW markers (prompt_safety).
+        self.assertRegex(rendered, r"->\s*(?:<<<UNTRUSTED_PREVIEW id=[0-9a-f]+>>>)?203\.0\.113\.42",
                          "expected `-> preview` continuation under args line")
         # Newlines in the raw output must be collapsed to spaces.
         self.assertNotIn("HTTP/1.1 200 OK\nServer:", rendered,
@@ -1491,7 +1494,8 @@ class FormatChainContextPreservesPerToolDetailRegression(unittest.TestCase):
         self.assertIn("WWW-Authenticate", rendered,
                       "D: raw HTTP response header missing; analysis still "
                       "shadows raw output")
-        self.assertRegex(rendered, r"Raw:\s*HTTP/1\.1 401",
+        # Raw preview is framed in UNTRUSTED_PREVIEW markers (prompt_safety).
+        self.assertRegex(rendered, r"Raw:\s*(?:<<<UNTRUSTED_PREVIEW id=[0-9a-f]+>>>)?HTTP/1\.1 401",
                          "expected `Raw:` line carrying the raw response")
 
     def test_no_regression_on_empty_or_failed_tools(self):

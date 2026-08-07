@@ -35,7 +35,6 @@ _RECON_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # (HTTP/HTTPS, ports, GraphQL endpoints). Every `docker run` literal in these
 # files must carry `--net=host`.
 TARGET_REACHING_HELPERS = [
-    "helpers/katana_helpers.py",
     "helpers/nuclei_helpers.py",
     "helpers/resource_enum/katana_helpers.py",
     "helpers/resource_enum/hakrawler_helpers.py",

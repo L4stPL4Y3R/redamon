@@ -41,7 +41,7 @@ of RedAmon.
 |---|---|---|---|
 | **OSV-Scanner** | Verdict engine - is a package `MAL-` (malicious) or `CVE`/`GHSA` (vulnerable)? | v2.4.0 | Go static binary |
 | **GuardDog** | Behavioural analysis - does the package *behave* like malware (install hooks, obfuscation, exfil, typosquat)? | v3.0.1 | Python (+ semgrep, YARA) |
-| **retire.js** | Black-box JS library + version harvest (L2, v2) | v5.4.3 | Node CLI |
+| **retire.js** | Black-box JS library + version harvest (L2) | v5.4.3 | Node CLI |
 
 A vulnerability id starting with `MAL-` is a **terminal malicious verdict** (the
 package itself is malware, e.g. a typosquat). `CVE-` / `GHSA-` ids are ordinary
@@ -205,8 +205,26 @@ secrets, no graph writes.
 |---|---|
 | `osv_runner.py` | `run_osv_scan(target, mode, db_path)` shells out to osv-scanner offline; `parse_osv_json` splits `MAL-` from `CVE-/GHSA-`. |
 | `guarddog_runner.py` | `scan_package` / `verify_lockfile`; `parse_guarddog` normalizes the scan-object and verify-list shapes, applies the severity map. |
-| `retire_runner.py` | `scan_js_dir` over downloaded JS; `parse_retire_json`; `to_purls`. (Wired in v2.) |
+| `retire_runner.py` | `scan_js_dir` over downloaded JS; `parse_retire_json`; `to_purls`. |
 | `purl.py` | Canonical package-URL construction (`pkg:npm/lodash@4.17.21`), npm-scope `%40` encoding, Maven `group:artifact` -> namespace/name, PyPI PEP 503 normalization. |
+
+> **retire.js needs egress, and two of its behaviours look like "clean".**
+> Unlike osv-scanner, retire.js is **not** offline. It downloads
+> `jsrepository-v5.json` from `raw.githubusercontent.com` on **every** run: it
+> caches to `/tmp/.retire-cache`, and the analyzer's `/tmp` is a tmpfs, so
+> nothing survives between jobs. Two consequences worth knowing before reading
+> an empty L2 result as good news:
+>
+> 1. **A failed repository download still writes well-formed JSON** - `data` is
+>    empty and the reason appears only in `errors`. `scan_js_dir` therefore
+>    treats a non-empty `errors` array as a run failure rather than trusting
+>    the exit code, which `--exitwith` already reassigns.
+> 2. **retire.js only reports components that carry known vulnerabilities.** A
+>    file it positively identifies as a clean version reports identically to a
+>    file it did not recognise at all. retire.js is a vulnerable-library
+>    detector, not an inventory source - the OSV pass that follows can only
+>    re-verdict what retire already flagged (it still earns its place: it adds
+>    `MAL-` advisories, severity and CVSS that retire does not carry).
 | `security.py` | `sanitize_name` / `sanitize_purl` / `sanitize_version` (strict charset gate before any subprocess/filename), and `validate_artifact` (the DIRTY->CLEAN boundary). |
 | `artifact.py` | Shared artifact assembly (`empty_artifact`, `add_osv_findings`, `add_guarddog_findings`, `to_cyclonedx`, `osv_mode_for_path`). |
 | `osv_db_sync.py` | Lazy per-ecosystem OSV DB population. |
@@ -426,18 +444,31 @@ satisfies the SSRF control (S4) by construction:
 1. **Source-map mining** - extract `node_modules/(@scope/)?<pkg>` from the
    `sources[]` of source maps JS-recon already fetched. Exact npm names, no
    versions (nested `node_modules` and scoped packages handled).
-2. **Import mining** (v2) - bare specifiers from JS `import`/`require`.
+2. **Import mining** - bare specifiers from JS `import`/`require`.
 3. **Technology -> purl** - map `http_probe` technologies (the real
    `"Name:Version"` strings, e.g. `React:18.2.0`) to npm purls with versions.
 
+A fourth source, **retire.js**, runs separately (inside the dirty analyzer,
+since it parses attacker-served bytes) and its artifact is merged in. It is the
+only source that reads a name **and a version** straight out of the served
+JavaScript, so it is the only one that can verdict a library absent from the
+15-entry technology alias table.
+
 Names without a version (source-map/import mining) are recorded as `Package`
 nodes for inventory but **cannot be OSV-verdicted** (osv-scanner needs a version
-to match a version-specific advisory); verdicts come primarily from the
-version-bearing sources (technologies now, retire.js in v2). The harvest is
-deduped into a purl set (a versioned sighting wins over a versionless one),
+to match a version-specific advisory); verdicts come from the version-bearing
+sources - technologies and retire.js. The harvest is deduped into a purl set,
 synthesized into a CycloneDX SBOM, and scanned offline. The result is stored on
 `combined_result['supply_chain_recon']` and written by
 `_graph_update_bg("update_graph_from_supply_chain_recon", ...)`.
+
+> **Dedup identity is `(ecosystem, name)`, never the purl string.** A versioned
+> sighting always beats a versionless one, and the rule has to hold in *two*
+> places: inside `harvest_packages` (across its three sources) and inside
+> `merge_artifacts` (where the retire.js artifact is folded in). Keying the
+> latter on the purl made `pkg:npm/lodash` and `pkg:npm/lodash@4.17.4` two
+> different keys, so one library became two `Package` nodes - one of them
+> permanently unverdictable.
 
 **Pipeline placement** (`recon/main.py`): GROUP 5.5, gated on
 `SUPPLY_CHAIN_RECON_ENABLED`, after `run_js_recon` so its `source_maps` +
@@ -564,7 +595,7 @@ flowchart TB
 |---|---|---|---|---|---|
 | `redamon-supply-chain-PID` (L1) | CLEAN | spawned per scan, auto-removed | Yes | ro | host (reach Neo4j at `localhost:7687`) |
 | `redamon-recon-PID` (L2) | CLEAN | spawned per recon scan | Yes | ro (mounted at spawn) | host |
-| `redamon-supply-chain-analyzer` | DIRTY | `docker run` per L3 GuardDog call | **No** | ro | isolated bridge (`redamon-supply-chain-net`); GuardDog egress opt-in |
+| `redamon-supply-chain-analyzer` | DIRTY | `docker run` per GuardDog call (L2 deep analysis, and L3 `execute_guarddog`) | **No** | ro | registry egress required; `cap_drop=ALL`, read-only rootfs, non-root uid 1001, pid/mem caps |
 | `kali-sandbox` (L3) | tool | long-lived | no (uses scoped tokens) | ro | internal |
 
 Build-time: the two supply-chain images build under `--profile tools`
@@ -595,13 +626,46 @@ no rebuild) into recon / scan / analyzer at spawn.
 
 - L1 input: an uploaded **SBOM / lockfile** (static, offline). Nodes float (no repo anchor).
 - L2: source-map + technology harvest + offline OSV verdict; anchored to `BaseURL`.
+- L2 **GuardDog deep analysis** (opt-in, flagged-package-only) -> `suspicious` findings.
 - L3: `execute_osv_scanner` (offline) + `execute_guarddog` (dispatched to the analyzer).
+
+**Deep behavioural analysis (GuardDog), L2 — implemented 2026-08-07**
+
+Gated on `SUPPLY_CHAIN_RECON_DEEP_ANALYSIS_ENABLED` (off by default). After the
+offline OSV pass, `deep_analyze()` in `supply_chain_recon.py` takes the packages
+OSV **already flagged** (malicious first, capped at
+`SUPPLY_CHAIN_DEEP_MAX_PACKAGES`, default 10), maps the OSV ecosystem brand to
+GuardDog's slug, and runs `guarddog <eco> scan` **inside the dirty analyzer
+image**, spawned through the broker socket the recon container already holds
+(`DOCKER_HOST=unix:///var/run/broker/docker.sock`). The recon process holds the
+Neo4j creds and never unpacks a tarball itself.
+
+Results become `suspicious` findings (`verdict=suspicious`,
+`source_tool=guarddog`, `advisory_id=<rule>`), carrying the **versioned purl**
+so they attach to the existing `Package` node. A download failure becomes a
+`soft_error` finding, never a silent clean. A GuardDog hit is never malicious —
+only an OSV `MAL-` id is.
+
+> **`--no-sandbox` is required, and deliberate.** GuardDog 3.x auto-detects and
+> builds its own kernel-level sandbox around the extraction step. Inside a
+> container it cannot, and it fails *silently*: exit 0, `issues: 0`, the real
+> cause buried in `errors["download-package"]`. Verified on 3.0.1 that it fails
+> identically with and without `--cap-drop ALL` / `--read-only`, so it is the
+> container context, not our hardening. The **analyzer container is the
+> sandbox** (`cap_drop=ALL`, read-only rootfs, non-root uid 1001, pid/memory
+> caps, no secrets) — a stronger boundary than GuardDog's in-process one, and
+> the reason the dirty analyzer exists. Never run `guarddog` outside that image.
 
 **Deferred to v2:**
 
 - L1 **GitHub-repo** input (clone in the DIRTY analyzer, anchor to `GithubRepository`).
-- L2 **retire.js** harvest of served JS (versioned components -> more verdicts).
-- **GuardDog deep-analysis** dispatch in L1/L2 (off by default; flagged-package-only).
+- **GuardDog in L1**: the standalone scan container is spawned with no broker
+  socket and no `DOCKER_HOST`, so it cannot dispatch. Wiring it means granting
+  Docker access to a container that holds the Neo4j creds — a deliberate
+  decision, not an oversight.
+- **GuardDog from L3 in practice**: `execute_guarddog` is correct, but
+  `kali-sandbox` is mounted with no Docker socket at all, so the dispatch
+  returns "docker not available". Needs the broker socket to be useful.
 - Non-`MAL` OSV ids (`CVE`/`GHSA`) routed to the existing CVE node path.
 
 ---

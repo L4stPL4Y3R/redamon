@@ -229,9 +229,35 @@ def _fetch_capture_config(url: str, key: str):
         return None
 
 
+def _ensure_spool_shared(path: str) -> None:
+    """Make the shared spool volume writable by the capture containers' non-root uid.
+
+    This orchestrator is the FIRST and only always-on mounter of the `capture_spool`
+    named volume (it publishes .capture-config.json there), and it runs as root
+    while capture-proxy / traffic-ingest run as uid 10001 with a read-only rootfs.
+    Docker applies an image's directory ownership to a named volume only while that
+    volume is still EMPTY, so the moment this reconciler writes the config file the
+    volume becomes non-empty and stays root:root 0755 forever. The capture
+    containers then cannot mkdir /spool/.tmp or /spool/.rejected and crash-loop
+    under restart=unless-stopped (issue #159).
+
+    Widening the mount point to 0777 here is the same cross-uid sharing already
+    applied to the bodies store by both capture entrypoints. It is an internal
+    volume holding no secrets: the spool records carry an opaque ctx tag, and the
+    proxy is credential-free by construction. Idempotent, so it also repairs
+    volumes already broken in the field on the next orchestrator restart.
+    """
+    try:
+        os.makedirs(path, exist_ok=True)
+        if (os.stat(path).st_mode & 0o777) != 0o777:
+            os.chmod(path, 0o777)
+    except OSError as e:
+        logger.warning("could not normalise spool dir %s (capture may fail): %s", path, e)
+
+
 def _atomic_write(path: str, text: str) -> None:
     d = os.path.dirname(path) or "."
-    os.makedirs(d, exist_ok=True)
+    _ensure_spool_shared(d)
     tmp = f"{path}.tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(text)
@@ -253,6 +279,10 @@ async def _capture_config_reconcile():
     key = os.environ.get("INTERNAL_API_KEY", "")
     path = os.environ.get("CAPTURE_CONFIG_FILE", "/spool/.capture-config.json")
     interval = float(os.environ.get("CAPTURE_CONFIG_RECONCILE_SEC", "5") or 5)
+    # Repair the shared mount point up front, not just on the first write: if the
+    # webapp is unreachable at boot we never write, yet the operator may still
+    # toggle capture on and spawn the (non-root) proxy against a root-owned volume.
+    _ensure_spool_shared(os.path.dirname(path) or "/spool")
     last = None
     while True:
         try:

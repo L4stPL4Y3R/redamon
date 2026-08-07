@@ -56,26 +56,32 @@ def resolve_input_path(uploads_dir, sbom_file):
 
 class SupplyChainRunner:
     def __init__(self, *, uploads_dir, sbom_file, db_path, project_id,
-                 ecosystems=None, osv=osv_runner):
+                 ecosystems=None, osv=osv_runner, repo_dir=None):
         self.uploads_dir = uploads_dir
         self.sbom_file = sbom_file
         self.db_path = db_path
         self.project_id = project_id
         self.ecosystems = set(ecosystems or [])
         self._osv = osv  # injectable for tests
+        # When set, the input is a cloned repository checkout rather than a
+        # single uploaded file: osv-scanner walks it and picks up EVERY
+        # lockfile it contains, which is the point of the GitHub source.
+        self.repo_dir = repo_dir
         self.stats = {"packages": 0, "malicious": 0, "vulnerable": 0,
                       "errors": []}
 
     def run(self):
         """Scan the input and return a validated artifact dict."""
-        try:
-            path = resolve_input_path(self.uploads_dir, self.sbom_file)
-        except SupplyChainInputError as exc:
-            art = empty_artifact()
-            art["errors"].append(str(exc))
-            return validate_artifact(art)
-
-        mode = osv_mode_for_path(path)
+        if self.repo_dir:
+            path, mode = self.repo_dir, "dir"
+        else:
+            try:
+                path = resolve_input_path(self.uploads_dir, self.sbom_file)
+            except SupplyChainInputError as exc:
+                art = empty_artifact()
+                art["errors"].append(str(exc))
+                return validate_artifact(art)
+            mode = osv_mode_for_path(path)
         result = self._osv.run_osv_scan(path, mode=mode, db_path=self.db_path)
 
         artifact = empty_artifact(mode)

@@ -280,3 +280,25 @@ describe('formatGraphRecords', () => {
     expect(result.nodes[0].properties.number).toBe(443)
   })
 })
+
+describe('node name truncation', () => {
+  // REGRESSION: a GuardDog metadata_mismatch finding stores a multi-line
+  // manifest diff in `title`. MalPackageFinding has no `name`, so the fallback
+  // chain reached `title` and the whole dump became the node's displayed name.
+  const dump =
+    'Difference between manifest and package.json found: \n' +
+    Array.from({ length: 40 }, (_, i) =>
+      `  @next/swc-${i}: Manifest("13.4.7"), package.json("None") \n`).join('')
+
+  test('keeps a long multi-line title from becoming the node name', () => {
+    const name = getNodeName('MalPackageFinding', { title: dump })
+    expect(dump.length).toBeGreaterThan(1000)
+    expect(name.length).toBeLessThanOrEqual(80)
+    expect(name).not.toContain('\n')
+  })
+
+  test('leaves a short name untouched', () => {
+    expect(getNodeName('Package', { name: 'pkg:npm/axios@1.14.1' }))
+      .toBe('pkg:npm/axios@1.14.1')
+  })
+})

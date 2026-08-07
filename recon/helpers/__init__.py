@@ -7,7 +7,6 @@ This package contains helper functions organized by category:
 - docker_helpers: Docker utilities (container management, image pulls, permissions)
 - target_helpers: Target extraction and URL building from recon data
 - nuclei_helpers: Nuclei command building, output parsing, false positive detection
-- katana_helpers: Katana web crawler for URL discovery
 - cve_helpers: CVE lookup from NVD and Vulners APIs
 - security_checks: Custom security checks (direct IP access, TLS, headers, etc.)
 """
@@ -44,11 +43,6 @@ from .nuclei_helpers import (
     parse_nuclei_finding,
     is_false_positive,
     set_fp_ai_ctx,
-)
-
-# Katana web crawler
-from .katana_helpers import (
-    run_katana_crawler,
 )
 
 # CVE lookup
@@ -110,7 +104,6 @@ __all__ = [
     "is_false_positive",
     "set_fp_ai_ctx",
     # Katana
-    "run_katana_crawler",
     # CVE
     "split_server_header",
     "parse_technology_string",

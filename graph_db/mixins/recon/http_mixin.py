@@ -22,6 +22,59 @@ from urllib.parse import urlparse, parse_qs
 from graph_db.cpe_resolver import _is_ip_address
 
 
+def resolve_tech_version(session, name: str, version: str,
+                         user_id: str, project_id: str) -> str:
+    """Return the version to MERGE a Technology node on, collapsing duplicates.
+
+    Technology identity is ``(name, version, user_id, project_id)`` and a
+    versionless detection is stored with ``version: ''`` (Neo4j cannot MERGE on
+    null, so the empty string is the sentinel). Two detectors disagreeing about
+    whether they can read a version therefore produced TWO nodes for the same
+    technology - observed live as React ``18.2.0`` (httpx) alongside React ``''``
+    (wappalyzer). That inflates technology counts, splits the graph view, and
+    can hide a version from version-based matching.
+
+    Both directions are handled:
+      - a versionless detection arrives and a versioned node already exists
+        -> reuse the versioned node, do not create the '' twin
+      - a versioned detection arrives and a versionless node exists
+        -> absorb it: move its USES_TECHNOLOGY edges onto the versioned node
+           and delete the twin
+
+    Returns the version string the caller should MERGE on.
+    """
+    if version:
+        # Absorb an existing versionless twin into this versioned node.
+        session.run(
+            """
+            MATCH (old:Technology {name: $name, version: '',
+                                   user_id: $uid, project_id: $pid})
+            MERGE (new:Technology {name: $name, version: $version,
+                                   user_id: $uid, project_id: $pid})
+            WITH old, new
+            OPTIONAL MATCH (e)-[r:USES_TECHNOLOGY]->(old)
+            WITH old, new, collect(e) AS endpoints
+            FOREACH (e IN endpoints | MERGE (e)-[:USES_TECHNOLOGY]->(new))
+            DETACH DELETE old
+            """,
+            name=name, version=version, uid=user_id, pid=project_id,
+        )
+        return version
+
+    # Versionless detection: prefer an existing versioned node for this name.
+    rec = session.run(
+        """
+        MATCH (t:Technology {name: $name, user_id: $uid, project_id: $pid})
+        WHERE t.version <> ''
+        RETURN t.version AS version
+        ORDER BY t.version DESC
+        LIMIT 1
+        """,
+        name=name, uid=user_id, pid=project_id,
+    ).single()
+    return rec["version"] if rec and rec["version"] else ""
+
+
 def _split_url(url: str) -> tuple[str, str]:
     """Return ``(base_url, path)`` where ``base_url = scheme://host:port``
     and ``path`` is the URL path (defaults to ``'/'``). Query string and
@@ -336,6 +389,12 @@ class HttpMixin:
                             # Remove None values
                             tech_props = {k: v for k, v in tech_props.items() if v is not None}
 
+                            # Collapse a versionless/versioned twin of the same
+                            # technology onto one node before merging.
+                            tech_version = resolve_tech_version(
+                                session, tech_name, tech_version, user_id, project_id)
+                            tech_props["version"] = tech_version
+
                             # Create Technology node (unique by name + version + tenant)
                             if tech_version:
                                 session.run(
@@ -473,6 +532,13 @@ class HttpMixin:
 
                             # Remove None values
                             tech_props = {k: v for k, v in tech_props.items() if v is not None}
+
+                            # Same twin-collapsing as the httpx path above: the two
+                            # detectors disagree on version presence often (React
+                            # 18.2.0 from httpx vs bare React from wappalyzer).
+                            tech_version = resolve_tech_version(
+                                session, tech_name, tech_version, user_id, project_id)
+                            tech_props["version"] = tech_version
 
                             # Create Technology node
                             if tech_version:

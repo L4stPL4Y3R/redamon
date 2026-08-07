@@ -135,6 +135,17 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       updateData.targetIps = updateData.targetIps.map((s: string) => s.trim()).filter(Boolean)
     }
 
+    // Supply-chain input: supplyChainRepoUrl becomes a `git clone` argument in
+    // the scan container, so it is validated server-side. The Other Scans UI
+    // validates too, but a direct PUT bypasses it.
+    {
+      const { validateSupplyChainInput } = await import('@/lib/validation/supplyChainInput')
+      const err = validateSupplyChainInput(updateData)
+      if (err) {
+        return NextResponse.json({ error: err }, { status: 400 })
+      }
+    }
+
     // Fireteam settings: server-side Zod validation so a direct API call
     // with out-of-range values (bypassing the UI form) still gets rejected.
     // Only validate when at least one fireteam field is being touched.

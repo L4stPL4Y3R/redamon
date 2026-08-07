@@ -321,17 +321,6 @@ class MCPToolsManager:
                 )
             return self._generation, tools
 
-    def get_tool_by_name(self, name: str) -> Optional[any]:
-        """Get a specific tool by name."""
-        return self._tools_cache.get(name)
-
-    def get_available_tools_for_phase(self, phase: str) -> List:
-        """Get tools that are allowed in the current phase."""
-        return [
-            tool for name, tool in self._tools_cache.items()
-            if is_tool_allowed_in_phase(name, phase)
-        ]
-
 
 # =============================================================================
 # NEO4J TOOL MANAGER
@@ -2354,13 +2343,6 @@ class PhaseAwareToolExecutor:
     def get_all_tools(self) -> List:
         """Get all registered tools."""
         return list(self._all_tools.values())
-
-    def get_tools_for_phase(self, phase: str) -> List:
-        """Get tools allowed in the given phase."""
-        return [
-            tool for name, tool in self._all_tools.items()
-            if is_tool_allowed_in_phase(name, phase)
-        ]
 
 
 def get_phase_for_tool(tool_name: str) -> str:

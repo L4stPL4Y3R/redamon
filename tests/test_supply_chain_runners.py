@@ -11,7 +11,9 @@ Run: python -m pytest tests/test_supply_chain_runners.py
 
 import json
 import os
+import shutil
 import sys
+import tempfile
 import unittest
 
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -185,6 +187,84 @@ class TestRetireParser(unittest.TestCase):
         parsed = retire_runner.parse_retire_json(None)
         self.assertEqual(parsed["components"], [])
         self.assertEqual(parsed["vulns"], [])
+
+
+class TestRetireErrorSurfacing(unittest.TestCase):
+    """A retire.js run that could not load its signature repository writes a
+    WELL-FORMED report: `data` is empty and the reason is only in `errors`.
+
+    That is the false-clean shape - valid JSON, zero components, no parse
+    failure - and it is not hypothetical: retire.js downloads
+    jsrepository-v5.json from raw.githubusercontent.com on every run, and the
+    analyzer's /tmp is a tmpfs so nothing caches between runs. One DNS blip and
+    every JS library on the target reads as clean.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="retire-err-")
+        self.out = os.path.join(self.dir, "out.json")
+        self._orig = retire_runner.run_argv
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+        self.addCleanup(setattr, retire_runner, "run_argv", self._orig)
+
+    def _stub(self, payload, exit_code=0):
+        def fake(argv, timeout=None):
+            with open(self.out, "w") as fh:
+                json.dump(payload, fh)
+            return {"exit_code": exit_code, "stdout": "", "stderr": "", "error": None}
+        retire_runner.run_argv = fake
+
+    def test_reported_errors_become_the_runner_error(self):
+        self._stub({"version": "5.4.3", "data": [], "errors": [
+            "Error downloading: https://raw.githubusercontent.com/RetireJS/"
+            "retire.js/master/repository/jsrepository-v5.json: "
+            "Error: getaddrinfo EAI_AGAIN raw.githubusercontent.com"]})
+        res = retire_runner.scan_js_dir(self.dir, out_path=self.out)
+        self.assertIsNotNone(res["error"])
+        self.assertIn("jsrepository", res["error"])
+        self.assertEqual(res["components"], [])
+
+    def test_exit_zero_does_not_launder_a_reported_error(self):
+        """--exitwith already reassigns the findings exit code, so tying
+        'did the scan work' to it is the coupling that produced the GuardDog
+        false-clean. Exit 0 plus a reported error is still an error."""
+        self._stub({"data": [], "errors": ["repository load failed"]}, exit_code=0)
+        res = retire_runner.scan_js_dir(self.dir, out_path=self.out)
+        self.assertIn("repository load failed", res["error"])
+
+    def test_empty_errors_list_is_a_genuine_clean_result(self):
+        """retire.js reports `data: []` for a CLEAN component too - its JSON
+        reporter emits only components carrying vulnerabilities. Empty errors
+        is the only thing separating that from a failed run."""
+        self._stub({"version": "5.4.3", "data": [], "errors": []})
+        res = retire_runner.scan_js_dir(self.dir, out_path=self.out)
+        self.assertIsNone(res["error"])
+        self.assertEqual(res["components"], [])
+
+    def test_missing_errors_key_is_tolerated(self):
+        self._stub({"version": "5.4.3", "data": []})
+        self.assertIsNone(retire_runner.scan_js_dir(self.dir, out_path=self.out)["error"])
+
+    def test_findings_still_parse_when_errors_are_present(self):
+        """A partial run must not lose the components it did identify."""
+        self._stub({"data": [{"file": "/work/js/a.js", "results": [
+            {"component": "handlebars", "version": "4.0.5",
+             "detection": "filecontent", "vulnerabilities": []}]}],
+            "errors": ["some non-fatal complaint"]})
+        res = retire_runner.scan_js_dir(self.dir, out_path=self.out)
+        self.assertIn("some non-fatal complaint", res["error"])
+        self.assertEqual([c["name"] for c in res["components"]], ["handlebars"])
+
+    def test_a_spawn_error_is_not_overwritten_by_the_reported_one(self):
+        def fake(argv, timeout=None):
+            with open(self.out, "w") as fh:
+                json.dump({"data": [], "errors": ["secondary"]}, fh)
+            return {"exit_code": 127, "stdout": "", "stderr": "",
+                    "error": "binary not found"}
+        retire_runner.run_argv = fake
+        self.assertEqual(
+            retire_runner.scan_js_dir(self.dir, out_path=self.out)["error"],
+            "binary not found")
 
 
 if __name__ == "__main__":

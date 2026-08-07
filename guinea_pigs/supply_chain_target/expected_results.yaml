@@ -1,0 +1,496 @@
+# Expected Neo4j state after a full recon scan of the Supply-Chain guinea pig.
+#
+# Every entry below was OBSERVED by running the real production chain
+# (run_js_recon -> run_supply_chain_recon) against the target via
+# run_dry_run.sh, not hand-predicted. Regenerate after any harvest change.
+#
+# Checked by validate_supply_chain_recon.py.
+
+target:
+  url: http://192.88.99.10
+  # _extract_base_urls normalizes probed URLs down to scheme://netloc, which is
+  # what the BaseURL node's `url` property holds.
+  base_url_node: http://192.88.99.10
+
+totals:
+  # 11 from technologies + 108 from source maps (98 filler + 10 named)
+  # + 3 from retire.js. That is 122, not 123: retire.js reports lodash@4.17.4,
+  # which REPLACES the versionless pkg:npm/lodash the technology path found
+  # rather than sitting beside it.
+  packages_min: 122
+  malicious_findings: 1
+  # CVE/GHSA verdicts DO become graph nodes now (Vulnerability, not
+  # MalPackageFinding - the two verdict classes are kept apart on purpose).
+  # 102 artifact entries across 8 packages; the node count is lower because
+  # Vulnerability MERGEs on the advisory id, so one advisory affecting two
+  # packages is one node with two HAS_VULNERABILITY edges.
+  vulnerable_findings_in_artifact: 102
+  vulnerability_nodes_min: 95
+
+# ---------------------------------------------------------------------------
+# PATH A - technologies -> purl. The only version-bearing source in the
+# pipeline. httpx (wappalyzergo) reads <script src> paths and the X-Powered-By
+# header, emits "Name:Version", and harvest.py maps the display name through
+# _TECH_NPM_ALIASES. Anything not in that table is dropped.
+# ---------------------------------------------------------------------------
+packages_from_technologies:
+
+  - purl: pkg:npm/axios@1.14.1
+    source: wappalyzer
+    version: "1.14.1"
+    proves: >
+      MALICIOUS path. OSV MAL-2026-2307 is live (not withdrawn) for axios
+      1.14.1, so this is the single package in the whole alias table that can
+      produce a MalPackageFinding end to end.
+    expect_malicious: true
+
+  - purl: pkg:npm/jquery@3.4.1
+    source: wappalyzer
+    version: "3.4.1"
+    proves: >
+      VULNERABLE-but-not-a-node. Carries GHSA-gxr4-xjj5-5px2 and
+      GHSA-jpcq-cgw6-v4j6; both must land in the JSON artifact and neither may
+      create a MalPackageFinding.
+    expect_malicious: false
+
+  - purl: pkg:npm/vue@2.6.10
+    source: wappalyzer
+    version: "2.6.10"
+    proves: second vulnerable-only package (GHSA-5j4c-8p2g-v4jx), same rule.
+    expect_malicious: false
+
+  - purl: pkg:npm/bootstrap@5.3.3
+    source: wappalyzer
+    version: "5.3.3"
+    proves: CLEAN + versioned. A Package node with a version and zero findings.
+    expect_malicious: false
+
+  # NOTE: lodash is deliberately NOT listed here any more. httpx still emits a
+  # bare versionless "Lodash", but retire.js reads 4.17.4 out of
+  # /assets/util-belt.js and the merge keeps the versioned sighting - so the
+  # graph holds pkg:npm/lodash@4.17.4 with source=retirejs, not
+  # pkg:npm/lodash. See packages_from_retirejs below; the versionless form is
+  # asserted absent under must_not_exist.
+
+  - purl: pkg:npm/moment
+    source: wappalyzer
+    version: null
+    proves: second versionless alias, via a path with no version segment.
+    expect_malicious: false
+
+  - purl: pkg:npm/express
+    source: wappalyzer
+    version: null
+    proves: >
+      Alias reached through a RESPONSE HEADER (X-Powered-By: Express) rather
+      than a script path, exercising the non-scriptSrc fingerprint route.
+    expect_malicious: false
+
+  - purl: pkg:npm/next@13.4.7
+    source: wappalyzer
+    version: "13.4.7"
+    proves: >
+      Header route WITH a version (X-Powered-By: Next.js 13.4.7 on port 8080),
+      and the second BaseURL. Flagged by OSV, so it also reaches GuardDog.
+    expect_malicious: false
+
+  - purl: pkg:npm/react@18.2.0
+    source: wappalyzer
+    version: "18.2.0"
+    proves: second CLEAN + versioned package, and the plain `react` alias.
+    expect_malicious: false
+
+  - purl: pkg:npm/angular@1.8.3
+    source: wappalyzer
+    version: "1.8.3"
+    proves: >
+      ALIAS RENAME. httpx reports the display name "AngularJS"; the table maps
+      `angularjs` -> npm `angular`. (The display name `angular` maps to
+      @angular/core instead, but Angular 2+ is only detectable through
+      browser-runtime js: rules, so it is unreachable in L2.) Flagged by OSV,
+      so it also reaches GuardDog - where it is the HIGH severity proof.
+    expect_malicious: false
+
+  - purl: pkg:npm/d3
+    source: wappalyzer
+    version: null
+    proves: third versionless alias.
+    expect_malicious: false
+
+  - purl: pkg:npm/backbone
+    source: wappalyzer
+    version: null
+    proves: fourth versionless alias.
+    expect_malicious: false
+
+# Detected by httpx but NOT in _TECH_NPM_ALIASES. Their absence proves the
+# harvester refuses to invent purls for things it cannot map to npm.
+technologies_detected_but_dropped:
+  - "Nginx:1.18.0"      # Server header
+  - "WordPress:6.1"     # <meta name="generator">
+  - "PHP"               # implied by WordPress
+  - "MySQL"             # implied by WordPress
+  - "Node.js"           # implied by Express
+  - "Underscore.js"     # real npm package, deliberately NOT in the alias table
+  - "Webpack"           # build tool, not a dependency
+
+# ---------------------------------------------------------------------------
+# PATH B - source-map mining. Names only, never versions.
+# js_recon stores map["sources"][:100] as source_files.
+# ---------------------------------------------------------------------------
+packages_from_sourcemaps:
+
+  - purl: pkg:npm/left-pad
+    source: sourcemap
+    proves: plain unscoped node_modules/<pkg> extraction.
+
+  - purl: pkg:npm/is-odd
+    source: sourcemap
+    proves: second unscoped package, volume sanity.
+
+  - purl: "pkg:npm/%40babel/runtime"
+    source: sourcemap
+    proves: >
+      SCOPED package. build_purl must url-encode the leading '@' as %40 so the
+      purl round-trips through URL parsers. Raw name is @babel/runtime.
+
+  - purl: pkg:npm/outer-pkg
+    source: sourcemap
+    proves: >
+      NESTED node_modules, outer half. The regex uses findall, so
+      node_modules/outer-pkg/node_modules/inner-pkg/index.js must yield BOTH.
+
+  - purl: pkg:npm/inner-pkg
+    source: sourcemap
+    proves: nested node_modules, inner half.
+
+  - purl: pkg:npm/within-cap-edge
+    source: sourcemap
+    proves: >
+      source_files[:100] boundary. This sits at index 99 of deep-vendor.js.map,
+      the last entry that survives the cap.
+
+  # -------------------------------------------------------------------------
+  # SOURCE-MAP DISCOVERY MECHANISMS. js_recon has four independent ways to
+  # locate a map; each package below proves exactly one of them fired.
+  # -------------------------------------------------------------------------
+  - purl: pkg:npm/via-header
+    source: sourcemap
+    proves: >
+      Map advertised by the `SourceMap:` RESPONSE HEADER
+      (sourcemap.py::check_sourcemap_header), with no //# comment in the bundle.
+
+  - purl: pkg:npm/via-path-probe
+    source: sourcemap
+    proves: >
+      Bundle carries NO hint at all; js_recon falls back to probing
+      DEFAULT_SOURCEMAP_PROBE_PATHS and finds {url}.map.
+
+  - purl: pkg:npm/via-inline-data
+    source: sourcemap
+    proves: >
+      Inline `//# sourceMappingURL=data:application/json;base64,...`. Decoded
+      before is_url_safe_to_probe, so it is the only discovery path that needs
+      no second fetch (sourcemap.py:106-114).
+
+  - purl: pkg:npm/via-multiline-comment
+    source: sourcemap
+    proves: >
+      Block-comment form `/*# sourceMappingURL=... */`, the second regex branch
+      in check_sourcemap_comment.
+
+# 98 of these (filler-000 .. filler-097). They pad deep-vendor.js.map so the
+# cap boundary lands on a known name.
+filler_packages:
+  prefix: pkg:npm/filler-
+  count: 98
+
+# ---------------------------------------------------------------------------
+# PATH C - retire.js. Name AND version, read out of the served bytes.
+#
+# The only source that can verdict a library the 15-entry _TECH_NPM_ALIASES
+# table has never heard of, and the only one that can put a version on a
+# library the other two paths saw versionless. Runs inside the DIRTY analyzer
+# (the JS is attacker-served), dispatched over the broker socket.
+#
+# Observed against retire.js v5.4.3 + the offline OSV DB on 2026-08-07.
+# ---------------------------------------------------------------------------
+packages_from_retirejs:
+
+  - purl: pkg:npm/handlebars@4.0.5
+    source: retirejs
+    version: "4.0.5"
+    detection: filecontent
+    served_at: /assets/tpl-engine.js
+    vulnerable_count: 17
+    proves: >
+      UNIQUE COVERAGE. handlebars is absent from _TECH_NPM_ALIASES and never
+      appears in a source map, so no other path in the pipeline can see it at
+      all - and the URL is deliberately anonymous, so even the technology path
+      could not guess it. Its 17 advisories also span every severity tier
+      (critical/high/medium/low), which is what exercises the full ladder in
+      _vuln_severity rather than a single branch.
+    expect_malicious: false
+
+  - purl: pkg:npm/lodash@4.17.4
+    source: retirejs
+    version: "4.17.4"
+    detection: filecontent
+    served_at: /assets/util-belt.js
+    vulnerable_count: 10
+    proves: >
+      THE UPGRADE, and the merge_artifacts identity fix. httpx reports a bare
+      versionless "Lodash" from /js/lodash.custom.js, which osv-scanner can
+      never verdict. retire.js reads 4.17.4 from the bytes, and the merge keys
+      packages on (ecosystem, name) - NOT on the purl string - so the versioned
+      sighting REPLACES the versionless one. Purl-keying made them two
+      different keys and put two Package nodes in the graph for one library.
+    expect_malicious: false
+
+  - purl: pkg:npm/knockout@3.4.0
+    source: retirejs
+    version: "3.4.0"
+    detection: filecontent
+    served_at: /assets/bind-lib.js
+    vulnerable_count: 1
+    proves: second not-in-the-alias-table library, via a different extractor.
+    expect_malicious: false
+
+# ---------------------------------------------------------------------------
+# Negative controls. Every purl here MUST BE ABSENT from the graph.
+# ---------------------------------------------------------------------------
+must_not_exist:
+
+  - purl: pkg:npm/must-not-appear
+    name: must-not-appear
+    why: >
+      Sole source of /assets/badmap.js.map, which omits the mandatory "version"
+      key. js_recon requires version + a sources list, so a malformed map must
+      contribute nothing rather than being partially trusted.
+
+  - purl: pkg:npm/beyond-cap-pkg
+    name: beyond-cap-pkg
+    why: >
+      Index 100 of deep-vendor.js.map, one past the source_files[:100] cap. Its
+      presence would mean the cap silently moved.
+
+  - purl: pkg:npm/axios
+    why: >
+      VERSION-PREFERRING DEDUP. axios appears twice - versionless from
+      app.7f3c2a.js.map and versioned from the technology hit. harvest_packages
+      dedups by NAME and the versioned sighting must win, so the bare purl must
+      never be written. If it exists, dedup regressed and the MAL verdict would
+      be lost.
+
+  - purl: pkg:npm/lodash
+    why: >
+      THE SAME RULE, ACROSS THE SOURCE BOUNDARY. axios above is deduped inside
+      harvest_packages, which has always keyed by name. lodash is deduped in
+      merge_artifacts, where the versionless technology sighting meets the
+      versioned retire.js one - and that function used to key on the PURL, so
+      pkg:npm/lodash and pkg:npm/lodash@4.17.4 were two different keys and both
+      survived. If the bare purl reappears, that regressed.
+
+  - purl: pkg:npm/knockout@3.5.1
+    name: knockout
+    why: >
+      RETIRE.JS CLEAN-VERSION CONTROL. /assets/fresh-lib.js carries a knockout
+      3.5.1 banner that retire.js positively matches - but its JSON reporter
+      emits ONLY components carrying known vulnerabilities, so a clean version
+      is indistinguishable from an unrecognised file and contributes nothing.
+      This is why retire.js is a vulnerable-library detector and NOT a general
+      inventory source. If 3.5.1 ever appears, retire.js changed behaviour and
+      the note in supply_chain_common/retire_runner.py is stale.
+
+  # Hostile source-map entries. sanitize_name must reject all four.
+  #
+  # `name` is asserted as well as `purl` on purpose. The regression these guard
+  # against is a LOOSENED sanitize_name, and if that happened build_purl would
+  # percent-encode the survivor (evil;whoami -> pkg:npm/evil%3Bwhoami), so a
+  # purl-only check would pass while the bad package sat in the graph.
+  - purl: "pkg:npm/.."
+    name: ".."
+    why: "path traversal: node_modules/../../etc/passwd"
+  - purl: pkg:npm/-rf
+    name: "-rf"
+    why: "leading '-' would be parsed as a CLI flag by the tool we shell out to"
+  - purl: "pkg:npm/evil;whoami"
+    name: "evil;whoami"
+    why: "shell metacharacter in a package name"
+  - purl: "pkg:npm/back`tick`"
+    name: "back`tick`"
+    why: "backtick in a package name"
+
+# Non-package source entries (src/index.js, src/components/App.jsx) carry no
+# node_modules segment and must produce nothing at all.
+non_package_sources_yield_nothing: true
+
+# ---------------------------------------------------------------------------
+# Graph shape.
+# ---------------------------------------------------------------------------
+graph:
+  malicious_finding:
+    advisory_id: MAL-2026-2307
+    verdict: malicious
+    source_tool: osv
+    attached_to_purl: pkg:npm/axios@1.14.1
+    relationship: FLAGGED_AS
+
+  depends_on:
+    # L2 anchors every harvested package to EVERY target BaseURL, unlike L1
+    # whose uploaded-SBOM packages float. Two surfaces (80 and 8080) mean two
+    # BaseURL nodes, which exercises the per-BaseURL loop in
+    # update_graph_from_supply_chain_recon rather than the single-anchor case.
+    from_label: BaseURL
+    from_key: url
+    from_value: http://192.88.99.10
+    also_anchored_from:
+      - http://192.88.99.10:8080
+    to_label: Package
+    relationship: DEPENDS_ON
+    # Every Package node must be anchored.
+    expect_all_packages_anchored: true
+
+  # -------------------------------------------------------------------------
+  # Deep behavioural analysis (GuardDog). Opt-in via
+  # supplyChainReconDeepAnalysisEnabled; asserted only when the validator is
+  # run with --deep, because the pass downloads real tarballs from the npm
+  # registry and is off by default.
+  #
+  # Only OSV-FLAGGED packages are ever sent, so the reachable set here is
+  # exactly {axios@1.14.1, jquery@3.4.1, vue@2.6.10}. Observed against
+  # GuardDog 3.0.1 on 2026-08-07.
+  # -------------------------------------------------------------------------
+  deep_analysis:
+    # 8, not 5: retire.js added handlebars@4.0.5, knockout@3.4.0 and
+    # lodash@4.17.4 to the flagged set, and deep analysis only ever runs over
+    # packages an OSV verdict already flagged. Three of the eight packages
+    # GuardDog now behaviourally analyses were INVISIBLE to the pipeline before
+    # retire.js existed - that reach is the clearest measure of what the
+    # integration bought.
+    scanned_packages: 8
+    # A MINIMUM, not an equality: `next` alone contributes 19 rules and that
+    # count tracks upstream GuardDog rule changes. The per-package rule sets
+    # below are the real assertions.
+    #
+    # NOTE this counts GRAPH NODES, not artifact entries. The artifact holds
+    # one finding per rule HIT (54 here); MalPackageFinding MERGEs on
+    # finding_id = sha256(purl:advisory), so repeated hits of the same rule at
+    # different code locations collapse into one node (38 here). That
+    # collapsing is intended - one node per (package, rule).
+    min_suspicious_findings: 35
+    verdict: suspicious      # never `malicious` - only an OSV MAL- hit is that
+    source_tool: guarddog
+
+    findings:
+      - purl: pkg:npm/jquery@3.4.1
+        rules:
+          - rule: threat-runtime-obfuscation-general
+            severity: medium     # severity_for_rule: "obfuscation" -> medium
+          - rule: capability-network-outbound
+            severity: low
+          - rule: capability-process-schedule
+            severity: low
+          - rule: capability-process-spawn
+            severity: low
+
+      - purl: pkg:npm/vue@2.6.10
+        rules:
+          - rule: capability-filesystem-read
+            severity: low
+          - rule: capability-network-outbound
+            severity: low
+          - rule: capability-process-spawn
+            severity: low
+
+      # -- The three packages only retire.js could reach ---------------------
+      # Deep analysis runs exclusively over OSV-flagged packages, and these
+      # three are flagged only because retire.js supplied a VERSION for them.
+      # Their presence here is the end-to-end proof of the whole Path C chain:
+      # served bytes -> retire.js filecontent match -> purl with a version ->
+      # offline OSV verdict -> behavioural analysis -> graph.
+      - purl: pkg:npm/handlebars@4.0.5
+        reachable_only_via: retirejs
+        rules:
+          - rule: capability-filesystem-read
+            severity: low
+          - rule: capability-process-spawn
+            severity: low
+          - rule: metadata_mismatch
+            severity: medium
+
+      - purl: pkg:npm/knockout@3.4.0
+        reachable_only_via: retirejs
+        rules:
+          - rule: capability-process-spawn
+            severity: low
+          # Fires twice in the artifact (two dependency entries) and collapses
+          # to ONE node - MalPackageFinding MERGEs on (purl, rule).
+          - rule: threat-npm-http-dependency
+            severity: low
+
+      # lodash reaches GuardDog only because retire.js put 4.17.4 on what the
+      # technology path saw as a versionless, unverdictable "Lodash".
+      - purl: pkg:npm/lodash@4.17.4
+        reachable_only_via: retirejs
+        rules:
+          - rule: capability-network-outbound
+            severity: low
+          - rule: capability-process-spawn
+            severity: low
+
+      # SOFT ERROR proof: npm unpublished the malicious axios release, so the
+      # tarball cannot be downloaded. GuardDog reports errors["download-package"]
+      # and issues=0; that must become a soft_error finding, never a silent
+      # clean. This is the single most important deep-analysis assertion.
+      # HIGH severity tier - the only rule family that reaches it via
+      # severity_for_rule's "steganography" marker. angular is the cheap proof
+      # (4 rules, ~4s scan); next fires the same rule among 19.
+      - purl: pkg:npm/angular@1.8.3
+        rules:
+          - rule: threat-runtime-obfuscation-steganography
+            severity: high
+          - rule: capability-network-download
+            severity: low
+          - rule: capability-network-outbound
+            severity: low
+          - rule: capability-process-spawn
+            severity: low
+
+      - purl: pkg:npm/next@13.4.7
+        rules:
+          - rule: threat-runtime-obfuscation-steganography
+            severity: high
+          - rule: metadata_mismatch
+            severity: medium
+          - rule: threat-runtime-obfuscation-base64exec
+            severity: medium
+          - rule: threat-network-exfiltration
+            severity: low
+
+      - purl: pkg:npm/axios@1.14.1
+        rules:
+          - rule: download-package
+            severity: low
+            soft_error: true
+
+    # The finding must attach to the EXISTING versioned Package node. Before
+    # add_guarddog_findings took a purl, the graph writer fell back to
+    # "pkg:<eco>/<name>" and MERGEd a second, versionless Package instead.
+    no_versionless_duplicates:
+      - pkg:npm/jquery
+      - pkg:npm/vue
+      - pkg:npm/axios
+      - pkg:npm/angular
+      - pkg:npm/next
+
+  merge_semantics:
+    # A second scan must enrich, not duplicate.
+    package_merge_key: [purl, user_id, project_id]
+    finding_merge_key: [finding_id, user_id, project_id]
+    first_seen_stable_on_rescan: true
+    last_seen_advances_on_rescan: true
+
+  tenant_isolation:
+    # Every MERGE key carries user_id + project_id (S10).
+    other_project_sees_zero_packages: true

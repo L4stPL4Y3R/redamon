@@ -27,3 +27,5 @@ __all__ = [
     "sanitize_name",
     "SanitizeError",
 ]
+
+from . import analyzer_dispatch  # noqa: E402,F401

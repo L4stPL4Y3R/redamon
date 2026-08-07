@@ -472,13 +472,6 @@ export function InputArea({
           </div>
         </div>
       </div>
-      <span className={styles.inputHint}>
-        {isConnected
-          ? isLoading
-            ? 'Send guidance or stop the agent'
-            : 'Press Enter to send, Shift+Enter for new line'
-          : 'Waiting for connection...'}
-      </span>
     </div>
   )
 }

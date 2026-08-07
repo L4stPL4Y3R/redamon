@@ -23,13 +23,17 @@ artifact the clean side would reject.
 import argparse
 import json
 import os
+import shutil
 import sys
+import tempfile
 
 # supply_chain_common is bind-mounted at /app (like graph_db). PYTHONPATH=/app.
 from supply_chain_common import osv_runner, retire_runner, guarddog_runner
-from supply_chain_common.security import validate_artifact, ArtifactError
+from supply_chain_common.security import (
+    validate_artifact, ArtifactError, sanitize_name, sanitize_version, SanitizeError,
+)
 from supply_chain_common.artifact import (
-    empty_artifact, add_osv_findings, add_guarddog_findings,
+    empty_artifact, add_osv_findings, add_guarddog_findings, to_cyclonedx,
 )
 
 _OSV_DB = os.environ.get("OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY")
@@ -42,24 +46,71 @@ def run_job(job):
 
     if mode == "js-dir":
         # Black-box harvest: retire.js over downloaded JS, then OSV over the
-        # resulting SBOM/purls.
+        # resulting SBOM.
+        #
+        # retire.js is the ONLY L2 source that yields a NAME **and a VERSION**
+        # straight out of the served bytes. Source-map mining gives names with
+        # no version (unverdictable), and the technology path only covers the
+        # 15-entry alias table, so without this step most of a real target's
+        # dependency set can never be verdicted at all.
         retire_res = retire_runner.scan_js_dir(target)
         if retire_res["error"]:
             artifact["errors"].append("retire: {}".format(retire_res["error"]))
+        harvested = []
         for comp in retire_res["components"]:
+            # retire.js parses ATTACKER-SERVED JavaScript, so a component name
+            # is untrusted input. Drop a hostile one here: validate_artifact at
+            # the end of this function raises on the whole artifact, so a single
+            # bad name would otherwise discard every legitimate package AND
+            # every verdict collected in this job (same failure mode the
+            # GuardDog leg already guards against below).
+            name = comp.get("name")
+            try:
+                sanitize_name(name)
+                sanitize_version(comp.get("version"))
+            except (SanitizeError, TypeError):
+                artifact["errors"].append(
+                    "retire: dropped hostile component name {!r}".format(name)[:500])
+                continue
             try:
                 purl = retire_runner.to_purls([comp])
             except Exception:
                 purl = []
-            artifact["packages"].append({
-                "name": comp.get("name"),
+            pkg = {
+                "name": name,
                 "version": comp.get("version"),
                 "ecosystem": "npm",
                 "purl": purl[0] if purl else None,
                 "source": "retirejs",
-            })
-        # OSV verdict on the harvested set would run here against a synthesized
-        # SBOM; wired in Phase 3 when the harvest chain produces the SBOM file.
+            }
+            artifact["packages"].append(pkg)
+            if pkg["purl"]:
+                harvested.append(pkg)
+
+        # Verdict the harvested set offline. osv-scanner detects components by
+        # purl, so a synthesized CycloneDX SBOM is the input format (same shape
+        # the L2 recon module already builds).
+        if harvested:
+            tmpdir = tempfile.mkdtemp(prefix="sc-jsdir-")
+            bom_path = os.path.join(tmpdir, "bom.cdx.json")
+            try:
+                with open(bom_path, "w") as fh:
+                    json.dump(to_cyclonedx(harvested), fh)
+                osv_res = osv_runner.run_osv_scan(bom_path, mode="sbom",
+                                                 db_path=_OSV_DB)
+                if osv_res.get("error"):
+                    artifact["errors"].append("osv: {}".format(osv_res["error"]))
+                # Only fold in the verdicts; the packages are already recorded
+                # above with source=retirejs (add_osv_findings would relabel
+                # them source=osv and duplicate the set).
+                parsed = osv_res.get("parsed") or {}
+                add_osv_findings(artifact, {
+                    "packages": [],
+                    "malicious": parsed.get("malicious", []),
+                    "vulnerable": parsed.get("vulnerable", []),
+                })
+            finally:
+                shutil.rmtree(tmpdir, ignore_errors=True)
     elif mode in {"lockfile", "sbom", "dir"}:
         osv_res = osv_runner.run_osv_scan(target, mode=mode, db_path=_OSV_DB)
         if osv_res["error"]:

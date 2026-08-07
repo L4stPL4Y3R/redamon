@@ -13,6 +13,15 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Pre-create the shared capture-spool mount point, world-writable. This image is
+# the first mounter of the `capture_spool` named volume (compose starts the
+# orchestrator by default; the capture profile does not), and Docker copies a
+# directory's mode onto a still-EMPTY named volume. Without this the volume is
+# born root:root 0755 and the non-root capture-proxy / traffic-ingest containers
+# cannot create their spool subdirs (issue #159). _ensure_spool_shared() in api.py
+# is the runtime backstop that also repairs already-broken volumes.
+RUN mkdir -p /spool && chmod 0777 /spool
+
 # Copy application code
 COPY *.py ./
 # Shipped memory profile (per-scan-type envelopes). Compose bind-mounts the source

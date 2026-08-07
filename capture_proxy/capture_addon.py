@@ -37,8 +37,8 @@ from datetime import datetime, timezone
 from mitmproxy import http
 
 from capture_lib import (
-    build_record, classify_family, decide_body, normalize_headers,
-    parse_body_rules, sha256_hex,
+    build_record, classify_family, decide_body, ensure_dir_writable,
+    normalize_headers, parse_body_rules, sha256_hex,
 )
 from egress import check_egress, policy_from_dict, policy_from_env
 
@@ -93,8 +93,8 @@ class RedamonCapture:
             target=self._config_watch, name="config-watch", daemon=True)
         self._cfg_watcher.start()
         self.tmp_dir = os.path.join(self.spool_dir, ".tmp")
-        os.makedirs(self.tmp_dir, exist_ok=True)
-        os.makedirs(self.bodies_dir, exist_ok=True)
+        ensure_dir_writable(self.tmp_dir)
+        ensure_dir_writable(self.bodies_dir)
         # The bodies store is shared with the webapp (different uid) which reads
         # + ref-counted-GCs blobs, so make it group/other writable. Internal
         # volume only; blobs are never served by raw path (§15.7).

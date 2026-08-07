@@ -25,12 +25,26 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     const project = await prisma.project.findUnique({
       where: { id: projectId },
-      select: { id: true, userId: true, supplyChainSbomFile: true },
+      select: {
+        id: true, userId: true, supplyChainSbomFile: true,
+        supplyChainInputMode: true, supplyChainRepoUrl: true,
+      },
     })
     if (!project) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 })
     }
-    if (!project.supplyChainSbomFile) {
+
+    // Gate on the source the operator actually selected. Checking only the
+    // uploaded file would refuse to start a perfectly valid GitHub scan, and
+    // checking neither would start a scan with no input at all.
+    if (project.supplyChainInputMode === 'github') {
+      if (!project.supplyChainRepoUrl) {
+        return NextResponse.json(
+          { error: 'No repository set. Enter a GitHub repository in Other Scans -> Supply Chain first.' },
+          { status: 400 }
+        )
+      }
+    } else if (!project.supplyChainSbomFile) {
       return NextResponse.json(
         { error: 'No SBOM/lockfile uploaded. Upload one in Other Scans -> Supply Chain first.' },
         { status: 400 }

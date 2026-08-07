@@ -32,11 +32,6 @@ _member_streaming_ctx: ContextVar[Optional["MemberScopedCallback"]] = ContextVar
 )
 
 
-def get_member_streaming() -> Optional["MemberScopedCallback"]:
-    """Return the active MemberScopedCallback, or None if not inside a member."""
-    return _member_streaming_ctx.get()
-
-
 def resolve_streaming_callback(streaming_callbacks: dict, session_id: str):
     """Returns the member-scoped proxy if set, else the root callback.
 

@@ -229,13 +229,18 @@ class TestFormatSingleTool(unittest.TestCase):
         trace = [_tool(1, "execute_nmap", success=False,
                        error_message="Host unreachable")]
         result = format_chain_context([], [], [], trace)
-        self.assertIn("FAILED | Host unreachable", result)
+        # Raw error text is framed in UNTRUSTED_TOOL_ERROR markers (prompt_safety),
+        # so the prefix and the message are asserted separately.
+        self.assertIn("FAILED |", result)
+        self.assertIn("Host unreachable", result)
         self.assertNotIn("OK", result)
 
     def test_single_tool_no_analysis_falls_back_to_output(self):
         trace = [_tool(1, "kali_shell", output="uid=0(root)", analysis="")]
         result = format_chain_context([], [], [], trace)
-        self.assertIn("OK | uid=0(root)", result)
+        # Raw output falls back below the "OK |" line, framed in UNTRUSTED_TOOL_OUTPUT markers.
+        self.assertIn("OK |", result)
+        self.assertIn("uid=0(root)", result)
 
     def test_last_step_full_output(self):
         trace = [_tool(1, "kali_shell", output="full output here")]
@@ -279,7 +284,9 @@ class TestFormatWave(unittest.TestCase):
         ]
         result = format_chain_context([], [], [], trace)
         self.assertIn("2 OK, 1 FAILED", result)
-        self.assertIn("FAILED | execute_curl: timeout", result)
+        # Error text is framed in UNTRUSTED_TOOL_ERROR markers; assert prefix + message.
+        self.assertIn("FAILED | execute_curl:", result)
+        self.assertIn("timeout", result)
 
     def test_wave_analysis_shown_once(self):
         shared_analysis = "All endpoints returned 200"
@@ -552,8 +559,10 @@ class TestEdgeCases(unittest.TestCase):
         ]
         result = format_chain_context([], [], [], trace)
         self.assertIn("0 OK, 2 FAILED", result)
-        self.assertIn("FAILED | execute_curl: timeout", result)
-        self.assertIn("FAILED | execute_curl: refused", result)
+        # Error text is framed in UNTRUSTED_TOOL_ERROR markers; assert prefix + message.
+        self.assertIn("FAILED | execute_curl:", result)
+        self.assertIn("timeout", result)
+        self.assertIn("refused", result)
 
     def test_empty_tool_name_single(self):
         trace = [{"iteration": 1, "phase": "info", "tool_name": None, "success": True}]
@@ -712,7 +721,9 @@ class TestEnrichedFindings(unittest.TestCase):
     def test_evidence_shown(self):
         findings = [_finding("SQLi found", evidence="Parameter id is injectable", step=1)]
         result = format_chain_context(findings, [], [], [_tool(1, "x")])
-        self.assertIn("Evidence: Parameter id is injectable", result)
+        # Evidence text is framed in UNTRUSTED_EVIDENCE markers; assert label + content.
+        self.assertIn("Evidence:", result)
+        self.assertIn("Parameter id is injectable", result)
 
     def test_evidence_truncated(self):
         # Cap raised to 10000 so JWTs/hashes/.env contents survive intact.

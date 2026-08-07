@@ -25,12 +25,6 @@ _IMPORT_PATTERNS = [
     re.compile(r'''export\s+.*?from\s+['"](@[^'"\/]+\/[^'"\/]+)['"]'''),
 ]
 
-# Patterns for unscoped internal-looking packages
-_INTERNAL_PACKAGE_INDICATORS = [
-    'internal', 'private', 'core', 'shared', 'common', 'utils',
-    'helpers', 'lib', 'sdk', 'api-client', 'client-sdk',
-]
-
 # Webpack chunk patterns
 _WEBPACK_CHUNK_NAME_RE = re.compile(r'webpackChunkName:\s*["\']([^"\']+)["\']')
 _WEBPACK_MODULE_RE = re.compile(r'__webpack_require__\(\s*["\']([^"\']+)["\']\s*\)')
@@ -98,12 +92,6 @@ def extract_webpack_packages(content: str) -> list:
             packages.add(name)
 
     return list(packages)
-
-
-def _looks_internal(package_name: str) -> bool:
-    """Check if an unscoped package name looks like an internal package."""
-    name_lower = package_name.lower()
-    return any(indicator in name_lower for indicator in _INTERNAL_PACKAGE_INDICATORS)
 
 
 def detect_dependency_confusion(

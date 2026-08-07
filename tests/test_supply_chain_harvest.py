@@ -7,9 +7,12 @@ preference, and CycloneDX synthesis.
 Run: python -m unittest tests.test_supply_chain_harvest
 """
 
+import contextlib
 import importlib.util
 import os
+import signal
 import sys
+import time
 import unittest
 
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -115,5 +118,121 @@ class TestHarvestAndSbom(unittest.TestCase):
         self.assertTrue(all(p["purl"].startswith("pkg:npm/") for p in pkgs))
 
 
-if __name__ == "__main__":
-    unittest.main()
+class TestImportRegexIsNotQuadratic(unittest.TestCase):
+    """REGRESSION: catastrophic backtracking in the import-mining regex.
+
+    The clause between `import` and `from` was an UNBOUNDED lazy `[^'"]*?`. On
+    JavaScript that never satisfies the `from`, every `import` token becomes a
+    start position that rescans to end-of-string, so the match is quadratic in
+    file size. Measured before the fix:
+
+        14 KB -> 0.12s     140 KB -> 13.2s     280 KB -> 64.4s
+
+    js_recon caps each downloaded file at 5 MB, which extrapolates to HOURS of
+    CPU for a single crafted file. The recon container holds the Neo4j
+    credentials, and a target could hang it by serving a .js - no auth, no
+    interaction. Bounding the clause makes the scan linear.
+    """
+
+    # Deliberately generous so the test is not flaky on a loaded CI box. The
+    # pre-fix time for this payload was ~64s, so even a 20x slower machine
+    # cannot pass it by accident.
+    _BUDGET_SECONDS = 5.0
+
+    def _worst_case(self, tokens):
+        # No quotes and no `from`: the lazy clause can never match, so the
+        # engine explores the maximum.
+        return "import " * tokens
+
+    @contextlib.contextmanager
+    def _deadline(self, seconds):
+        """Abort the regex mid-scan instead of waiting it out.
+
+        Measuring elapsed time AFTER the call is useless as a regression guard
+        here: with the bound removed the 5 MB case runs for hours, so the test
+        would hang CI rather than fail it. SIGALRM interrupts the C-level regex
+        loop, turning "quadratic again" into a fast, readable failure.
+
+        Verified by mutation (raising _IMPORT_CLAUSE_MAX to 5_000_000): the
+        suite goes from 4s to >120s without this, and fails in seconds with it.
+        """
+        if not hasattr(signal, "SIGALRM"):        # non-POSIX: fall back to timing
+            yield
+            return
+
+        def _blew_the_deadline(signum, frame):
+            raise AssertionError(
+                "import mining exceeded {}s - the regex is quadratic again "
+                "(catastrophic backtracking on attacker-served JS)".format(seconds))
+
+        prev = signal.signal(signal.SIGALRM, _blew_the_deadline)
+        signal.setitimer(signal.ITIMER_REAL, seconds)
+        try:
+            yield
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, prev)
+
+    def test_regression_no_quadratic_blowup_on_import_flood(self):
+        payload = self._worst_case(40000)   # ~280 KB, the 64.4s case
+        with self._deadline(self._BUDGET_SECONDS):
+            harvest.mine_import_packages([payload])
+
+    def test_regression_scales_linearly_not_quadratically(self):
+        """4x the input must not cost ~16x the time."""
+        def timed(tokens):
+            payload = self._worst_case(tokens)
+            started = time.monotonic()
+            with self._deadline(self._BUDGET_SECONDS):
+                harvest.mine_import_packages([payload])
+            return time.monotonic() - started
+
+        small = timed(20000)
+        large = timed(80000)          # 4x the bytes
+        # Linear would be ~4x. Quadratic would be ~16x. Allow 8x for noise, and
+        # floor the baseline so a sub-millisecond `small` cannot blow up the
+        # ratio on a fast machine.
+        ratio = large / max(small, 0.01)
+        self.assertLess(ratio, 8.0,
+                        "4x input cost {:.1f}x the time - superlinear".format(ratio))
+
+    def test_a_5mb_file_the_per_file_cap_stays_bounded(self):
+        """js_recon's per-file ceiling must be survivable, not hours of CPU.
+
+        This is the case that made the bug critical: one 5 MB served .js.
+        """
+        payload = self._worst_case(700000)   # ~4.9 MB
+        with self._deadline(30.0):
+            harvest.mine_import_packages([payload])
+
+    def test_real_import_forms_still_match_after_bounding(self):
+        """The bound must cost no legitimate detection."""
+        src = (
+            'import React from "react";\n'
+            'import * as _ from "lodash";\n'
+            'import { debounce, throttle as t } from "underscore";\n'
+            'const ax = require("axios");\n'
+            'import("@babel/runtime");\n'
+            'export { x } from "@scope/pkg-name";\n'
+        )
+        names = {p["name"] for p in harvest.mine_import_packages([src])}
+        self.assertEqual(names, {"react", "lodash", "underscore", "axios",
+                                 "@babel/runtime", "@scope/pkg-name"})
+
+    def test_relative_and_absolute_specifiers_still_excluded(self):
+        src = 'import a from "./local";\nimport b from "/abs/path";\n'
+        self.assertEqual(harvest.mine_import_packages([src]), [])
+
+    def test_import_clause_longer_than_the_bound_still_resolves(self):
+        """The bound costs nothing even on a clause that exceeds it.
+
+        A >200-char destructuring clause makes the `import ... from` branch
+        fail, but the alternation's `from\\s+` branch still matches at the
+        `from "react"`. So bounding the clause loses no detection at all - it
+        only removes the pathological backtracking.
+        """
+        long_clause = "{ " + ", ".join("a%d" % i for i in range(80)) + " }"
+        self.assertGreater(len(long_clause), harvest._IMPORT_CLAUSE_MAX)
+        src = 'import %s from "react";\n' % long_clause
+        names = {p["name"] for p in harvest.mine_import_packages([src])}
+        self.assertEqual(names, {"react"})

@@ -1596,7 +1596,15 @@ def execute_guarddog(args: str) -> str:
 
         analyzer_img = os.environ.get("SUPPLY_CHAIN_ANALYZER_IMAGE",
                                       "redamon-supply-chain-analyzer:latest")
-        gd_cmd = ["guarddog", eco, "scan", name, "--output-format", "json"]
+        # --no-sandbox: GuardDog 3.x auto-detects and tries to build its own
+        # kernel-level sandbox (user namespaces + seccomp) around the extraction.
+        # It cannot do that inside a container, and it fails SILENTLY: exit 0,
+        # `issues: 0`, real cause buried in errors["download-package"] - a false
+        # clean from the tool whose whole job is triaging a suspicious package.
+        # The analyzer container IS the sandbox (cap_drop=ALL, read-only,
+        # non-root, no secrets), which is stronger than GuardDog's in-process one.
+        gd_cmd = ["guarddog", eco, "scan", name,
+                  "--no-sandbox", "--output-format", "json"]
         if version:
             gd_cmd += ["--version", version]
         # Run GuardDog INSIDE the hardened analyzer image (registry egress only),

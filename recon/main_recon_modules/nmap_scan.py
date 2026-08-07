@@ -618,20 +618,3 @@ def run_nmap_scan(recon_data: dict, output_file: Path = None, settings: dict = N
             pass
 
 
-def run_nmap_scan_isolated(recon_data: dict, settings: dict = None) -> dict:
-    """
-    Run Nmap scan and return only the 'nmap_scan' data dict.
-
-    Thread-safe: does not mutate recon_data.
-
-    Args:
-        recon_data: The pipeline's combined result dictionary (read-only)
-        settings: Settings dictionary from main.py
-
-    Returns:
-        The 'nmap_scan' data dict, or empty dict if scan produced no results.
-    """
-    import copy
-    snapshot = copy.copy(recon_data)
-    run_nmap_scan(snapshot, output_file=None, settings=settings)
-    return snapshot.get("nmap_scan", {})

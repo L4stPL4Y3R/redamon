@@ -35,9 +35,24 @@ _NODE_MODULES_RE = re.compile(r"node_modules/((?:@[^/@\s]+/)?[^/@\s][^/\s]*)")
 
 # JS import/require of a bare module specifier (scoped or unscoped). Excludes
 # relative ('./x') and absolute ('/x') paths and URLs.
+#
+# The clause between `import` and `from` is BOUNDED to 200 chars. It used to be
+# an unbounded lazy `[^'"]*?`, which is quadratic on input that never satisfies
+# the `from`: every `import` in the file becomes a start position that rescans
+# to end-of-string. Measured against v5.4.3 of this regex on 2026-08-07 with a
+# payload of repeated `import ` and no quotes:
+#
+#     14 KB -> 0.12s      140 KB -> 13.2s      280 KB -> 64.4s
+#
+# js_recon caps each downloaded file at 5 MB, which extrapolates to HOURS of CPU
+# for one crafted file - a remote hang of the recon container (which holds the
+# Neo4j credentials) triggered by nothing more than serving a .js. A real import
+# clause ("* as x", "{ a, b as c }") is far under 200 chars, so the bound costs
+# no legitimate match while making the scan linear.
+_IMPORT_CLAUSE_MAX = 200
 _IMPORT_RE = re.compile(
-    r"""(?:import\s+[^'"]*?from\s*|require\(\s*|import\(\s*|from\s+)"""
-    r"""['"]((?:@[A-Za-z0-9._-]+/)?[A-Za-z0-9._-]+)['"]""")
+    r"""(?:import\s+[^'"]{0,%d}?from\s*|require\(\s*|import\(\s*|from\s+)"""
+    r"""['"]((?:@[A-Za-z0-9._-]+/)?[A-Za-z0-9._-]+)['"]""" % _IMPORT_CLAUSE_MAX)
 
 # A few common tech display-names -> their npm package name.
 _TECH_NPM_ALIASES = {

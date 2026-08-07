@@ -122,14 +122,6 @@ class MCPServer(BaseModel):
 
         return self
 
-    def effective_phases_for(self, tool_name: str) -> List[str]:
-        """Return the phase list for a tool, falling back to the server default."""
-        for t in self.tools:
-            if t.name == tool_name:
-                return list(t.default_phases) if t.default_phases else list(self.default_phases)
-        return list(self.default_phases)
-
-
 # =============================================================================
 # VALIDATION (post-parse, cross-server)
 # =============================================================================

@@ -6,7 +6,9 @@ Run: python3 -m unittest capture_proxy.tests.test_capture_lib
 """
 from __future__ import annotations
 
+import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -338,6 +340,49 @@ class TestBuildRecord(unittest.TestCase):
         self.assertTrue(rec["hasSetCookie"])
         self.assertTrue(rec["isTls"])
         self.assertEqual(rec["targetIp"], "93.184.216.34")
+
+
+class TestEnsureDirWritable(unittest.TestCase):
+    """Issue #159: a root-initialised spool volume must fail with an actionable
+    message, not a bare EACCES traceback repeated forever by restart=unless-stopped."""
+
+    def test_creates_nested_dir_and_returns_it(self):
+        with tempfile.TemporaryDirectory() as d:
+            target = os.path.join(d, "spool", ".tmp")
+            self.assertEqual(cl.ensure_dir_writable(target), target)
+            self.assertTrue(os.path.isdir(target))
+
+    def test_existing_dir_is_a_noop(self):
+        with tempfile.TemporaryDirectory() as d:
+            cl.ensure_dir_writable(d)  # exist_ok, must not raise
+
+    @unittest.skipIf(os.getuid() == 0, "root ignores directory permissions")
+    def test_unwritable_parent_raises_actionable_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            parent = os.path.join(d, "spool")
+            os.makedirs(parent)
+            os.chmod(parent, 0o555)  # r-xr-xr-x, like a root:root 0755 volume
+            try:
+                with self.assertRaises(RuntimeError) as ctx:
+                    cl.ensure_dir_writable(os.path.join(parent, ".tmp"))
+            finally:
+                os.chmod(parent, 0o755)  # so TemporaryDirectory can clean up
+            msg = str(ctx.exception)
+            self.assertIn(parent, msg)
+            self.assertIn(f"uid={os.getuid()}", msg)
+            self.assertIn("chmod 0777", msg)          # the repair command
+            self.assertIn("redamon_capture_spool", msg)  # names the volume
+
+    def test_non_permission_oserror_is_not_swallowed(self):
+        # ENOTDIR (a file where a dir should be) is a different bug; let it surface
+        # as-is rather than mislabelling it a volume-ownership problem.
+        with tempfile.TemporaryDirectory() as d:
+            blocker = os.path.join(d, "spool")
+            with open(blocker, "w") as fh:
+                fh.write("x")
+            with self.assertRaises(OSError) as ctx:
+                cl.ensure_dir_writable(os.path.join(blocker, ".tmp"))
+            self.assertNotIsInstance(ctx.exception, RuntimeError)
 
 
 if __name__ == "__main__":

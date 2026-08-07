@@ -170,6 +170,104 @@ class TestReviewRegressions2(unittest.TestCase):
         self.assertIn("supply-chain-sync PyPI", msg)
         self.assertNotIn("filesystem walk", msg)
 
+    def test_partially_loaded_db_is_reported_even_on_an_OK_exit(self):
+        """REGRESSION: the PARTIAL-database false-clean.
+
+        osv-scanner scans every lockfile it finds, loads the ecosystem DBs it
+        has, and reports nothing at all for the ones it does not - exiting 0/1,
+        which is a SUCCESS code. So an npm-only database scanning a repo that
+        also has requirements.txt returns the npm findings, no error, and total
+        silence about the Python packages. They read clean.
+
+        Only reachable in volume once directory/repository scanning exists: a
+        single uploaded lockfile has one ecosystem, and a total DB miss exits
+        127 (already handled). Verified against osv-scanner v2.4.0 on
+        2026-08-07 with an npm-only DB: exit 1, jinja2 2.4.1 and flask 0.12.2
+        silently absent.
+        """
+        stderr = (
+            "Scanning dir /work/src\n"
+            "Scanned /work/src/py/requirements.txt file and found 2 packages\n"
+            "Scanned /work/src/app/package-lock.json file and found 1 package\n"
+            "Loaded npm local db from /osv-db/osv-scanner/npm/all.zip\n"
+            "could not load db for PyPI ecosystem: unable to fetch OSV database\n")
+        captured = {}
+
+        def fake_run(argv, timeout=None, env=None):
+            captured["argv"] = argv
+            # Exit 1 == "vulnerabilities found", an OK code.
+            return {"exit_code": 1, "stdout": '{"results": []}',
+                    "stderr": stderr, "error": None}
+
+        orig = osv_runner.run_argv
+        osv_runner.run_argv = fake_run
+        try:
+            res = osv_runner.run_osv_scan(
+                "/work/src", mode="dir", db_path=_REPO, offline=True)
+        finally:
+            osv_runner.run_argv = orig
+
+        self.assertIsNotNone(
+            res["error"],
+            "a partially loaded DB reported no error - the unscanned "
+            "ecosystem reads clean")
+        self.assertIn("PyPI", res["error"])
+        self.assertIn("NOT checked", res["error"])
+
+    def test_partial_db_keeps_the_findings_it_did_resolve(self):
+        """The npm results are real; only the gap is added alongside them."""
+        raw = ('{"results": [{"source": {"path": "/x/package-lock.json"}, '
+               '"packages": [{"package": {"name": "lodash", "version": "4.17.4", '
+               '"ecosystem": "npm"}, "vulnerabilities": [{"id": "GHSA-x"}]}]}]}')
+
+        def fake_run(argv, timeout=None, env=None):
+            return {"exit_code": 1, "stdout": raw,
+                    "stderr": "could not load db for Go ecosystem: nope\n",
+                    "error": None}
+
+        orig = osv_runner.run_argv
+        osv_runner.run_argv = fake_run
+        try:
+            res = osv_runner.run_osv_scan("/x", mode="dir", db_path=_REPO)
+        finally:
+            osv_runner.run_argv = orig
+
+        self.assertIn("Go", res["error"])
+        names = [p["name"] for p in res["parsed"]["packages"]]
+        self.assertIn("lodash", names, "resolved findings must not be discarded")
+
+    def test_every_missing_ecosystem_is_named_not_just_the_first(self):
+        """A repo spans many ecosystems; naming one sends the operator round
+        the loop once per missing DB."""
+        msg = osv_runner._explain_osv_stderr(
+            "could not load db for PyPI ecosystem: x\n"
+            "could not load db for Go ecosystem: x\n"
+            "could not load db for Maven ecosystem: x\n", 127)
+        for eco in ("PyPI", "Go", "Maven"):
+            self.assertIn(eco, msg)
+
+    def test_missing_ecosystems_deduplicates(self):
+        self.assertEqual(
+            osv_runner._missing_ecosystems(
+                "could not load db for PyPI ecosystem: a\n"
+                "could not load db for PyPI ecosystem: b\n"),
+            ["PyPI"])
+
+    def test_no_missing_db_lines_means_no_error(self):
+        """A fully-synced scan must stay clean - this guard must not fire on
+        the normal 'Loaded npm local db' line."""
+        def fake_run(argv, timeout=None, env=None):
+            return {"exit_code": 0, "stdout": '{"results": []}',
+                    "stderr": "Loaded npm local db from /osv-db/...\n",
+                    "error": None}
+        orig = osv_runner.run_argv
+        osv_runner.run_argv = fake_run
+        try:
+            res = osv_runner.run_osv_scan("/x", mode="dir", db_path=_REPO)
+        finally:
+            osv_runner.run_argv = orig
+        self.assertIsNone(res["error"])
+
     def test_generic_osv_error_keeps_the_tail_not_the_walk_log(self):
         msg = osv_runner._explain_osv_stderr(
             "Starting filesystem walk for root: /\nEnd status: 0 dirs\nboom: real cause", 127)

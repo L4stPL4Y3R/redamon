@@ -1923,11 +1923,28 @@ serves). Both MERGE on the same keys, so the two sources dedup into one set.
 
 IMPORTANT for triage: a verdict of "malicious" (advisory_id starting with MAL-) means
 the dependency itself is malware (e.g. a typosquat) - treat it as a critical finding.
-"suspicious" is a heuristic behavioural hit, NOT a confirmation. Known-vulnerable
-CVE/GHSA advisories are NOT stored as MalPackageFinding nodes.
+"suspicious" is a heuristic behavioural hit, NOT a confirmation.
+
+Known-vulnerable CVE/GHSA advisories are NOT MalPackageFinding nodes. They are
+stored as **Vulnerability** nodes (the same label nuclei/gvm use) with
+source = "osv", reached from the package:
+
+  `(:Package)-[:HAS_VULNERABILITY]->(:Vulnerability {source: 'osv'})`
+
+- id (string): the advisory id, "CVE-..." or "GHSA-..."
+- severity (string): "critical", "high", "medium", "low", "info" - from the OSV
+  advisory band; "info" means OSV graded it, so do NOT read it as low risk
+- cvss_metrics (string): CVSS vector when the advisory carries one
+- name, description (string): advisory summary and detail
+
+So: MALICIOUS -> MalPackageFinding, VULNERABLE -> Vulnerability. A package can
+have both.
 
 - Typical query: "list malicious packages" -> `MATCH (p:Package)-[:FLAGGED_AS]->(f:MalPackageFinding {verdict: 'malicious'}) RETURN p.purl, p.ecosystem, f.advisory_id, f.title`
 - Typical query: "which URLs depend on a malicious package" -> `MATCH (b:BaseURL)-[:DEPENDS_ON]->(p:Package)-[:FLAGGED_AS]->(f:MalPackageFinding {verdict: 'malicious'}) RETURN b.url, p.purl, f.advisory_id`
+- Typical query: "vulnerable dependencies" -> `MATCH (p:Package)-[:HAS_VULNERABILITY]->(v:Vulnerability {source: 'osv'}) RETURN p.purl, v.id, v.severity ORDER BY v.severity`
+- Typical query: "critical/high CVEs in dependencies" -> `MATCH (p:Package)-[:HAS_VULNERABILITY]->(v:Vulnerability {source: 'osv'}) WHERE v.severity IN ['critical','high'] RETURN p.purl, v.id, v.severity, v.name`
+- Typical query: "which packages did retire.js find on the target" -> `MATCH (p:Package {source: 'retirejs'}) RETURN p.purl, p.version`
 
 ### JS Recon Scanner Nodes
 
@@ -2115,6 +2132,7 @@ When user asks about "AI SDKs in JS", "leaked AI keys", "AnythingLLM/Open WebUI/
 - `(b:BaseURL)-[:DEPENDS_ON]->(p:Package)` - Live target serves this dependency (Supply-Chain Recon). An uploaded-SBOM Package has NO anchor and floats
 - `(gr:GithubRepository)-[:DEPENDS_ON]->(p:Package)` - Repository depends on this package (Supply-Chain scan, repo input)
 - `(p:Package)-[:FLAGGED_AS]->(mf:MalPackageFinding)` - Package has a malicious/suspicious verdict
+- `(p:Package)-[:HAS_VULNERABILITY]->(v:Vulnerability)` - Package has a known CVE/GHSA (source='osv')
 
 ### JS Recon Relationships (hierarchical: parent -> file -> findings)
 - `(b:BaseURL)-[:HAS_JS_FILE]->(jf:JsReconFinding {finding_type: 'js_file'})` - BaseURL has analyzed JS file (pipeline crawl)

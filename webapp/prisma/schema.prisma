@@ -311,10 +311,20 @@ model Project {
   trufflehogExcludeDetectors   String   @default("") @map("trufflehog_exclude_detectors")
 
   // ========== SUPPLY-CHAIN SCAN (L1 "Other Scans") ==========
-  supplyChainEnabled              Boolean @default(false) @map("supply_chain_enabled")
+  // NOTE: there is deliberately no `supplyChainEnabled`. The scan is launched
+  // explicitly from Other Scans, so the launch IS the intent; the old flag
+  // gated nothing (it was parsed and never read) and only made it possible to
+  // press Start and have nothing happen.
   supplyChainSbomFile             String  @default("") @map("supply_chain_sbom_file")
   supplyChainEcosystems           String  @default("npm,PyPI,Go,Maven,crates.io,Packagist,RubyGems,NuGet") @map("supply_chain_ecosystems")
   supplyChainDeepAnalysisEnabled  Boolean @default(false) @map("supply_chain_deep_analysis_enabled")
+  // Input source for the L1 scan, chosen in the Other Scans modal.
+  // "upload" = the last uploaded SBOM/lockfile (supplyChainSbomFile);
+  // "github" = clone the repo below. Each upload REPLACES the previous file,
+  // so supplyChainSbomFile always names the only file present.
+  supplyChainInputMode            String  @default("upload") @map("supply_chain_input_mode")
+  supplyChainRepoUrl              String  @default("") @map("supply_chain_repo_url")
+  supplyChainRepoRef              String  @default("") @map("supply_chain_repo_ref")
   // ========== SUPPLY-CHAIN RECON (L2 pipeline) ==========
   supplyChainReconEnabled              Boolean @default(false) @map("supply_chain_recon_enabled")
   supplyChainReconEcosystems           String  @default("npm") @map("supply_chain_recon_ecosystems")

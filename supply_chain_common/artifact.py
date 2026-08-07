@@ -43,23 +43,36 @@ def add_osv_findings(artifact, parsed, *, source="osv"):
         artifact["vulnerable"].append({
             "purl": vul.get("purl"), "name": vul.get("name"),
             "version": vul.get("version"), "ecosystem": vul.get("ecosystem"),
-            "advisory_id": vul.get("advisory_id"), "severity": "unknown",
+            "advisory_id": vul.get("advisory_id"),
+            # Real advisory severity when OSV gave one (see
+            # osv_runner.severity_for_vuln); "unknown" only when it did not.
+            "severity": vul.get("severity") or "unknown",
             "confidence": "suspicious",
             "title": vul.get("summary") or vul.get("advisory_id"),
         })
     return artifact
 
 
-def add_guarddog_findings(artifact, findings, *, ecosystem=None, name=None):
-    """Merge parse_guarddog output (a list) into the artifact's suspicious set."""
+def add_guarddog_findings(artifact, findings, *, ecosystem=None, name=None,
+                          version=None, purl=None):
+    """Merge parse_guarddog output (a list) into the artifact's suspicious set.
+
+    `purl` matters: without it the graph writer falls back to building
+    ``pkg:<eco>/<name>`` with no version, which MERGEs a SECOND, versionless
+    Package node instead of attaching the finding to the versioned package the
+    verdict actually came from. Callers that know the purl must pass it.
+    """
     for f in findings or []:
-        artifact["suspicious"].append({
+        entry = {
             "name": f.get("package") or name,
-            "version": f.get("version"), "ecosystem": ecosystem,
+            "version": f.get("version") or version, "ecosystem": ecosystem,
             "rule": f.get("rule"), "severity": f.get("severity"),
             "confidence": "suspicious", "message": f.get("message"),
             "soft_error": f.get("soft_error", False),
-        })
+        }
+        if purl:
+            entry["purl"] = purl
+        artifact["suspicious"].append(entry)
     return artifact
 
 

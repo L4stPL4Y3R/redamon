@@ -11,15 +11,23 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 DEFAULT_SUPPLY_CHAIN_SETTINGS: dict[str, Any] = {
-    'SUPPLY_CHAIN_ENABLED': False,
-    # v1 input: an uploaded SBOM / lockfile (basename inside the uploads volume).
+    # Which input the scan reads: 'upload' (the SBOM/lockfile in the uploads
+    # volume) or 'github' (a repository cloned by the scan itself).
+    'SUPPLY_CHAIN_INPUT_MODE': 'upload',
+    # 'upload' input: the basename inside the uploads volume. Uploads REPLACE
+    # each other, so this always names the only file present for the project.
     'SUPPLY_CHAIN_SBOM_FILE': '',
+    # 'github' input.
+    'SUPPLY_CHAIN_REPO_URL': '',
+    'SUPPLY_CHAIN_REPO_REF': '',
     # Comma-separated OSV ecosystem names to report (osv auto-detects from the
     # file; this is an allow-filter for the graph write).
     'SUPPLY_CHAIN_ECOSYSTEMS': 'npm,PyPI,Go,Maven,crates.io,Packagist,RubyGems,NuGet',
     # GuardDog deep analysis (downloads untrusted tarballs). OFF by default (S5.5).
-    # v1 runs OSV-only; deep analysis dispatch to the DIRTY analyzer is v2.
     'SUPPLY_CHAIN_DEEP_ANALYSIS_ENABLED': False,
+    # Read from the USER's global settings, and only in the github input mode.
+    # Empty means clone anonymously (public repositories only).
+    'GITHUB_ACCESS_TOKEN': '',
 }
 
 
@@ -37,15 +45,38 @@ def fetch_supply_chain_settings(project_id: str, webapp_url: str) -> dict[str, A
     project = response.json()
 
     settings = DEFAULT_SUPPLY_CHAIN_SETTINGS.copy()
-    settings['SUPPLY_CHAIN_ENABLED'] = project.get(
-        'supplyChainEnabled', DEFAULT_SUPPLY_CHAIN_SETTINGS['SUPPLY_CHAIN_ENABLED'])
+    settings['SUPPLY_CHAIN_INPUT_MODE'] = project.get(
+        'supplyChainInputMode', DEFAULT_SUPPLY_CHAIN_SETTINGS['SUPPLY_CHAIN_INPUT_MODE'])
     settings['SUPPLY_CHAIN_SBOM_FILE'] = project.get(
         'supplyChainSbomFile', DEFAULT_SUPPLY_CHAIN_SETTINGS['SUPPLY_CHAIN_SBOM_FILE'])
+    settings['SUPPLY_CHAIN_REPO_URL'] = project.get(
+        'supplyChainRepoUrl', DEFAULT_SUPPLY_CHAIN_SETTINGS['SUPPLY_CHAIN_REPO_URL'])
+    settings['SUPPLY_CHAIN_REPO_REF'] = project.get(
+        'supplyChainRepoRef', DEFAULT_SUPPLY_CHAIN_SETTINGS['SUPPLY_CHAIN_REPO_REF'])
     settings['SUPPLY_CHAIN_ECOSYSTEMS'] = project.get(
         'supplyChainEcosystems', DEFAULT_SUPPLY_CHAIN_SETTINGS['SUPPLY_CHAIN_ECOSYSTEMS'])
     settings['SUPPLY_CHAIN_DEEP_ANALYSIS_ENABLED'] = project.get(
         'supplyChainDeepAnalysisEnabled',
         DEFAULT_SUPPLY_CHAIN_SETTINGS['SUPPLY_CHAIN_DEEP_ANALYSIS_ENABLED'])
+
+    # The GitHub token lives in the USER's global settings, not the project -
+    # the same one the secret hunter and trufflehog use, so a private repo needs
+    # no second credential. Only fetched for the github input mode: an
+    # SBOM-upload scan has no business holding a token.
+    if settings['SUPPLY_CHAIN_INPUT_MODE'] == 'github':
+        user_id = os.environ.get('USER_ID', '')
+        if user_id:
+            try:
+                user_url = f"{webapp_url.rstrip('/')}/api/users/{user_id}/settings?internal=true"
+                user_resp = requests.get(user_url, timeout=30, headers=headers)
+                user_resp.raise_for_status()
+                settings['GITHUB_ACCESS_TOKEN'] = (
+                    user_resp.json().get('githubAccessToken') or '')
+            except Exception as exc:
+                # Not fatal: public repositories clone anonymously. Say so, or a
+                # private-repo failure later looks like a missing repository.
+                logger.warning(f"No GitHub token available ({exc}); "
+                               "private repositories will fail to clone")
 
     logger.info(f"Loaded {len(settings)} Supply-Chain settings for project {project_id}")
     return settings

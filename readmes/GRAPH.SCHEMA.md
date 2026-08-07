@@ -609,10 +609,10 @@ Discovered vulnerabilities. Seven sources produce Vulnerability nodes, each with
 **Common properties (all sources):**
 ```cypher
 (:Vulnerability {
-    id: String,                              // Unique identifier
+    id: String,                              // Unique identifier (for source="osv": the CVE-/GHSA- advisory id)
     user_id: String,                         // Multi-tenant isolation
     project_id: String,                      // Multi-tenant isolation
-    source: "nuclei" | "gvm" | "security_check" | "netlas" | "nmap_nse" | "graphql_scan" | "takeover_scan" | "vhost_sni_enum" | "cache_poisoning",  // Scanner source
+    source: "nuclei" | "gvm" | "security_check" | "netlas" | "nmap_nse" | "graphql_scan" | "takeover_scan" | "vhost_sni_enum" | "cache_poisoning" | "osv",  // Scanner source
     name: String,                            // Vulnerability name
     description: String,                     // Description
     severity: "critical" | "high" | "medium" | "low" | "info",  // Always lowercase
@@ -1456,6 +1456,7 @@ FOR (m:Malware) ON (m.user_id, m.project_id);
 
 // Security check vulnerabilities (missing headers, etc.) connect to BaseURL
 (BaseURL)-[:HAS_VULNERABILITY]->(Vulnerability)
+(Package)-[:HAS_VULNERABILITY]->(Vulnerability)   // supply-chain: CVE/GHSA, source='osv'
 
 // Note: DAST vulnerabilities connect via Endpoint (FOUND_AT) and Parameter (AFFECTS_PARAMETER)
 // rather than directly to BaseURL, to avoid redundant connections in the graph.
@@ -3136,6 +3137,14 @@ both sources dedup into the same nodes. See `readmes/README.SUPPLY_CHAIN.md`.
   name,
   version,       // nullable (L2 black-box may not know the version)
   source,        // sbom | lockfile | sourcemap | retirejs | import | wappalyzer | osv | finding
+
+// Verdict routing for a Package (the two are NOT interchangeable):
+//   MALICIOUS  (OSV MAL-)        -> (:Package)-[:FLAGGED_AS]->(:MalPackageFinding {verdict:'malicious'})
+//   SUSPICIOUS (GuardDog rule)   -> (:Package)-[:FLAGGED_AS]->(:MalPackageFinding {verdict:'suspicious'})
+//   VULNERABLE (CVE-/GHSA-)      -> (:Package)-[:HAS_VULNERABILITY]->(:Vulnerability {source:'osv'})
+// A package can carry both. Vulnerability reuses the nuclei/gvm node (no new
+// label); severity comes from the OSV advisory band, defaulting to 'info' when
+// the advisory is ungraded.
   user_id, project_id,
   first_seen, last_seen
 })

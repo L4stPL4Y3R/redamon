@@ -33,6 +33,7 @@ import time
 import uuid
 from typing import Any, Dict, Optional
 
+from capture_lib import ensure_dir_writable
 from redamon_ctx import verify_tag
 
 # Header/param names whose values are masked when redaction is on. A salted hash
@@ -195,11 +196,11 @@ def run() -> None:  # pragma: no cover - integration path
 
     spool_dir = os.environ.get("CAPTURE_SPOOL_DIR", "/spool")
     reject_dir = os.path.join(spool_dir, ".rejected")
-    os.makedirs(reject_dir, exist_ok=True)
+    ensure_dir_writable(reject_dir)
     # Bodies store is shared with the webapp (different uid) for read + GC.
     bodies_dir = os.environ.get("CAPTURE_BODIES_DIR", "/bodies")
+    ensure_dir_writable(bodies_dir)
     try:
-        os.makedirs(bodies_dir, exist_ok=True)
         os.chmod(bodies_dir, 0o777)
     except OSError:
         pass

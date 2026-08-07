@@ -496,14 +496,10 @@ export default function GraphPage() {
   const handleToggleSupplyChainLogs = useCallback(() => {
     setActiveLogsDrawer(prev => prev === 'supplyChain' ? null : 'supplyChain')
   }, [])
-  const [hasSupplyChainInput, setHasSupplyChainInput] = useState(false)
-  useEffect(() => {
-    if (!projectId) { setHasSupplyChainInput(false); return }
-    fetch(`/api/supply-chain/${projectId}/upload`)
-      .then(r => r.ok ? r.json() : { files: [] })
-      .then(d => setHasSupplyChainInput((d.files || []).length > 0))
-      .catch(() => setHasSupplyChainInput(false))
-  }, [projectId, isOtherScansModalOpen])
+  // Supply-chain input availability is no longer tracked here: the Other Scans
+  // card configures the input itself (upload or repository) and therefore is
+  // the only place that knows which source is selected and whether it is
+  // populated. Duplicating that here could only disagree with it.
 
   // Active sessions hook - polls kali-sandbox session list
   const activeSessions = useActiveSessions({
@@ -1429,7 +1425,7 @@ export default function GraphPage() {
         onStopSupplyChain={() => { void stopSupplyChain() }}
         onToggleSupplyChainLogs={handleToggleSupplyChainLogs}
         supplyChainStatus={supplyChainState?.status || 'idle'}
-        hasSupplyChainInput={hasSupplyChainInput}
+        projectId={projectId || undefined}
         isSupplyChainLogsOpen={activeLogsDrawer === 'supplyChain'}
       />
 

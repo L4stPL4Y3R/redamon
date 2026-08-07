@@ -118,18 +118,6 @@ def normalize_introspection_finding(
     )
 
 
-def severity_to_score(severity: str) -> int:
-    """Convert severity to numeric score for sorting."""
-    scores = {
-        'critical': 5,
-        'high': 4,
-        'medium': 3,
-        'low': 2,
-        'info': 1
-    }
-    return scores.get(severity.lower(), 0)
-
-
 def aggregate_findings(findings: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     Aggregate findings into summary statistics.

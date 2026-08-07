@@ -542,10 +542,6 @@ def _add_child(tree: ExploitTree, parent: ExploitTreeNode, cand: dict,
     return node
 
 
-def _highest_prior(kids: List[ExploitTreeNode]) -> ExploitTreeNode:
-    return max(kids, key=lambda n: n.local_value)
-
-
 def _mutex_safe_subset(kids: List[ExploitTreeNode]) -> List[ExploitTreeNode]:
     """Pick a wave that violates no TOOL_MUTEX_GROUP: at most one tool per
     mutex group. Deferred kids stay `proposed` for a later turn. Dangerous

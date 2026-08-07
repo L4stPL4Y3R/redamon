@@ -40,7 +40,6 @@ REMOVED_STRING_FRAGMENTS = ("proxychains", "socks5://127.0.0.1:9050", "127.0.0.1
 
 CHANGED_HELPERS = [
     "recon.helpers.nuclei_helpers.build_nuclei_command",
-    "recon.helpers.katana_helpers.run_katana_crawler",
     "recon.helpers.resource_enum.katana_helpers.run_katana_crawler",
     "recon.helpers.resource_enum.katana_helpers.fetch_forms_from_urls",
     "recon.helpers.resource_enum.gau_helpers.run_gau_discovery",
@@ -72,11 +71,10 @@ TOUCHED_MODULES = [
     "recon.graphql_scan.misconfig",
 ]
 
-# name -> module(s) that define the changed function (run_katana_crawler has two).
+# name -> module(s) that define the changed function.
 _CHANGED_FUNC_MODULES = {
     "build_nuclei_command": ["recon.helpers.nuclei_helpers"],
-    "run_katana_crawler": ["recon.helpers.resource_enum.katana_helpers",
-                           "recon.helpers.katana_helpers"],
+    "run_katana_crawler": ["recon.helpers.resource_enum.katana_helpers"],
     "fetch_forms_from_urls": ["recon.helpers.resource_enum.katana_helpers"],
     "run_gau_discovery": ["recon.helpers.resource_enum.gau_helpers"],
     "verify_gau_urls": ["recon.helpers.resource_enum.gau_helpers"],

@@ -1,14 +1,17 @@
 """
-Pure helpers for the capture-proxy addon: header normalization, cheap passive
-detections, body inline/offload decisions, and spool-record shaping.
+Helpers shared by the capture-proxy addon and the ingest worker: header
+normalization, cheap passive detections, body inline/offload decisions,
+spool-record shaping, and mount-point preflight.
 
 Kept free of any mitmproxy import so it is unit-testable on its own; the addon
 adapts a live flow into these plain inputs.
 """
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
+import os
 from typing import Any, Dict, List, Optional, Tuple
 
 SECURITY_HEADERS = (
@@ -21,6 +24,41 @@ SECURITY_HEADERS = (
 )
 
 AUTH_REQUEST_HEADERS = ("authorization", "cookie", "x-api-key", "x-auth-token")
+
+
+def ensure_dir_writable(path: str) -> str:
+    """makedirs(path), but turn an EACCES into an actionable, self-describing error.
+
+    The spool volume is shared with a ROOT writer: the orchestrator materialises
+    /spool/.capture-config.json into it. Docker copies an image's ownership onto a
+    named volume only while that volume is still EMPTY, so once the root-owned
+    writer has touched it first, the mount point stays root:root 0755 and this
+    process (uid 10001, read-only rootfs) cannot mkdir inside it.
+
+    Both capture containers run with restart=unless-stopped, so a bare EACCES
+    traceback here is indistinguishable from a crash loop. Name the volume, the
+    uid, the actual mode, and the one-line repair instead.
+    """
+    try:
+        os.makedirs(path, exist_ok=True)
+    except OSError as e:
+        if e.errno not in (errno.EACCES, errno.EPERM, errno.EROFS):
+            raise
+        parent = os.path.dirname(path.rstrip("/")) or "/"
+        try:
+            st = os.stat(parent)
+            owner = f"uid={st.st_uid} gid={st.st_gid} mode={oct(st.st_mode & 0o777)}"
+        except OSError:
+            owner = "not statable"
+        raise RuntimeError(
+            f"cannot create {path}: the mounted volume at {parent} is not writable by "
+            f"this process (running as uid={os.getuid()}; {parent} is {owner}). A "
+            f"root-owned writer most likely initialised the named volume before this "
+            f"container first mounted it, so Docker never applied the image's "
+            f"ownership. Repair without data loss:\n"
+            f"  docker run --rm -v redamon_capture_spool:/spool alpine chmod 0777 /spool"
+        ) from e
+    return path
 
 
 def normalize_headers(items) -> Dict[str, Any]:

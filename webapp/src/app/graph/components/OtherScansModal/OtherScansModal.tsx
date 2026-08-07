@@ -1,9 +1,11 @@
 'use client'
 
+import { useState } from 'react'
 import { Play, Pause, Square, Terminal, Download, Loader2, Github, Search, AlertTriangle } from 'lucide-react'
 import Link from 'next/link'
 import { Modal } from '@/components/ui'
 import type { GithubHuntStatus, TrufflehogStatus, SupplyChainStatus } from '@/lib/recon-types'
+import SupplyChainInput from './SupplyChainInput'
 import styles from './OtherScansModal.module.css'
 
 interface OtherScansModalProps {
@@ -47,7 +49,9 @@ interface OtherScansModalProps {
   supplyChainStatus?: SupplyChainStatus
   hasSupplyChainData?: boolean
   isSupplyChainLogsOpen?: boolean
-  hasSupplyChainInput?: boolean
+  /** Needed to configure the scan input inline (upload / repository). Without
+   *  it the card renders read-only and Start stays disabled. */
+  projectId?: string
 }
 
 function StatusBadge({ status }: { status: string }) {
@@ -105,7 +109,7 @@ export function OtherScansModal({
   supplyChainStatus = 'idle',
   hasSupplyChainData = false,
   isSupplyChainLogsOpen = false,
-  hasSupplyChainInput = false,
+  projectId,
 }: OtherScansModalProps) {
   // GitHub Hunt derived state
   const isGHBusy = githubHuntStatus === 'running' || githubHuntStatus === 'starting' || githubHuntStatus === 'pausing'
@@ -122,6 +126,12 @@ export function OtherScansModal({
   const isTHRunning = isTHBusy || isTHStopping
   const isTHPaused = trufflehogStatus === 'paused'
   const isTHActive = isTHRunning || isTHPaused
+
+  // Whether the SELECTED input source actually has a usable value. Reported by
+  // SupplyChainInput, because only it knows which source is active - a
+  // configured repository must not make Start clickable while the upload
+  // source is selected, and vice versa.
+  const [scInputReady, setInputReady] = useState(false)
 
   // Supply Chain derived state
   const isSCBusy = supplyChainStatus === 'running' || supplyChainStatus === 'starting' || supplyChainStatus === 'pausing'
@@ -146,6 +156,7 @@ export function OtherScansModal({
       size="large"
     >
       <div className={styles.content}>
+        <div className={styles.row}>
         {/* GitHub Secret Hunt Card */}
         <div className={styles.card}>
           <div className={styles.cardHeader}>
@@ -350,7 +361,12 @@ export function OtherScansModal({
           </div>
         </div>
 
-        {/* Supply Chain Scanner Card (L1) */}
+      </div>
+
+        {/* Supply Chain Scanner (L1) - full-width second row.
+            It carries its own input configuration, so it needs more room than
+            the two hunters above and no longer sends the operator to Project
+            Settings to pick a file. */}
         <div className={styles.card}>
           <div className={styles.cardHeader}>
             <Search size={18} className={styles.cardIcon} />
@@ -358,20 +374,17 @@ export function OtherScansModal({
             <StatusBadge status={supplyChainStatus} />
           </div>
           <p className={styles.cardDescription}>
-            Audit an uploaded SBOM / lockfile against the offline OSV database for known-malicious (MAL) and known-vulnerable packages. Fully offline.
+            Audit an SBOM / lockfile, or a GitHub repository, against the offline OSV database for known-malicious (MAL) and known-vulnerable packages. The OSV verdict is fully offline.
           </p>
-          {!hasSupplyChainInput && (
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px',
-              background: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.3)', borderRadius: '6px',
-            }}>
-              <AlertTriangle size={14} style={{ color: '#f59e0b', flexShrink: 0 }} />
-              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                Upload an SBOM / lockfile in{' '}
-                <Link href="/settings" style={{ color: 'var(--accent-primary)', fontWeight: 500 }}>Project Settings</Link>{' '}first.
-              </span>
-            </div>
+
+          {projectId && (
+            <SupplyChainInput
+              projectId={projectId}
+              disabled={isSCActive}
+              onInputAvailabilityChange={setInputReady}
+            />
           )}
+
           <div className={styles.cardActions}>
             {isSCPaused ? (
               <button className={styles.resumeButton} onClick={onResumeSupplyChain} disabled={scanBlocked}
@@ -380,8 +393,8 @@ export function OtherScansModal({
               </button>
             ) : (
               <button className={styles.startButton} onClick={onStartSupplyChain}
-                disabled={!hasSupplyChainInput || isSCRunning || scanBlocked}
-                title={scanBlocked ? blockedTitle : !hasSupplyChainInput ? 'Upload an SBOM/lockfile first' : isSCRunning ? 'In progress...' : 'Start Supply-Chain scan'}>
+                disabled={!scInputReady || isSCRunning || scanBlocked}
+                title={scanBlocked ? blockedTitle : !scInputReady ? 'Choose an input above first' : isSCRunning ? 'In progress...' : 'Start Supply-Chain scan'}>
                 {isSCRunning ? <Loader2 size={12} className={styles.spinner} /> : <Play size={12} />}
                 <span>{isSCPausing ? 'Pausing...' : isSCBusy ? 'Running...' : isSCStopping ? 'Stopping...' : 'Start'}</span>
               </button>

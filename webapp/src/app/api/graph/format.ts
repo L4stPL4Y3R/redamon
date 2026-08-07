@@ -351,7 +351,7 @@ export function getNodeName(node: Neo4jNode): string {
     }
   }
 
-  return (
+  const resolved = (
     (props.name as string) ||
     (props.address as string) ||
     (props.domain as string) ||
@@ -364,6 +364,22 @@ export function getNodeName(node: Neo4jNode): string {
     label ||
     'Unknown'
   )
+
+  // A node NAME is a label, never a payload. Some writers put free text in
+  // `title` (a GuardDog metadata_mismatch finding carries a multi-line manifest
+  // diff over a thousand characters long), and without this guard the whole
+  // dump became the node's displayed name and its graph label. The full text is
+  // still available in the node's properties.
+  return truncateNodeName(resolved)
+}
+
+const MAX_NODE_NAME = 80
+
+export function truncateNodeName(value: string): string {
+  if (typeof value !== 'string') return value
+  const firstLine = value.split('\n')[0].trim()
+  if (firstLine.length <= MAX_NODE_NAME) return firstLine || value.trim().slice(0, MAX_NODE_NAME)
+  return firstLine.slice(0, MAX_NODE_NAME - 1) + '…'
 }
 
 export function serializeProperties(props: Record<string, unknown>): Record<string, unknown> {
