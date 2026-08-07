@@ -126,11 +126,18 @@ class SupplyChainMixin:
                         ON CREATE SET p.first_seen = datetime()
                         SET p.ecosystem = $ecosystem, p.name = $name,
                             p.version = $version, p.source = $source,
+                            p.source_path = coalesce($source_path, p.source_path),
                             p.last_seen = datetime()
                         """,
                         purl=purl, uid=user_id, pid=project_id,
                         ecosystem=pkg.get("ecosystem"), name=pkg.get("name"),
                         version=pkg.get("version"), source=pkg.get("source"),
+                        # Which manifest inside a scanned tree the package came
+                        # from - the only way to tell, on an L1 repo scan that
+                        # walked 12 lockfiles, WHICH one carries the malware.
+                        # coalesce so a later L2 sighting (no path) cannot erase
+                        # what the repo scan established.
+                        source_path=pkg.get("source_path"),
                     )
                     stats["packages_merged"] += 1
                 except Exception as exc:  # keep going; one bad row is not fatal
@@ -183,7 +190,8 @@ class SupplyChainMixin:
                         SET mf.verdict = $verdict, mf.source_tool = $source_tool,
                             mf.advisory_id = $advisory, mf.severity = $severity,
                             mf.confidence = $confidence, mf.title = $title,
-                            mf.detail = $detail, mf.last_seen = datetime()
+                            mf.detail = $detail, mf.soft_error = $soft_error,
+                            mf.aliases = $aliases, mf.last_seen = datetime()
                         WITH mf
                         MERGE (p:Package {purl: $purl, user_id: $uid, project_id: $pid})
                         ON CREATE SET p.first_seen = datetime(), p.name = $pname,
@@ -197,6 +205,14 @@ class SupplyChainMixin:
                         advisory=advisory, severity=f.get("severity"),
                         confidence=f.get("confidence") or verdict,
                         title=_finding_title(f, advisory),
+                        # THE difference between "GuardDog analysed this and
+                        # found nothing bad" and "GuardDog never ran". The flag
+                        # exists in the artifact for exactly that reason; not
+                        # persisting it made every soft error read, in the UI,
+                        # as an ordinary low-severity suspicious finding.
+                        soft_error=bool(f.get("soft_error")),
+                        # OSV alias ids (a MAL- advisory often also has a GHSA-).
+                        aliases=[str(a) for a in (f.get("aliases") or [])][:50],
                         # None, not "": an absent detail should be an absent
                         # property, not an empty string that reads as present.
                         detail=f.get("detail") or f.get("message") or None,
@@ -291,15 +307,55 @@ class SupplyChainMixin:
         if not base_urls:
             return self.update_graph_from_supply_chain(artifact, user_id, project_id)
 
-        agg = {"packages_merged": 0, "malicious_merged": 0,
-               "suspicious_merged": 0, "vulnerabilities_merged": 0,
-               "relationships_created": 0, "errors": []}
-        for url in base_urls:
-            stats = self.update_graph_from_supply_chain(
-                artifact, user_id, project_id,
-                anchor_label="BaseURL", anchor_key="url", anchor_value=url)
-            for k in ("packages_merged", "malicious_merged", "suspicious_merged",
-                      "vulnerabilities_merged", "relationships_created"):
-                agg[k] += stats.get(k, 0)
-            agg["errors"].extend(stats.get("errors", []))
-        return agg
+        # Write the NODES once, then attach the per-BaseURL edges.
+        #
+        # This used to call update_graph_from_supply_chain once per BaseURL,
+        # which re-wrote the ENTIRE artifact every time. A scan with 122
+        # packages and 2 BaseURLs issued ~500 Cypher round-trips where ~250
+        # were needed, and reported packages_merged=244 for 122 actual nodes -
+        # the counts a reader trusts were simply wrong. A target with 10
+        # BaseURLs (multiple ports/subdomains is normal) paid 10x.
+        #
+        # The data was never wrong - MERGE is idempotent - so this is about
+        # cost and about the numbers meaning what they say.
+        stats = self.update_graph_from_supply_chain(artifact, user_id, project_id)
+        stats["relationships_created"] = 0
+
+        purls = [p["purl"] for p in (artifact.get("packages") or []) if p.get("purl")]
+        if purls:
+            for url in base_urls:
+                try:
+                    stats["relationships_created"] += self._anchor_packages_to(
+                        "BaseURL", "url", url, purls, user_id, project_id)
+                except Exception as exc:
+                    stats["errors"].append("depends_on {}: {}".format(url, exc))
+        return stats
+
+    def _anchor_packages_to(self, anchor_label, anchor_key, anchor_value,
+                            purls, user_id, project_id):
+        """MERGE DEPENDS_ON from one anchor to many packages in ONE query.
+
+        UNWIND rather than a query per package: this is the only part that has
+        to repeat per BaseURL, so it is the part worth batching.
+
+        The anchor is MATCHed, never created - inventing a BaseURL the scan did
+        not actually observe would put a fabricated target in the graph.
+        """
+        if anchor_label not in ("GithubRepository", "BaseURL"):
+            raise ValueError("unsupported anchor_label: {}".format(anchor_label))
+        if anchor_key not in ("id", "url"):
+            raise ValueError("unsupported anchor_key: {}".format(anchor_key))
+
+        with self.driver.session() as session:
+            res = session.run(
+                """
+                MATCH (a:%s {%s: $anchor_value, user_id: $uid, project_id: $pid})
+                UNWIND $purls AS purl
+                MATCH (p:Package {purl: purl, user_id: $uid, project_id: $pid})
+                MERGE (a)-[:DEPENDS_ON]->(p)
+                RETURN count(*) AS c
+                """ % (anchor_label, anchor_key),
+                anchor_value=anchor_value, purls=purls,
+                uid=user_id, pid=project_id)
+            rec = res.single()
+            return (rec and rec.get("c")) or 0

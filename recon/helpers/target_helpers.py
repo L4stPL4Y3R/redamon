@@ -4,6 +4,8 @@ RedAmon - Target Extraction Helpers
 Functions for extracting and building target URLs from reconnaissance data.
 """
 
+import ipaddress
+import re
 from typing import Dict, List, Optional, Set, Tuple
 from urllib.parse import urlparse
 
@@ -181,6 +183,39 @@ def _hosts_in_urls(urls: Set[str]) -> Set[str]:
     return hosts
 
 
+# Mock hostnames minted for IPs with no PTR record: recon/main.py replaces the
+# separators with dashes ("192.88.99.10" -> "192-88-99-10", "fe80::1" ->
+# "fe80--1"). They exist so the graph can label the host; they are NOT
+# resolvable and must never reach a crawler. See build_target_urls source 3.
+_MOCK_IPV4_RE = re.compile(r"^\d{1,3}-\d{1,3}-\d{1,3}-\d{1,3}$")
+
+
+def _is_mock_ip_hostname(hostname: str) -> bool:
+    """True when `hostname` is a dashed-IP placeholder rather than a real host.
+
+    Deliberately narrow: only a label that is ENTIRELY digits and dashes (or
+    hex and dashes, for IPv6) and that maps back to a valid IP literal. A real
+    domain like "mail-01.example.com" contains dots and is never matched.
+    """
+    if not hostname or "." in hostname:
+        return False
+    candidate = hostname.strip().lower()
+    if _MOCK_IPV4_RE.match(candidate):
+        try:
+            ipaddress.ip_address(candidate.replace("-", "."))
+            return True
+        except ValueError:
+            return False
+    # IPv6 placeholders: only hex digits and dashes, and round-trips to an IP.
+    if candidate and all(c in "0123456789abcdef-" for c in candidate) and "-" in candidate:
+        try:
+            ipaddress.ip_address(candidate.replace("-", ":"))
+            return True
+        except ValueError:
+            return False
+    return False
+
+
 def build_target_urls(
     hostnames: Set[str],
     ips: Set[str],
@@ -220,6 +255,7 @@ def build_target_urls(
         "httpx": 0,
         "fallback_subdomain": 0,
         "fallback_ip": 0,
+        "skipped_mock_hostname": 0,
     }
 
     # Source 1: resource_enum (BaseURLs + parameterized endpoint URLs)
@@ -251,6 +287,30 @@ def build_target_urls(
     # This catches newly discovered subdomains that haven't been probed yet.
     for hostname in sorted(hostnames):
         if not hostname or hostname.lower() in covered_hosts:
+            continue
+        # Skip MOCK hostnames. When an IP has no PTR record, recon/main.py
+        # labels it with the IP's dots turned into dashes ("192.88.99.10" ->
+        # "192-88-99-10") so the graph has something to show. That label is a
+        # DISPLAY ARTIFACT - it has no DNS record and never will.
+        #
+        # Handing it to the crawlers is not merely wasteful, it is destructive:
+        # a non-resolving seed makes hakrawler return ZERO urls overall (not
+        # merely zero for that seed) and collapses katana's stdout to zero
+        # lines, while both still exit 0 with no stderr. Every real URL they
+        # crawled is discarded. Bisected against the guinea pig on 2026-08-07:
+        #
+        #   real seeds only ............. katana 25, hakrawler 48
+        #   + the two mock seeds ........ katana  0, hakrawler  0
+        #
+        # depth and crawl-duration were ruled out; the mock seeds alone flip it.
+        # This hit EVERY IP-only target, silently, and downstream it looked
+        # like "the target serves no JavaScript" - which in the supply-chain
+        # pipeline reads as a clean bill of health.
+        #
+        # Nothing is lost by skipping them: the real IP URLs are already in the
+        # set from httpx (source 2), and source 4 covers un-probed IPs.
+        if _is_mock_ip_hostname(hostname):
+            counts["skipped_mock_hostname"] += 1
             continue
         before = len(url_set)
         url_set.add(f"http://{hostname}")

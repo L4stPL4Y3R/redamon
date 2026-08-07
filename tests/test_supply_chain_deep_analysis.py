@@ -15,6 +15,7 @@ Run: python -m pytest tests/test_supply_chain_deep_analysis.py
 import importlib.util
 import os
 import sys
+import tempfile
 import unittest
 from unittest.mock import MagicMock
 
@@ -31,7 +32,7 @@ _spec = importlib.util.spec_from_file_location(
 scr = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(scr)
 
-from supply_chain_common import guarddog_runner
+from supply_chain_common import guarddog_runner, analyzer_dispatch
 from supply_chain_common.artifact import empty_artifact, add_guarddog_findings
 from supply_chain_common.security import validate_artifact, SanitizeError
 from graph_db.mixins.supply_chain_mixin import SupplyChainMixin
@@ -42,26 +43,67 @@ from graph_db.mixins.supply_chain_mixin import SupplyChainMixin
 # --------------------------------------------------------------------------
 
 class _FakeGuardDog:
-    """Stands in for supply_chain_common.guarddog_runner."""
+    """Stands in for the ANALYZER DISPATCH, which is where GuardDog now runs.
+
+    This used to fake supply_chain_common.guarddog_runner, because deep_analyze
+    called gd_mod.scan_package(..., argv_prefix=...) directly. It no longer
+    does: every hostile-byte operation goes through one analyzer job contract,
+    so the dispatch is the only seam that controls what comes back.
+
+    Faking the removed seam did not fail loudly - deep_analyze quietly spawned
+    REAL docker, every package errored into a `guarddog-not-run` soft error,
+    and the suite went from 1.8s to 17s while asserting nothing it claimed to.
+
+    Kept as `_FakeGuardDog` with a `results` map keyed by package name so the
+    15 existing call sites read unchanged; only the plumbing moved.
+    """
 
     def __init__(self, results=None, raises=None):
         # results: {name: {"findings": [...], "error": str|None}}
         self.results = results or {}
         self.raises = raises or {}
         self.calls = []
+        self.jobs = []
+        self._dirs = []
 
-    def hardened_docker_argv(self, image=None, **kw):
-        return ["docker", "run", "--rm", "--cap-drop", "ALL",
-                "--entrypoint", "guarddog", image or "img"]
+    def new_work_dir(self, prefix="sc-job"):
+        d = tempfile.mkdtemp(prefix=prefix + "-")
+        self._dirs.append(d)
+        return d
 
-    def scan_package(self, ecosystem, name, version=None, timeout=None,
-                     argv_prefix=None):
-        self.calls.append({"ecosystem": ecosystem, "name": name,
-                           "version": version, "timeout": timeout,
-                           "argv_prefix": argv_prefix})
+    def run_analyzer_job(self, job, work_dir, sc_common, *, image=None,
+                         allow_registry_egress=False, timeout=None, **kw):
+        spec = (job.get("guarddog_packages") or [{}])[0]
+        name = spec.get("name")
+        # Record the argv the REAL dispatch would build, so the hardening
+        # assertions check the actual builder with the arguments deep_analyze
+        # passed rather than a stub's invention.
+        argv = analyzer_dispatch.analyzer_docker_argv(
+            work_dir, sc_common, image=image,
+            allow_registry_egress=allow_registry_egress)
+        self.calls.append({"ecosystem": spec.get("ecosystem"), "name": name,
+                           "version": spec.get("version"), "timeout": timeout,
+                           "argv_prefix": list(argv)})
+        self.jobs.append({"job": job, "allow_registry_egress": allow_registry_egress})
+
         if name in self.raises:
             raise self.raises[name]
-        return self.results.get(name, {"raw": None, "findings": [], "error": None})
+
+        outcome = self.results.get(name, {"findings": [], "error": None})
+        art = empty_artifact("purls")
+        # deep_analyze consumes artifact["suspicious"]; the fixtures describe
+        # GuardDog findings, so map them into that shape here.
+        for f in outcome.get("findings") or []:
+            art["suspicious"].append({
+                "name": f.get("package") or name,
+                "version": f.get("version") or spec.get("version"),
+                "ecosystem": "npm",
+                "purl": "pkg:npm/{}@{}".format(name, spec.get("version")),
+                "rule": f.get("rule"), "severity": f.get("severity"),
+                "message": f.get("message") or "", "confidence": "suspicious",
+                "soft_error": bool(f.get("soft_error")),
+            })
+        return {"artifact": art, "exit_code": 0, "error": outcome.get("error")}
 
 
 def _finding(rule="capability-process-spawn", severity="low", soft_error=False):
@@ -278,7 +320,7 @@ class TestDeepAnalyzeHappyPath(unittest.TestCase):
         art = _artifact_with(malicious=[_osv_finding("jquery", "3.4.1",
                                                      purl="pkg:npm/jquery@3.4.1")])
         gd = _FakeGuardDog({"jquery": {"findings": [_finding()], "error": None}})
-        art, stats = scr.deep_analyze(art, guarddog=gd)
+        art, stats = scr.deep_analyze(art, dispatch=gd)
         self.assertEqual(stats["scanned"], 1)
         self.assertEqual(stats["suspicious"], 1)
         self.assertEqual(len(art["suspicious"]), 1)
@@ -292,13 +334,13 @@ class TestDeepAnalyzeHappyPath(unittest.TestCase):
         gd = _FakeGuardDog({"jquery": {
             "findings": [_finding("threat-runtime-obfuscation-general", "medium")],
             "error": None}})
-        art, _ = scr.deep_analyze(art, guarddog=gd)
+        art, _ = scr.deep_analyze(art, dispatch=gd)
         validate_artifact(art)  # must not raise
 
     def test_guarddog_is_never_a_malicious_verdict(self):
         art = _artifact_with(malicious=[_osv_finding("jquery", "3.4.1")])
         gd = _FakeGuardDog({"jquery": {"findings": [_finding()], "error": None}})
-        art, _ = scr.deep_analyze(art, guarddog=gd)
+        art, _ = scr.deep_analyze(art, dispatch=gd)
         self.assertTrue(all(s["confidence"] == "suspicious"
                             for s in art["suspicious"]))
         self.assertEqual(len(art["malicious"]), 1)  # unchanged
@@ -307,20 +349,20 @@ class TestDeepAnalyzeHappyPath(unittest.TestCase):
         art = _artifact_with(malicious=[_osv_finding("axios", "1.14.1")])
         before = len(art["malicious"])
         gd = _FakeGuardDog({"axios": {"findings": [], "error": None}})
-        art, _ = scr.deep_analyze(art, guarddog=gd)
+        art, _ = scr.deep_analyze(art, dispatch=gd)
         self.assertEqual(len(art["malicious"]), before)
 
     def test_no_flagged_packages_means_no_dispatch(self):
         art = empty_artifact("js-dir")
         gd = _FakeGuardDog()
-        art, stats = scr.deep_analyze(art, guarddog=gd)
+        art, stats = scr.deep_analyze(art, dispatch=gd)
         self.assertEqual(gd.calls, [])
         self.assertEqual(stats["scanned"], 0)
 
     def test_dispatch_uses_the_hardened_prefix(self):
         art = _artifact_with(malicious=[_osv_finding("axios", "1.14.1")])
         gd = _FakeGuardDog()
-        scr.deep_analyze(art, guarddog=gd)
+        scr.deep_analyze(art, dispatch=gd)
         self.assertEqual(gd.calls[0]["argv_prefix"][:3], ["docker", "run", "--rm"])
 
 
@@ -338,7 +380,7 @@ class TestDeepAnalyzeFailurePaths(unittest.TestCase):
         gd = _FakeGuardDog({"jquery": {
             "findings": [],
             "error": "spawn failed: [Errno 2] No such file or directory: 'docker'"}})
-        art, stats = scr.deep_analyze(art, guarddog=gd)
+        art, stats = scr.deep_analyze(art, dispatch=gd)
 
         self.assertEqual(stats["scanned"], 0, "a failed dispatch is not a scan")
         self.assertEqual(stats["failed"], 1)
@@ -354,7 +396,7 @@ class TestDeepAnalyzeFailurePaths(unittest.TestCase):
         art = _artifact_with(malicious=[_osv_finding("jquery", "3.4.1")])
         gd = _FakeGuardDog({"jquery": {"findings": [],
                                        "error": "timeout after 180s"}})
-        art, stats = scr.deep_analyze(art, guarddog=gd)
+        art, stats = scr.deep_analyze(art, dispatch=gd)
         self.assertEqual(stats["failed"], 1)
         self.assertTrue(art["suspicious"][0]["soft_error"])
 
@@ -363,7 +405,7 @@ class TestDeepAnalyzeFailurePaths(unittest.TestCase):
                                         _osv_finding("good", "2.0")])
         gd = _FakeGuardDog(results={"good": {"findings": [_finding()], "error": None}},
                            raises={"bad": SanitizeError("hostile name")})
-        art, stats = scr.deep_analyze(art, guarddog=gd)
+        art, stats = scr.deep_analyze(art, dispatch=gd)
         # The good package still got analysed.
         self.assertEqual(stats["scanned"], 1)
         self.assertEqual(stats["failed"], 1)
@@ -379,7 +421,7 @@ class TestDeepAnalyzeFailurePaths(unittest.TestCase):
         gd = _FakeGuardDog({"axios": {
             "findings": [_finding("download-package", "low", soft_error=True)],
             "error": None}})
-        art, stats = scr.deep_analyze(art, guarddog=gd)
+        art, stats = scr.deep_analyze(art, dispatch=gd)
         self.assertEqual(stats["scanned"], 1)
         self.assertEqual(stats["soft_errors"], 1)
         self.assertEqual(stats["suspicious"], 0)
@@ -388,7 +430,7 @@ class TestDeepAnalyzeFailurePaths(unittest.TestCase):
         art = _artifact_with(malicious=[_osv_finding("jquery", "3.4.1")])
         gd = _FakeGuardDog({"jquery": {"findings": [_finding()],
                                        "error": "partial stderr noise"}})
-        art, stats = scr.deep_analyze(art, guarddog=gd)
+        art, stats = scr.deep_analyze(art, dispatch=gd)
         rules = {s["rule"] for s in art["suspicious"]}
         self.assertIn("capability-process-spawn", rules)
         self.assertNotIn("guarddog-not-run", rules,
@@ -403,7 +445,7 @@ class TestDeepAnalyzeFailurePaths(unittest.TestCase):
                                         _osv_finding("c", "3")])
         gd = _FakeGuardDog()
         # budget=0 -> exhausted before the first package.
-        art, stats = scr.deep_analyze(art, guarddog=gd, budget=0.0000001)
+        art, stats = scr.deep_analyze(art, dispatch=gd, budget=0.0000001)
         self.assertEqual(gd.calls, [], "nothing may be dispatched past the budget")
         self.assertEqual(stats["skipped_budget"], 3)
         self.assertEqual(len(art["suspicious"]), 3)
@@ -412,7 +454,7 @@ class TestDeepAnalyzeFailurePaths(unittest.TestCase):
     def test_per_package_timeout_shrinks_to_remaining_budget(self):
         art = _artifact_with(malicious=[_osv_finding("a", "1")])
         gd = _FakeGuardDog()
-        scr.deep_analyze(art, guarddog=gd, timeout=180, budget=5)
+        scr.deep_analyze(art, dispatch=gd, timeout=180, budget=5)
         self.assertLessEqual(gd.calls[0]["timeout"], 5)
 
     def test_boundary_purl_missing_does_not_fabricate_one(self):
@@ -422,7 +464,7 @@ class TestDeepAnalyzeFailurePaths(unittest.TestCase):
         no_purl["purl"] = None
         art = _artifact_with(malicious=[no_purl])
         gd = _FakeGuardDog({"x": {"findings": [_finding()], "error": None}})
-        art, _ = scr.deep_analyze(art, guarddog=gd)
+        art, _ = scr.deep_analyze(art, dispatch=gd)
         self.assertIsNone(art["suspicious"][0].get("purl"))
 
 
@@ -598,7 +640,7 @@ class TestIdempotency(unittest.TestCase):
         def run():
             art = _artifact_with(malicious=[_osv_finding("jquery", "3.4.1")])
             gd = _FakeGuardDog({"jquery": {"findings": [_finding()], "error": None}})
-            art, _ = scr.deep_analyze(art, guarddog=gd)
+            art, _ = scr.deep_analyze(art, dispatch=gd)
             return art["suspicious"]
         self.assertEqual(run(), run())
 
@@ -726,6 +768,117 @@ class TestRunSupplyChainReconWiring(unittest.TestCase):
         art = out["supply_chain_recon"]["artifact"]
         self.assertTrue(any("deep analysis failed" in e for e in art["errors"]))
         self.assertIn("packages", art)
+
+
+def _pkg(name, version, source="retirejs"):
+    purl = "pkg:npm/{}@{}".format(name, version) if version else "pkg:npm/{}".format(name)
+    return {"purl": purl, "name": name, "version": version,
+            "ecosystem": "npm", "source": source}
+
+
+def _versionless_pkg(name, source="wappalyzer"):
+    """What the technology / source-map paths produce: a name, no version.
+
+    Unverdictable on its own - OSV needs a version - which is why a retire.js
+    sighting of the same library must win rather than sit beside it.
+    """
+    return _pkg(name, None, source)
+
+
+def _art(packages=(), malicious=(), vulnerable=()):
+    a = empty_artifact("js-dir")
+    a["packages"].extend(packages)
+    a["malicious"].extend(malicious)
+    a["vulnerable"].extend(vulnerable)
+    return a
+
+
+class TestMergeArtifacts(unittest.TestCase):
+    """merge_artifacts folds the retire.js artifact into the OSV one.
+
+    NOTE: this class had no coverage at all in the committed tree - the
+    function was reachable from every L2 scan and entirely untested. It is the
+    join point between the two harvest halves, so a dedup mistake here shows up
+    as duplicate graph nodes rather than as a crash.
+    """
+
+    def test_findings_dedup_on_purl_and_advisory(self):
+        f = {"purl": "pkg:npm/jquery@3.4.1", "name": "jquery", "version": "3.4.1",
+             "ecosystem": "npm", "advisory_id": "GHSA-x", "severity": "high",
+             "confidence": "suspicious"}
+        out = scr.merge_artifacts(_art(vulnerable=[f]), _art(vulnerable=[dict(f)]))
+        self.assertEqual(len(out["vulnerable"]), 1)
+
+    def test_different_advisories_on_one_package_both_kept(self):
+        mk = lambda adv: {"purl": "pkg:npm/jquery@3.4.1", "name": "jquery",
+                          "version": "3.4.1", "ecosystem": "npm",
+                          "advisory_id": adv, "severity": "high",
+                          "confidence": "suspicious"}
+        out = scr.merge_artifacts(_art(vulnerable=[mk("GHSA-a")]),
+                                  _art(vulnerable=[mk("GHSA-b")]))
+        self.assertEqual(len(out["vulnerable"]), 2)
+
+    def test_merging_none_is_a_noop(self):
+        base = _art(packages=[_pkg("jquery", "3.4.1")])
+        self.assertEqual(len(scr.merge_artifacts(base, None)["packages"]), 1)
+
+    def test_errors_are_carried_over(self):
+        extra = _art()
+        extra["errors"].append("retire: dropped hostile component")
+        out = scr.merge_artifacts(_art(), extra)
+        self.assertIn("retire: dropped hostile component", out["errors"])
+
+    # -- identity dedup: (ecosystem, name), NOT the purl string -------------
+    #
+    # REGRESSION. harvest_packages has always keyed packages by NAME with the
+    # versioned sighting winning; merge_artifacts keyed on the PURL STRING. So
+    # `pkg:npm/lodash` (wappalyzer, versionless) and `pkg:npm/lodash@4.17.4`
+    # (retire.js) were two different keys and BOTH survived - one library, two
+    # Package nodes, one of them permanently unverdictable because OSV needs a
+    # version. retire.js is the only source that reads a version out of the
+    # served bytes, so the package it upgrades is routinely one the other
+    # sources already reported WITHOUT one; this is the common case, not a
+    # corner one.
+
+    def test_versioned_retire_sighting_replaces_the_versionless_one(self):
+        out = scr.merge_artifacts(_art(packages=[_versionless_pkg("lodash")]),
+                                  _art(packages=[_pkg("lodash", "4.17.4")]))
+        self.assertEqual(len(out["packages"]), 1)
+        self.assertEqual(out["packages"][0]["version"], "4.17.4")
+        self.assertEqual(out["packages"][0]["purl"], "pkg:npm/lodash@4.17.4")
+
+    def test_versionless_extra_never_displaces_a_known_version(self):
+        out = scr.merge_artifacts(_art(packages=[_pkg("lodash", "4.17.4")]),
+                                  _art(packages=[_versionless_pkg("lodash")]))
+        self.assertEqual(len(out["packages"]), 1)
+        self.assertEqual(out["packages"][0]["version"], "4.17.4")
+
+    def test_same_name_in_a_different_ecosystem_is_a_different_package(self):
+        pypi = {"purl": "pkg:pypi/lodash@1.0.0", "name": "lodash",
+                "version": "1.0.0", "ecosystem": "pypi", "source": "retirejs"}
+        out = scr.merge_artifacts(_art(packages=[_versionless_pkg("lodash")]),
+                                  _art(packages=[pypi]))
+        self.assertEqual(len(out["packages"]), 2)
+
+    def test_two_concrete_versions_keep_first_seen(self):
+        """The harvest side already deduped its own sources; do not
+        second-guess it, and never end up with both."""
+        out = scr.merge_artifacts(_art(packages=[_pkg("lodash", "4.17.4")]),
+                                  _art(packages=[_pkg("lodash", "4.17.20")]))
+        self.assertEqual(len(out["packages"]), 1)
+        self.assertEqual(out["packages"][0]["version"], "4.17.4")
+
+    def test_replacement_happens_in_place_not_by_appending(self):
+        """Position matters: an append-then-drop would reorder the list and
+        silently change which package a caller reading packages[0] sees."""
+        base = _art(packages=[_versionless_pkg("lodash"), _pkg("jquery", "3.4.1")])
+        out = scr.merge_artifacts(base, _art(packages=[_pkg("lodash", "4.17.4")]))
+        self.assertEqual([p["name"] for p in out["packages"]], ["lodash", "jquery"])
+
+    def test_upgraded_package_still_clears_the_boundary_validator(self):
+        out = scr.merge_artifacts(_art(packages=[_versionless_pkg("lodash")]),
+                                  _art(packages=[_pkg("lodash", "4.17.4")]))
+        validate_artifact(out)
 
 
 if __name__ == "__main__":

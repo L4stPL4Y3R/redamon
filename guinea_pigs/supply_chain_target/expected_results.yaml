@@ -291,8 +291,11 @@ must_not_exist:
       pkg:npm/lodash and pkg:npm/lodash@4.17.4 were two different keys and both
       survived. If the bare purl reappears, that regressed.
 
+  # NOTE: no `name:` assertion here, unlike the hostile-name entries below.
+  # knockout 3.4.0 IS expected (from /assets/bind-lib.js), so forbidding the
+  # bare name would fail on a package that is supposed to be there. Only the
+  # 3.5.1 PURL must be absent.
   - purl: pkg:npm/knockout@3.5.1
-    name: knockout
     why: >
       RETIRE.JS CLEAN-VERSION CONTROL. /assets/fresh-lib.js carries a knockout
       3.5.1 banner that retire.js positively matches - but its JSON reporter
