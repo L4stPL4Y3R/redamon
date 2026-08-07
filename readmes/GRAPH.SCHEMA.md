@@ -1594,6 +1594,12 @@ RETURN svc.name, svc.port_number, t.name, c.id
 // A scanned repository depends on this package (Supply-Chain scan, repo input)
 (GithubRepository)-[:DEPENDS_ON]->(Package)
 
+// Both L1 anchors hang off the project's Domain, so a standalone supply-chain
+// scan is part of the graph rather than a detached island. Created only when a
+// Domain already exists; the writer never invents one.
+(Domain)-[:HAS_SBOM_DOCUMENT]->(SbomDocument)
+(Domain)-[:HAS_REPOSITORY]->(GithubRepository)
+
 // An uploaded SBOM / lockfile listed this package (Supply-Chain scan, upload
 // input). EVERY Package has one of these three parents: uploaded packages used
 // to have none, which left them - and all of their Vulnerability nodes -
@@ -2212,7 +2218,10 @@ Findings are deduplicated across commit history (same repo + path + secret_type 
 })
 ```
 
-**Relationship:** `GithubHunt -[:HAS_REPOSITORY]-> GithubRepository`
+**Relationships:** `GithubHunt -[:HAS_REPOSITORY]-> GithubRepository`
+(secret hunt), and `Domain -[:HAS_REPOSITORY]-> GithubRepository` when an L1
+supply-chain scan targeted the repo. Both use the same node id, so a repo
+scanned each way is one node, not two.
 
 ### SbomDocument (Uploaded SBOM / lockfile)
 
@@ -2228,7 +2237,8 @@ The parent of every package read out of a file the operator uploaded in
 })
 ```
 
-**Relationship:** `SbomDocument -[:DEPENDS_ON]-> Package`
+**Relationships:**
+`Domain -[:HAS_SBOM_DOCUMENT]-> SbomDocument -[:DEPENDS_ON]-> Package`
 
 Why it exists: an upload has no target to hang off, so its packages originally
 floated - they and their `Vulnerability` nodes were reachable from nothing,
@@ -2239,6 +2249,13 @@ collapsed into an indistinguishable set of `source='osv'` packages.
 
 Note this node is NOT created for the repository input; that anchors to
 `GithubRepository` instead.
+
+Anchoring alone was not enough: the anchor itself started out parentless, so
+the whole L1 scan rendered as one detached cluster. Both L1 anchors are
+therefore linked to the project's `Domain`, the same way a GitHub Secret Hunt
+uses `Domain -[:HAS_GITHUB_HUNT]-> GithubHunt`. A project with no `Domain` yet
+(an SBOM upload can be the first thing done) keeps the anchor as a root rather
+than fabricating a target that was never scanned.
 
 ### GithubPath (File Path Within Repository)
 

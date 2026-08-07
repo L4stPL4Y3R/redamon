@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { ChevronDown, Database } from 'lucide-react'
 import { Toggle, WikiInfoButton } from '@/components/ui'
+import { SETTINGS_KEYS_HREF } from '@/lib/settingsLinks'
 import type { Project } from '@prisma/client'
 import styles from '../ProjectForm.module.css'
 import { NodeInfoTooltip } from '../NodeInfoTooltip'
@@ -91,7 +92,7 @@ export function CveLookupSection({ data, updateField }: CveLookupSectionProps) {
                 <h3 className={styles.subSectionTitle}>API Keys</h3>
                 <p className={styles.fieldHint} style={{ marginTop: 0 }}>
                   NVD and Vulners API keys are configured in{' '}
-                  <a href="/settings" style={{ color: 'var(--color-accent)', textDecoration: 'underline' }}>
+                  <a href={SETTINGS_KEYS_HREF} style={{ color: 'var(--color-accent)', textDecoration: 'underline' }}>
                     Global Settings &rarr; Tool API Keys
                   </a>
                   . Keys set there apply to all projects automatically.

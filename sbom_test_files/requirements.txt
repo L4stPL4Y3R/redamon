@@ -1,7 +1,0 @@
-# PyPI dependencies - deliberately NOT a synced ecosystem in the offline OSV DB.
-# This file exists to prove the scan reports an ACTIONABLE ERROR rather than a
-# silent clean when the local database has no data for the ecosystem.
-jinja2==2.4.1
-flask==0.12.2
-django==1.11.0
-pyyaml==3.12

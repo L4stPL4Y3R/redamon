@@ -96,6 +96,7 @@ export default function GraphPage() {
   const [hasGvmData, setHasGvmData] = useState(false)
   const [hasGithubHuntData, setHasGithubHuntData] = useState(false)
   const [hasTrufflehogData, setHasTrufflehogData] = useState(false)
+  const [hasSupplyChainData, setHasSupplyChainData] = useState(false)
   const [gvmAvailable, setGvmAvailable] = useState(true)
   const [isOtherScansModalOpen, setIsOtherScansModalOpen] = useState(false)
   const [hasGithubToken, setHasGithubToken] = useState(false)
@@ -925,13 +926,25 @@ export default function GraphPage() {
     }
   }, [projectId])
 
-  // Check for recon/GVM/GitHub Hunt/TruffleHog data on mount and when project changes
+  // Check if Supply-Chain (L1) data exists
+  const checkSupplyChainData = useCallback(async () => {
+    if (!projectId) return
+    try {
+      const response = await fetch(`/api/supply-chain/${projectId}/download`, { method: 'HEAD' })
+      setHasSupplyChainData(response.ok)
+    } catch {
+      setHasSupplyChainData(false)
+    }
+  }, [projectId])
+
+  // Check for recon/GVM/GitHub Hunt/TruffleHog/Supply-Chain data on mount and when project changes
   useEffect(() => {
     checkReconData()
     checkGvmData()
     checkGithubHuntData()
     checkTrufflehogData()
-  }, [checkReconData, checkGvmData, checkGithubHuntData, checkTrufflehogData])
+    checkSupplyChainData()
+  }, [checkReconData, checkGvmData, checkGithubHuntData, checkTrufflehogData, checkSupplyChainData])
 
   // Bypass all caches and refetch, with a delayed second fetch
   // to catch background graph-DB writes that may still be flushing.
@@ -976,6 +989,15 @@ export default function GraphPage() {
       return cleanup
     }
   }, [trufflehogState?.status, refetchAfterCompletion, checkTrufflehogData])
+
+  // Refresh when Supply-Chain (L1) completes
+  useEffect(() => {
+    if (supplyChainState?.status === 'completed' || supplyChainState?.status === 'error') {
+      const cleanup = refetchAfterCompletion()
+      checkSupplyChainData()
+      return cleanup
+    }
+  }, [supplyChainState?.status, refetchAfterCompletion, checkSupplyChainData])
 
   // Refresh graph when any partial recon run completes (detected via status changes in polling)
   const prevPartialRunStatusesRef = useRef<Record<string, string>>({})
@@ -1216,6 +1238,11 @@ export default function GraphPage() {
     window.open(`/api/trufflehog/${projectId}/download`, '_blank')
   }, [projectId])
 
+  const handleDownloadSupplyChainJSON = useCallback(async () => {
+    if (!projectId) return
+    window.open(`/api/supply-chain/${projectId}/download`, '_blank')
+  }, [projectId])
+
   const handleToggleTrufflehogLogs = useCallback(() => {
     setActiveLogsDrawer(prev => prev === 'trufflehog' ? null : 'trufflehog')
   }, [])
@@ -1426,8 +1453,10 @@ export default function GraphPage() {
         onPauseSupplyChain={() => { void pauseSupplyChain() }}
         onResumeSupplyChain={() => { void resumeSupplyChain() }}
         onStopSupplyChain={() => { void stopSupplyChain() }}
+        onDownloadSupplyChainJSON={handleDownloadSupplyChainJSON}
         onToggleSupplyChainLogs={handleToggleSupplyChainLogs}
         supplyChainStatus={supplyChainState?.status || 'idle'}
+        hasSupplyChainData={hasSupplyChainData}
         projectId={projectId || undefined}
         isSupplyChainLogsOpen={activeLogsDrawer === 'supplyChain'}
       />

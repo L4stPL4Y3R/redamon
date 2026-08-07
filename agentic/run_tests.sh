@@ -27,6 +27,8 @@ FOCUSED_TESTS=(
     tests.test_fireteam_deploy
     tests.test_fireteam_member_llm_retry
     tests.test_tool_confirmation
+    tests.test_system_mcp_tool_coverage
+    tests.test_guarddog_native_tool
     tests.test_tool_complete_emission
     tests.test_productivity
     tests.test_productivity_v2_review

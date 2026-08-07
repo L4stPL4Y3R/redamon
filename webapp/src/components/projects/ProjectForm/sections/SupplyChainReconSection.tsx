@@ -37,7 +37,7 @@ export function SupplyChainReconSection({ data, updateField, onRun }: SupplyChai
           <PackageSearch size={16} />
           Supply Chain Recon
           <NodeInfoTooltip section="SupplyChainRecon" />
-          <WikiInfoButton target="SupplyChain" />
+          <WikiInfoButton target="SupplyChainRecon" />
           <span className={styles.badgePassive}>Passive</span>
         </h2>
         <div className={styles.sectionHeaderRight}>

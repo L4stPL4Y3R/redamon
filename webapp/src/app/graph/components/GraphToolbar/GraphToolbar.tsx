@@ -454,12 +454,12 @@ export function GraphToolbar({
               </button>
             </div>
 
-            {/* Other Scans (GitHub Hunt + TruffleHog) */}
+            {/* Other Scans (GitHub Hunt + TruffleHog + Supply Chain) */}
             <div className={styles.actionGroup}>
               <button
                 className={`${styles.githubHuntButton} ${(isGithubHuntActive || isTrufflehogActive) ? styles.githubHuntButtonActive : ''}`}
                 onClick={onToggleOtherScansModal}
-                title="Other Scans (GitHub Hunt, TruffleHog)"
+                title="Other Scans (GitHub Hunt, TruffleHog, Supply Chain)"
               >
                 {(isGithubHuntRunning || isTrufflehogRunning) ? (
                   <Loader2 size={14} className={styles.spinner} />

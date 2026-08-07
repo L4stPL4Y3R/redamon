@@ -953,6 +953,7 @@ services:
       GVM_OUTPUT_PATH: /data/gvm-output
       GITHUB_HUNT_OUTPUT_PATH: /data/github-hunt-output
       TRUFFLEHOG_OUTPUT_PATH: /data/trufflehog-output
+      SUPPLY_CHAIN_OUTPUT_PATH: /data/supply-chain-output
       REPORT_OUTPUT_PATH: /data/reports
       WORDLIST_UPLOAD_PATH: /data/recon-wordlists
       NUCLEI_TEMPLATES_PATH: /data/nuclei-templates
@@ -963,6 +964,9 @@ services:
       - ./gvm_scan/output:/data/gvm-output:ro
       - ./github_secret_hunt/output:/data/github-hunt-output:ro
       - ./trufflehog_scan/output:/data/trufflehog-output:ro
+      # L1 Supply-Chain scan result JSON (supply_chain_<projectId>.json), served
+      # read-only by /api/supply-chain/[projectId]/download.
+      - ./supply_chain_scan/output:/data/supply-chain-output:ro
       # AI Attack Surface native reports (garak/pyrit/giskard/promptfoo) for the
       # transcript drill-down (§9c). Read-only; served via a path-validated route.
       - ./ai_attack_surface_scan/output:/data/ai-attack-output:ro

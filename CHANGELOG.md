@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.5.0] - 2026-08-07
+
+### Added
+
+- **Supply-Chain Discovery: detect malicious and vulnerable dependencies, fully offline.** A new module that finds known-malicious (`MAL-`) and known-vulnerable (`CVE`/`GHSA`) packages in a target's dependency surface, verdicted against a local copy of the [OSV](https://osv.dev) database with **zero network calls**. It ships as **three layers** that share one engine and one graph model, so every path dedups into the same `Package` / `MalPackageFinding` / `Vulnerability{source:'osv'}` nodes. Full reference in [readmes/README.SUPPLY_CHAIN.md](readmes/README.SUPPLY_CHAIN.md); operator guide on the [Supply-Chain Scanning](https://github.com/RedAmon/redamon/wiki/Supply-Chain-Scanning) wiki page.
+  - **L1 — Supply Chain Scan (Other Scans).** Audit an uploaded SBOM/lockfile **or** a GitHub repo. Packages anchor to an `SbomDocument` or `GithubRepository` node under the project `Domain`.
+  - **L2 — Supply-Chain Recon (pipeline, GROUP 5.5).** Black-box harvest of a live target's served packages — source-map mining plus **retire.js** reading library name *and* version straight from the served JS — then an offline OSV verdict, anchored to `BaseURL`. Makes no new network request (parses what JS Recon already downloaded). Optional GuardDog deep analysis on OSV-flagged packages.
+  - **L3 — Agent tools.** `execute_osv_scanner` (offline) and `execute_guarddog` (behavioural, dispatched to the hardened analyzer) the AI agent calls mid-engagement.
+- **Supply-Chain SCA table.** A new Data Table view joining the three node types across three sheets (Verdicts / Packages / Advisories), with a three-state verdict (`malicious` / `suspicious` / **`not analysed`**) and **`unverdictable`** as a first-class status, so "mostly unchecked" never reads as "mostly clean". Deep-linkable and per-sheet XLSX/JSON/MD export.
+- **Offline OSV database, lazy and self-refreshing.** Populate once per ecosystem with `./redamon.sh supply-chain-sync <eco>`; the orchestrator then refreshes it on the scan-spawn path, TTL-guarded (default 24h). Tunable via `OSV_DB_AUTO_REFRESH` / `OSV_DB_ECOSYSTEMS` / `OSV_DB_TTL_SECONDS` / `OSV_DB_REFRESH_TIMEOUT`.
+
+### Security
+
+- **DIRTY/CLEAN split.** Code that touches untrusted bytes (tarballs, target JS) runs in an isolated analyzer container (`cap_drop=ALL`, read-only rootfs, non-root, resource caps, no secrets); only a schema-validated JSON artifact crosses to the credential-holding writer. Enforced by a broker image/volume allowlist and per-tenant MERGE keys.
+- **NO-INSTALL invariant.** RedAmon never runs `npm`/`pip install` on a target manifest (lifecycle scripts are RCE); static parse only, verified by a CI grep test over the supply-chain source.
+
+### Fixed
+
+- **L1 uploads were impossible and the OSV DB was never automatic** ([7d10f649], [81d7afc4]); the `redamon.sh` OSV sync no longer runs before its image exists or aborts install.
+- **Mock IP hostnames silently zeroed both crawlers** during recon ([6f61df08]).
+- **MCP plugin add + audit/prune presets** repaired (resolves #165, [a38d002b]).
+
+---
+
 ## [6.4.1] - 2026-08-05
 
 ### Fixed

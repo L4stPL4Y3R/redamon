@@ -1,9 +1,14 @@
-"""Unit tests for the L3 MCP tools (execute_osv_scanner, execute_guarddog).
+"""Unit tests for the L3 Kali MCP tool execute_osv_scanner.
 
 network_recon_server imports `fastmcp`, which lives only in the kali image. We
 stub it with identity decorators so the real tool functions are importable and
 callable on the host, then mock `subprocess` so no real binary/Docker is needed.
 Focus: argument validation (S6/S7) and output framing (data-not-instructions).
+
+NOTE: execute_guarddog is no longer a Kali MCP tool. Dispatching the
+attacker-tarball analyzer needs the Docker socket the least-trusted Kali worker
+must never hold, so it moved to an AGENT-NATIVE tool on the webapp->orchestrator
+lane; its tests live in agentic/tests/test_guarddog_native_tool.py.
 
 Run: python -m unittest tests.test_supply_chain_mcp
 """
@@ -84,31 +89,15 @@ class TestExecuteOsvScanner(unittest.TestCase):
         self.assertIn("[ERROR]", out)
 
 
-class TestExecuteGuarddog(unittest.TestCase):
+class TestGuarddogIsNotAKaliTool(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.m = _load_server()
 
-    def test_missing_args(self):
-        self.assertIn("[ERROR]", self.m.execute_guarddog("npm"))
-
-    def test_bad_ecosystem(self):
-        self.assertIn("unsupported ecosystem", self.m.execute_guarddog("cargoX left-pad"))
-
-    def test_hostile_name_rejected(self):
-        out = self.m.execute_guarddog("npm ;rm-rf")
-        self.assertIn("[ERROR]", out)
-
-    def test_dispatches_and_summarizes(self):
-        raw = '{"package":"evil","issues":2,"errors":{},"results":{"typosquatting":"x","npm-obfuscation":[{"message":"y"}]}}'
-        with patch.object(self.m.subprocess, "run", return_value=_Res(1, raw)) as p:
-            out = self.m.execute_guarddog("npm evil 1.0.0")
-        # dispatched via docker run of the hardened analyzer image, not inline
-        argv = p.call_args[0][0]
-        self.assertEqual(argv[0], "docker")
-        self.assertIn("--cap-drop", argv)
-        self.assertIn("[DATA]", out)
-        self.assertIn("issues: 2", out)
+    def test_execute_guarddog_is_gone_from_the_kali_server(self):
+        """It moved to an agent-native tool; a Kali `docker run` here would put
+        the Docker socket in the least-trusted zone (trust-model violation)."""
+        self.assertFalse(hasattr(self.m, "execute_guarddog"))
 
 
 class TestSafeNameHelper(unittest.TestCase):

@@ -8,6 +8,7 @@ import styles from '../ProjectForm.module.css'
 import { NodeInfoTooltip } from '../NodeInfoTooltip'
 import { TimeEstimate } from '../TimeEstimate'
 import Link from 'next/link'
+import { SETTINGS_KEYS_HREF } from '@/lib/settingsLinks'
 
 type FormData = Omit<Project, 'id' | 'userId' | 'createdAt' | 'updatedAt' | 'user'>
 
@@ -56,7 +57,7 @@ export function GithubSection({ data, updateField, hasGithubToken = false }: Git
               <AlertTriangle size={16} style={{ color: '#f59e0b', flexShrink: 0 }} />
               <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
                 GitHub Access Token required.{' '}
-                <Link href="/settings" style={{ color: 'var(--accent-primary)', fontWeight: 500 }}>
+                <Link href={SETTINGS_KEYS_HREF} style={{ color: 'var(--accent-primary)', fontWeight: 500 }}>
                   Configure it in Global Settings
                 </Link>
               </span>

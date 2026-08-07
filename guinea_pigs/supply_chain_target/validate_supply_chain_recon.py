@@ -48,6 +48,12 @@ def check(name, cond, detail=""):
     return bool(cond)
 
 
+# Sources that mean "the live target actually served this". Anything else
+# (osv/sbom/lockfile/dir) came from a file an operator uploaded and has no
+# BaseURL to hang off. Mirrors _SOURCE_RANK in graph_db/mixins/supply_chain_mixin.py.
+_LIVE_TARGET_SOURCES = {"retirejs", "wappalyzer", "sourcemap", "import"}
+
+
 class Graph:
     def __init__(self, uid, pid):
         self.uid, self.pid = uid, pid
@@ -244,7 +250,8 @@ def main():
         # An unknown severity means _vuln_severity fell through, which is how a
         # critical advisory quietly renders as low-priority in the UI.
         bad_sev = [v["id"] for v in vulns
-                   if v["severity"] not in ("critical", "high", "medium", "low")]
+                   if v["severity"] not in ("critical", "high", "medium",
+                                            "low", "info")]
         check("every Vulnerability has a real severity", not bad_sev,
               "unranked: %s" % bad_sev[:5])
 
@@ -316,8 +323,18 @@ def main():
             check("  DEPENDS_ON edges from %s" % burl, len(anchored) > 0,
                   "%d anchored" % len(anchored))
             if dep["expect_all_packages_anchored"]:
-                missing = set(pkgs) - anchored
-                check("  every Package anchored to %s" % burl, not missing,
+                # Only packages the LIVE TARGET served must be anchored. A
+                # package that arrived via an L1 upload (an SBOM or lockfile
+                # someone supplied) has no BaseURL parent and floats by
+                # design - see the mixin docstring. L1 and L2 dedup into one
+                # node set per project, so once both have run this check must
+                # look at provenance rather than assume every node came from
+                # the crawl.
+                live = {purl for purl, row in pkgs.items()
+                        if row.get("source") in _LIVE_TARGET_SOURCES}
+                missing = live - anchored
+                check("  every live-target Package anchored to %s" % burl,
+                      not missing,
                       "%d unanchored: %s" % (len(missing), sorted(missing)[:3]))
 
         check("total packages >= %d" % exp["totals"]["packages_min"],

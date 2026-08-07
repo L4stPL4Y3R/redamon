@@ -260,6 +260,21 @@ class SupplyChainStartRequest(BaseModel):
     webapp_api_url: str
 
 
+class GuarddogRequest(BaseModel):
+    """Request for a one-shot GuardDog behavioural analysis of one package (L3)."""
+    ecosystem: str
+    name: str
+    version: str = ""
+
+
+class GuarddogResult(BaseModel):
+    """Outcome of a one-shot GuardDog run. `error` set only on dispatch failure."""
+    issues: int = 0
+    rules_fired: list[str] = []
+    errors: list[str] = []
+    error: Optional[str] = None
+
+
 class SupplyChainState(BaseModel):
     """Current state of a Supply-Chain scan process"""
     project_id: str

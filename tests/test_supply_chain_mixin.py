@@ -33,9 +33,10 @@ class FakeResult:
 
 
 class FakeSession:
-    def __init__(self, anchor_exists=True):
+    def __init__(self, anchor_exists=True, domain_exists=True):
         self.queries = []
         self.anchor_exists = anchor_exists
+        self.domain_exists = domain_exists
 
     def __enter__(self):
         return self
@@ -45,6 +46,8 @@ class FakeSession:
 
     def run(self, query, **kwargs):
         self.queries.append((query, kwargs))
+        if "MERGE (dom)" in query:
+            return FakeResult({"linked": 1 if self.domain_exists else 0})
         if "DEPENDS_ON" in query and "RETURN count" in query:
             return FakeResult({"c": 1 if self.anchor_exists else 0})
         return FakeResult()
@@ -489,6 +492,90 @@ class TestUploadedSbomIsNotAnIsland(unittest.TestCase):
                           if not l.lstrip().startswith("#"))
         self.assertIn("ensure_sbom_document", code)
         self.assertIn('anchor_label="SbomDocument"', code)
+
+
+class TestAnchorsReachTheDomain(unittest.TestCase):
+    """Anchoring packages to a file/repo stopped them floating individually,
+    but the ANCHOR itself was still parentless - so an L1 scan rendered as one
+    detached island hanging off nothing. A GitHub Secret Hunt does not have
+    this problem because it links Domain -[:HAS_GITHUB_HUNT]-> GithubHunt.
+    These cover the same link for the two supply-chain anchors.
+    """
+
+    def _domain_query(self, sess):
+        for q, kw in sess.queries:
+            if "MERGE (dom)" in q:
+                return q, kw
+        return None, None
+
+    def test_sbom_document_is_linked_to_the_project_domain(self):
+        sess = FakeSession()
+        Writer(sess).ensure_sbom_document("u1", "p1", "requirements.txt")
+        q, kw = self._domain_query(sess)
+        self.assertIsNotNone(q, "no Domain link was attempted")
+        self.assertIn("MATCH (dom:Domain", q)
+        self.assertIn("(dom)-[:HAS_SBOM_DOCUMENT]->(n)", q)
+        self.assertEqual((kw["uid"], kw["pid"], kw["nid"]),
+                         ("u1", "p1", "sbom-u1-p1-requirements.txt"))
+
+    def test_github_repository_is_linked_to_the_project_domain(self):
+        sess = FakeSession()
+        Writer(sess).ensure_github_repository("u1", "p1", "acme/app")
+        q, kw = self._domain_query(sess)
+        self.assertIsNotNone(q, "no Domain link was attempted")
+        self.assertIn("(dom)-[:HAS_REPOSITORY]->(n)", q)
+        self.assertEqual(kw["nid"], "github-repo-u1-p1-acme/app")
+
+    def test_the_link_is_tenant_scoped(self):
+        """A Domain from another project must never adopt this anchor."""
+        sess = FakeSession()
+        Writer(sess).ensure_sbom_document("u1", "p1", "yarn.lock")
+        q, _ = self._domain_query(sess)
+        self.assertIn("user_id: $uid", q)
+        self.assertIn("project_id: $pid", q)
+
+    def test_a_project_with_no_domain_still_returns_the_anchor_id(self):
+        """An SBOM upload can be the FIRST thing done in a project, before any
+        recon has created a Domain. That must not fail the scan or lose the
+        anchor - the packages are still correctly parented to the file.
+        """
+        sess = FakeSession(domain_exists=False)
+        doc_id = Writer(sess).ensure_sbom_document("u1", "p1", "requirements.txt")
+        self.assertEqual(doc_id, "sbom-u1-p1-requirements.txt")
+
+    def test_a_failing_domain_link_does_not_break_the_anchor(self):
+        """The graph write is still correct without the Domain edge, so a
+        driver error there must not propagate and kill the whole scan."""
+        class Boom(FakeSession):
+            def run(self, query, **kwargs):
+                if "MERGE (dom)" in query:
+                    raise RuntimeError("neo4j is unhappy")
+                return super().run(query, **kwargs)
+
+        repo_id = Writer(Boom()).ensure_github_repository("u1", "p1", "acme/app")
+        self.assertEqual(repo_id, "github-repo-u1-p1-acme/app")
+
+    def test_link_reports_whether_a_domain_was_actually_found(self):
+        """The return value is the only signal that an anchor stayed a root.
+        Hardcoding True would make a project with no Domain indistinguishable
+        from a linked one."""
+        w = Writer(FakeSession())
+        self.assertTrue(w._link_anchor_to_domain(
+            FakeSession(), "u1", "p1", "SbomDocument", "d1", "HAS_SBOM_DOCUMENT"))
+        self.assertFalse(w._link_anchor_to_domain(
+            FakeSession(domain_exists=False), "u1", "p1",
+            "SbomDocument", "d1", "HAS_SBOM_DOCUMENT"))
+
+    def test_anchor_node_is_created_before_the_domain_link(self):
+        """MATCH (n:Label {id}) finds nothing if the MERGE has not run yet, so
+        ordering is load-bearing, not cosmetic."""
+        sess = FakeSession()
+        Writer(sess).ensure_sbom_document("u1", "p1", "requirements.txt")
+        merge_at = next(i for i, (q, _) in enumerate(sess.queries)
+                        if "MERGE (d:SbomDocument" in q)
+        link_at = next(i for i, (q, _) in enumerate(sess.queries)
+                       if "MERGE (dom)" in q)
+        self.assertLess(merge_at, link_at)
 
 
 if __name__ == "__main__":

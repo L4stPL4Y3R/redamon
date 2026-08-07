@@ -327,6 +327,43 @@ class SupplyChainMixin:
 
         return stats
 
+    def _link_anchor_to_domain(self, session, user_id, project_id, label, node_id, rel):
+        """Attach an L1 anchor to the project's Domain, the graph's root.
+
+        Anchoring packages to a file or a repository stopped them from floating
+        INDIVIDUALLY, but left the anchor itself parentless - so the whole L1
+        scan hung in the view as one detached island, exactly what a GitHub
+        Secret Hunt avoids by linking `Domain -[:HAS_GITHUB_HUNT]-> GithubHunt`.
+        This is that same link for the supply-chain anchors.
+
+        `label` and `rel` are internal constants, never caller/user input, so
+        interpolating them into the query is safe (Cypher cannot parameterise a
+        label or a relationship type).
+
+        Returns True when a Domain existed to link to. A project with no Domain
+        node yet is NOT an error and must not fail the scan: the graph write is
+        still correct, the anchor simply stays a root until recon creates one.
+        We never invent a Domain here - fabricating a target the operator never
+        scanned would be worse than a detached node.
+        """
+        try:
+            rec = session.run(
+                """
+                MATCH (dom:Domain {{user_id: $uid, project_id: $pid}})
+                MATCH (n:{label} {{id: $nid}})
+                MERGE (dom)-[:{rel}]->(n)
+                RETURN count(*) AS linked
+                """.format(label=label, rel=rel),
+                uid=user_id, pid=project_id, nid=node_id).single()
+            linked = bool(rec and rec["linked"])
+            if not linked:
+                print("[!][graph-db] no Domain for user_id={} project_id={}; "
+                      "{} stays a graph root".format(user_id, project_id, label))
+            return linked
+        except Exception as exc:
+            print("[!][graph-db] could not link {} to Domain: {}".format(label, exc))
+            return False
+
     def ensure_github_repository(self, user_id, project_id, repo_slug):
         """MERGE the GithubRepository anchor for an L1 repo scan, return its id.
 
@@ -347,6 +384,8 @@ class SupplyChainMixin:
                     gr.updated_at = datetime()
                 """,
                 id=repo_id, name=repo_slug, uid=user_id, pid=project_id)
+            self._link_anchor_to_domain(session, user_id, project_id,
+                                        "GithubRepository", repo_id, "HAS_REPOSITORY")
         return repo_id
 
     def ensure_sbom_document(self, user_id, project_id, filename):
@@ -374,6 +413,8 @@ class SupplyChainMixin:
                     d.updated_at = datetime()
                 """,
                 id=doc_id, name=filename, uid=user_id, pid=project_id)
+            self._link_anchor_to_domain(session, user_id, project_id,
+                                        "SbomDocument", doc_id, "HAS_SBOM_DOCUMENT")
         return doc_id
 
     def update_graph_from_supply_chain_recon(self, combined_result, user_id, project_id):

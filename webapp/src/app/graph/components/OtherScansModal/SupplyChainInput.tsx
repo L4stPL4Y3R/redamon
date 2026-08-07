@@ -1,8 +1,10 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import Link from 'next/link'
 import { Upload, Github, FileText, Loader2, Trash2 } from 'lucide-react'
 import { parseGithubRepo, isValidGitRef } from '@/lib/validation/supplyChainInput'
+import { SETTINGS_KEYS_HREF } from '@/lib/settingsLinks'
 import styles from './OtherScansModal.module.css'
 
 export type SupplyChainSource = 'upload' | 'github'
@@ -237,7 +239,11 @@ export default function SupplyChainInput({
             <p className={styles.hint}>
               CycloneDX / SPDX SBOMs and lockfiles (package-lock.json, yarn.lock,
               poetry.lock, go.sum, Gemfile.lock, ...). Max 10 MB. A new upload
-              replaces the current file.
+              replaces the current file. No API key is needed for an upload; keys
+              and tokens live in{' '}
+              <Link href={SETTINGS_KEYS_HREF} style={{ color: 'var(--accent-primary)', fontWeight: 500 }}>
+                Global Settings
+              </Link>.
             </p>
           </>
         ) : (
@@ -285,8 +291,11 @@ export default function SupplyChainInput({
             )}
             <p className={styles.hint}>
               The repository is cloned shallowly inside the scan sandbox and its
-              lockfiles are audited. Private repos use the GitHub token from
-              Global Settings.
+              lockfiles are audited. Public repos clone anonymously; private ones
+              use the GitHub Access Token from{' '}
+              <Link href={SETTINGS_KEYS_HREF} style={{ color: 'var(--accent-primary)', fontWeight: 500 }}>
+                Global Settings
+              </Link>.
             </p>
           </>
         )}

@@ -61,6 +61,9 @@ export const TOOL_WIKI: Record<string, { page: string; anchor?: string }> = {
   // JS Recon
   JsRecon:            { page: 'JS-Reconnaissance' },
 
+  // Supply-Chain Recon (GROUP 5.5)
+  SupplyChainRecon:   { page: 'Supply-Chain-Scanning', anchor: 'layer-l2-supply-chain-recon-pipeline' },
+
   // AI Surface Recon (Phase 4.5)
   AiSurfaceRecon:     { page: 'Adversarial-AI-Recon', anchor: 'ai-surface-recon-active-probing' },
 
@@ -97,6 +100,8 @@ export const SECTION_WIKI: Record<string, { page: string; anchor?: string }> = {
   EndpointAiClassifier: { page: 'Adversarial-AI-Recon', anchor: 'endpoint-ai-classifier' },
   Github:           { page: 'GitHub-Secret-Hunting' },
   Trufflehog:       { page: 'TruffleHog-Secret-Scanning' },
+  // Supply-Chain L1 standalone scan (the Other Scans modal card). L2 recon uses SupplyChainRecon.
+  SupplyChainScan:  { page: 'Supply-Chain-Scanning', anchor: 'layer-l1-the-supply-chain-scanner-other-scans' },
   GvmScan:          { page: 'GVM-Vulnerability-Scanning' },
   Fireteam:         { page: 'Fireteam-Parallel-Specialists' },
   Lats:             { page: 'Exploit-Path-Search-LATS' },

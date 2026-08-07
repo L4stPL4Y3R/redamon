@@ -13,6 +13,7 @@ describe('internalKeyRouteAllowed — enumerated internal routes pass', () => {
     ['GET', '/api/users/abc/tradecraft-resources'],
     ['GET', '/api/projects/p1'],
     ['POST', '/api/internal/codefix-sandbox/job1/exec'],
+    ['POST', '/api/internal/supply-chain/guarddog'],  // agent-driven L3 GuardDog passthrough
     ['GET', '/api/internal/capture-config'],       // orchestrator polls the DB->file config
     ['GET', '/api/conversations/by-session/s1'],
     ['POST', '/api/conversations/by-session/s1/messages'],
@@ -35,6 +36,7 @@ describe('internalKeyRouteAllowed — off-allowlist routes are NOT allowed', () 
     ['GET', '/api/analytics/redzone'],             // arbitrary route
     ['POST', '/api/users/abc/settings'],           // settings is GET-only for the key
     ['POST', '/api/internal/capture-config'],      // capture-config is GET-only
+    ['GET', '/api/internal/supply-chain/guarddog'], // guarddog is POST-only
     ['GET', '/api/projects'],                      // projects LIST (only /[id] allowed)
   ])('%s %s → NOT allowed', (method, path) => {
     expect(internalKeyRouteAllowed(method, path)).toBe(false)

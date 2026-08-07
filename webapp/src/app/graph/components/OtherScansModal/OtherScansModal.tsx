@@ -3,7 +3,8 @@
 import { useState } from 'react'
 import { Play, Pause, Square, Terminal, Download, Loader2, Github, Search, AlertTriangle } from 'lucide-react'
 import Link from 'next/link'
-import { Modal } from '@/components/ui'
+import { SETTINGS_KEYS_HREF } from '@/lib/settingsLinks'
+import { Modal, WikiInfoButton } from '@/components/ui'
 import type { GithubHuntStatus, TrufflehogStatus, SupplyChainStatus } from '@/lib/recon-types'
 import SupplyChainInput from './SupplyChainInput'
 import styles from './OtherScansModal.module.css'
@@ -162,6 +163,7 @@ export function OtherScansModal({
           <div className={styles.cardHeader}>
             <Github size={18} className={styles.cardIcon} />
             <h3 className={styles.cardTitle}>GitHub Secret Hunt</h3>
+            <WikiInfoButton target="Github" title="GitHub Secret Hunting wiki" />
             <StatusBadge status={githubHuntStatus} />
           </div>
           <p className={styles.cardDescription}>
@@ -180,7 +182,7 @@ export function OtherScansModal({
               <AlertTriangle size={14} style={{ color: '#f59e0b', flexShrink: 0 }} />
               <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
                 GitHub Access Token required.{' '}
-                <Link href="/settings" style={{ color: 'var(--accent-primary)', fontWeight: 500 }}>
+                <Link href={SETTINGS_KEYS_HREF} style={{ color: 'var(--accent-primary)', fontWeight: 500 }}>
                   Global Settings
                 </Link>
               </span>
@@ -264,6 +266,7 @@ export function OtherScansModal({
           <div className={styles.cardHeader}>
             <Search size={18} className={styles.cardIcon} />
             <h3 className={styles.cardTitle}>TruffleHog Scanner</h3>
+            <WikiInfoButton target="Trufflehog" title="TruffleHog Secret Scanning wiki" />
             <StatusBadge status={trufflehogStatus} />
           </div>
           <p className={styles.cardDescription}>
@@ -282,7 +285,7 @@ export function OtherScansModal({
               <AlertTriangle size={14} style={{ color: '#f59e0b', flexShrink: 0 }} />
               <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
                 GitHub Access Token required.{' '}
-                <Link href="/settings" style={{ color: 'var(--accent-primary)', fontWeight: 500 }}>
+                <Link href={SETTINGS_KEYS_HREF} style={{ color: 'var(--accent-primary)', fontWeight: 500 }}>
                   Global Settings
                 </Link>
               </span>
@@ -371,6 +374,7 @@ export function OtherScansModal({
           <div className={styles.cardHeader}>
             <Search size={18} className={styles.cardIcon} />
             <h3 className={styles.cardTitle}>Supply Chain Scanner</h3>
+            <WikiInfoButton target="SupplyChainScan" title="Supply-Chain Scanning wiki" />
             <StatusBadge status={supplyChainStatus} />
           </div>
           <p className={styles.cardDescription}>

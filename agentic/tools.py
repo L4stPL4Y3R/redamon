@@ -178,6 +178,18 @@ SYSTEM_MCP_TOOL_NAMES = frozenset({
     "execute_nmap", "execute_nuclei", "kali_shell", "execute_playwright",
     "execute_hydra", "metasploit_console", "msf_restart",
     "execute_code", "cve_intel", "execute_masscan",
+    # Supply-chain L3 PASSIVE verdict tool. It was missing here and got dropped
+    # by the manifest filter ("Skipped registering ... not declared in any
+    # manifest") while still advertised to the LLM, so every call returned "Tool
+    # not found". execute_osv_scanner is passive/offline (reads the mounted OSV
+    # DB, no dispatch, no secrets) so it stays a Kali MCP tool.
+    #
+    # execute_guarddog is deliberately NOT here: it is an AGENT-NATIVE tool
+    # (supply_chain_tools.py). Dispatching the attacker-tarball analyzer needs
+    # the Docker socket, which the least-trusted Kali worker must never hold, so
+    # it rides the webapp->orchestrator internal lane instead of being a Kali
+    # MCP tool. See readmes/README.TM.SYSTEM_OVERVIEW.md trust boundaries.
+    "execute_osv_scanner",
 })
 
 
@@ -1703,6 +1715,18 @@ class PhaseAwareToolExecutor:
         except Exception as _tt_err:  # noqa: BLE001
             logger.warning(f"Failed to register traffic tools: {_tt_err}")
 
+        # Supply-chain L3 agent-native tool: execute_guarddog. It is NOT a Kali
+        # MCP tool (dispatching the attacker-tarball analyzer requires the Docker
+        # socket, which the least-trusted Kali worker must never hold); it rides
+        # the webapp->orchestrator internal lane instead. execute_osv_scanner
+        # stays a Kali MCP tool (passive, offline, no dispatch).
+        try:
+            from supply_chain_tools import build_supply_chain_tools
+            for _name, _tool in build_supply_chain_tools().items():
+                self._all_tools[_name] = _tool
+        except Exception as _sc_err:  # noqa: BLE001
+            logger.warning(f"Failed to register supply-chain tools: {_sc_err}")
+
     def register_mcp_tools(
         self,
         tools: List,
@@ -2134,6 +2158,10 @@ class PhaseAwareToolExecutor:
                 output = await active_tool.ainvoke(tool_args)
             elif tool_name == "google_dork":
                 output = await active_tool.ainvoke(tool_args.get("query", ""))
+            elif tool_name == "execute_guarddog":
+                # Agent-native (not MCP): single "args" string, dispatched to the
+                # orchestrator analyzer via the webapp internal lane.
+                output = await active_tool.ainvoke(tool_args.get("args", ""))
             elif tool_name == "tradecraft_lookup":
                 # Pass the structured args through. The tool function picks them up
                 # by name (resource_id, query, cve_id, section_path, force_refresh).

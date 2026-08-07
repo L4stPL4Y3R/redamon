@@ -17,6 +17,9 @@ const INTERNAL_ALLOWLIST: { method: string; pattern: RegExp }[] = [
   { method: 'GET', pattern: /^\/api\/users\/[^/]+\/tradecraft-resources$/ },
   { method: 'GET', pattern: /^\/api\/projects\/[^/]+$/ },
   { method: 'ANY', pattern: /^\/api\/internal\/codefix-sandbox\// },
+  // Agent-driven one-shot GuardDog (execute_guarddog, L3): X-Internal-Key
+  // passthrough to the orchestrator, same lane as codefix-sandbox.
+  { method: 'POST', pattern: /^\/api\/internal\/supply-chain\/guarddog$/ },
   // Global TrafficMind capture config, polled by the orchestrator to materialise
   // the DB settings to the proxy's config file (DB = single source of truth).
   { method: 'GET', pattern: /^\/api\/internal\/capture-config$/ },

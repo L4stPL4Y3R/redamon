@@ -3229,6 +3229,109 @@ class ContainerManager:
                 except APIError:
                     pass
 
+    # Ecosystems GuardDog can analyse (mirrors the tool contract). Also the
+    # INJECTION GATE: the value is passed to `docker run` as an argv element, so
+    # anything off this list is refused, not escaped.
+    _GUARDDOG_ECOSYSTEMS = frozenset(
+        {"npm", "pypi", "go", "crates", "rubygems", "github_action", "extension"})
+    # Package name / version charset gate. Same posture as
+    # supply_chain_common.security.sanitize_name; kept inline (this module has no
+    # source mount of that package). The FIRST char must be alphanumeric or @ (npm
+    # scopes): a leading '-' would otherwise let a name like "--help" reach
+    # GuardDog's argv as a FLAG (there is no shell, but click/argparse would still
+    # consume it). No real package name or version starts with '-'.
+    _GUARDDOG_SAFE = re.compile(r"^[A-Za-z0-9@][A-Za-z0-9._@/+-]{0,213}$")
+
+    def run_guarddog_package(self, ecosystem: str, name: str,
+                             version: str = "", *, timeout: int = 200) -> dict:
+        """Behavioural (GuardDog) analysis of ONE named package.
+
+        The L3 counterpart of the L1 deep-analysis path: an agent chat asks for
+        GuardDog on a single package, and this runs it the SAME way the L1 scan
+        does - inside the hardened, secret-free analyzer image, dispatched by the
+        orchestrator (the trusted socket holder). The Kali worker never touches
+        Docker: it cannot, and must not (it is the least-trusted, target-facing
+        zone). See readmes/README.TM.SYSTEM_OVERVIEW.md trust boundaries.
+
+        GuardDog downloads the attacker-authored tarball, so the container:
+          - runs on the ISOLATED analyzer bridge (internet NAT for the registry,
+            but NO route to any RedAmon service),
+          - drops ALL caps, read-only rootfs, exec tmpfs scratch, mem/pids caps,
+          - carries ZERO secrets (a full RCE in here finds no cred).
+
+        Returns {issues, rules_fired, errors, error}. `error` is set only on a
+        dispatch/charset failure; a clean package is {issues:0, ...}.
+        """
+        eco = (ecosystem or "").strip().lower()
+        pkg = (name or "").strip()
+        ver = (version or "").strip()
+        if eco not in self._GUARDDOG_ECOSYSTEMS:
+            return {"error": "unsupported ecosystem: {!r}".format(ecosystem),
+                    "issues": 0, "rules_fired": [], "errors": []}
+        if not self._GUARDDOG_SAFE.match(pkg) or (ver and not self._GUARDDOG_SAFE.match(ver)):
+            return {"error": "invalid package name/version (charset validation)",
+                    "issues": 0, "rules_fired": [], "errors": []}
+
+        self._ensure_supply_chain_network()
+        # GuardDog needs registry egress; the isolated analyzer bridge provides
+        # internet NAT while sharing no subnet with RedAmon services. An operator
+        # may still pin a dedicated egress net.
+        network = os.environ.get("SUPPLY_CHAIN_EGRESS_NETWORK",
+                                 self.supply_chain_analyzer_network)
+
+        # --no-sandbox: GuardDog 3.x tries to build its own user-namespace
+        # sandbox and fails SILENTLY inside a container (exit 0, issues 0, real
+        # cause buried in errors). The analyzer image IS the sandbox, so disable
+        # GuardDog's inner one. Matches the former in-Kali command exactly.
+        cmd = [eco, "scan", pkg, "--no-sandbox", "--output-format", "json"]
+        if ver:
+            cmd += ["--version", ver]
+
+        container = None
+        try:
+            container = self.client.containers.run(
+                self.supply_chain_analyzer_image,
+                detach=True,
+                network=network,
+                cap_drop=["ALL"],
+                read_only=True,
+                tmpfs={"/tmp": "size=1g,exec"},
+                mem_limit=self._container_mem_limit("supply_chain") or self.supply_chain_analyzer_mem,
+                nano_cpus=self._container_cpu_limit() or self.supply_chain_analyzer_nanocpus,
+                pids_limit=self.supply_chain_analyzer_pids,
+                environment={"PYTHONUNBUFFERED": "1"},
+                entrypoint="guarddog",
+                command=cmd,
+            )
+            container.wait(timeout=timeout)
+            # GuardDog prints the JSON report to stdout; its own logs go to stderr.
+            out = container.logs(stdout=True, stderr=False) or b""
+            try:
+                raw = json.loads(out.decode("utf-8", "replace") or "{}")
+            except ValueError:
+                return {"error": "guarddog produced non-JSON output",
+                        "issues": 0, "rules_fired": [], "errors": []}
+            if not isinstance(raw, dict):
+                return {"error": "guarddog output was not an object",
+                        "issues": 0, "rules_fired": [], "errors": []}
+            fired = [r for r, v in (raw.get("results") or {}).items() if v]
+            return {
+                "issues": raw.get("issues", 0),
+                "rules_fired": fired[:30],
+                "errors": list((raw.get("errors") or {}).keys()),
+                "error": None,
+            }
+        except Exception as e:  # dispatch/timeout/daemon error
+            logger.error(f"[supply-chain] guarddog package run failed: {e}")
+            return {"error": "guarddog dispatch failed: {}".format(e),
+                    "issues": 0, "rules_fired": [], "errors": []}
+        finally:
+            if container is not None:
+                try:
+                    container.remove(force=True)
+                except APIError:
+                    pass
+
     # ------------------------------------------------------------------
     # Offline OSV database freshness (lazy-on-scan refresh)
     # ------------------------------------------------------------------

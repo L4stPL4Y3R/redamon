@@ -2146,6 +2146,8 @@ When user asks about "AI SDKs in JS", "leaked AI keys", "AnythingLLM/Open WebUI/
 - `(b:BaseURL)-[:DEPENDS_ON]->(p:Package)` - Live target serves this dependency (Supply-Chain Recon)
 - `(gr:GithubRepository)-[:DEPENDS_ON]->(p:Package)` - Repository depends on this package (Supply-Chain scan, repo input)
 - `(d:SbomDocument)-[:DEPENDS_ON]->(p:Package)` - An UPLOADED SBOM/lockfile listed this package (Supply-Chain scan, upload input). `d.name` is the filename
+- `(dom:Domain)-[:HAS_SBOM_DOCUMENT]->(d:SbomDocument)` - The project's domain owns the uploaded SBOM
+- `(dom:Domain)-[:HAS_REPOSITORY]->(gr:GithubRepository)` - The domain owns a repo scanned by Supply Chain (a secret hunt instead reaches it via GithubHunt)
 - `(p:Package)-[:FLAGGED_AS]->(mf:MalPackageFinding)` - Package has a malicious/suspicious verdict
 - `(p:Package)-[:HAS_VULNERABILITY]->(v:Vulnerability)` - Package has a known CVE/GHSA (source='osv')
 

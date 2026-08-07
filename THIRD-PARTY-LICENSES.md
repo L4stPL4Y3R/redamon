@@ -155,6 +155,24 @@ These libraries power **TrafficMind**, RedAmon's engagement-scoped HTTP capture 
 
 ---
 
+## Supply-Chain / Malicious-Package Detection
+
+These tools power RedAmon's **Supply-Chain Discovery** module (malicious / vulnerable dependency detection across the three layers: L1 SBOM scan, L2 recon harvest, L3 agent tools). All are invoked as **separate processes** via `run_argv` (`shell=False` subprocess), never imported into RedAmon source, so their scope does not extend to RedAmon's MIT code (mere aggregation). All are permissively licensed and MIT-compatible.
+
+| Tool | Purpose | License | Source Repository | How Used |
+|------|---------|---------|-------------------|----------|
+| **OSV-Scanner** | Offline verdict engine — flags packages as malicious (`MAL-`) or known-vulnerable (`CVE`/`GHSA`) against a local OSV database | Apache-2.0 | https://github.com/google/osv-scanner | Go binary built from source (`@v2.4.0`) in `supply_chain_analyzer/Dockerfile`, `supply_chain_scan/Dockerfile`, `recon/Dockerfile`, and `mcp/kali-sandbox/Dockerfile`; invoked as a CLI subprocess via `supply_chain_common/osv_runner.py` with `--offline` (zero network egress) |
+| **GuardDog** | Behavioural malware analysis of a package (install hooks, obfuscation, exfil, typosquat) | Apache-2.0 | https://github.com/DataDog/guarddog | Installed via `pip` (`guarddog==3.0.1`) in `supply_chain_analyzer/Dockerfile`; invoked as a CLI subprocess (`guarddog <eco> scan`) via `supply_chain_common/guarddog_runner.py`, only inside the hardened DIRTY analyzer image |
+| **Semgrep** | Static-analysis engine used internally by GuardDog | LGPL-2.1 | https://github.com/semgrep/semgrep | Pulled in transitively by GuardDog inside `supply_chain_analyzer`; runs as a separate process, `pip`-replaceable |
+| **YARA** | Pattern-matching engine used internally by GuardDog | BSD-3-Clause | https://github.com/VirusTotal/yara | Pulled in transitively by GuardDog inside `supply_chain_analyzer` |
+| **retire.js** | Black-box JS library + version harvest from target-served JavaScript (L2) | Apache-2.0 | https://github.com/RetireJS/retire.js | Installed via `npm install -g retire@5.4.3` in `supply_chain_analyzer/Dockerfile`; invoked as a CLI subprocess via `supply_chain_common/retire_runner.py` (runner wired; L2 activation is a follow-up release) |
+
+**OSV database (data, not code).** The offline OSV vulnerability database is **downloaded at runtime** by `osv-scanner --download-offline-databases` into the `redamon-osv-db` Docker volume (`supply_chain_common/osv_db_sync.py`); it is **not** bundled in any RedAmon image and is not redistributed by RedAmon. The aggregated OSV.dev data is published under **CC-BY-4.0** (individual records carry their upstream advisory sources). See https://osv.dev.
+
+**CycloneDX SBOM format.** RedAmon synthesizes CycloneDX-format SBOMs itself (`supply_chain_common/artifact.py::to_cyclonedx`) to feed osv-scanner; it does **not** bundle or depend on any CycloneDX library. The CycloneDX specification is an OWASP project under Apache-2.0 (https://github.com/CycloneDX). Only the open format is used.
+
+---
+
 ## Vulnerability Assessment (GVM/OpenVAS)
 
 | Tool | Purpose | License | Source Repository | How Used |
@@ -419,4 +437,4 @@ AGPL-3.0 extends the GPL-3.0 copyleft to users who interact with the software **
 
 ---
 
-*Last updated: July 2026*
+*Last updated: August 2026*

@@ -47,6 +47,8 @@ from models import (
     SupplyChainStartRequest,
     SupplyChainState,
     SupplyChainStatus,
+    GuarddogRequest,
+    GuarddogResult,
     TrufflehogStatus,
     PartialReconStartRequest,
     PartialReconState,
@@ -1722,6 +1724,26 @@ async def start_supply_chain(project_id: str, request: SupplyChainStartRequest):
     except Exception as e:
         logger.error(f"Error starting Supply-Chain scan: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/supply-chain/guarddog", response_model=GuarddogResult)
+async def supply_chain_guarddog(request: GuarddogRequest):
+    """One-shot GuardDog behavioural analysis of a SINGLE package (L3).
+
+    The agent's `execute_guarddog` reaches this via the webapp internal
+    passthrough. GuardDog downloads the attacker-authored tarball, so it must
+    run in the hardened, secret-free analyzer image - and only the orchestrator
+    holds the Docker socket, so it dispatches here. The Kali worker (least-
+    trusted, target-facing) never touches Docker. See the trust-boundary section
+    of readmes/README.TM.SYSTEM_OVERVIEW.md.
+    """
+    if not container_manager:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    # Blocking (docker run + wait) - keep it off the event loop.
+    result = await asyncio.to_thread(
+        container_manager.run_guarddog_package,
+        request.ecosystem, request.name, request.version)
+    return GuarddogResult(**result)
 
 
 @app.get("/supply-chain/{project_id}/status", response_model=SupplyChainState)

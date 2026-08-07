@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
+import { SETTINGS_SKILLS_HREF } from '@/lib/settingsLinks'
 import { ChevronDown, Bug, KeyRound, Mail, Swords, Loader2, Settings, Zap, Database, Code2, Globe, Terminal, FolderTree, Download, ShieldAlert, FileCode2 } from 'lucide-react'
 import type { Project } from '@prisma/client'
 import { useProject } from '@/providers/ProjectProvider'
@@ -415,7 +416,7 @@ export function AttackSkillsSection({ data, updateField }: AttackSkillsSectionPr
                   No user skills uploaded yet. Upload <code>.md</code> skill files from Global Settings to create custom attack workflows.
                 </p>
                 <Link
-                  href="/settings"
+                  href={SETTINGS_SKILLS_HREF}
                   style={{
                     display: 'inline-flex',
                     alignItems: 'center',

@@ -1343,9 +1343,9 @@ export default function SettingsPage() {
           <div className={styles.settingsGrid}>
             <SecretField
               label="GitHub Access Token"
-              hint="Required for GitHub Secret Hunt and TruffleHog scanners. Use repo scope for private repos, or a fine-grained token for specific repos only"
+              hint="Required for GitHub Secret Hunt and TruffleHog, and for Supply Chain scans of a private repository (public repos clone anonymously). Use repo scope for private repos, or a fine-grained token for specific repos only"
               signupUrl="https://github.com/settings/tokens"
-              badges={['GitHub Secret Hunt', 'TruffleHog']}
+              badges={['GitHub Secret Hunt', 'TruffleHog', 'Supply Chain']}
               value={settings.githubAccessToken}
               visible={!!visibleFields.githubAccessToken}
               onToggle={() => toggleFieldVisibility('githubAccessToken')}
