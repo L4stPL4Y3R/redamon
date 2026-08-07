@@ -1461,6 +1461,26 @@ async def test_mcp_server(server: dict):
             "warnings": [w.model_dump() for w in env_warnings],
         }
 
+    # Fast-fail for stdio when the declared working directory is missing.
+    # This is the common "preset not installed yet" case: presets like CVE
+    # Intel point `cwd` at /tmp/cve-mcp-server, which the user must git-clone
+    # + pip install first. Without this check the spawn raises a bare
+    # FileNotFoundError with the path stripped ("No such file or directory"),
+    # which a non-expert cannot act on. Catch it here with actionable text.
+    if srv_obj.transport == "stdio" and srv_obj.cwd and not os.path.isdir(srv_obj.cwd):
+        return {
+            "ok": False,
+            "elapsed_ms": int((time.monotonic() - started) * 1000),
+            "discovered_tools": [],
+            "error": (
+                f"working directory '{srv_obj.cwd}' does not exist. This MCP "
+                f"server needs a one-time setup before it can run — follow the "
+                f"preset's setup hint (typically a git clone + pip install into "
+                f"that directory), then Test again."
+            ),
+            "warnings": [w.model_dump() for w in env_warnings],
+        }
+
     def _stdio_diagnostic_stderr() -> Optional[str]:
         """
         Spawn the stdio MCP ourselves and capture stderr if it crashes.
@@ -1488,6 +1508,15 @@ async def test_mcp_server(server: dict):
                 text=True,
             )
         except FileNotFoundError:
+            # FileNotFoundError at spawn means EITHER the cwd is missing OR the
+            # command binary is missing. Check the cwd first so we don't blame
+            # a perfectly-valid command (e.g. `python`) for a missing folder.
+            if srv_obj.cwd and not os.path.isdir(srv_obj.cwd):
+                return (
+                    f"working directory '{srv_obj.cwd}' does not exist — run "
+                    f"the preset's setup step (git clone + pip install into "
+                    f"that directory) first, then Test again."
+                )
             return (
                 f"command not found: '{srv_obj.command}'. Is it installed in "
                 f"the agent container? (e.g. for npx-based MCPs ensure node, "
@@ -1615,7 +1644,9 @@ async def test_mcp_server(server: dict):
         # the subprocess stderr. Re-spawn ourselves to capture the real
         # reason (missing API key, npm pkg not found, etc.).
         if srv_obj.transport == "stdio" and (
-            "Connection closed" in msg or "ClosedResourceError" in msg or "BrokenPipe" in msg
+            "Connection closed" in msg or "ClosedResourceError" in msg
+            or "BrokenPipe" in msg or "FileNotFoundError" in msg
+            or "No such file or directory" in msg
         ):
             diag = _stdio_diagnostic_stderr()
             if diag:
@@ -1630,7 +1661,9 @@ async def test_mcp_server(server: dict):
     except Exception as exc:
         msg = f"{type(exc).__name__}: {exc}"
         if srv_obj.transport == "stdio" and (
-            "Connection closed" in msg or "ClosedResource" in msg or "BrokenPipe" in msg
+            "Connection closed" in msg or "ClosedResource" in msg
+            or "BrokenPipe" in msg or "FileNotFoundError" in msg
+            or "No such file or directory" in msg
         ):
             diag = _stdio_diagnostic_stderr()
             if diag:

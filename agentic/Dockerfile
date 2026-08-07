@@ -125,6 +125,27 @@ RUN if [ "$SKIP_KB" != "true" ]; then \
         python -c "from sentence_transformers import CrossEncoder; CrossEncoder('${KB_RERANKER_MODEL}')"; \
     fi
 
+# CVE Intel (extended) MCP server. Baked in so the "CVE Intel (extended)"
+# preset works out of the box and SURVIVES container restarts (issue #165),
+# instead of requiring a manual git-clone into an ephemeral /tmp dir. The
+# upstream package is `cve_mcp`, exposed as the `cve-mcp` console script
+# (stdio by default) — the preset invokes that binary directly, no cwd needed.
+# Placed after the heavy KB layers so it never busts their (slow) build cache.
+RUN pip install --no-cache-dir "git+https://github.com/mukul975/cve-mcp-server.git@main"
+
+# Trivy vuln scanner + its MCP plugin, baked in so the "Trivy" preset works
+# out of the box (issue #165 audit). Two gotchas handled here: (1) Trivy is
+# NOT in the Debian apt repos, so it's installed via the official script;
+# (2) `trivy mcp` is a PLUGIN (github.com/aquasecurity/trivy-mcp), not a
+# built-in subcommand — so the binary alone is not enough, the plugin must
+# be installed too. The plugin lands in /root/.trivy (the runtime HOME) and
+# is baked into the image, surviving container restarts. Version pinned for
+# reproducible builds.
+ARG TRIVY_VERSION=v0.73.0
+RUN curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+        | sh -s -- -b /usr/local/bin "${TRIVY_VERSION}" \
+    && trivy plugin install mcp
+
 # Copy application code
 # - graph_db/ : shared Neo4j schema (used by both agent and KB)
 # - knowledge_base/ : KB package (sibling to agentic/, imported as `knowledge_base`)

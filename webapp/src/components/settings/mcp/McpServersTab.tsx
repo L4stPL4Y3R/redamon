@@ -857,7 +857,7 @@ export default function McpServersTab({ userId, onDirtyChange }: Props) {
                 rows={3}
                 value={(editing.args || []).join('\n')}
                 onChange={e => updateField('args', e.target.value.split('\n').map(s => s).filter(s => s !== ''))}
-                placeholder="mcp-server-time&#10;--local-timezone=UTC"
+                placeholder="duckduckgo-mcp-server"
               />
             </label>
             <label className={styles.field}>
