@@ -3235,7 +3235,13 @@ class ContainerManager:
     # OSV ecosystems this sidecar knows how to seed. Also the INJECTION GATE:
     # the ecosystem string is interpolated into a shell script, so anything not
     # on this list is refused rather than escaped (same posture as sanitize_name).
-    _OSV_SYNC_ECOSYSTEMS = ("npm", "PyPI", "Go", "crates.io", "Packagist", "RubyGems")
+    # MUST stay in step with supply_chain_common/osv_db_sync.py SEED_MANIFESTS.
+    # This sidecar cannot import that module (it has no source mount), so the
+    # list is duplicated - tests/test_supply_chain_osv_refresh.py asserts the
+    # two never drift. Maven and NuGet were missing here, so an operator could
+    # sync them by hand and then watch them silently go stale forever.
+    _OSV_SYNC_ECOSYSTEMS = ("npm", "PyPI", "Go", "Maven", "crates.io",
+                            "Packagist", "RubyGems", "NuGet")
 
     def ensure_osv_db_fresh(self, ecosystems=None, ttl_seconds=None,
                             bootstrap: bool = False) -> dict:
@@ -3311,6 +3317,8 @@ for ECO in $(echo "__ECOS__" | tr ',' ' '); do
     crates.io) printf '[[package]]\nname = "libc"\nversion = "0.2.150"\n' > "$SEED/Cargo.lock"; F="$SEED/Cargo.lock" ;;
     Packagist) printf '%s' '{"packages":[{"name":"monolog/monolog","version":"2.0.0"}]}' > "$SEED/composer.lock"; F="$SEED/composer.lock" ;;
     RubyGems)  printf 'GEM\n  specs:\n    rake (13.0.0)\n\nPLATFORMS\n  ruby\n' > "$SEED/Gemfile.lock"; F="$SEED/Gemfile.lock" ;;
+    Maven) printf '%s' '<project><modelVersion>4.0.0</modelVersion><groupId>seed</groupId><artifactId>seed</artifactId><version>1.0.0</version><dependencies><dependency><groupId>com.google.guava</groupId><artifactId>guava</artifactId><version>30.0-jre</version></dependency></dependencies></project>' > "$SEED/pom.xml"; F="$SEED/pom.xml" ;;
+    NuGet) printf '%s' '{"version":1,"dependencies":{".NETCoreApp,Version=v6.0":{"Newtonsoft.Json":{"type":"Direct","requested":"[13.0.1, )","resolved":"13.0.1"}}}}' > "$SEED/packages.lock.json"; F="$SEED/packages.lock.json" ;;
     *) echo "unknown ecosystem $ECO"; RC=1; rm -rf "$SEED"; continue ;;
   esac
   echo "sync $ECO ..."

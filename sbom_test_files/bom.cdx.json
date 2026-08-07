@@ -1,0 +1,19 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "metadata": {
+    "component": {
+      "type": "application",
+      "name": "redamon-supply-chain-test",
+      "version": "1.0.0"
+    }
+  },
+  "components": [
+    { "type": "library", "name": "axios",      "version": "1.14.1", "purl": "pkg:npm/axios@1.14.1" },
+    { "type": "library", "name": "lodash",     "version": "4.17.4", "purl": "pkg:npm/lodash@4.17.4" },
+    { "type": "library", "name": "jquery",     "version": "3.4.1",  "purl": "pkg:npm/jquery@3.4.1" },
+    { "type": "library", "name": "handlebars", "version": "4.0.5",  "purl": "pkg:npm/handlebars@4.0.5" },
+    { "type": "library", "name": "knockout",   "version": "3.4.0",  "purl": "pkg:npm/knockout@3.4.0" }
+  ]
+}

@@ -268,6 +268,49 @@ class TestReviewRegressions2(unittest.TestCase):
             osv_runner.run_argv = orig
         self.assertIsNone(res["error"])
 
+    def test_missing_ecosystem_message_is_not_duplicated(self):
+        """REGRESSION: both the explainer and the partial-DB guard fired.
+
+        A total DB miss exits 127 (generic explainer) AND prints "could not
+        load db for X ecosystem" (partial-DB guard). Both spoke, so the
+        operator saw the same instruction twice in one error:
+
+          "...no 'PyPI' ecosystem(s); run ... to add them; ...no 'PyPI'
+           ecosystem(s); those packages were NOT checked - run ..."
+
+        Observed verbatim in a real L1 scan of requirements.txt. The
+        missing-ecosystem case now owns the message outright.
+        """
+        def fake_run(argv, timeout=None, env=None):
+            return {"exit_code": 127, "stdout": "",
+                    "stderr": ("Scanned /work/requirements.txt file and found 4 packages\n"
+                               "could not load db for PyPI ecosystem: unable to fetch\n"),
+                    "error": None}
+        orig = osv_runner.run_argv
+        osv_runner.run_argv = fake_run
+        try:
+            res = osv_runner.run_osv_scan("/x", mode="lockfile", db_path=_REPO)
+        finally:
+            osv_runner.run_argv = orig
+        self.assertIsNotNone(res["error"])
+        self.assertEqual(res["error"].count("ecosystem(s)"), 1,
+                         "the instruction is repeated: " + res["error"])
+        self.assertIn("NOT checked", res["error"])
+
+    def test_a_genuine_tool_error_still_gets_the_generic_explainer(self):
+        """Suppressing the duplicate must not swallow unrelated failures."""
+        def fake_run(argv, timeout=None, env=None):
+            return {"exit_code": 127, "stdout": "",
+                    "stderr": "Starting filesystem walk\nboom: real cause\n",
+                    "error": None}
+        orig = osv_runner.run_argv
+        osv_runner.run_argv = fake_run
+        try:
+            res = osv_runner.run_osv_scan("/x", mode="lockfile", db_path=_REPO)
+        finally:
+            osv_runner.run_argv = orig
+        self.assertIn("boom: real cause", res["error"])
+
     def test_generic_osv_error_keeps_the_tail_not_the_walk_log(self):
         msg = osv_runner._explain_osv_stderr(
             "Starting filesystem walk for root: /\nEnd status: 0 dirs\nboom: real cause", 127)

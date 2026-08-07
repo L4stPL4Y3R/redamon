@@ -61,6 +61,12 @@ RUN chown nextjs:nodejs .next
 RUN mkdir -p /data/reports && chown nextjs:nodejs /data/reports
 RUN mkdir -p /data/js-recon-uploads && chown nextjs:nodejs /data/js-recon-uploads
 RUN mkdir -p /data/js-recon-custom && chown nextjs:nodejs /data/js-recon-custom
+# Supply-Chain (L1) SBOM/lockfile uploads. Missing here, the named volume was
+# created by Docker as root:root and the webapp (uid 1001 nextjs) could not
+# mkdir the per-project subdir - every upload failed with
+#   EACCES: permission denied, mkdir '/data/supply-chain-uploads/<project>'
+# surfaced to the operator only as "Failed to upload file".
+RUN mkdir -p /data/supply-chain-uploads && chown nextjs:nodejs /data/supply-chain-uploads
 
 # Leverage output traces to reduce image size
 # https://nextjs.org/docs/advanced-features/output-file-tracing

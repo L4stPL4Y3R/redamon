@@ -91,37 +91,39 @@ def run_osv_scan(target, *, mode="lockfile", db_path=None, offline=True,
 
     res = run_argv(argv, timeout=timeout, env=env)
 
-    error = res["error"]
-    if error is None and res["exit_code"] not in OSV_OK_EXIT_CODES:
-        # Non-{0,1} exit is a tool/usage error. osv-scanner prints a filesystem
-        # walk log BEFORE the real cause, so surface the meaningful lines (and
-        # the TAIL, not the head) instead of 500 chars of walk noise.
-        error = _explain_osv_stderr(res["stderr"], res["exit_code"])
-
-    # A PARTIALLY loaded database is the dangerous case, and it exits 0/1 - so
-    # the check above never sees it. osv-scanner scans every lockfile it finds,
-    # loads whatever ecosystem DBs it has, and simply reports nothing for the
-    # rest:
+    # A missing ecosystem DB is its OWN case and owns the whole message.
+    #
+    # Checked BEFORE the generic explainer because both can fire on the same
+    # run: a total DB miss exits 127 (explainer) while ALSO printing
+    # "could not load db for X ecosystem". Letting both speak produced one
+    # error with the same instruction twice, e.g.
+    #   "...no 'PyPI' ecosystem(s); run ... to add them; ...no 'PyPI'
+    #    ecosystem(s); those packages were NOT checked - run ..."
+    #
+    # The PARTIAL case is the dangerous one and the reason this exists at all:
+    # osv-scanner scans every lockfile it finds, loads whatever ecosystem DBs
+    # it has, reports nothing for the rest - and exits 0/1, a SUCCESS code:
     #
     #   Scanned .../requirements.txt file and found 2 packages
     #   Loaded npm local db from /osv-db/osv-scanner/npm/all.zip
     #   could not load db for PyPI ecosystem: ...
     #   exit 1, results = [ the npm package only ]
     #
-    # The Python half of that repo reads CLEAN. Verified against osv-scanner
-    # v2.4.0 on 2026-08-07 with an npm-only DB. This matters most for a
-    # directory/repository scan, where one input spans many ecosystems - a
-    # single uploaded lockfile has one, and a total DB miss exits 127.
-    #
-    # The findings that DID resolve are kept; the gap is reported alongside
-    # them, because "we could not check these" is not "these are fine".
+    # So the Python half reads CLEAN. Verified against v2.4.0 on 2026-08-07.
+    # Findings that DID resolve are kept; the gap is reported alongside them,
+    # because "we could not check these" is not "these are fine".
+    error = res["error"]
     missing = _missing_ecosystems(res["stderr"])
-    if missing:
-        gap = ("offline OSV database has no {} ecosystem(s); those packages "
-               "were NOT checked - run './redamon.sh supply-chain-sync {}'"
-               .format(", ".join("'{}'".format(e) for e in missing),
-                       " ".join(missing)))
-        error = gap if error is None else "{}; {}".format(error, gap)
+    if error is None and missing:
+        error = ("offline OSV database has no {} ecosystem(s); those packages "
+                 "were NOT checked - run './redamon.sh supply-chain-sync {}'"
+                 .format(", ".join("'{}'".format(e) for e in missing),
+                         " ".join(missing)))
+    elif error is None and res["exit_code"] not in OSV_OK_EXIT_CODES:
+        # Non-{0,1} exit is a tool/usage error. osv-scanner prints a filesystem
+        # walk log BEFORE the real cause, so surface the meaningful lines (and
+        # the TAIL, not the head) instead of 500 chars of walk noise.
+        error = _explain_osv_stderr(res["stderr"], res["exit_code"])
 
     raw = None
     if res["stdout"]:

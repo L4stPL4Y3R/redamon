@@ -74,6 +74,47 @@ def _vuln_severity(value):
     return v if v in _GRAPH_SEVERITIES else "info"
 
 
+# Evidence strength per harvest source, used to stop a weaker sighting from
+# overwriting a stronger one on the shared Package node (L1 and L2 dedup by
+# purl into ONE node, by design).
+#
+# The ordering is about REACHABILITY, not tool quality: something observed
+# being served by the live target is stronger evidence than something read out
+# of a manifest a human uploaded. A lockfile can list a dependency that is
+# never shipped to a browser; retire.js matching bytes the target actually
+# served cannot.
+#
+#   40  live target, name AND version   (retire.js, wappalyzer)
+#   30  live target, name only          (source maps, JS imports)
+#   10  manifest / SBOM                 (osv, lockfile, sbom, dir)
+#    0  synthesised to hang a finding on (has no discovery evidence at all)
+_SOURCE_RANK = {
+    "retirejs": 40,
+    "wappalyzer": 40,
+    "sourcemap": 30,
+    "import": 30,
+    "osv": 10,
+    "sbom": 10,
+    "lockfile": 10,
+    "dir": 10,
+    "finding": 0,
+}
+# An unrecognised source sits with the manifest tier: strong enough to replace
+# a placeholder, never strong enough to erase live-target evidence.
+_DEFAULT_SOURCE_RANK = 10
+
+
+def _overridable_sources(source):
+    """Sources a package discovered via `source` is allowed to overwrite.
+
+    Equal rank is included so a re-scan by the same source refreshes normally.
+    A source not in the table is left alone rather than clobbered - unknown
+    provenance is still provenance.
+    """
+    rank = _SOURCE_RANK.get(source, _DEFAULT_SOURCE_RANK)
+    return [name for name, r in _SOURCE_RANK.items() if r <= rank]
+
+
 class SupplyChainMixin:
     """Mixin adding supply-chain graph writes to the Neo4jClient."""
 
@@ -125,13 +166,29 @@ class SupplyChainMixin:
                         MERGE (p:Package {purl: $purl, user_id: $uid, project_id: $pid})
                         ON CREATE SET p.first_seen = datetime()
                         SET p.ecosystem = $ecosystem, p.name = $name,
-                            p.version = $version, p.source = $source,
+                            p.version = $version,
+                            p.source = CASE
+                                WHEN p.source IS NULL OR p.source IN $overridable
+                                THEN $source ELSE p.source END,
                             p.source_path = coalesce($source_path, p.source_path),
                             p.last_seen = datetime()
                         """,
                         purl=purl, uid=user_id, pid=project_id,
                         ecosystem=pkg.get("ecosystem"), name=pkg.get("name"),
                         version=pkg.get("version"), source=pkg.get("source"),
+                        # L1 and L2 dedup into ONE node per purl (intentional),
+                        # but `source` was SET unconditionally, so whichever
+                        # scan ran last won. Upload a package-lock.json after a
+                        # recon scan and lodash@4.17.4 - which retire.js read
+                        # out of the bytes the target actually served - started
+                        # claiming it came from a file someone uploaded.
+                        #
+                        # That field answers "is this dependency really being
+                        # served, or did it just appear in a manifest?", which
+                        # is the difference between a reachable finding and a
+                        # theoretical one. So a WEAKER source may no longer
+                        # overwrite a stronger one; see _overridable_sources.
+                        overridable=_overridable_sources(pkg.get("source")),
                         # Which manifest inside a scanned tree the package came
                         # from - the only way to tell, on an L1 repo scan that
                         # walked 12 lockfiles, WHICH one carries the malware.

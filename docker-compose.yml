@@ -504,7 +504,12 @@ services:
       # defaults need no .env edit: refresh ON, npm only, 24h TTL, 15m ceiling.
       # Set OSV_DB_AUTO_REFRESH=false for a strictly air-gapped deployment.
       OSV_DB_AUTO_REFRESH: ${OSV_DB_AUTO_REFRESH:-true}
-      OSV_DB_ECOSYSTEMS: ${OSV_DB_ECOSYSTEMS:-npm}
+      # ALL supported ecosystems by default. Only npm used to be listed, so a
+      # PyPI/Go/Maven DB an operator synced by hand was never refreshed and
+      # silently went stale - new advisories for it would never be seen.
+      # Full coverage costs ~279 MB vs ~208 MB for npm alone (measured
+      # 2026-08-07); the other seven are ~71 MB combined.
+      OSV_DB_ECOSYSTEMS: ${OSV_DB_ECOSYSTEMS:-npm,PyPI,Go,Maven,crates.io,Packagist,RubyGems,NuGet}
       OSV_DB_TTL_SECONDS: ${OSV_DB_TTL_SECONDS:-86400}
       OSV_DB_REFRESH_TIMEOUT: ${OSV_DB_REFRESH_TIMEOUT:-900}
       # Memory-governor admission knobs (scan reservation ledger). Same rationale

@@ -19,7 +19,9 @@ if _REPO not in sys.path:
 sys.modules.setdefault("neo4j", MagicMock())
 sys.modules.setdefault("dotenv", MagicMock())
 
-from graph_db.mixins.supply_chain_mixin import SupplyChainMixin, _finding_id
+from graph_db.mixins.supply_chain_mixin import (
+    SupplyChainMixin, _finding_id, _overridable_sources, _SOURCE_RANK,
+)
 
 
 class FakeResult:
@@ -357,6 +359,71 @@ class TestReconWriteIsNotRepeatedPerBaseUrl(unittest.TestCase):
             w._anchor_packages_to("Evil", "url", "x", ["pkg:npm/a@1"], "u", "p")
         with self.assertRaises(ValueError):
             w._anchor_packages_to("BaseURL", "evil", "x", ["pkg:npm/a@1"], "u", "p")
+
+
+class TestSourceProvenanceIsNotClobbered(unittest.TestCase):
+    """REGRESSION: an L1 upload erased what the LIVE target actually served.
+
+    L1 and L2 dedup into one Package node per purl (intentional), but `source`
+    was SET unconditionally, so the last scan to run won. Uploading a
+    package-lock.json after a recon scan rewrote lodash@4.17.4 - which
+    retire.js had read out of bytes the target really served - to source='osv',
+    as though it had only ever appeared in a file someone uploaded.
+
+    Observed live: the guinea-pig validator dropped 174/174 -> 170/174 with
+    four "source=retirejs ... (got 'osv')" failures immediately after an L1
+    upload of the same packages.
+
+    `source` is how you tell a REACHABLE dependency from a theoretical one, so
+    a weaker source must never overwrite a stronger one.
+    """
+
+    def test_manifest_source_may_not_overwrite_live_target_evidence(self):
+        self.assertNotIn("retirejs", _overridable_sources("osv"))
+        self.assertNotIn("wappalyzer", _overridable_sources("osv"))
+        self.assertNotIn("sourcemap", _overridable_sources("lockfile"))
+
+    def test_live_target_evidence_may_overwrite_a_manifest(self):
+        for weaker in ("osv", "sbom", "lockfile", "dir", "finding"):
+            self.assertIn(weaker, _overridable_sources("retirejs"), weaker)
+
+    def test_same_source_refreshes_itself(self):
+        """A re-scan by the same source must still update the node."""
+        for src in _SOURCE_RANK:
+            self.assertIn(src, _overridable_sources(src), src)
+
+    def test_placeholder_is_the_weakest(self):
+        """'finding' exists only to hang a verdict on - it has no discovery
+        evidence and must never displace a real sighting."""
+        self.assertEqual(_overridable_sources("finding"), ["finding"])
+
+    def test_unknown_source_cannot_erase_live_evidence(self):
+        overridable = _overridable_sources("something-new")
+        self.assertNotIn("retirejs", overridable)
+        self.assertIn("finding", overridable)
+
+    def test_unknown_existing_source_is_left_alone(self):
+        """Unknown provenance is still provenance - do not clobber it."""
+        self.assertNotIn("mystery-tool", _overridable_sources("retirejs"))
+
+    def test_query_guards_the_source_write(self):
+        sess = FakeSession()
+        Writer(sess).update_graph_from_supply_chain(
+            artifact(packages=[{"purl": "pkg:npm/a@1", "name": "a", "version": "1",
+                                "ecosystem": "npm", "source": "osv"}]), "u1", "p1")
+        q, kw = next((q, k) for q, k in sess.queries if "MERGE (p:Package" in q)
+        self.assertIn("p.source IN $overridable", q,
+                      "source must be written conditionally, not unconditionally")
+        self.assertNotIn("retirejs", kw["overridable"])
+
+    def test_retire_sighting_passes_the_full_override_set(self):
+        sess = FakeSession()
+        Writer(sess).update_graph_from_supply_chain(
+            artifact(packages=[{"purl": "pkg:npm/a@1", "name": "a", "version": "1",
+                                "ecosystem": "npm", "source": "retirejs"}]), "u1", "p1")
+        _, kw = next((q, k) for q, k in sess.queries if "MERGE (p:Package" in q)
+        self.assertIn("osv", kw["overridable"])
+        self.assertIn("sourcemap", kw["overridable"])
 
 
 if __name__ == "__main__":

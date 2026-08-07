@@ -587,6 +587,61 @@ export_version() {
     REDAMON_VERSION="$(get_version)"
 }
 
+# Repair data-volume ownership for the non-root webapp (uid 1001 nextjs).
+#
+# A named volume only inherits ownership from the image when Docker CREATES it
+# empty AND the image pre-created the mountpoint. /data/supply-chain-uploads was
+# missing from webapp/Dockerfile, so Docker made it root:root and every L1
+# SBOM upload failed with:
+#   EACCES: permission denied, mkdir '/data/supply-chain-uploads/<project>'
+# which the UI showed only as "Failed to upload file".
+#
+# The Dockerfile now pre-creates it, but that ONLY helps a volume that does not
+# exist yet - an existing install keeps the root-owned volume forever. So repair
+# it here, idempotently, on every install/update/up.
+# Every ecosystem the offline OSV DB can hold. MUST stay in step with
+# supply_chain_common/osv_db_sync.py SEED_MANIFESTS and the orchestrator's
+# _OSV_SYNC_ECOSYSTEMS.
+OSV_ALL_ECOSYSTEMS="npm PyPI Go Maven crates.io Packagist RubyGems NuGet"
+
+# Populate the offline OSV database so supply-chain scans actually have data.
+#
+# This used to be entirely manual. A scan against an un-synced ecosystem could
+# not verdict anything and reported "offline OSV database has no 'PyPI'
+# ecosystem(s)" - correct, but it meant every operator had to discover the
+# supply-chain-sync subcommand before the feature did anything useful.
+#
+# Cheap to call repeatedly: the sync is TTL-marked per ecosystem and skips any
+# that are already fresh, so this is a no-op after the first run.
+#
+# Best-effort by design: it downloads ~279 MB on a cold install and MUST NOT
+# fail install/update if the network is unavailable. The scan-time guard still
+# reports an actionable error if an ecosystem is missing.
+ensure_osv_db() {
+    local ecos="${OSV_DB_ECOSYSTEMS:-$(_env_get OSV_DB_ECOSYSTEMS "$SCRIPT_DIR/.env")}"
+    ecos="${ecos:-$OSV_ALL_ECOSYSTEMS}"
+    ecos="${ecos//,/ }"
+    if ! docker image inspect redamon-supply-chain-analyzer:latest &>/dev/null; then
+        return 0   # tool images not built yet; up/install builds them first
+    fi
+    info "Ensuring offline OSV database (${ecos})"
+    # shellcheck disable=SC2086
+    cmd_supply_chain_sync $ecos || warn "OSV database sync incomplete; supply-chain scans will report which ecosystems are missing"
+}
+
+ensure_volume_ownership() {
+    local vol="redamon_supply_chain_uploads"
+    docker volume inspect "$vol" >/dev/null 2>&1 || return 0
+    # Cheap no-op when already correct; only chown when it is not.
+    if docker run --rm -u root -v "$vol":/d alpine \
+         sh -c '[ "$(stat -c %u /d)" = "1001" ]' >/dev/null 2>&1; then
+        return 0
+    fi
+    info "Repairing ownership of $vol (webapp runs as uid 1001)"
+    docker run --rm -u root -v "$vol":/d alpine chown -R 1001:1001 /d >/dev/null 2>&1 \
+        || warn "Could not repair $vol ownership; SBOM uploads may fail"
+}
+
 ensure_auth_secrets() {
     local env_file="$SCRIPT_DIR/.env"
     touch "$env_file"
@@ -1482,6 +1537,8 @@ cmd_install() {
 
     # Generate auth secrets if not present
     ensure_auth_secrets
+    ensure_volume_ownership
+    ensure_osv_db
     ensure_db_secrets
 
     # Build all images (tools + core services + the on-demand capture proxy).
@@ -1741,6 +1798,8 @@ cmd_update() {
     # next recreate. Generating first guarantees a single `update` fully enforces.
     # Both are idempotent (append-if-absent), so this is a no-op once present.
     ensure_auth_secrets
+    ensure_volume_ownership
+    ensure_osv_db
     ensure_db_secrets
 
     # Rebuild tool-profile images. A tool image is build-only (not a running core
@@ -1920,6 +1979,8 @@ cmd_up_dev() {
 
     ensure_tool_images
     ensure_auth_secrets
+    ensure_volume_ownership
+    ensure_osv_db
     ensure_db_secrets
 
     info "Starting RedAmon in DEV mode (GVM: ${gvm_flag})..."
@@ -1985,6 +2046,8 @@ cmd_up() {
 
     ensure_tool_images
     ensure_auth_secrets
+    ensure_volume_ownership
+    ensure_osv_db
     ensure_db_secrets
 
     info "Starting RedAmon (GVM: ${gvm_mode})..."

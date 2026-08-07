@@ -226,5 +226,63 @@ class TestOsvRefreshRegressions(unittest.TestCase):
         os.environ.pop("OSV_DB_TTL_SECONDS")
 
 
+class TestEcosystemListsDoNotDrift(unittest.TestCase):
+    """REGRESSION: three copies of the ecosystem list, two of them wrong.
+
+    The set lived in three places that could not import each other:
+      * supply_chain_common/osv_db_sync.py SEED_MANIFESTS  (redamon.sh path)
+      * container_manager._OSV_SYNC_ECOSYSTEMS             (auto-refresh)
+      * redamon.sh OSV_ALL_ECOSYSTEMS                      (install/update)
+
+    The orchestrator was missing Maven and NuGet, so an operator could sync
+    them by hand and then watch them silently go stale forever - the refresh
+    would log "refusing unknown ecosystem" and move on. Meanwhile the project
+    default advertised all eight in the scan header.
+    """
+
+    def _repo(self, *parts):
+        return os.path.join(_REPO, *parts)
+
+    def test_orchestrator_covers_every_seeded_ecosystem(self):
+        from supply_chain_common.osv_db_sync import SEED_MANIFESTS
+        src = open(self._repo("recon_orchestrator", "container_manager.py")).read()
+        block = src[src.index("_OSV_SYNC_ECOSYSTEMS = ("):]
+        block = block[:block.index(")")]
+        for eco in SEED_MANIFESTS:
+            self.assertIn('"%s"' % eco, block,
+                          "%s is seedable but the orchestrator refuses it" % eco)
+
+    def test_orchestrator_has_a_seed_manifest_for_each(self):
+        """The allowlist is useless if the shell case has no branch for it."""
+        from supply_chain_common.osv_db_sync import SEED_MANIFESTS
+        src = open(self._repo("recon_orchestrator", "container_manager.py")).read()
+        for eco in SEED_MANIFESTS:
+            self.assertIn("%s)" % eco, src,
+                          "no seed manifest branch for %s in the refresh script" % eco)
+
+    def test_redamon_sh_lists_every_seeded_ecosystem(self):
+        from supply_chain_common.osv_db_sync import SEED_MANIFESTS
+        src = open(self._repo("redamon.sh")).read()
+        line = [l for l in src.splitlines() if l.startswith("OSV_ALL_ECOSYSTEMS=")][0]
+        for eco in SEED_MANIFESTS:
+            self.assertIn(eco, line, "%s missing from redamon.sh" % eco)
+
+    def test_compose_default_covers_every_seeded_ecosystem(self):
+        """The auto-refresh only touches what OSV_DB_ECOSYSTEMS names."""
+        from supply_chain_common.osv_db_sync import SEED_MANIFESTS
+        src = open(self._repo("docker-compose.yml")).read()
+        line = [l for l in src.splitlines() if "OSV_DB_ECOSYSTEMS:" in l][0]
+        for eco in SEED_MANIFESTS:
+            self.assertIn(eco, line, "%s missing from the compose default" % eco)
+
+    def test_install_and_update_populate_the_db(self):
+        """Cold-install must not leave the feature inert until someone finds
+        the supply-chain-sync subcommand."""
+        src = open(self._repo("redamon.sh")).read()
+        self.assertIn("ensure_osv_db()", src)
+        # called from install, update and up (plus the dev variant)
+        self.assertGreaterEqual(src.count("\n    ensure_osv_db\n"), 3)
+
+
 if __name__ == "__main__":
     unittest.main()
