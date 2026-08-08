@@ -35,6 +35,11 @@ vi.mock('@/lib/prisma', () => ({
 vi.mock('@/lib/session', () => ({
   requireUserAccess: vi.fn().mockResolvedValue(null),
   isInternalRequest: vi.fn().mockReturnValue(false),
+  // Mocking the module wholesale means every export the route reaches for has
+  // to be listed; a missing one fails inside the handler as a 500, which reads
+  // like a route bug rather than a test-setup one.
+  isScannerRequest: vi.fn().mockReturnValue(false),
+  getSession: vi.fn().mockResolvedValue({ userId: 'u1', role: 'admin' }),
 }))
 
 import { PUT } from './route'
