@@ -19,5 +19,19 @@ export default defineConfig({
     // bakes in NODE_ENV=production, so without this override every
     // render()-based test would fail with "React.act is not a function".
     env: { NODE_ENV: 'test' },
+    // Coverage (memory-safe): keep --no-file-parallelism at the CLI (see the
+    // `test` scripts in package.json); the box OOMs at default parallelism.
+    // Needs @vitest/coverage-v8 (in devDependencies).
+    coverage: {
+      provider: 'v8',
+      reporter: ['text-summary', 'text'],
+      reportsDirectory: './coverage',
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: [
+        '**/node_modules/**', '**/.next/**', '**/*.config.*',
+        '**/*.test.*', '**/*.d.ts', 'vitest.setup.ts',
+        'src/**/*.stories.*',
+      ],
+    },
   },
 })

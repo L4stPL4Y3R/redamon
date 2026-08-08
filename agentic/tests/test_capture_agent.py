@@ -26,9 +26,27 @@ def _load(name, path):
     return m
 
 
-agent_ctx = _load("agent_redamon_ctx", REPO / "agentic" / "redamon_ctx.py")
-ingest_ctx = _load("ingest_redamon_ctx", REPO / "capture_proxy" / "redamon_ctx.py")
-kali_routing = _load("kali_capture_routing", REPO / "mcp" / "servers" / "capture_routing.py")
+# This is a cross-layer test: it needs agentic/, capture_proxy/ and mcp/servers/
+# siblings all present under one repo root. That layout exists in the repo-root
+# test run (full repo mounted) but NOT in the agentic-only section image (where
+# capture_proxy/ is not mounted). Locate the files defensively and self-skip
+# cleanly (bucket 2) when they are absent, rather than erroring at import.
+_AGENT_CTX = REPO / "agentic" / "redamon_ctx.py"
+_INGEST_CTX = REPO / "capture_proxy" / "redamon_ctx.py"
+_KALI_ROUTING = REPO / "mcp" / "servers" / "capture_routing.py"
+
+agent_ctx = ingest_ctx = kali_routing = None
+if _AGENT_CTX.exists() and _INGEST_CTX.exists() and _KALI_ROUTING.exists():
+    agent_ctx = _load("agent_redamon_ctx", _AGENT_CTX)
+    ingest_ctx = _load("ingest_redamon_ctx", _INGEST_CTX)
+    kali_routing = _load("kali_capture_routing", _KALI_ROUTING)
+
+
+def setUpModule():
+    if agent_ctx is None:
+        raise unittest.SkipTest(
+            "cross-layer capture files not all present in this image "
+            "(needs agentic/ + capture_proxy/ + mcp/servers/ under one root)")
 
 INTERNAL = "internal-key-abc"
 SCANNER = "scanner-key-xyz"

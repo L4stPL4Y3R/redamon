@@ -47,6 +47,13 @@ sys.modules["graph_db.tenant_filter"].find_disallowed_write_operation = lambda *
 sys.modules["graph_db.tenant_filter"].inject_tenant_filter = lambda c, *a, **kw: c
 sys.modules["prompts"].TEXT_TO_CYPHER_SYSTEM = ""
 
+# When graph_db is stubbed with a bare MagicMock, project_settings'
+# apply_memory_governor() does `from graph_db import resource_governor` and then
+# compares a MagicMock cap with an int (`eff < val`), raising TypeError. Keep the
+# governor inert so it short-circuits. Only touch the stub, never a real module.
+if isinstance(sys.modules.get("graph_db"), MagicMock):
+    sys.modules["graph_db"].resource_governor.governor_enabled = lambda: False
+
 # Stub the `tool` decorator so module-level `@tool` definitions don't blow up.
 def _identity_tool(fn=None, **_kw):
     if callable(fn):

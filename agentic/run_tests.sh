@@ -1,79 +1,67 @@
 #!/bin/bash
-# Run agent tests with the correct mounts.
+# Run the agent-image test suite via pytest, with the determinism the legacy
+# per-file `unittest` runner gave for free.
 #
-# Tests under agentic/tests/ split into two groups:
-#   - Unit tests of agent code (default focused list) — only need agentic/.
-#   - Integration / consistency tests (test_*_integration, test_*_skill, etc.) —
-#     reach into mcp/servers/, mcp/kali-sandbox/Dockerfile, and webapp/prisma/
-#     to verify cross-layer consistency. They need those dirs mounted too.
+# WHY per-file isolation: a large body of these tests was written for
+# `python -m unittest tests.test_x` (one process per file). Many stub
+# langchain/langgraph into sys.modules at import time and bake real tool objects
+# against a fake decorator during import — order-dependent in a single pytest
+# process. So the gate runs each test FILE in its own pytest subprocess
+# (parallelized) via scripts/pytest_isolated.py. See readmes/README.TESTING.md.
+#
+# The whole repo is mounted at /repo (workdir /repo/agentic) so the cross-layer
+# tests resolve: REPO_ROOT=parents[2]=/repo, git HEAD is available, and sibling
+# dirs (capture_proxy/, recon_orchestrator/, webapp/, mcp/) are present.
 #
 # Usage:
-#   ./agentic/run_tests.sh focused    # 522-test regression set (fast path)
-#   ./agentic/run_tests.sh discover   # full unittest discover
-#   ./agentic/run_tests.sh <modules>  # arbitrary `python -m unittest` args
-
-set -e
+#   ./agentic/run_tests.sh                 # unit gate (default) — must be 100% green
+#   ./agentic/run_tests.sh unit            # same
+#   ./agentic/run_tests.sh focused         # back-compat alias -> unit
+#   ./agentic/run_tests.sh integration     # integration tier
+#   ./agentic/run_tests.sh live            # live tier (self-skips when stack down)
+#   ./agentic/run_tests.sh all             # unit + integration
+#   ./agentic/run_tests.sh coverage        # unit+integration with --cov + floor
+#   ./agentic/run_tests.sh tests/test_x.py [pytest args...]   # passthrough (single proc)
+set -u
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-MODE="${1:-focused}"
+MODE="${1:-unit}"
 shift || true
 
-FOCUSED_TESTS=(
-    # Collected first so it imports the REAL langgraph before test_tool_confirmation
-    # stubs langgraph into sys.modules (its stubbing is conditional on absence).
-    tests.test_lats_checkpoint
-    tests.test_prompt_caching
-    tests.test_fireteam_regressions
-    tests.test_fireteam_core
-    tests.test_fireteam_deploy
-    tests.test_fireteam_member_llm_retry
-    tests.test_tool_confirmation
-    tests.test_system_mcp_tool_coverage
-    tests.test_guarddog_native_tool
-    tests.test_tool_complete_emission
-    tests.test_productivity
-    tests.test_productivity_v2_review
-    tests.test_peer_task_scope
-    tests.test_phase_gating
-    tests.test_soft_allowlist
-    tests.test_token_tracking
-    tests.test_root_think_and_guardrail_retry
-    tests.test_plan_mutex
-    tests.test_plan_parallelism
-    tests.test_state_priority_coercion
-    tests.test_chain_context
-    tests.test_startup_guard
-    tests.test_lats_models
-    tests.test_lats
-    tests.test_lats_trace
-    tests.test_lats_hook
-    tests.test_lats_emission
-    tests.test_lats_settings
-    tests.test_lats_drive
-    tests.test_lats_integration
-    tests.test_lats_attribution
-    tests.test_lats_smoke
-    tests.test_lats_view_contract
-)
+IMAGE="redamon-agent:latest"
+COV_FLOOR="${REDAMON_COV_FLOOR:-38}"     # agentic ratchet floor (see README)
+PARALLEL="${REDAMON_TEST_PARALLEL:-8}"
+
+if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+    echo ">> SKIP agent tests ($IMAGE not built)"
+    exit 0
+fi
+
+# Ensure test deps (baked in the rebuilt image; runtime-install fallback for an
+# older image) + neutralize git's dubious-ownership guard on the mounted repo.
+PREP='python -c "import pytest" 2>/dev/null || pip install -q -r /repo/requirements-test.txt >/dev/null 2>&1;
+      git config --global --add safe.directory "*" 2>/dev/null || true;'
+
+run_in_image() {
+    docker run --rm \
+        -v "$REPO_ROOT:/repo" \
+        -w /repo/agentic \
+        -e PYTHONPATH=/repo/agentic:/repo:/repo/mcp/servers:/repo/recon_orchestrator \
+        -e COVERAGE_FILE=/tmp/redamon.coverage \
+        -e HOME=/tmp \
+        -e REDAMON_TEST_PARALLEL="$PARALLEL" \
+        --entrypoint sh \
+        "$IMAGE" -c "$PREP $*"
+}
 
 case "$MODE" in
-    focused)
-        ARGS="${FOCUSED_TESTS[*]}"
-        ;;
-    discover)
-        ARGS="discover -s tests -p test_*.py"
-        ;;
+    unit|focused)  run_in_image 'exec python /repo/scripts/pytest_isolated.py unit tests' ;;
+    integration)   run_in_image 'exec python /repo/scripts/pytest_isolated.py integration tests' ;;
+    live)          run_in_image 'exec python /repo/scripts/pytest_isolated.py live tests' ;;
+    all|discover)  run_in_image 'exec python /repo/scripts/pytest_isolated.py all tests' ;;
+    coverage)      run_in_image "exec python /repo/scripts/pytest_isolated.py all tests --cov . --cov-floor $COV_FLOOR" ;;
+    tests/*|*.py|-*)
+        # Passthrough: a specific file / node id / pytest args (single process).
+        run_in_image "exec python -m pytest $MODE $*" ;;
     *)
-        ARGS="$MODE $*"
-        ;;
+        echo "Unknown mode: $MODE" >&2; exit 2 ;;
 esac
-
-exec docker run --rm \
-    -v "$REPO_ROOT/agentic:/app" \
-    -v "$REPO_ROOT/graph_db:/app/graph_db" \
-    -v "$REPO_ROOT/knowledge_base:/app/knowledge_base" \
-    -v "$REPO_ROOT/mcp:/mcp" \
-    -v "$REPO_ROOT/webapp:/webapp" \
-    -w /app \
-    -e PYTHONPATH=/app:/mcp/servers \
-    redamon-agent:latest \
-    python -m unittest $ARGS

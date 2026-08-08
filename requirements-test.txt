@@ -1,0 +1,15 @@
+# RedAmon test toolchain (Part A of the testing foundation).
+#
+# Installed two ways (see readmes/README.TESTING.md):
+#   * Baked into the daily-driver images (agentic/, recon/) via their
+#     requirements.txt so the canonical gate needs no runtime install.
+#   * Runtime-installed by `redamon.sh test` inside the occasional-run slim
+#     images (recon-orchestrator, ai-attack-surface, capture-proxy, docker-broker).
+#
+# pytest runs the existing stdlib `unittest.TestCase` tests unchanged — this is a
+# runner swap, not a test rewrite.
+
+pytest>=8
+pytest-cov>=5
+pytest-xdist>=3      # opt-in parallelism (`-n`); the box OOMs, so serial is the default
+pytest-asyncio>=0.23 # a handful of pytest-native suites use `@pytest.mark.asyncio`

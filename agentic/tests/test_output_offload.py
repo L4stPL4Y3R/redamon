@@ -256,6 +256,12 @@ class TestNonStringOutput(OffloadTestBase):
 # --- Gap-fill #3: write-failure fallback path --------------------------------
 
 class TestWriteFailureFallback(OffloadTestBase):
+    @unittest.skipIf(
+        os.geteuid() == 0,
+        "chmod-based write denial is a no-op for root (the container runs as "
+        "root); the monkeypatched-write_text sibling test covers this path "
+        "root-safely",
+    )
     def test_disk_write_failure_falls_back_to_inline(self):
         # Make the outputs dir un-writable (file with same name blocks mkdir,
         # OR remove permissions on the parent).

@@ -82,9 +82,18 @@ class ExploitPrePatch(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        src = _git_show("agentic/cypherfix_codefix/tools/bash_tool.py")
-        assert "create_subprocess_shell" in src and "BLOCKED_PATTERNS" in src, \
-            "HEAD bash_tool is not the expected pre-patch version"
+        try:
+            src = _git_show("agentic/cypherfix_codefix/tools/bash_tool.py")
+        except Exception:
+            raise unittest.SkipTest(
+                "pre-patch bash_tool unavailable (no git checkout at repo root)")
+        # This class demonstrates the OLD vulnerability by loading the pre-patch
+        # bash_tool from git HEAD. Once the T6/E10 fix merged, HEAD is the patched
+        # (sandbox-only) version — the historical exploit is no longer
+        # reproducible from HEAD, so skip cleanly rather than fail.
+        if "create_subprocess_shell" not in src or "BLOCKED_PATTERNS" not in src:
+            raise unittest.SkipTest(
+                "HEAD bash_tool is already patched; pre-patch exploit demo obsolete")
         cls.old = _load_source("old_bash_tool", src)
 
     def test_arbitrary_command_execution_and_secret_exfiltration(self):
@@ -353,6 +362,7 @@ def _install_orchestrator_stubs():
     for n in ("ReconState", "ReconStatus", "ReconLogEvent", "GvmState", "GvmStatus",
               "GvmLogEvent", "GithubHuntState", "GithubHuntStatus", "GithubHuntLogEvent",
               "TrufflehogState", "TrufflehogStatus", "TrufflehogLogEvent",
+              "SupplyChainState", "SupplyChainStatus", "SupplyChainLogEvent",
               "PartialReconState", "PartialReconStatus", "AiAttackSurfaceState",
               "AiAttackSurfaceStatus", "AiAttackSurfaceLogEvent"):
         setattr(fake_models, n, type(n, (), {}))

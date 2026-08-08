@@ -2861,6 +2861,7 @@ cmd_help() {
     echo -e "  ${GREEN}reset-password${NC}   Reset an existing user's password"
     echo -e "  ${GREEN}kb <command>${NC}     Knowledge Base management (build/update/rebuild/stats)"
     echo -e "  ${GREEN}supply-chain-sync [ecos]${NC}  Populate the offline OSV DB (default: npm; e.g. 'npm PyPI Go')"
+    echo -e "  ${GREEN}test [tier]${NC}      Run the test suite: unit (default) | integration | live | all | coverage"
     echo -e "  ${GREEN}help${NC}             Show this help message"
     echo ""
     echo -e "${BOLD}Examples:${NC}"
@@ -2877,6 +2878,98 @@ cmd_help() {
     echo "  ./redamon.sh kb update        # Refresh all KB sources"
     echo "  ./redamon.sh kb stats         # Show KB chunk counts"
     echo ""
+}
+
+# ---------------------------------------------------------------------------
+# Test runner (Part F of the testing foundation)
+# ---------------------------------------------------------------------------
+# One systematic entry point across every Python section. Each section runs in
+# its own image with the WHOLE repo mounted at /repo (so cross-layer/sibling
+# imports and git HEAD resolve), test deps runtime-installed if not already
+# baked, and each test FILE isolated in its own pytest subprocess via
+# scripts/pytest_isolated.py (determinism — see readmes/README.TESTING.md).
+# Sections whose image is absent are skipped cleanly.
+#
+#   ./redamon.sh test              # unit gate across all sections (canonical)
+#   ./redamon.sh test unit|integration|live|all|coverage
+#
+# Section spec: name|image|workdir|PYTHONPATH|testpaths|covpkg
+_TEST_SECTIONS=(
+    "agent|redamon-agent|/repo/agentic|/repo/agentic:/repo:/repo/mcp/servers:/repo/recon_orchestrator|tests|."
+    "root|redamon-agent|/repo|/repo:/repo/agentic:/repo/mcp/servers|tests supply_chain_common supply_chain_analyzer supply_chain_scan graph_db knowledge_base mcp|supply_chain_common"
+    "recon|redamon-recon|/repo/recon|/repo/recon:/repo|tests|."
+    "recon_orchestrator|redamon-recon-orchestrator|/repo/recon_orchestrator|/repo/recon_orchestrator:/repo|. tests|."
+    "ai_attack_surface|redamon-ai-attack-surface|/repo/ai_attack_surface_scan|/repo/ai_attack_surface_scan:/repo|tests adapters|."
+    "capture_proxy|redamon-capture-proxy|/repo/capture_proxy|/repo/capture_proxy:/repo|tests|."
+    "docker_broker|redamon-docker-broker|/repo/docker_broker|/repo/docker_broker:/repo|.|."
+)
+
+_test_run_section() {
+    local name="$1" image="$2" workdir="$3" pypath="$4" testpaths="$5" covpkg="$6"
+    local tier="$7"
+    if ! docker image inspect "$image" >/dev/null 2>&1; then
+        warn "SKIP section '$name' ($image not built)"
+        return 0
+    fi
+    info "=== section: $name  (image: $image, tier: $tier) ==="
+    local cov_args=""
+    if [[ "$tier" == "coverage" ]]; then
+        cov_args="--cov $covpkg --cov-floor ${REDAMON_COV_FLOOR:-0}"
+        tier="all"
+    fi
+    # Ensure pytest is available (baked in the daily images; runtime-installed
+    # for the slim ones), silence git's dubious-ownership guard on the mount.
+    local prep='python -c "import pytest" 2>/dev/null || pip install -q -r /repo/requirements-test.txt >/dev/null 2>&1; git config --global --add safe.directory "*" 2>/dev/null || true;'
+    docker run --rm \
+        -v "$SCRIPT_DIR:/repo" \
+        -w "$workdir" \
+        -e PYTHONPATH="$pypath" \
+        -e COVERAGE_FILE=/tmp/redamon.coverage \
+        -e HOME=/tmp \
+        -e REDAMON_TEST_PARALLEL="${REDAMON_TEST_PARALLEL:-8}" \
+        --entrypoint sh \
+        "$image" -c "$prep exec python /repo/scripts/pytest_isolated.py $tier $testpaths $cov_args"
+}
+
+cmd_test() {
+    local tier="${1:-unit}"
+    case "$tier" in
+        unit|integration|live|all|coverage) ;;
+        *) error "Unknown test tier: $tier (use unit|integration|live|all|coverage)"; return 2 ;;
+    esac
+    local failed=0 spec
+    for spec in "${_TEST_SECTIONS[@]}"; do
+        IFS='|' read -r name image workdir pypath testpaths covpkg <<< "$spec"
+        if ! _test_run_section "$name" "$image" "$workdir" "$pypath" "$testpaths" "$covpkg" "$tier"; then
+            failed=1
+            error "section '$name' had failures"
+        fi
+    done
+    echo
+    if [[ $failed -eq 0 ]]; then
+        success "ALL TEST SECTIONS GREEN (tier: $tier)"
+    else
+        error "TEST FAILURES ABOVE (tier: $tier)"
+    fi
+    # Webapp (vitest) — only for the broader tiers; needs node_modules.
+    if [[ "$tier" == "all" || "$tier" == "coverage" || "$tier" == "unit" ]]; then
+        _test_run_webapp "$tier" || failed=1
+    fi
+    return $failed
+}
+
+_test_run_webapp() {
+    local tier="$1"
+    if [[ ! -x "$SCRIPT_DIR/webapp/node_modules/.bin/vitest" ]]; then
+        warn "SKIP webapp vitest (webapp/node_modules absent; run in the webapp image or 'npm ci')"
+        return 0
+    fi
+    info "=== section: webapp (vitest) ==="
+    if [[ "$tier" == "coverage" ]]; then
+        ( cd "$SCRIPT_DIR/webapp" && npm run test:coverage )
+    else
+        ( cd "$SCRIPT_DIR/webapp" && npm run test )
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -2932,6 +3025,7 @@ case "${1:-help}" in
     reset-password) cmd_reset_password ;;
     create-admin)   cmd_create_admin ;;
     supply-chain-sync) shift; cmd_supply_chain_sync "$@" ;;
+    test)           shift; cmd_test "${1:-unit}" ;;
     help|--help|-h) cmd_help ;;
     *)
         error "Unknown command: $1"

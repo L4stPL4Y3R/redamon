@@ -118,6 +118,9 @@ class TestListSkills(unittest.TestCase):
             "technologies", "protocols", "coordination", "general",
             "cloud", "mobile", "api_security", "wireless",
             "network", "active_directory", "social_engineering", "reporting",
+            # post_exploitation is a shipped skill category (skills/post_exploitation/):
+            # docker_escape, linux_privesc, windows_privesc.
+            "post_exploitation",
         }
         skills = list_skills()
         for skill in skills:

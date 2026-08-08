@@ -66,5 +66,11 @@ def main():
     return 0 if FAIL == 0 else 1
 
 
+def test_log_redaction():
+    """pytest entrypoint: run the script-style checks; main() returns
+    non-zero on any failed check (bucket-1 runner-compat conversion)."""
+    assert main() == 0
+
+
 if __name__ == "__main__":
     sys.exit(main())

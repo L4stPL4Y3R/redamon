@@ -19,10 +19,25 @@ import asyncio
 import io
 import os
 import shutil
+import sys
 import tempfile
 import time
 import unittest
 from unittest import mock
+
+# Self-defense (Part C isolation rule): keep the section root importable
+# regardless of collection order, and skip cleanly if an earlier test left a
+# `project_settings` stub in sys.modules instead of erroring. See
+# test_tradecraft_isolation.py for the same guard.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import project_settings as _ps  # noqa: E402
+
+
+def setUpModule():
+    if not hasattr(_ps, "DEFAULT_AGENT_SETTINGS"):
+        raise unittest.SkipTest(
+            "project_settings stubbed by an earlier test (import-time pollution)")
+
 
 from orchestrator_helpers.tradecraft_lookup import (
     CVE_ID_RE,

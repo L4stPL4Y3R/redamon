@@ -54,7 +54,51 @@ def trusted_view(s: str) -> str:
 # --------------------------------------------------------------------------
 # Shims so state.py (patched and pre-patch) imports on bare Python
 # --------------------------------------------------------------------------
+#
+# ISOLATION (Part C of the testing foundation): this module overwrites several
+# entries in the process-wide `sys.modules` at import time so it can import
+# `state.py` on bare Python. Under a single pytest process that also collects
+# `test_tradecraft_lookup.py`, `test_tool_confirmation.py`, etc., leaving those
+# stubs in place silently poisons every later-imported victim (dropping e.g.
+# `tradecraft_lookup.py` to 0% coverage and breaking their collection). So we
+# capture whatever was there first and restore it in `tearDownModule()`.
+_SHIMMED_KEYS = (
+    "project_settings",
+    "pydantic",
+    "orchestrator_helpers",
+    "orchestrator_helpers.error_class",
+    "langgraph",
+    "langgraph.graph",
+    "langgraph.graph.message",
+    # imported below against the stubs; must not leak to real-module consumers.
+    "state",
+    "state_prepatch",
+)
+_SAVED_MODULES = {}
+
+
+def _snapshot_shimmed_modules():
+    for key in _SHIMMED_KEYS:
+        if key not in _SAVED_MODULES:
+            _SAVED_MODULES[key] = sys.modules.get(key)  # None => was absent
+
+
+def _restore_shimmed_modules():
+    """Put back whatever was in sys.modules before we shimmed (removing keys that
+    were absent). Reusable: the originals stay captured so it can run again."""
+    for key, original in _SAVED_MODULES.items():
+        if original is None:
+            sys.modules.pop(key, None)
+        else:
+            sys.modules[key] = original
+
+
+def tearDownModule():
+    _restore_shimmed_modules()
+
+
 def _install_state_shims():
+    _snapshot_shimmed_modules()
     ps = types.ModuleType("project_settings")
     ps.get_setting = lambda key, default=None: default
     sys.modules["project_settings"] = ps
@@ -104,14 +148,41 @@ def _install_state_shims():
 _install_state_shims()
 import prompt_safety  # noqa: E402  (stdlib only)
 import state          # noqa: E402  (patched, via shims)
+# `state` and `prompt_safety` are now bound as module-level names, so we no longer
+# need the sys.modules stubs. Restore immediately — pytest imports EVERY collected
+# module during collection, so leaving the stubs in place here is exactly what
+# poisoned tradecraft_lookup/tool_confirmation at collection time. _load_prepatch_state
+# re-installs them just around the exec that needs them.
+_restore_shimmed_modules()
 
 
 def _load_prepatch_state():
-    """Load the committed (pre-patch) state.py from git HEAD as its own module."""
-    src = subprocess.check_output(
-        ["git", "show", "HEAD:agentic/state.py"], cwd=str(REPO_ROOT), text=True)
+    """Load the committed (pre-patch) state.py from git HEAD as its own module.
+
+    Needs a git checkout at REPO_ROOT. The section image mounts only agentic/
+    (no .git), so self-skip cleanly (bucket 2) rather than error when git can't
+    supply the pre-patch source — this class only demonstrates the OLD leak, not
+    current production behavior."""
+    try:
+        src = subprocess.check_output(
+            ["git", "show", "HEAD:agentic/state.py"], cwd=str(REPO_ROOT), text=True,
+            stderr=subprocess.DEVNULL)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        raise unittest.SkipTest(
+            "pre-patch state.py unavailable (no git checkout at repo root in this image)")
+    # Once the DP2 fix merged, git HEAD IS the patched version — the previews are
+    # now wrapped, so the "pre-patch must leak" assertions no longer hold. This
+    # class only demonstrates the OLD vulnerability, so skip cleanly when HEAD is
+    # already patched (bucket 2).
+    if "wrap_untrusted_inline" in src:
+        raise unittest.SkipTest(
+            "HEAD state.py is already patched; pre-patch leak demo obsolete")
     mod = types.ModuleType("state_prepatch")
-    exec(compile(src, "<state_prepatch>", "exec"), mod.__dict__)
+    _install_state_shims()  # the pre-patch source imports pydantic/langgraph too
+    try:
+        exec(compile(src, "<state_prepatch>", "exec"), mod.__dict__)
+    finally:
+        _restore_shimmed_modules()
     return mod
 
 

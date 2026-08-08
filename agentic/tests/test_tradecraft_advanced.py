@@ -20,11 +20,26 @@ import asyncio
 import os
 import shutil
 import sqlite3
+import sys
 import tempfile
 import time
 import unittest
 from typing import Any, Dict
 from unittest import mock
+
+# Self-defense (Part C isolation rule): keep the section root importable
+# regardless of collection order, and skip cleanly if an earlier test left a
+# `project_settings` stub in sys.modules instead of erroring. See
+# test_tradecraft_isolation.py for the same guard.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import project_settings as _ps  # noqa: E402
+
+
+def setUpModule():
+    if not hasattr(_ps, "DEFAULT_AGENT_SETTINGS"):
+        raise unittest.SkipTest(
+            "project_settings stubbed by an earlier test (import-time pollution)")
+
 
 from orchestrator_helpers.tradecraft_lookup import (
     FetchResult,
@@ -440,7 +455,10 @@ class TestAgenticCrawlBounds(unittest.TestCase):
             async def get_tools(self): return [self.t]
 
         # Always follow the only available child.
-        from tests.test_tradecraft_crawl import _ScriptedLLM
+        try:  # sibling-test helper; robust to namespace-package shadowing
+            from tests.test_tradecraft_crawl import _ScriptedLLM
+        except ModuleNotFoundError:
+            from test_tradecraft_crawl import _ScriptedLLM
         llm = _ScriptedLLM([
             '{"action":"follow","indices":[1],"reason":"go"}',
         ] * 5)
@@ -479,7 +497,10 @@ class TestAgenticCrawlBounds(unittest.TestCase):
             def __init__(self, m): self.t = SlowPw(m)
             async def get_tools(self): return [self.t]
 
-        from tests.test_tradecraft_crawl import _ScriptedLLM
+        try:  # sibling-test helper; robust to namespace-package shadowing
+            from tests.test_tradecraft_crawl import _ScriptedLLM
+        except ModuleNotFoundError:
+            from test_tradecraft_crawl import _ScriptedLLM
         llm = _ScriptedLLM(['{"action":"follow","indices":[1]}'] * 20)
 
         # The crawl loop now does Tier 1 (raw HTTP) first. Stub it to return
