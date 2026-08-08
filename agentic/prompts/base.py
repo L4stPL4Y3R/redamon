@@ -1683,7 +1683,7 @@ Nuclei-specific properties (source="nuclei"):
 - template_id (string): nuclei template ID
 - template_path, template_url (string): template location
 - category (string): "xss", "sqli", "rce", "lfi", "ssrf", "exposure", etc.
-- tags (list), authors (list), references (list)
+- tags (list): lowercase product/vendor/category tags — primary place a nuclei finding's product lives (e.g. ["aem","adobe","exposure"]). authors, references (list)
 - cwe_ids (list), cves (list), cvss_metrics (string)
 - matched_at (string): URL where vuln was found
 - matcher_name, matcher_status, extractor_name, extracted_results
@@ -2134,6 +2134,17 @@ When user asks about "AI SDKs in JS", "leaked AI keys", "AnythingLLM/Open WebUI/
 - `(s:Subdomain)-[:WAF_BYPASS_VIA]->(i:IP)` - Subdomain can bypass WAF via direct IP
 
 **NOTE:** Vulnerability nodes store CVE IDs as properties (`cves` list for nuclei, `cve_ids` list for GVM), NOT as relationships to CVE nodes. To find CVEs for a vulnerability, use the property: `v.cves` or `v.cve_ids`.
+
+### Product/vendor-named vulns (AEM, WordPress, Struts...)
+Nuclei findings carry product identity ONLY in free-text fields, NOT in Technology
+or CVE nodes. Match case-insensitively across v.name, v.tags (lowercase), v.template_id,
+v.description — try BOTH the acronym ("aem") and full name ("adobe experience manager").
+Never conclude "no results" from a Technology/CVE-only match. v.host holds the affected
+hostname directly (nuclei vulns aren't linked to Domain/Subdomain via HAS_VULNERABILITY).
+  MATCH (v:Vulnerability)
+  WHERE toLower(v.name) CONTAINS 'aem' OR toLower(coalesce(v.template_id,'')) CONTAINS 'aem'
+     OR any(t IN coalesce(v.tags,[]) WHERE toLower(t) IN ['aem','adobe'])
+  RETURN v.host, v.name, v.severity, v.matched_at, v.tags LIMIT 50
 
 **CVE → MITRE Chain (from Technology CVE lookup, NOT from Vulnerability nodes):**
 - `(c:CVE)-[:HAS_CWE]->(m:MitreData)` - CVE has CWE weakness
