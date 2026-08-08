@@ -145,7 +145,11 @@ data file). The floor is enforced with `--cov-fail-under`; set it per section vi
 `REDAMON_COV_FLOOR` (or the section spec in `redamon.sh`).
 
 To **ratchet** a floor: run coverage, read the section total, set the floor to
-`floor(total) - 2`. Headline numbers to beat: agentic > 41%, supply_chain > 72%.
+`floor(total) - 2`. Measured agentic total (unit+integration) is **81%** — once
+the import-time pollution was fixed, real coverage was far above the depressed
+41% the old polluted `discover` run reported — so the agentic floor is **79**
+(`REDAMON_COV_FLOOR`, default in `agentic/run_tests.sh`). supply_chain baseline
+to beat is 72%.
 
 > **The floor guards against rot, not quality.** Because an AI writes these tests,
 > the number is gameable by hollow tests that execute code and assert nothing. The
