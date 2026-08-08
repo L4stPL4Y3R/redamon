@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { rowCap } from '../rowCap'
 import { guardProject } from '@/lib/access'
 import { getGraphSession } from '@/app/api/graph/neo4j'
 
@@ -56,7 +57,7 @@ export async function GET(request: NextRequest) {
          CASE v.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1
            WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END,
          p.is_injectable DESC
-       LIMIT 1000`,
+       LIMIT ${rowCap()}`,
       { pid: projectId }
     )
 

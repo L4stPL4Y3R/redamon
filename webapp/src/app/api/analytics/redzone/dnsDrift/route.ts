@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { rowCap } from '../rowCap'
 import { guardProject } from '@/lib/access'
 import { getGraphSession } from '@/app/api/graph/neo4j'
 
@@ -72,7 +73,7 @@ export async function GET(request: NextRequest) {
        ORDER BY
          size(historicResolutionsClean) + size(externalDomainsClean) + size(danglingSubsClean) DESC,
          d.name
-       LIMIT 500`,
+       LIMIT ${rowCap()}`,
       { pid: projectId }
     )
 

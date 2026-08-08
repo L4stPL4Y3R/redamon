@@ -56,8 +56,9 @@ GVM** (its images plus the vulnerability-feed volumes/DB add ~25-30 GB, and thos
 feed update). On top of that, budget **~100 GB of free space for operational data** - the Neo4j
 attack graph, scan artifacts/outputs, Postgres, and container logs all grow with use. That lands
 at **200 GB without GVM, 250 GB with GVM**, each leaving roughly 100 GB free for operations. gp3
-EBS resizes online, so you can start smaller and grow in place. Set `DOCKER_BUILD_CACHE_MAX_GB` so
-the build cache (which `update` reuses but never prunes) can't slowly eat that headroom.
+EBS resizes online, so you can start smaller and grow in place. `install` and `update` now drop the
+cache each build orphans, which holds that ~20 GB line item near its floor instead of letting it
+creep; `DOCKER_BUILD_CACHE_MAX_GB` remains the belt-and-suspenders daemon-level ceiling.
 
 **RAM and supply-chain SCA.** Supply-chain is the only feature that spawns a *second* heavy
 container per job: the scan/partial books a 1.75 GB envelope and the network-isolated "dirty"
@@ -136,7 +137,7 @@ flag it manages. Control KB with `ENABLE_KB` only.
 | `REDAMON_SKIP_RAM_GATE` | `true` bypasses the 8 GB floor on tiny boxes (risky). |
 | `REDAMON_BUILD_PARALLEL` | Cap concurrent image builds. Blank -> redamon.sh auto-sizes. |
 | `DOCKER_DNS` | e.g. `8.8.8.8,8.8.4.4` merged into `/etc/docker/daemon.json` if container DNS breaks. |
-| `DOCKER_BUILD_CACHE_MAX_GB` | Cap the BuildKit build cache (GB) via `daemon.json` auto-GC. Blank -> Docker's default. `update` reuses but never prunes the cache, so it grows unbounded; set e.g. `30` to bound it without slowing incremental rebuilds. |
+| `DOCKER_BUILD_CACHE_MAX_GB` | Cap the BuildKit build cache (GB) via `daemon.json` auto-GC. Blank -> Docker's default. `install`/`update` already drop the cache each build orphans, so this is a second-line ceiling for cache the daemon accumulates outside RedAmon's builds; set e.g. `30` on a shared or long-lived host. |
 | `<SERVICE>_CPUS` | Per-service CPU limit (`NEO4J_CPUS`, `KALI_CPUS`, `AGENT_CPUS`, ...). Auto-capped at `init` to `min(compose default, host nproc)` so `up` never fails on a box with fewer CPUs than compose's generous defaults (neo4j 8 / kali 10 / agent 8). Set one to pin it; blank -> auto. |
 
 ### Engagement knobs

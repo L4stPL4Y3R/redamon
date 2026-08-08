@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { rowCap } from '../rowCap'
 import { guardProject } from '@/lib/access'
 import { getGraphSession } from '@/app/api/graph/neo4j'
 
@@ -48,7 +49,7 @@ export async function GET(request: NextRequest) {
          CASE WHEN ep.graphql_introspection_enabled = true THEN 0 ELSE 1 END,
          CASE WHEN ep.graphql_graphiql_exposed = true THEN 0 ELSE 1 END,
          ep.graphql_mutations_count DESC
-       LIMIT 500`,
+       LIMIT ${rowCap()}`,
       { pid: projectId }
     )
 

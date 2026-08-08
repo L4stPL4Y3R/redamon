@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { rowCap } from '../rowCap'
 import { guardProject } from '@/lib/access'
 import { getGraphSession } from '@/app/api/graph/neo4j'
 
@@ -57,7 +58,7 @@ export async function GET(request: NextRequest) {
               [x IN malwareHashes WHERE x IS NOT NULL]    AS malwareHashes,
               malwareCount                                AS malwareCount
        ORDER BY pulseCount DESC, vtMaliciousCount DESC, criminalipAbuseCount DESC
-       LIMIT 500`,
+       LIMIT ${rowCap()}`,
       { pid: projectId }
     )
 
@@ -113,7 +114,7 @@ export async function GET(request: NextRequest) {
               [x IN malwareHashes WHERE x IS NOT NULL]     AS malwareHashes,
               malwareCount                                 AS malwareCount
        ORDER BY pulseCount DESC, vtMaliciousCount DESC
-       LIMIT 500`,
+       LIMIT ${rowCap()}`,
       { pid: projectId }
     )
 

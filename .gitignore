@@ -105,6 +105,10 @@ dmypy.json
 
 # Recon data files (downloaded at runtime)
 recon/data/resolvers.txt
+# MITRE CVE database refresh marker. Written by add_mitre.py inside the spawned
+# recon container, which volume-mounts the host's recon/ — so every scan dirtied
+# a tracked file and `./redamon.sh update` then refused to fast-forward.
+recon/main_recon_modules/data/mitre_db/.last_update
 
 # Recon output files (contain sensitive scan data)
 recon/output/*.json

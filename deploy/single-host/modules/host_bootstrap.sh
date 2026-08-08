@@ -188,10 +188,13 @@ bootstrap_docker_dns() {
 }
 
 # --- 12. BuildKit cache cap (bound build-cache disk growth across updates) ---
-# redamon.sh `update` reuses the build cache for fast incremental rebuilds but
-# never prunes it, so it grows unbounded over many updates. Setting
-# DOCKER_BUILD_CACHE_MAX_GB makes the daemon auto-GC the cache to that ceiling,
-# so it can never eat operational headroom. Blank -> leave Docker's default.
+# redamon.sh reuses the build cache for fast incremental rebuilds, and since
+# compose_build's Layer 3 it also drops the cache each build ORPHANS, so the
+# RedAmon-driven growth is already bounded. This ceiling is the second line of
+# defence: it covers cache the daemon accumulates outside those builds (other
+# projects, manual `docker build`) and caps the total regardless of what wrote
+# it. DOCKER_BUILD_CACHE_MAX_GB makes the daemon auto-GC to that size.
+# Blank -> leave Docker's default.
 bootstrap_docker_build_cache() {
   local gb="${DOCKER_BUILD_CACHE_MAX_GB:-}"
   [[ -z "${gb}" ]] && return 0

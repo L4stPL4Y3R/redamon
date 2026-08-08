@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { rowCap } from '../rowCap'
 import { guardProject } from '@/lib/access'
 import { getGraphSession } from '@/app/api/graph/neo4j'
 
@@ -39,7 +40,7 @@ export async function GET(request: NextRequest) {
        ORDER BY
          CASE v.verdict WHEN 'confirmed' THEN 0 WHEN 'likely' THEN 1 ELSE 2 END,
          v.confidence DESC
-       LIMIT 500`,
+       LIMIT ${rowCap()}`,
       { pid: projectId }
     )
 

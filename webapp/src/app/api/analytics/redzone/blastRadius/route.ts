@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { rowCap } from '../rowCap'
 import { guardProject } from '@/lib/access'
 import { getGraphSession } from '@/app/api/graph/neo4j'
 
@@ -50,7 +51,7 @@ export async function GET(request: NextRequest) {
               sevClean                            AS severities,
               cveIds[0..5]                        AS topCveIds
        ORDER BY kevCount DESC, maxCvss DESC, cveCount DESC
-       LIMIT 500`,
+       LIMIT ${rowCap()}`,
       { pid: projectId }
     )
 

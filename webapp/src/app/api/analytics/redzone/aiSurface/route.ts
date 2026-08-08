@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { rowCap } from '../rowCap'
 import { guardProject } from '@/lib/access'
 import { getGraphSession } from '@/app/api/graph/neo4j'
 
@@ -37,7 +38,7 @@ export async function GET(request: NextRequest) {
               ep.ai_frontend_product_guess AS frontend,
               ep.ai_tool_schema_ref AS schemaRef,
               ep.source AS source
-       ORDER BY ep.ai_interface_type, ep.baseurl, ep.path LIMIT 2000`,
+       ORDER BY ep.ai_interface_type, ep.baseurl, ep.path LIMIT ${rowCap()}`,
       { pid })
 
     // --- MCP servers ---
@@ -53,7 +54,7 @@ export async function GET(request: NextRequest) {
               ep.ai_mcp_caps AS capabilities,
               ep.ai_mcp_auth_required AS authRequired,
               ep.ai_mcp_tools_hash AS toolsHash
-       ORDER BY ep.baseurl LIMIT 500`,
+       ORDER BY ep.baseurl LIMIT ${rowCap()}`,
       { pid })
 
     // --- AI technologies (category ai-*) ---
@@ -63,7 +64,7 @@ export async function GET(request: NextRequest) {
        RETURN t.name AS name, t.category AS category, t.version AS version,
               [d IN collect(DISTINCT r.detected_by) WHERE d IS NOT NULL] AS detectedBy,
               count(DISTINCT x) AS attachedTo
-       ORDER BY t.category, t.name LIMIT 2000`,
+       ORDER BY t.category, t.name LIMIT ${rowCap()}`,
       { pid })
 
     // --- Vector databases ---
@@ -73,7 +74,7 @@ export async function GET(request: NextRequest) {
        OPTIONAL MATCH (ip:IP)-[:HAS_PORT]->(p)
        RETURN t.name AS name, ip.address AS host, p.number AS port,
               coalesce(r.detected_by, t.source) AS detectedBy
-       ORDER BY t.name LIMIT 500`,
+       ORDER BY t.name LIMIT ${rowCap()}`,
       { pid })
 
     // --- Model inventory (flatten ai_model_ids) ---
@@ -82,7 +83,7 @@ export async function GET(request: NextRequest) {
        UNWIND ep.ai_model_ids AS modelId
        RETURN DISTINCT modelId AS modelId, ep.ai_model_family_guess AS family,
               ep.baseurl AS baseUrl, ep.path AS sourceEndpoint
-       ORDER BY modelId LIMIT 1000`,
+       ORDER BY modelId LIMIT ${rowCap()}`,
       { pid })
 
     const sheets = {

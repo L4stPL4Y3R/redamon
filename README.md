@@ -338,8 +338,9 @@ docker compose --profile tools down --rmi local --volumes --remove-orphans  # Fu
 **Reclaim disk space:**
 ```bash
 docker system df                                  # Show Docker disk usage (add -v for per-image breakdown)
-docker image prune -f                             # Remove dangling images (auto-run by `./redamon.sh update`)
-docker builder prune -f                           # Clear build cache (NOT auto-cleaned, can grow to many GB over time)
+docker image prune -f                             # Remove dangling images (auto-run by `./redamon.sh install` and `update`)
+docker builder prune -f                           # Drop unused build cache (auto-run after every successful build; opt out with REDAMON_NO_AUTO_PRUNE=1)
+docker builder prune -af                          # Drop ALL build cache, including what the current images reuse -- frees no extra disk and makes the next rebuild cold
 docker container prune -f                         # Remove stopped containers
 ```
 

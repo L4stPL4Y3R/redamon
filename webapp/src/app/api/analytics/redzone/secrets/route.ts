@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { rowCap } from '../rowCap'
 import { guardProject } from '@/lib/access'
 import { getGraphSession } from '@/app/api/graph/neo4j'
 
@@ -45,7 +46,7 @@ export async function GET(request: NextRequest) {
               sd.name                                   AS subdomain,
               j.source_url                              AS jsFileUrl,
               CASE WHEN j IS NOT NULL THEN 'JsReconFinding' ELSE 'Secret' END AS origin
-       LIMIT 2000`,
+       LIMIT ${rowCap()}`,
       { pid: projectId }
     )
 

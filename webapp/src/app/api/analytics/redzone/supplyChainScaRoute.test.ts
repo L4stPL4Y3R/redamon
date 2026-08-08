@@ -58,6 +58,7 @@ beforeEach(() => {
   runCalls.length = 0
   runReturnByCall = []
   shouldThrow = null
+  delete process.env.REDAMON_REDZONE_ROW_CAP
 })
 
 describe('supplyChainSca: contract', () => {
@@ -260,9 +261,14 @@ describe('supplyChainSca: row caps', () => {
 
   // A capped sheet next to uncapped totals is exactly the "absence reads as a
   // clean result" trap this feature keeps closing elsewhere.
+  //
+  // The cap is lowered for this test rather than materializing REDZONE_ROW_CAP
+  // rows: the assertion is about the >= comparison, and building 200k mock rows
+  // to prove it would cost a lot of heap to test nothing extra.
   test('meta.truncated flags a sheet that hit the cap', async () => {
+    process.env.REDAMON_REDZONE_ROW_CAP = '3'
     setDatasets({
-      verdicts: Array.from({ length: 1000 }, (_, i) => ({ findingId: `f${i}`, purl: 'p' })),
+      verdicts: Array.from({ length: 3 }, (_, i) => ({ findingId: `f${i}`, purl: 'p' })),
     })
     const res = await route.GET(makeRequest('p1'))
     const body = await res.json()

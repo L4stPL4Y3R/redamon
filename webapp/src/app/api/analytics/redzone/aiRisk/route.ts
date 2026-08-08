@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { rowCap } from '../rowCap'
 import { guardProject } from '@/lib/access'
 import { getGraphSession } from '@/app/api/graph/neo4j'
 import { corroborateAttackFindings, type RawAttackRow } from '@/lib/report/aiAttackFindings'
@@ -31,7 +32,7 @@ export async function GET(request: NextRequest) {
               v.ai_payload_class AS payloadClass, v.evidence AS evidence, v.id AS findingId,
               coalesce(e.baseurl, '') AS baseUrl, e.path AS endpointPath
        ORDER BY CASE v.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1
-                WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END LIMIT 1000`,
+                WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END LIMIT ${rowCap()}`,
       { pid })
 
     // --- Prompt-injectable parameters ---
@@ -41,7 +42,7 @@ export async function GET(request: NextRequest) {
        RETURN p.name AS name, coalesce(e.path, p.endpoint_path) AS endpointPath,
               coalesce(e.baseurl, p.baseurl) AS baseUrl,
               p.ai_tool_arg_path AS toolArgPath, p.position AS position
-       ORDER BY p.name LIMIT 1000`,
+       ORDER BY p.name LIMIT ${rowCap()}`,
       { pid })
 
     // --- RAG ingestion points (indirect-prompt-injection vectors) ---
@@ -49,7 +50,7 @@ export async function GET(request: NextRequest) {
       `MATCH (ep:Endpoint {project_id: $pid}) WHERE ep.is_ai_rag_ingest = true
        RETURN ep.baseurl AS baseUrl, ep.path AS path, ep.method AS method,
               ep.ai_interface_type AS interfaceType
-       ORDER BY ep.baseurl, ep.path LIMIT 1000`,
+       ORDER BY ep.baseurl, ep.path LIMIT ${rowCap()}`,
       { pid })
 
     // --- Exposed AI runtimes / gateways ---
@@ -59,7 +60,7 @@ export async function GET(request: NextRequest) {
        OPTIONAL MATCH (ip:IP)-[:HAS_PORT]->(p)
        WITH t, [hp IN collect(DISTINCT (ip.address + ':' + toString(p.number))) WHERE hp <> ':'] AS hostPorts
        RETURN t.name AS name, t.category AS category, t.version AS version, hostPorts AS exposedOn
-       ORDER BY t.category, t.name LIMIT 1000`,
+       ORDER BY t.category, t.name LIMIT ${rowCap()}`,
       { pid })
 
     // --- Unauthenticated MCP servers ---
@@ -68,7 +69,7 @@ export async function GET(request: NextRequest) {
        WHERE ep.ai_interface_type = 'mcp' AND coalesce(ep.ai_mcp_auth_required, false) = false
        RETURN ep.baseurl AS baseUrl, ep.path AS path, ep.ai_mcp_server_name AS serverName,
               ep.ai_mcp_tool_count AS toolCount
-       ORDER BY ep.baseurl LIMIT 500`,
+       ORDER BY ep.baseurl LIMIT ${rowCap()}`,
       { pid })
 
     // --- Tested vulnerabilities (garak/pyrit/giskard/promptfoo), corroborated
@@ -92,7 +93,7 @@ export async function GET(request: NextRequest) {
               v.evidence AS evidence, v.ai_probe_pack_version AS probePackVersion,
               coalesce(parent.baseurl, parent.url, parent.name, v.ai_target_url) AS target,
               parent.path AS endpointPath
-       ORDER BY v.ai_asr DESC LIMIT 2000`,
+       ORDER BY v.ai_asr DESC LIMIT ${rowCap()}`,
       { pid })
     const rawTested: RawAttackRow[] = tested.records.map((r: { get: (k: string) => unknown }) => ({
       source: (r.get('source') as string) || '', severity: (r.get('severity') as string) || 'info',
