@@ -4,6 +4,7 @@ import { memo, useMemo, useState } from 'react'
 import { RedZoneTableShell } from './RedZoneTableShell'
 import { useRedZoneTable } from './useRedZoneTable'
 import type { RedZoneExportConfig } from './exportCsv'
+import { useRedZoneFilters, type RedZoneFilterColumn } from './useRedZoneFilters'
 import {
   SeverityBadge,
   Mono,
@@ -36,6 +37,22 @@ interface TakeoverRow {
 
 const PAGE_SIZE = 100
 
+/** Module-level so the filter profiles are not rebuilt on every render. */
+const COLUMNS: RedZoneFilterColumn[] = [
+  { key: 'hostname', header: 'Hostname' },
+  { key: 'cnameTarget', header: 'CNAME Target' },
+  { key: 'provider', header: 'Provider' },
+  { key: 'method', header: 'Method' },
+  { key: 'verdict', header: 'Verdict' },
+  { key: 'confidence', header: 'Confidence' },
+  { key: 'severity', header: 'Severity' },
+  { key: 'sources', header: 'Sources' },
+  { key: 'confirmationCount', header: '# Confirm' },
+  { key: 'evidence', header: 'Evidence' },
+  { key: 'firstSeen', header: 'First Seen' },
+  { key: 'lastSeen', header: 'Last Seen' },
+]
+
 const VERDICT_CLASS: Record<string, string> = {
   confirmed: rowStyles.sevCritical,
   likely: rowStyles.sevHigh,
@@ -55,7 +72,10 @@ export const TakeoverTable = memo(function TakeoverTable({ projectId }: Props) {
   const [limit, setLimit] = useState(PAGE_SIZE)
 
   const rows = useMemo(() => data?.rows ?? [], [data])
-  const filtered = useMemo(() => filterRowsByText(rows, search), [rows, search])
+  const searched = useMemo(() => filterRowsByText(rows, search), [rows, search])
+  const { filteredRows: filtered, filterUi } = useRedZoneFilters({
+    rows: searched, columns: COLUMNS, projectId, slug: 'takeover',
+  })
   const sliced = useMemo(() => filtered.slice(0, limit), [filtered, limit])
 
   const exportConfig = useMemo<RedZoneExportConfig | undefined>(() =>
@@ -64,20 +84,7 @@ export const TakeoverTable = memo(function TakeoverTable({ projectId }: Props) {
           rows: filtered,
           sheetName: 'Takeover',
           fileSlug: 'redzone-takeover',
-          columns: [
-            { key: 'hostname', header: 'Hostname' },
-            { key: 'cnameTarget', header: 'CNAME Target' },
-            { key: 'provider', header: 'Provider' },
-            { key: 'method', header: 'Method' },
-            { key: 'verdict', header: 'Verdict' },
-            { key: 'confidence', header: 'Confidence' },
-            { key: 'severity', header: 'Severity' },
-            { key: 'sources', header: 'Sources' },
-            { key: 'confirmationCount', header: '# Confirm' },
-            { key: 'evidence', header: 'Evidence' },
-            { key: 'firstSeen', header: 'First Seen' },
-            { key: 'lastSeen', header: 'Last Seen' },
-          ],
+          columns: COLUMNS,
         }
       : undefined,
     [filtered, rows.length],
@@ -96,6 +103,7 @@ export const TakeoverTable = memo(function TakeoverTable({ projectId }: Props) {
       onSearchChange={setSearch}
       searchPlaceholder="Search hostname, provider, CNAME target..."
       exportConfig={exportConfig}
+      filterUi={filterUi}
       onRefresh={refetch}
       isLoading={isLoading}
       error={error}

@@ -2,6 +2,7 @@
 
 import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import { RedZoneTableShell } from './RedZoneTableShell'
+import { useRedZoneFilters } from './useRedZoneFilters'
 import type { RedZoneExportConfig } from './exportCsv'
 import {
   SeverityBadge, Mono, Truncated, NumCell, ListCell, LinkedListCell, filterRowsByText,
@@ -313,7 +314,12 @@ export const SupplyChainScaTable = memo(function SupplyChainScaTable({ projectId
   const rows = useMemo(
     () => (data?.sheets?.[active] ?? []) as unknown as Record<string, unknown>[],
     [data, active])
-  const filtered = useMemo(() => filterRowsByText(rows, search), [rows, search])
+  const searched = useMemo(() => filterRowsByText(rows, search), [rows, search])
+  // The three sheets filter independently: their columns do not overlap, so a
+  // verdict filter would be meaningless on the packages sheet.
+  const { filteredRows: filtered, filterUi } = useRedZoneFilters({
+    rows: searched, columns: EXPORT_COLUMNS[active], projectId, slug: 'supplyChainSca', sheet: active,
+  })
   const sliced = useMemo(() => filtered.slice(0, limit), [filtered, limit])
 
   const selectSheet = useCallback((key: SheetKey) => {
@@ -357,6 +363,7 @@ export const SupplyChainScaTable = memo(function SupplyChainScaTable({ projectId
       onSearchChange={setSearch}
       searchPlaceholder={`Search ${SHEET_LABEL[active].toLowerCase()}...`}
       exportConfig={exportConfig}
+      filterUi={filterUi}
       onRefresh={fetchData}
       isLoading={isLoading}
       error={error}

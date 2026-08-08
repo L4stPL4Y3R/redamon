@@ -1,0 +1,194 @@
+/**
+ * Per-column filtering on the JS Recon page.
+ *
+ * JS Recon is the one page in the table dropdown that does not use the Red Zone
+ * shell, so its filter wiring is hand-written and needs its own coverage. Two
+ * things here exist nowhere else:
+ *
+ *   - columns reached through a dotted path (`validation.status`)
+ *   - sub-tabs that stack several row shapes, which must NOT offer a filter at
+ *     all rather than offering one that silently drops the other shapes
+ *
+ * Run: npx vitest run src/app/graph/components/JsReconTable/jsReconFilters.test.tsx
+ */
+import { describe, test, expect, vi, afterEach } from 'vitest'
+import { render, screen, waitFor, fireEvent, cleanup } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import type { ReactNode } from 'react'
+import { createElement } from 'react'
+
+import { JsReconTable } from './JsReconTable'
+
+const PROJECT = 'proj-1'
+
+const DATA = {
+  secrets: [
+    { id: 's1', severity: 'critical', name: 'aws_key', redacted_value: 'AKIA…', category: 'cloud',
+      source_url: 'https://a.invalid/app.js', detection_method: 'regex', confidence: 0.9,
+      validation: { status: 'validated' } },
+    { id: 's2', severity: 'low', name: 'generic_token', redacted_value: 'tok…', category: 'generic',
+      source_url: 'https://b.invalid/vendor.js', detection_method: 'entropy', confidence: 0.3,
+      validation: { status: 'unvalidated' } },
+  ],
+  endpoints: [
+    { id: 'e1', severity: 'info', method: 'GET', path: '/api/v1/users', type: 'rest', category: 'api',
+      base_url: 'https://a.invalid', source_js: 'app.js' },
+    { id: 'e2', severity: 'info', method: 'POST', path: '/api/v1/login', type: 'rest', category: 'auth',
+      base_url: 'https://a.invalid', source_js: 'app.js' },
+  ],
+  dom_sinks: [{ id: 'd1', severity: 'medium', finding_type: 'sink', type: 'innerHTML', pattern: 'x' }],
+  frameworks: [{ id: 'f1', name: 'react', version: '18' }],
+}
+
+interface PatchCall { featureKey: string; value: any }
+
+function installFetch(prefs: Record<string, unknown> = {}, data: unknown = DATA) {
+  const patches: PatchCall[] = []
+  globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+    const u = typeof url === 'string' ? url : url.toString()
+    if (u.includes('/api/js-recon/')) {
+      return new Response(JSON.stringify(data), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      })
+    }
+    if (u === '/api/user/preferences' && (!init?.method || init.method === 'GET')) {
+      return new Response(JSON.stringify(prefs), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      })
+    }
+    if (init?.method === 'PATCH') {
+      const b = JSON.parse(init.body as string) as PatchCall
+      patches.push(b)
+      return new Response(JSON.stringify({ [b.featureKey]: b.value }), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      })
+    }
+    return new Response('not found', { status: 404 })
+  }) as typeof fetch
+  return patches
+}
+
+function makeWrapper() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+  return ({ children }: { children: ReactNode }) =>
+    createElement(QueryClientProvider, { client }, children)
+}
+
+function renderTable(search = '') {
+  return render(<JsReconTable projectId={PROJECT} search={search} />, { wrapper: makeWrapper() })
+}
+
+function rowCount(container: HTMLElement): number {
+  return container.querySelectorAll('tbody tr').length
+}
+
+async function openFilters() {
+  fireEvent.click(await screen.findByRole('button', { name: /^Filters/i }))
+  return screen.findByPlaceholderText('Find a column…')
+}
+
+function openColumnCard(label: string) {
+  const header = screen.getByRole('button', { name: new RegExp(`^Filter by ${label}( \\(active\\))?$`) })
+  if (header.getAttribute('aria-expanded') === 'false') fireEvent.click(header)
+  return header
+}
+
+async function goToTab(label: string) {
+  fireEvent.click(await screen.findByRole('button', { name: new RegExp(`^${label}`) }))
+}
+
+afterEach(() => { cleanup(); vi.clearAllMocks() })
+
+// ---------------------------------------------------------------------------
+
+describe('JS Recon column filters', () => {
+  test('the secrets tab offers its own columns', async () => {
+    installFetch()
+    renderTable()
+    await openFilters()
+    for (const label of ['Severity', 'Type', 'Category', 'Validation', 'Detection']) {
+      expect(screen.getByRole('button', { name: new RegExp(`^Filter by ${label}`) })).toBeTruthy()
+    }
+  })
+
+  test('picking a value narrows the rows', async () => {
+    installFetch()
+    const { container } = renderTable()
+    await waitFor(() => expect(rowCount(container)).toBe(2))
+    await openFilters()
+    openColumnCard('Severity')
+    fireEvent.click(await screen.findByRole('checkbox', { name: /critical/ }))
+    await waitFor(() => expect(rowCount(container)).toBe(1))
+  })
+
+  test('a dotted column path filters on the nested value', async () => {
+    installFetch()
+    const { container } = renderTable()
+    await openFilters()
+    openColumnCard('Validation')
+    // `validation.status`, not a top-level property - a plain `row[key]` read
+    // would offer an empty facet list here.
+    fireEvent.click(await screen.findByRole('checkbox', { name: /^validated/ }))
+    await waitFor(() => expect(rowCount(container)).toBe(1))
+  })
+
+  test('the free-text search still applies on top', async () => {
+    installFetch()
+    const { container } = renderTable('generic')
+    await waitFor(() => expect(rowCount(container)).toBe(1))
+  })
+
+  test('each sub-tab filters independently', async () => {
+    installFetch()
+    const { container } = renderTable()
+    await openFilters()
+    openColumnCard('Severity')
+    fireEvent.click(await screen.findByRole('checkbox', { name: /critical/ }))
+    await waitFor(() => expect(rowCount(container)).toBe(1))
+
+    await goToTab('Endpoints')
+    // The secrets filter must not follow: endpoints has no `critical` row and
+    // would render empty if it did.
+    await waitFor(() => expect(rowCount(container)).toBe(2))
+  })
+
+  test('a tab that stacks several row shapes offers no column filter', async () => {
+    installFetch()
+    renderTable()
+    await screen.findByRole('button', { name: /^Filters/i })
+    await goToTab('Security')
+    await waitFor(() => expect(screen.queryByRole('button', { name: /^Filters/i })).toBeNull())
+  })
+})
+
+describe('JS Recon filter persistence', () => {
+  test('a change is saved under the tab\'s own scope', async () => {
+    const patches = installFetch()
+    renderTable()
+    await openFilters()
+    openColumnCard('Severity')
+    fireEvent.click(await screen.findByRole('checkbox', { name: /critical/ }))
+
+    await waitFor(() => expect(patches.some(p => p.featureKey === 'tableFilters')).toBe(true))
+    const value = patches.filter(p => p.featureKey === 'tableFilters').pop()!.value
+    expect(value[PROJECT]['redzone:jsRecon:secrets'].severity.selected).toEqual(['critical'])
+  })
+
+  test('a saved filter is restored on mount', async () => {
+    installFetch({
+      tableFilters: {
+        [PROJECT]: {
+          'redzone:jsRecon:secrets': {
+            severity: {
+              presence: 'any', selected: ['low'], listMode: 'any', min: null, max: null,
+              from: '', to: '', q: '', textMode: 'contains', negate: false,
+            },
+          },
+        },
+      },
+    })
+    const { container } = renderTable()
+    await waitFor(() => expect(rowCount(container)).toBe(1))
+    expect(await screen.findByText(/Severity is low/)).toBeTruthy()
+  })
+})

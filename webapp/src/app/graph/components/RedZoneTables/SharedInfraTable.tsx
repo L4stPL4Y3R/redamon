@@ -4,6 +4,7 @@ import { memo, useMemo, useState } from 'react'
 import { RedZoneTableShell } from './RedZoneTableShell'
 import { useRedZoneTable } from './useRedZoneTable'
 import type { RedZoneExportConfig } from './exportCsv'
+import { useRedZoneFilters, type RedZoneFilterColumn } from './useRedZoneFilters'
 import { ExternalLink } from '@/components/ui'
 import { resolveLinkable } from '@/lib/url-utils'
 import {
@@ -51,6 +52,25 @@ function daysToExpiry(iso: string | null): number | null {
   return Math.floor((d.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
 }
 
+/** Module-level: the filter profiles are keyed off these, and a fresh array
+ *  literal per render would re-profile every row. */
+const COLUMNS: RedZoneFilterColumn[] = [
+  { key: 'clusterType', header: 'Type' },
+  { key: 'clusterKey', header: 'Cluster Key' },
+  { key: 'hostCount', header: 'Host Count' },
+  { key: 'hosts', header: 'Hosts' },
+  { key: 'baseurls', header: 'BaseURLs' },
+  { key: 'certCn', header: 'Cert CN' },
+  { key: 'certIssuer', header: 'Cert Issuer' },
+  { key: 'certNotAfter', header: 'Cert Not After' },
+  { key: 'daysToExpiry', header: 'Days To Expiry' },
+  { key: 'tlsVersion', header: 'TLS Version' },
+  { key: 'cipher', header: 'Cipher' },
+  { key: 'asn', header: 'ASN' },
+  { key: 'country', header: 'Country' },
+  { key: 'ipAddress', header: 'IP' },
+]
+
 interface Props { projectId: string | null }
 
 export const SharedInfraTable = memo(function SharedInfraTable({ projectId }: Props) {
@@ -59,7 +79,10 @@ export const SharedInfraTable = memo(function SharedInfraTable({ projectId }: Pr
   const [limit, setLimit] = useState(PAGE_SIZE)
 
   const rows = useMemo(() => data?.rows ?? [], [data])
-  const filtered = useMemo(() => filterRowsByText(rows, search), [rows, search])
+  const searched = useMemo(() => filterRowsByText(rows, search), [rows, search])
+  const { filteredRows: filtered, filterUi } = useRedZoneFilters({
+    rows: searched, columns: COLUMNS, projectId, slug: 'sharedInfra',
+  })
   const sliced = useMemo(() => filtered.slice(0, limit), [filtered, limit])
 
   const exportConfig = useMemo<RedZoneExportConfig | undefined>(() => {
@@ -72,22 +95,7 @@ export const SharedInfraTable = memo(function SharedInfraTable({ projectId }: Pr
       rows: flat,
       sheetName: 'Shared-Infra',
       fileSlug: 'redzone-shared-infra',
-      columns: [
-        { key: 'clusterType', header: 'Type' },
-        { key: 'clusterKey', header: 'Cluster Key' },
-        { key: 'hostCount', header: 'Host Count' },
-        { key: 'hosts', header: 'Hosts' },
-        { key: 'baseurls', header: 'BaseURLs' },
-        { key: 'certCn', header: 'Cert CN' },
-        { key: 'certIssuer', header: 'Cert Issuer' },
-        { key: 'certNotAfter', header: 'Cert Not After' },
-        { key: 'daysToExpiry', header: 'Days To Expiry' },
-        { key: 'tlsVersion', header: 'TLS Version' },
-        { key: 'cipher', header: 'Cipher' },
-        { key: 'asn', header: 'ASN' },
-        { key: 'country', header: 'Country' },
-        { key: 'ipAddress', header: 'IP' },
-      ],
+      columns: COLUMNS,
     }
   }, [filtered, rows.length])
 
@@ -105,6 +113,7 @@ export const SharedInfraTable = memo(function SharedInfraTable({ projectId }: Pr
       onSearchChange={setSearch}
       searchPlaceholder="Search CN, ASN, IP, hostname..."
       exportConfig={exportConfig}
+      filterUi={filterUi}
       onRefresh={refetch}
       isLoading={isLoading}
       error={error}

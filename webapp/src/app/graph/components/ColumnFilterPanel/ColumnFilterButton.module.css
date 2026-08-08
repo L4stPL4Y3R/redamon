@@ -1,0 +1,82 @@
+/*
+ * The Filters control, styled once for every table in the graph views.
+ *
+ * This used to be three near-copies (the Red Zone shell, JS Recon, All Nodes)
+ * plus the Node Inspector borrowing its own `menuButton`, which drifted on icon
+ * size, badge colour and which edge the panel opened from. Anything that needs
+ * the control now imports the component, so there is nowhere for a fourth
+ * variant to appear.
+ */
+
+.menu {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  font-weight: var(--font-semibold);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.button:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* An active filter is the one state worth colouring: it is the reason the
+   table is showing fewer rows than the user expects. */
+.buttonActive {
+  border-color: var(--accent);
+}
+
+.count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--bg-primary);
+  font-size: 10px;
+  font-weight: var(--font-semibold);
+}
+
+.dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  z-index: 60;
+  width: 320px;
+  max-height: 60vh;
+  overflow: hidden;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+/* The control sits at the right edge of its toolbar, so the panel hangs from
+   that edge too - anchoring it left would push it off-screen. */
+.dropdownRight {
+  right: 0;
+}
+
+.dropdownLeft {
+  left: 0;
+}

@@ -4,6 +4,7 @@ import { memo, useMemo, useState } from 'react'
 import { RedZoneTableShell } from './RedZoneTableShell'
 import { useRedZoneTable } from './useRedZoneTable'
 import type { RedZoneExportConfig } from './exportCsv'
+import { useRedZoneFilters, type RedZoneFilterColumn } from './useRedZoneFilters'
 import {
   Truncated,
   ListCell,
@@ -56,6 +57,36 @@ function PolicyChip({ policy }: { policy: string | null }) {
   return <span className={`${rowStyles.sevBadge} ${cls}`}>{policy}</span>
 }
 
+/** Module-level: the filter profiles are keyed off these, and a fresh array
+ *  literal per render would re-profile every row. */
+const COLUMNS: RedZoneFilterColumn[] = [
+  { key: 'domain', header: 'Domain' },
+  { key: 'spfPresent', header: 'SPF Present' },
+  { key: 'spfStrict', header: 'SPF Strict' },
+  { key: 'spfRecord', header: 'SPF Record' },
+  { key: 'dmarcPresent', header: 'DMARC Present' },
+  { key: 'dmarcPolicy', header: 'DMARC Policy' },
+  { key: 'dnssec', header: 'DNSSEC' },
+  { key: 'dnssecEnabled', header: 'DNSSEC Enabled' },
+  { key: 'zoneTransferOpen', header: 'Zone Transfer Open' },
+  { key: 'mxRecords', header: 'MX Records' },
+  { key: 'mxCount', header: 'MX Count' },
+  { key: 'nameServers', header: 'Name Servers' },
+  { key: 'nameServerCount', header: 'NS Count' },
+  { key: 'nsDistinctProviders', header: 'NS Providers' },
+  { key: 'whoisEmails', header: 'WHOIS Emails' },
+  { key: 'registrar', header: 'Registrar' },
+  { key: 'organization', header: 'Organization' },
+  { key: 'country', header: 'Country' },
+  { key: 'expirationDate', header: 'Expiration' },
+  { key: 'daysToExpiry', header: 'Days To Expiry' },
+  { key: 'registrarStatus', header: 'Registrar Status' },
+  { key: 'vtMaliciousCount', header: 'VT Malicious' },
+  { key: 'vtReputation', header: 'VT Reputation' },
+  { key: 'otxPulseCount', header: 'OTX Pulses' },
+  { key: 'vulnTags', header: 'Vuln Tags' },
+]
+
 interface Props { projectId: string | null }
 
 export const DnsEmailTable = memo(function DnsEmailTable({ projectId }: Props) {
@@ -64,7 +95,10 @@ export const DnsEmailTable = memo(function DnsEmailTable({ projectId }: Props) {
   const [limit, setLimit] = useState(PAGE_SIZE)
 
   const rows = useMemo(() => data?.rows ?? [], [data])
-  const filtered = useMemo(() => filterRowsByText(rows, search), [rows, search])
+  const searched = useMemo(() => filterRowsByText(rows, search), [rows, search])
+  const { filteredRows: filtered, filterUi } = useRedZoneFilters({
+    rows: searched, columns: COLUMNS, projectId, slug: 'dnsEmail',
+  })
   const sliced = useMemo(() => filtered.slice(0, limit), [filtered, limit])
 
   const exportConfig = useMemo<RedZoneExportConfig | undefined>(() =>
@@ -73,33 +107,7 @@ export const DnsEmailTable = memo(function DnsEmailTable({ projectId }: Props) {
           rows: filtered,
           sheetName: 'DNS-Email',
           fileSlug: 'redzone-dns-email',
-          columns: [
-            { key: 'domain', header: 'Domain' },
-            { key: 'spfPresent', header: 'SPF Present' },
-            { key: 'spfStrict', header: 'SPF Strict' },
-            { key: 'spfRecord', header: 'SPF Record' },
-            { key: 'dmarcPresent', header: 'DMARC Present' },
-            { key: 'dmarcPolicy', header: 'DMARC Policy' },
-            { key: 'dnssec', header: 'DNSSEC' },
-            { key: 'dnssecEnabled', header: 'DNSSEC Enabled' },
-            { key: 'zoneTransferOpen', header: 'Zone Transfer Open' },
-            { key: 'mxRecords', header: 'MX Records' },
-            { key: 'mxCount', header: 'MX Count' },
-            { key: 'nameServers', header: 'Name Servers' },
-            { key: 'nameServerCount', header: 'NS Count' },
-            { key: 'nsDistinctProviders', header: 'NS Providers' },
-            { key: 'whoisEmails', header: 'WHOIS Emails' },
-            { key: 'registrar', header: 'Registrar' },
-            { key: 'organization', header: 'Organization' },
-            { key: 'country', header: 'Country' },
-            { key: 'expirationDate', header: 'Expiration' },
-            { key: 'daysToExpiry', header: 'Days To Expiry' },
-            { key: 'registrarStatus', header: 'Registrar Status' },
-            { key: 'vtMaliciousCount', header: 'VT Malicious' },
-            { key: 'vtReputation', header: 'VT Reputation' },
-            { key: 'otxPulseCount', header: 'OTX Pulses' },
-            { key: 'vulnTags', header: 'Vuln Tags' },
-          ],
+          columns: COLUMNS,
         }
       : undefined,
     [filtered, rows.length],
@@ -113,6 +121,7 @@ export const DnsEmailTable = memo(function DnsEmailTable({ projectId }: Props) {
       onSearchChange={setSearch}
       searchPlaceholder="Search domain, NS, registrar..."
       exportConfig={exportConfig}
+      filterUi={filterUi}
       onRefresh={refetch}
       isLoading={isLoading}
       error={error}

@@ -1580,6 +1580,7 @@ export default function GraphPage() {
                 data={filterGraphData ?? data}
                 isLoading={filterLoading || isLoading}
                 error={error}
+                projectId={projectId}
               />
             ) : tableViewMode === 'jsRecon' ? (
               <JsReconTable projectId={projectId} search={jsReconSearch} onDataLoaded={setJsReconData} />
@@ -1625,6 +1626,7 @@ export default function GraphPage() {
                 rows={effectiveTableRows}
                 globalFilter={globalFilter}
                 onGlobalFilterChange={setGlobalFilter}
+                projectId={projectId}
               />
             )
           ) : activeView === 'sessions' ? (

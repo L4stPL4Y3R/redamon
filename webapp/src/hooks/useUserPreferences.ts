@@ -62,7 +62,22 @@ export function useUserPreferences() {
         timersRef.current.delete(featureKey)
         try {
           const updated = await patchPref(featureKey, valueToSend)
-          queryClient.setQueryData(QUERY_KEY, updated)
+          // Take the server's value for THIS key only, rather than adopting its
+          // whole blob. The response is stale for every key still sitting in a
+          // debounce somewhere on the page - the server has never seen those
+          // values - and this page holds several independent writers (column
+          // visibility, filters, theme). Overwriting wholesale is not just a
+          // flicker: `updatePref`'s updater form reads the cache, so the next
+          // edit to a clobbered key computes from a blob missing its current
+          // value and silently discards filters saved for other tables.
+          const serverValue = (updated as UiPreferences)[featureKey]
+          queryClient.setQueryData(QUERY_KEY, (prev: UiPreferences | undefined) => ({
+            ...(prev ?? {}),
+            // A response that does not echo the key back is malformed, not a
+            // deletion - the route always returns the merged blob. Keeping what
+            // was sent beats blanking a setting the user just made.
+            [featureKey]: serverValue === undefined ? valueToSend : serverValue,
+          }))
         } catch (error) {
           console.error(`Failed to persist preference "${featureKey}":`, error)
           // Rollback only if no newer write is queued for this featureKey.
@@ -77,14 +92,46 @@ export function useUserPreferences() {
     [queryClient]
   )
 
-  // Flush any pending writes on unmount
-  useEffect(() => {
+  /**
+   * Send whatever the debounce is still holding, rather than dropping it.
+   *
+   * Two ways a queued write is lost without this, both of which land inside the
+   * 400ms window routinely: unmounting (switching table view, closing a
+   * drawer), and leaving the page entirely (reload, navigation). The second is
+   * not an unmount at all - React never runs cleanup - so it needs `pagehide`.
+   *
+   * `keepalive` is what lets the request outlive the document; the response is
+   * irrelevant, since the value being sent is already the optimistic state.
+   */
+  const flushPending = useCallback(() => {
     const timers = timersRef.current
-    return () => {
-      timers.forEach(t => clearTimeout(t))
-      timers.clear()
+    const pending = pendingValuesRef.current
+    timers.forEach(t => clearTimeout(t))
+    timers.clear()
+    for (const [featureKey, value] of pending) {
+      try {
+        fetch('/api/user/preferences', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ featureKey, value }),
+          keepalive: true,
+        }).catch(() => {})
+      } catch {
+        // A failed last-gasp write is not worth breaking teardown over.
+      }
     }
+    pending.clear()
   }, [])
+
+  useEffect(() => {
+    // `pagehide` rather than `beforeunload`: it fires for the bfcache path too,
+    // which `beforeunload` misses on mobile Safari.
+    window.addEventListener('pagehide', flushPending)
+    return () => {
+      window.removeEventListener('pagehide', flushPending)
+      flushPending()
+    }
+  }, [flushPending])
 
   return { prefs, isLoading: query.isLoading, error: query.error, updatePref }
 }
@@ -114,6 +161,61 @@ export function useNodeDetailsPrefs(nodeType: string | null) {
   )
 
   return { hiddenColumns, setHiddenColumns }
+}
+
+// ---- Per-column table filters - per-user, per-project, per-table ---------
+
+const TABLE_FILTERS_KEY = 'tableFilters'
+
+/**
+ * `{ [projectId]: { [scope]: { [columnId]: filter } } }`.
+ *
+ * One featureKey for EVERY filterable table (the Node Inspector's per-node-type
+ * views and every Red Zone sheet) rather than one per table: the blob is a
+ * single JSON column read on every page load, and a key per table would make
+ * the debounced PATCH from one table race the in-flight PATCH from another
+ * whenever a user switches views mid-write.
+ *
+ * `scope` is the caller's identifier for "which table am I" - see
+ * `tableFilterScope()`. The value is deliberately opaque here: validating a
+ * filter's shape belongs with the code that defines it, and this hook must not
+ * drop fields it does not recognise from a newer build.
+ */
+type TableFilterPrefs = Record<string, Record<string, Record<string, unknown>>>
+
+/** The scope key for one filterable table. Keep call sites from inventing their own. */
+export function tableFilterScope(surface: string, view: string | null): string {
+  return view ? `${surface}:${view}` : surface
+}
+
+export function useTableFilterPrefs(projectId: string | null, scope: string | null) {
+  const { prefs, isLoading, updatePref } = useUserPreferences()
+  const featurePrefs = (prefs[TABLE_FILTERS_KEY] ?? {}) as TableFilterPrefs
+  const storedFilters =
+    projectId && scope ? featurePrefs[projectId]?.[scope] ?? null : null
+
+  const setStoredFilters = useCallback(
+    (next: Record<string, unknown>) => {
+      if (!projectId || !scope) return
+      updatePref(TABLE_FILTERS_KEY, (prev: unknown) => {
+        const prevObj = (prev ?? {}) as TableFilterPrefs
+        const project = { ...(prevObj[projectId] ?? {}) }
+        // An empty filter set is REMOVED, not stored as `{}`. Otherwise every
+        // table a user ever opened accumulates a dead key in a row that is
+        // fetched on every page load.
+        if (Object.keys(next).length === 0) delete project[scope]
+        else project[scope] = next as Record<string, unknown>
+
+        const nextObj = { ...prevObj }
+        if (Object.keys(project).length === 0) delete nextObj[projectId]
+        else nextObj[projectId] = project
+        return nextObj
+      })
+    },
+    [projectId, scope, updatePref]
+  )
+
+  return { storedFilters, setStoredFilters, isLoading }
 }
 
 // ---- Graph node-type filter (bottom-bar chips) ---------------------------

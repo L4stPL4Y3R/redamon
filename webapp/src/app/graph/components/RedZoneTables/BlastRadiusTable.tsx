@@ -4,6 +4,7 @@ import { memo, useMemo, useState } from 'react'
 import { RedZoneTableShell } from './RedZoneTableShell'
 import { useRedZoneTable } from './useRedZoneTable'
 import type { RedZoneExportConfig } from './exportCsv'
+import { useRedZoneFilters, type RedZoneFilterColumn } from './useRedZoneFilters'
 import {
   Mono,
   Truncated,
@@ -28,6 +29,20 @@ interface BlastRadiusRow {
 
 const PAGE_SIZE = 100
 
+/** Module-level: the filter profiles are keyed off these, and a fresh array
+ *  literal per render would re-profile every row. */
+const COLUMNS: RedZoneFilterColumn[] = [
+  { key: 'techName', header: 'Technology' },
+  { key: 'techVersion', header: 'Version' },
+  { key: 'cveCount', header: 'CVE Count' },
+  { key: 'maxCvss', header: 'Max CVSS' },
+  { key: 'kevCount', header: 'KEV Count' },
+  { key: 'baseUrlCount', header: 'BaseURLs' },
+  { key: 'ipCount', header: 'IPs' },
+  { key: 'severities', header: 'Severities' },
+  { key: 'topCveIds', header: 'Top CVE IDs' },
+]
+
 interface Props { projectId: string | null }
 
 export const BlastRadiusTable = memo(function BlastRadiusTable({ projectId }: Props) {
@@ -36,7 +51,10 @@ export const BlastRadiusTable = memo(function BlastRadiusTable({ projectId }: Pr
   const [limit, setLimit] = useState(PAGE_SIZE)
 
   const rows = useMemo(() => data?.rows ?? [], [data])
-  const filtered = useMemo(() => filterRowsByText(rows, search), [rows, search])
+  const searched = useMemo(() => filterRowsByText(rows, search), [rows, search])
+  const { filteredRows: filtered, filterUi } = useRedZoneFilters({
+    rows: searched, columns: COLUMNS, projectId, slug: 'blastRadius',
+  })
   const sliced = useMemo(() => filtered.slice(0, limit), [filtered, limit])
 
   const exportConfig = useMemo<RedZoneExportConfig | undefined>(() =>
@@ -45,17 +63,7 @@ export const BlastRadiusTable = memo(function BlastRadiusTable({ projectId }: Pr
           rows: filtered,
           sheetName: 'Blast-Radius',
           fileSlug: 'redzone-blast-radius',
-          columns: [
-            { key: 'techName', header: 'Technology' },
-            { key: 'techVersion', header: 'Version' },
-            { key: 'cveCount', header: 'CVE Count' },
-            { key: 'maxCvss', header: 'Max CVSS' },
-            { key: 'kevCount', header: 'KEV Count' },
-            { key: 'baseUrlCount', header: 'BaseURLs' },
-            { key: 'ipCount', header: 'IPs' },
-            { key: 'severities', header: 'Severities' },
-            { key: 'topCveIds', header: 'Top CVE IDs' },
-          ],
+          columns: COLUMNS,
         }
       : undefined,
     [filtered, rows.length],
@@ -69,6 +77,7 @@ export const BlastRadiusTable = memo(function BlastRadiusTable({ projectId }: Pr
       onSearchChange={setSearch}
       searchPlaceholder="Search tech name, CVE, version..."
       exportConfig={exportConfig}
+      filterUi={filterUi}
       onRefresh={refetch}
       isLoading={isLoading}
       error={error}

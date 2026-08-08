@@ -4,6 +4,7 @@ import { memo, useMemo, useState } from 'react'
 import { RedZoneTableShell } from './RedZoneTableShell'
 import { useRedZoneTable } from './useRedZoneTable'
 import type { RedZoneExportConfig } from './exportCsv'
+import { useRedZoneFilters, type RedZoneFilterColumn } from './useRedZoneFilters'
 import {
   Mono,
   Truncated,
@@ -63,6 +64,28 @@ function HeaderCell({ present }: { present: boolean }) {
   )
 }
 
+/** Module-level: the filter profiles are keyed off these, and a fresh array
+ *  literal per render would re-profile every row. */
+const COLUMNS: RedZoneFilterColumn[] = [
+  { key: 'baseUrl', header: 'BaseURL' },
+  { key: 'subdomain', header: 'Subdomain' },
+  { key: 'scheme', header: 'Scheme' },
+  { key: 'statusCode', header: 'Status' },
+  { key: 'server', header: 'Server' },
+  { key: 'grade', header: 'Grade' },
+  { key: 'authEndpointCount', header: 'Auth Endpoints' },
+  { key: 'totalEndpointCount', header: 'Total Endpoints' },
+  { key: 'authEndpointPaths', header: 'Auth Paths' },
+  { key: 'authCategories', header: 'Auth Categories' },
+  { key: 'vulnTags', header: 'Vuln Tags' },
+  { key: 'CSP', header: 'CSP' },
+  { key: 'HSTS', header: 'HSTS' },
+  { key: 'X-Frame-Options', header: 'X-Frame-Options' },
+  { key: 'X-Content-Type-Options', header: 'X-Content-Type-Options' },
+  { key: 'Referrer-Policy', header: 'Referrer-Policy' },
+  { key: 'Permissions-Policy', header: 'Permissions-Policy' },
+]
+
 interface Props { projectId: string | null }
 
 export const WebInitAccessTable = memo(function WebInitAccessTable({ projectId }: Props) {
@@ -71,7 +94,10 @@ export const WebInitAccessTable = memo(function WebInitAccessTable({ projectId }
   const [limit, setLimit] = useState(PAGE_SIZE)
 
   const rows = useMemo(() => data?.rows ?? [], [data])
-  const filtered = useMemo(() => filterRowsByText(rows, search), [rows, search])
+  const searched = useMemo(() => filterRowsByText(rows, search), [rows, search])
+  const { filteredRows: filtered, filterUi } = useRedZoneFilters({
+    rows: searched, columns: COLUMNS, projectId, slug: 'webInitAccess',
+  })
   const sliced = useMemo(() => filtered.slice(0, limit), [filtered, limit])
 
   const exportConfig = useMemo<RedZoneExportConfig | undefined>(() => {
@@ -99,25 +125,7 @@ export const WebInitAccessTable = memo(function WebInitAccessTable({ projectId }
       rows: flat,
       sheetName: 'Web-Init-Access',
       fileSlug: 'redzone-web-init-access',
-      columns: [
-        { key: 'baseUrl', header: 'BaseURL' },
-        { key: 'subdomain', header: 'Subdomain' },
-        { key: 'scheme', header: 'Scheme' },
-        { key: 'statusCode', header: 'Status' },
-        { key: 'server', header: 'Server' },
-        { key: 'grade', header: 'Grade' },
-        { key: 'authEndpointCount', header: 'Auth Endpoints' },
-        { key: 'totalEndpointCount', header: 'Total Endpoints' },
-        { key: 'authEndpointPaths', header: 'Auth Paths' },
-        { key: 'authCategories', header: 'Auth Categories' },
-        { key: 'vulnTags', header: 'Vuln Tags' },
-        { key: 'CSP', header: 'CSP' },
-        { key: 'HSTS', header: 'HSTS' },
-        { key: 'X-Frame-Options', header: 'X-Frame-Options' },
-        { key: 'X-Content-Type-Options', header: 'X-Content-Type-Options' },
-        { key: 'Referrer-Policy', header: 'Referrer-Policy' },
-        { key: 'Permissions-Policy', header: 'Permissions-Policy' },
-      ],
+      columns: COLUMNS,
     }
   }, [filtered, rows.length])
 
@@ -129,6 +137,7 @@ export const WebInitAccessTable = memo(function WebInitAccessTable({ projectId }
       onSearchChange={setSearch}
       searchPlaceholder="Search BaseURL, subdomain, vuln, auth path..."
       exportConfig={exportConfig}
+      filterUi={filterUi}
       onRefresh={refetch}
       isLoading={isLoading}
       error={error}

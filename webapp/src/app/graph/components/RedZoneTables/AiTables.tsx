@@ -2,6 +2,7 @@
 
 import { memo, useEffect, useMemo, useState } from 'react'
 import { RedZoneTableShell } from './RedZoneTableShell'
+import { useRedZoneFilters } from './useRedZoneFilters'
 import type { RedZoneExportConfig } from './exportCsv'
 import {
   Mono, Truncated, UrlCell, NumCell, BoolChip, ListCell, SeverityBadge, filterRowsByText,
@@ -63,14 +64,23 @@ const MultiSheetTable = memo(function MultiSheetTable({ projectId, slug, title, 
 
   const sheet = sheets.find(s => s.key === active) ?? sheets[0]
   const allRows = useMemo(() => (data?.sheets?.[sheet.key] as Record<string, unknown>[]) ?? [], [data, sheet.key])
-  const filtered = useMemo(() => filterRowsByText(allRows, search), [allRows, search])
+  const searched = useMemo(() => filterRowsByText(allRows, search), [allRows, search])
+  // Each sheet has its own columns, so it filters - and remembers its filters -
+  // independently of its siblings.
+  const filterColumns = useMemo(
+    () => sheet.columns.map(c => ({ key: c.key, header: c.header })),
+    [sheet],
+  )
+  const { filteredRows: filtered, filterUi } = useRedZoneFilters({
+    rows: searched, columns: filterColumns, projectId, slug, sheet: sheet.key,
+  })
 
   const exportConfig = useMemo<RedZoneExportConfig | undefined>(() =>
     filtered.length > 0
       ? { rows: filtered, sheetName: sheet.label, fileSlug: `${slug}-${sheet.key}`,
-          columns: sheet.columns.map(c => ({ key: c.key, header: c.header })) }
+          columns: filterColumns }
       : undefined,
-    [filtered, sheet, slug])
+    [filtered, sheet, slug, filterColumns])
 
   const counts = (data?.sheets ?? {}) as Record<string, unknown[]>
   const meta = sheets.map(s => `${s.label}: ${counts[s.key]?.length ?? 0}`).join(' · ')
@@ -83,6 +93,7 @@ const MultiSheetTable = memo(function MultiSheetTable({ projectId, slug, title, 
       onSearchChange={setSearch}
       searchPlaceholder={`Search ${sheet.label.toLowerCase()}...`}
       exportConfig={exportConfig}
+      filterUi={filterUi}
       onRefresh={fetchData}
       isLoading={isLoading}
       error={error}

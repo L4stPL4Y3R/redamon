@@ -4,6 +4,7 @@ import { memo, useMemo, useState } from 'react'
 import { RedZoneTableShell } from './RedZoneTableShell'
 import { useRedZoneTable } from './useRedZoneTable'
 import type { RedZoneExportConfig } from './exportCsv'
+import { useRedZoneFilters, type RedZoneFilterColumn } from './useRedZoneFilters'
 import { ExternalLink } from '@/components/ui'
 import { resolveLinkable } from '@/lib/url-utils'
 import {
@@ -66,6 +67,39 @@ function GradeChip({ grade }: { grade: string | null }) {
   return <span className={`${rowStyles.sevBadge} ${cls}`}>{grade}</span>
 }
 
+/** Module-level: the filter profiles are keyed off these, and a fresh array
+ *  literal per render would re-profile every row. */
+const COLUMNS: RedZoneFilterColumn[] = [
+  { key: 'assetType', header: 'Type' },
+  { key: 'asset', header: 'Asset' },
+  { key: 'vtMaliciousCount', header: 'VT Malicious' },
+  { key: 'vtSuspiciousCount', header: 'VT Suspicious' },
+  { key: 'vtReputation', header: 'VT Reputation' },
+  { key: 'vtTags', header: 'VT Tags' },
+  { key: 'vtJarm', header: 'VT JARM' },
+  { key: 'otxPulseCount', header: 'OTX Pulses' },
+  { key: 'otxUrlCount', header: 'OTX URLs' },
+  { key: 'otxAdversaries', header: 'OTX Adversaries' },
+  { key: 'otxMalwareFamilies', header: 'OTX Malware Families' },
+  { key: 'otxTlp', header: 'OTX TLP' },
+  { key: 'otxAttackIds', header: 'MITRE ATT&CK' },
+  { key: 'criminalipRiskGrade', header: 'CriminalIP Grade' },
+  { key: 'criminalipAbuseCount', header: 'CriminalIP Abuse' },
+  { key: 'criminalipCurrentService', header: 'CriminalIP Service' },
+  { key: 'criminalipScoreInbound', header: 'CriminalIP Score Inbound' },
+  { key: 'criminalipIsTor', header: 'Is Tor' },
+  { key: 'criminalipIsProxy', header: 'Is Proxy' },
+  { key: 'criminalipIsVpn', header: 'Is VPN' },
+  { key: 'criminalipIsDarkweb', header: 'Is Darkweb' },
+  { key: 'criminalipCountry', header: 'Country' },
+  { key: 'subdomains', header: 'Subdomains' },
+  { key: 'pulseNames', header: 'Pulse Names' },
+  { key: 'pulseAdversaries', header: 'Pulse Adversaries' },
+  { key: 'pulseCount', header: 'Pulse Count' },
+  { key: 'malwareHashes', header: 'Malware Hashes' },
+  { key: 'malwareCount', header: 'Malware Count' },
+]
+
 interface Props { projectId: string | null }
 
 export const ThreatIntelTable = memo(function ThreatIntelTable({ projectId }: Props) {
@@ -74,7 +108,10 @@ export const ThreatIntelTable = memo(function ThreatIntelTable({ projectId }: Pr
   const [limit, setLimit] = useState(PAGE_SIZE)
 
   const rows = useMemo(() => data?.rows ?? [], [data])
-  const filtered = useMemo(() => filterRowsByText(rows, search), [rows, search])
+  const searched = useMemo(() => filterRowsByText(rows, search), [rows, search])
+  const { filteredRows: filtered, filterUi } = useRedZoneFilters({
+    rows: searched, columns: COLUMNS, projectId, slug: 'threatIntel',
+  })
   const sliced = useMemo(() => filtered.slice(0, limit), [filtered, limit])
 
   const exportConfig = useMemo<RedZoneExportConfig | undefined>(() =>
@@ -83,36 +120,7 @@ export const ThreatIntelTable = memo(function ThreatIntelTable({ projectId }: Pr
           rows: filtered,
           sheetName: 'Threat-Intel',
           fileSlug: 'redzone-threat-intel',
-          columns: [
-            { key: 'assetType', header: 'Type' },
-            { key: 'asset', header: 'Asset' },
-            { key: 'vtMaliciousCount', header: 'VT Malicious' },
-            { key: 'vtSuspiciousCount', header: 'VT Suspicious' },
-            { key: 'vtReputation', header: 'VT Reputation' },
-            { key: 'vtTags', header: 'VT Tags' },
-            { key: 'vtJarm', header: 'VT JARM' },
-            { key: 'otxPulseCount', header: 'OTX Pulses' },
-            { key: 'otxUrlCount', header: 'OTX URLs' },
-            { key: 'otxAdversaries', header: 'OTX Adversaries' },
-            { key: 'otxMalwareFamilies', header: 'OTX Malware Families' },
-            { key: 'otxTlp', header: 'OTX TLP' },
-            { key: 'otxAttackIds', header: 'MITRE ATT&CK' },
-            { key: 'criminalipRiskGrade', header: 'CriminalIP Grade' },
-            { key: 'criminalipAbuseCount', header: 'CriminalIP Abuse' },
-            { key: 'criminalipCurrentService', header: 'CriminalIP Service' },
-            { key: 'criminalipScoreInbound', header: 'CriminalIP Score Inbound' },
-            { key: 'criminalipIsTor', header: 'Is Tor' },
-            { key: 'criminalipIsProxy', header: 'Is Proxy' },
-            { key: 'criminalipIsVpn', header: 'Is VPN' },
-            { key: 'criminalipIsDarkweb', header: 'Is Darkweb' },
-            { key: 'criminalipCountry', header: 'Country' },
-            { key: 'subdomains', header: 'Subdomains' },
-            { key: 'pulseNames', header: 'Pulse Names' },
-            { key: 'pulseAdversaries', header: 'Pulse Adversaries' },
-            { key: 'pulseCount', header: 'Pulse Count' },
-            { key: 'malwareHashes', header: 'Malware Hashes' },
-            { key: 'malwareCount', header: 'Malware Count' },
-          ],
+          columns: COLUMNS,
         }
       : undefined,
     [filtered, rows.length],
@@ -126,6 +134,7 @@ export const ThreatIntelTable = memo(function ThreatIntelTable({ projectId }: Pr
       onSearchChange={setSearch}
       searchPlaceholder="Search asset, adversary, malware, tag..."
       exportConfig={exportConfig}
+      filterUi={filterUi}
       onRefresh={refetch}
       isLoading={isLoading}
       error={error}
