@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.6.0] - 2026-08-08
+
+### Added
+
+- **Per-column filters on every graph table.** A schema-free filter across all 20 pages of the table dropdown (Node Inspector, All Nodes, JS Recon sub-tabs, and the 17 Red Zone sheets). Each column infers its own control from the values present (checkbox list, numeric range, date range, text/regex), so no table declares a filter schema, and the active set is remembered per user, project and view in `users.ui_preferences.tableFilters` ([81ccbbba]).
+
+### Changed
+
+- **One row cap for every Red Zone route.** The per-route `LIMIT`s (200 to 2000, depending on which table you happened to open) are replaced by a single 200k ceiling, overridable per process with `REDAMON_REDZONE_ROW_CAP` ([078dcdbd]).
+
+### Fixed
+
+- **Supply-chain scans under-reserved memory.** The dirty analyzer is a second heavy container per job that the admission ledger could not see, so the host reported itself idle while several ~1.5 GB analyzers ran. Envelopes are now tool-qualified, and the analyzer is admitted and released like any other unit ([41110c72]).
+- **A build could die of a full disk and leave the host with no usable images.** A disk preflight now refuses a build that cannot finish (measuring the filesystem Docker writes to, not the one holding the repo), `up` no longer reports success over a stack with no images or with dead services, and every successful build reclaims the cache it orphaned (opt out with `REDAMON_NO_AUTO_PRUNE=1`) ([078dcdbd]).
+- **`./redamon.sh update` refused to fast-forward after any scan.** The MITRE `.last_update` marker is tracked in git *and* rewritten by the spawned recon container, so every scan dirtied the checkout and the next update stopped on a confusing "local changes" error. Now gitignored, and restored before the pull ([078dcdbd]).
+- **The single-host deploy could not configure supply-chain SCA.** The `OSV_DB_*` knobs now reach a deployed host, `verify` reports an empty OSV database instead of leaving it for the first scan to discover, and the analyzer caps documented in `.env.example` are no longer silently inert ([b18c7310]).
+
+---
+
 ## [6.5.0] - 2026-08-07
 
 ### Added
