@@ -59,9 +59,52 @@ ANALYZER_NETWORK = os.environ.get("SUPPLY_CHAIN_ANALYZER_NETWORK",
                                   "redamon-supply-chain-net")
 
 # Mirrors ContainerManager.run_supply_chain_analyzer (plan section 5.2).
-_DEFAULT_MEM = os.environ.get("SUPPLY_CHAIN_ANALYZER_MEM", "1500m")
+# Last-resort literal: used only when the operator set nothing AND the governor
+# is unreachable. NOT read from the environment at import time - see _resolve_mem.
+_DEFAULT_MEM = "1500m"
 _DEFAULT_PIDS = os.environ.get("SUPPLY_CHAIN_ANALYZER_PIDS", "512")
 _DEFAULT_TMPFS = "size=1g,exec"
+
+# The analyzer's tool envelope in the memory governor's profile. The governor
+# multiplies it by CONTAINER_CAP_HEADROOM to produce the hard --memory value.
+_ANALYZER_TOOL = "supply_chain_analyzer"
+
+
+def _governed_mem():
+    """The analyzer's memory ceiling from the memory governor, or None.
+
+    WHY: this container is spawned from three processes and only ONE of them
+    (the orchestrator) could reach the governor, so this module used to hardcode
+    a fixed "1500m" that never shrank on a memory-starved host while every other
+    RedAmon container did. Resolving it here makes the SDK path and the broker
+    path agree by construction, which is what this module exists to guarantee.
+
+    Fail-soft and lazy on purpose: the analyzer image itself mounts this package
+    but has no graph_db, and an ImportError at module scope would break it.
+    """
+    try:
+        try:
+            from graph_db import resource_governor as rg
+        except ImportError:
+            import resource_governor as rg   # direct (tests / alt sys.path)
+        return rg.container_cap(rg.tool_container_envelope(_ANALYZER_TOOL))
+    except Exception:
+        return None  # governor absent/unreadable -> _DEFAULT_MEM (legacy behaviour)
+
+
+def _resolve_mem():
+    """The analyzer's `--memory` value: operator override > governor > literal.
+
+    The env var is read HERE, at call time, not captured at import. Snapshotting
+    it into a module constant meant an operator value that arrived after this
+    module was first imported was silently dropped: the override check saw it and
+    stepped aside, then the fallback constant still held the stale "1500m". The
+    operator asked for 700m and docker got 1500m, with nothing logged.
+    """
+    override = os.environ.get("SUPPLY_CHAIN_ANALYZER_MEM")
+    if override and override.strip():
+        return override.strip()
+    return _governed_mem() or _DEFAULT_MEM
 
 
 def analyzer_docker_argv(job_scratch_host_path, sc_common_host_path, *,
@@ -93,7 +136,7 @@ def analyzer_docker_argv(job_scratch_host_path, sc_common_host_path, *,
         "--read-only",
         "--tmpfs", "/tmp:{}".format(tmpfs),
         "--pids-limit", str(pids or _DEFAULT_PIDS),
-        "--memory", str(mem or _DEFAULT_MEM),
+        "--memory", str(mem or _resolve_mem()),
         "-e", "OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY=/osv-db",
         "-e", "PYTHONUNBUFFERED=1",
         "-e", "PYTHONPATH=/app",

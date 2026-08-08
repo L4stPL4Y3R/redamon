@@ -138,6 +138,7 @@ This is the core. It is pure Python (stdlib only) and fail-open. Public API:
 | `scale()` | The RATIO factor in `(0,1]`. Piecewise: `≥MEM_SCALE_HIGH → 1.0`; `≤MEM_SCALE_LOW → MEM_SCALE_FLOOR`; linear ramp between. |
 | `scaled(value, floor)` | RATIO model. `clamp(round(value×scale()), floor, value)`. Never exceeds `value`. |
 | `scaled_cap(env_cap, per_unit_bytes, fraction, floor)` | BYTE-BUDGET model. `clamp(available×fraction // per_unit_bytes, floor, env_cap)`. |
+| `container_cap(envelope)` | Hard per-container `mem_limit` from an envelope: `clamp(envelope × CONTAINER_CAP_HEADROOM, envelope, PER_CONTAINER_MAX)`, floored at 512 MB. `None` when the governor is off. Lives here, not in `container_manager`, because **three** processes spawn capped containers (§6). |
 | `pressure()` | `"ok"` / `"warn"` / `"critical"` from `avail_ratio` vs the LOW/HIGH bands. Drives admission blocking. |
 | `cpu_percent()` / `cpu_cores()` | Host CPU utilisation from `/proc/stat` deltas (for the UI meter). |
 | `parse_size(s)` / `env_bytes(name, default)` | Parse Docker-style sizes (`2g`, `512m`, plain bytes) from env. |
@@ -196,11 +197,33 @@ demanded 6 GB free, which never happens once the core services are up.
 |---|---|---|
 | `full_recon` | 2 GB | container + a dozen sibling tools |
 | `partial_recon` | 768 MB | one step, few or no siblings |
+| `partial_recon:SupplyChainRecon` | 1.75 GB | tool-qualified (below): JS fetch **plus** the dirty analyzer |
 | `ai_attack` | 1 GB | probe workers (the on-demand local LLM is accounted separately) |
 | `gvm` | 2.5 GB | openvas is the heaviest scanner |
 | `github_hunt` | 768 MB | clone + regex sweep |
 | `trufflehog` | 768 MB | clone + verifier sweep |
+| `supply_chain` | 1.75 GB | L1 clean writer + the dirty analyzer it dispatches for GuardDog |
 | `_default` | 2 GB | unknown type: assume full-pipeline size |
+
+**Tool-qualified keys.** Partial-recon tools are not interchangeable in RAM terms, so the
+key may be `partial_recon:<tool_id>`. `scan_job_envelope()` tries the qualified key, then
+falls back to the **base kind**, then `_default`. That fallback is what makes qualifying
+*every* tool safe: a tool with no entry of its own keeps its family's cheap 768 MB rather
+than jumping to the 2 GB unknown-type figure. `SupplyChainRecon` is the only qualified
+entry today; it re-runs the JS fetch and spawns the analyzer, so the generic single-step
+envelope under-reserved it by roughly 3x.
+
+> The admission kind and `_active_scan_keys()` must build the **same** key string. Book as
+> `partial_recon:SupplyChainRecon:<pid>:<run>` while the reaper reports
+> `partial_recon:<pid>:<run>` and `reconcile()` sees an unknown committed key and frees a
+> live scan's reservation within 30 s. `ContainerManager._partial_kind()` is the single
+> source both sides call; `recon_orchestrator/tests/test_supply_chain_admission.py` pins it.
+
+There is a second table, `tool_container_envelope_bytes`, for **sibling** containers a scan
+spawns rather than scans themselves. It carries `supply_chain_analyzer` (1 GB expected
+peak, so `container_cap()` yields the 1.5 GB ceiling) plus a `_default`. The analyzer is
+sized from *this* table, not from whichever scan happens to dispatch it: an L3 GuardDog
+call has no scan anywhere near it, yet used to be capped by the L1 scan's envelope.
 
 Layers 1 and 2 carry the same numbers on purpose (layer 2 may be absent), and
 `tests/test_resource_governor.py` asserts they stay identical across both governor copies
@@ -263,6 +286,16 @@ Notes:
   its UI tab closed is detected), then drops any committed key that is no longer
   `RUNNING`/`STARTING`/`PAUSED`. This is more robust than hooking every terminal path.
 
+**Not every admitted unit is a scan.** The agent's L3 `execute_guarddog` spawns a real
+~1.5 GB analyzer container on demand, so it books the analyzer's *tool* envelope through
+the same ledger (`ContainerManager.run_guarddog_package_governed`). Before that gate the
+path booked nothing: the ledger reported the host idle while N analyzers ran, which is
+exactly the sum-of-envelopes guarantee this subsystem exists to provide. The reservation is
+request-scoped (taken before the spawn, released in a `finally`) and its key is listed in
+`_active_scan_keys` meanwhile, or the 30 s reaper would free a live job's bytes. A refusal
+returns the same typed 409 a refused scan does, and the agent tool renders it as an
+explicitly **retryable** condition, never as "the package is clean".
+
 Per-scan envelopes come from `RECON_JOB_ENVELOPE_MEM` (env override, applies to every type)
 or from `scan_job_envelope_bytes[scan_type]` in the merged profile, which is **per scan type**
 (see §4.3 for the table and the layering). `RECON_MAX_CONCURRENT_GLOBAL` is
@@ -296,6 +329,10 @@ flowchart LR
       direction TB
       broker[docker-broker injects HostConfig.Memory]
     end
+    subgraph D[Dirty supply-chain analyzer]
+      direction TB
+      disp[analyzer_dispatch builds one argv for all 3 spawners]
+    end
 ```
 
 1. **Always-on services** (`docker-compose.yml`): `mem_limit` (plus `pids_limit` + `cpus`, D1)
@@ -317,6 +354,25 @@ flowchart LR
    `validate_create` passes, it injects `HostConfig.Memory` (`BROKER_TOOL_MEM_BYTES`, default
    2 GB) into the create body, re-serialises it, and rewrites `Content-Length` before
    forwarding. The injection is strictly additive, it never relaxes a deny rule.
+4. **The dirty supply-chain analyzer** (`supply_chain_common/analyzer_dispatch.py`): the odd
+   one out, because it is spawned from **three** processes, the orchestrator (Docker SDK),
+   the recon container and the L1 scan container (both shelling out through the broker
+   socket). Only the orchestrator can import `container_manager`, so when the cap clamp
+   lived there the other two hardcoded a fixed `1500m`, making this the one RedAmon
+   container that never shrank on a starved host, and a security-sensitive one at that.
+   `container_cap()` now lives in the governor module itself and `analyzer_dispatch`
+   resolves `--memory` from it (lazily and fail-soft, since the analyzer image mounts
+   `supply_chain_common` but has no `graph_db`). The broker's 2 GB injection remains the
+   outer backstop.
+
+   **Precedence is `SUPPLY_CHAIN_ANALYZER_MEM` > governor > literal, on both sides, read
+   at call time.** All three clauses are load-bearing and each one has been violated:
+   snapshotting the override at import silently dropped a late-arriving operator value,
+   and resolving the override only as a *fallback* on the SDK side made the orchestrator
+   ignore an override the broker side honoured. The two implementations cannot import
+   each other (`recon_orchestrator` does not mount `supply_chain_common`), so their
+   agreement is pinned by a source-level parity contract in
+   [tests/test_supply_chain_governor_integration.py](../tests/test_supply_chain_governor_integration.py).
 
 **CPU and PID caps (STRIDE D1).** As of the 2026-07 hardening wave, memory is no longer the
 only capped resource. Each of the 6 scan spawns also gets a **CPU cap**
@@ -521,6 +577,14 @@ Each is computed at spawn from the RAM-scaled envelope × headroom, clamped to
 | `PER_CONTAINER_CPUS` | absolute per-spawn CPU ceiling in cores (unset = no ceiling); clamps `CONTAINER_CPU_FRACTION x cores`. |
 | `CONTAINER_PIDS_MAX` | `512` (D1), fixed PID ceiling per scan spawn - stops a fork bomb. |
 
+### Dirty supply-chain analyzer (sibling, all three spawn paths)
+
+| Var | Default | Meaning |
+|---|---|---|
+| `SUPPLY_CHAIN_ANALYZER_MEM` | governed (`container_cap` of the 1 GB tool envelope, ~1.5 GB) | Hard `--memory` for the analyzer. **Setting it opts out of the governor** for this container, on every spawn path. Read at call time, and if it is *larger* than the tool envelope the L3 admission reserves the override instead, so the ledger never promises less than the container may use. |
+| `SUPPLY_CHAIN_ANALYZER_PIDS` | `512` | PID ceiling for the analyzer. |
+| `SUPPLY_CHAIN_ANALYZER_NANOCPUS` | `2e9` (2 cores) | CPU ceiling used when the governor returns no CPU cap. |
+
 ### Always-on service caps (compose)
 
 | Var | Meaning |
@@ -579,6 +643,20 @@ blocking legitimate work:
 | [tests/test_broker_inject.py](../tests/test_broker_inject.py) | `inject_limits` add/cap/respect-lower, size parsing, body re-serialisation. |
 | [tests/test_recon_mem_governor.py](../tests/test_recon_mem_governor.py) | recon `apply_memory_governor` ratio + byte-budget scaling, `[RESOURCE-CAP]` emission, guards. |
 | [tests/test_agent_mem_governor.py](../tests/test_agent_mem_governor.py) | agent byte-budget scaling of fireteam/plan keys, small-host throttle, guards. |
+| [tests/test_supply_chain_mem_governor.py](../tests/test_supply_chain_mem_governor.py) | UNIT: analyzer `--memory` resolved from the governor on the broker path, override precedence (including one arriving after import), fail-open on ImportError, docker-acceptable value format, L2 import-mining budgets. |
+| [tests/test_supply_chain_governor_integration.py](../tests/test_supply_chain_governor_integration.py) | INTEGRATION: governor → settings → the miner that consumes them; governor → `run_analyzer_job` → the real spawn argv; profile layering; reservation-vs-ceiling invariants; the source-level parity contract between the two analyzer spawn implementations; calibration can measure the analyzer. |
+| [recon_orchestrator/tests/test_supply_chain_admission.py](../recon_orchestrator/tests/test_supply_chain_admission.py) | L3 GuardDog admit/release/leak-on-raise/leak-on-cancel, tool-qualified partial keys, admission↔reconcile key symmetry, mixed-workload reconcile, saturation and typed refusals, override precedence on the SDK path. |
+| [agentic/tests/test_guarddog_native_tool.py](../agentic/tests/test_guarddog_native_tool.py) | The agent end of the lane: a 409 refusal must read as retryable and never as a clean package; `ram` vs `hard` are reported as different problems. |
+| [tests/test_guarddog_contract.py](../tests/test_guarddog_contract.py) | Cross-service field names for BOTH response shapes (result quadruple and the typed limit payload), including that the webapp passes the 409 status through. |
+| [tests/supply_chain_governor_smoke.sh](../tests/supply_chain_governor_smoke.sh) | SMOKE, needs a running stack: Docker accepts the governed value verbatim, the analyzer really gets it applied (`docker inspect`), no stack container is uncapped, live `/system/stats`, and a real L3 HTTP round trip that reserves and releases. |
+
+> **Test-isolation gotcha, now fixed.** Several suites put a *different* directory on
+> `sys.path` and then `import resource_governor`, so whichever ran first owned the bare
+> module name for the whole process. A test that overrode only its own `rg` was therefore
+> often not touching the object `apply_memory_governor` resolved: it silently read **real
+> host RAM**, passing alone and failing in a combined run. The governor suites now fan
+> `set_mem_override` out to every loaded copy (`_all_governors()`) and load each
+> `project_settings.py` by explicit path under a unique name.
 | [tests/redamon_governor_test.sh](../tests/redamon_governor_test.sh) | bash: `_size_to_mb`, `preflight_ram_gate`, `export_resource_caps` (incl. neo4j heap coherence), `setup_zram` guards. |
 
 Run the Python suites with `python3 -m unittest tests.test_resource_governor …` and the bash

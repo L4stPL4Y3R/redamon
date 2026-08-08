@@ -229,11 +229,30 @@ class ContainerManager:
         # before spawning so concurrent scans can never sum past the host's scan
         # pool. Fail-open: with the governor disabled, try_admit always admits.
         self.ledger = ReservationLedger()
+        # Reservation keys for in-flight L3 GuardDog analyzer jobs. These have no
+        # state dict of their own (they are request-scoped, not scans), so they
+        # are tracked here purely so _active_scan_keys can protect them from the
+        # reaper for the seconds-to-minutes they run.
+        self.guarddog_jobs: set = set()
 
     def _scan_key(self, kind: str, project_id: str, run_id: Optional[str] = None) -> str:
         """Stable reservation key for a scan job."""
         base = f"{kind}:{project_id}"
         return f"{base}:{run_id}" if run_id else base
+
+    @staticmethod
+    def _partial_kind(tool_id: Optional[str]) -> str:
+        """Tool-qualified admission kind for a partial recon.
+
+        Partial tools are not interchangeable in RAM terms: most are a single
+        cheap step, but SupplyChainRecon re-runs the JS fetch AND spawns the
+        dirty analyzer. resource_governor.scan_job_envelope() resolves
+        "partial_recon:<tool>" and falls back to the plain "partial_recon"
+        envelope for any tool without its own entry, so qualifying every tool is
+        safe and keeps admission and reconcile on ONE key format. Using the plain
+        kind at admission and a qualified one in _active_scan_keys (or vice
+        versa) would make the reaper free a live scan's reservation."""
+        return f"partial_recon:{tool_id}" if tool_id else "partial_recon"
 
     async def _admit_scan(self, kind: str, project_id: str, run_id: Optional[str] = None,
                           user_id: Optional[str] = None) -> str:
@@ -262,7 +281,7 @@ class ContainerManager:
         for pid, runs in self.partial_recon_states.items():
             for rid, st in runs.items():
                 if st.status in (PartialReconStatus.RUNNING, PartialReconStatus.STARTING):
-                    keys.add(self._scan_key("partial_recon", pid, rid))
+                    keys.add(self._scan_key(self._partial_kind(st.tool_id), pid, rid))
         for pid, runs in self.ai_attack_states.items():
             for rid, st in runs.items():
                 if st.status in (AiAttackSurfaceStatus.RUNNING, AiAttackSurfaceStatus.STARTING):
@@ -282,6 +301,10 @@ class ContainerManager:
         for pid, st in self.supply_chain_states.items():
             if st.status in (SupplyChainStatus.RUNNING, SupplyChainStatus.STARTING, SupplyChainStatus.PAUSED):
                 keys.add(self._scan_key("supply_chain", pid))
+        # L3 GuardDog jobs are transient (no state dict, seconds-to-minutes) but
+        # they DO hold a reservation. Without them here the 30 s reaper would
+        # free a live job's bytes and the ledger would under-count.
+        keys |= self.guarddog_jobs
         return keys
 
     async def refresh_all_scan_states(self) -> None:
@@ -330,31 +353,65 @@ class ContainerManager:
                 pass
 
     def _container_mem_limit(self, kind: str) -> Optional[int]:
-        """Hard per-container memory ceiling (bytes) for a spawned scan, sized from
+        """Hard per-container memory ceiling (bytes) for a spawned SCAN, sized from
         the job envelope × headroom and clamped to PER_CONTAINER_MAX so one
         container can never take the whole host. Generous backstop: it sits ABOVE
         the admission envelope so a normal peak is never killed, only a runaway.
-        Returns None (no limit) when the governor is disabled or RAM is unreadable."""
-        if not rg.governor_enabled():
-            return None
-        envelope = self.ledger.envelope_for(kind)
-        if envelope <= 0:
-            return None
-        headroom = rg._env_float("CONTAINER_CAP_HEADROOM", 1.5)
-        if headroom < 1.0:
-            headroom = 1.0
-        cap = int(envelope * headroom)
-        per_max = rg.env_bytes("PER_CONTAINER_MAX", None)
-        if per_max is None:
-            mem = rg.read_mem()
-            per_max = int(mem[0] * 0.55) if mem else cap
-        cap = min(cap, per_max)
-        # Never size the hard cap BELOW the admission envelope (the expected peak),
-        # or a normal run would be OOM-killed. On a host so small that per_max <
-        # envelope, admission would already have rejected this scan; if it somehow
-        # ran, the envelope floor still avoids a false kill.
-        floor = 512 * 1024 ** 2
-        return max(floor, envelope, cap)
+        Returns None (no limit) only when the governor is DISABLED. Unreadable RAM
+        is not a None case: the envelope x headroom is still a valid ceiling and
+        only the PER_CONTAINER_MAX clamp degrades.
+
+        The clamp itself lives in resource_governor.container_cap() because the
+        recon and L1 containers spawn capped siblings too and cannot import this
+        module; keeping it here is what let their caps drift into literals."""
+        return rg.container_cap(self.ledger.envelope_for(kind))
+
+    def _tool_container_mem_limit(self, tool: str, override_env: Optional[str] = None):
+        """Hard ceiling for a spawned SIBLING TOOL container (the dirty analyzer),
+        sized from its own tool envelope rather than from whichever scan happens
+        to be dispatching it. The two are different quantities: an L3 GuardDog
+        call has no scan anywhere near it, yet used to be capped by the L1 scan's
+        envelope.
+
+        Precedence MUST match supply_chain_common.analyzer_dispatch._resolve_mem:
+        operator override > governor > caller default. The analyzer is spawned
+        both here (Docker SDK) and there (broker socket), and the whole point of
+        that module is that the two agree. Reading the override only as a
+        *fallback* here meant an operator who set SUPPLY_CHAIN_ANALYZER_MEM=700m
+        got 700m from recon and the governed 1.5 GB from the orchestrator — the
+        same divergence, just pointing the other way.
+
+        Read at call time, not from __init__, so a late env var still lands.
+        Returns a Docker size string for an override, bytes for a governed value,
+        or None when the governor is disabled (caller falls back)."""
+        if override_env:
+            raw = os.environ.get(override_env)
+            if raw and raw.strip():
+                return raw.strip()
+        return rg.container_cap(rg.tool_container_envelope(tool))
+
+    _ANALYZER_MEM_ENV = "SUPPLY_CHAIN_ANALYZER_MEM"
+
+    def _analyzer_mem_limit(self):
+        """The dirty analyzer's ceiling, one resolution for both SDK spawn sites."""
+        return (self._tool_container_mem_limit("supply_chain_analyzer",
+                                               self._ANALYZER_MEM_ENV)
+                or self.supply_chain_analyzer_mem)
+
+    def _analyzer_envelope(self) -> int:
+        """RAM to RESERVE for one analyzer job.
+
+        Normally the tool envelope. But an operator override raises the hard cap
+        without telling the ledger, so a 4 GB override would let the container
+        take 4 GB against a 1 GB reservation. Reserve the larger of the two: the
+        ledger must never promise less than the container is permitted to use."""
+        envelope = rg.tool_container_envelope("supply_chain_analyzer")
+        raw = os.environ.get(self._ANALYZER_MEM_ENV)
+        if raw and raw.strip():
+            parsed = rg.parse_size(raw.strip())
+            if parsed and parsed > envelope:
+                return parsed
+        return envelope
 
     def _container_cpu_limit(self) -> Optional[int]:
         """D1: hard per-container CPU ceiling (nano_cpus) for a spawned scan,
@@ -1512,7 +1569,9 @@ class ContainerManager:
         container_name = self._get_partial_container_name(project_id, run_id)
 
         # Memory admission (Part 1): reserve this run's RAM envelope or reject.
-        await self._admit_scan("partial_recon", project_id, run_id, user_id=config.get("user_id"))
+        # Tool-qualified: SupplyChainRecon costs ~3x a normal partial step.
+        partial_kind = self._partial_kind(tool_id)
+        await self._admit_scan(partial_kind, project_id, run_id, user_id=config.get("user_id"))
 
         # Lazy-on-scan OSV DB refresh, but ONLY for the supply-chain partial tool -
         # other partial tools have nothing to do with the OSV feed. TTL-guarded +
@@ -1614,7 +1673,7 @@ class ContainerManager:
                     # selector to read TEMPLATES-STATS.json.
                     "nuclei-templates": {"bind": "/opt/nuclei-templates-official", "mode": "ro"},
                 },
-                mem_limit=self._container_mem_limit("partial_recon"),  # Memory governor (Part 4c)
+                mem_limit=self._container_mem_limit(partial_kind),  # Memory governor (Part 4c)
                 pids_limit=self._container_pids_limit(),  # D1: fork-bomb ceiling
                 nano_cpus=self._container_cpu_limit(),  # D1: core-proportional CPU cap
                 **self._scanner_hardening(drop_caps=False),  # S3/E6: cap_drop deferred (breaks writes to host-owned source bind mount; needs CAP_DAC_OVERRIDE)
@@ -3200,7 +3259,7 @@ class ContainerManager:
                 cap_drop=["ALL"],
                 read_only=True,
                 tmpfs={"/tmp": "size=1g,exec"},
-                mem_limit=self._container_mem_limit("supply_chain") or self.supply_chain_analyzer_mem,
+                mem_limit=self._analyzer_mem_limit(),
                 nano_cpus=self._container_cpu_limit() or self.supply_chain_analyzer_nanocpus,
                 pids_limit=self.supply_chain_analyzer_pids,
                 # CRITICAL: NO secrets. Only the offline DB pointer.
@@ -3296,7 +3355,7 @@ class ContainerManager:
                 cap_drop=["ALL"],
                 read_only=True,
                 tmpfs={"/tmp": "size=1g,exec"},
-                mem_limit=self._container_mem_limit("supply_chain") or self.supply_chain_analyzer_mem,
+                mem_limit=self._analyzer_mem_limit(),
                 nano_cpus=self._container_cpu_limit() or self.supply_chain_analyzer_nanocpus,
                 pids_limit=self.supply_chain_analyzer_pids,
                 environment={"PYTHONUNBUFFERED": "1"},
@@ -3331,6 +3390,39 @@ class ContainerManager:
                     container.remove(force=True)
                 except APIError:
                     pass
+
+    async def run_guarddog_package_governed(self, ecosystem: str, name: str,
+                                            version: str = "") -> dict:
+        """Admission-gated wrapper around run_guarddog_package (L3).
+
+        The agent can call execute_guarddog as often as it likes, and every call
+        spawns a real ~1.5 GB analyzer container. Before this gate that path
+        booked nothing: the ledger reported the host idle while N analyzers ran,
+        which is exactly the sum-of-envelopes guarantee the governor exists to
+        provide. Now an L3 job reserves the analyzer's tool envelope like any
+        other work, and a full host returns the same typed 409 a refused scan
+        does instead of quietly oversubscribing RAM.
+
+        The reservation is request-scoped: taken here, released in `finally`, and
+        listed in _active_scan_keys meanwhile so the reaper cannot free it early.
+        Fail-open is inherited from try_admit (governor off / RAM unreadable ->
+        admitted). Raises AdmissionError, which api.py maps to a 409 payload.
+        """
+        key = f"supply_chain_analyzer:{uuid.uuid4()}"
+        envelope = self._analyzer_envelope()
+        result = await self.ledger.try_admit(key, envelope)
+        if not result.admitted:
+            logger.info(f"[governor] admission denied for {key}: "
+                        f"{result.limit_type} - {result.detail}")
+            raise AdmissionError(result)
+        self.guarddog_jobs.add(key)
+        try:
+            # Blocking (docker run + wait) - keep it off the event loop.
+            return await asyncio.to_thread(
+                self.run_guarddog_package, ecosystem, name, version)
+        finally:
+            self.guarddog_jobs.discard(key)
+            await self.ledger.release(key)
 
     # ------------------------------------------------------------------
     # Offline OSV database freshness (lazy-on-scan refresh)

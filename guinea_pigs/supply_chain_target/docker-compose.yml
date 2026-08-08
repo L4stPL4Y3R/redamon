@@ -35,6 +35,14 @@ services:
     image: redamon-supply-chain-target:latest
     container_name: redamon-supply-chain-target
     restart: unless-stopped
+    # This is a separate compose PROJECT, so redamon.sh's export_resource_caps
+    # never reaches it and the memory governor's reservation ledger does not know
+    # it exists. It still shares the host with Neo4j and Postgres, so it carries
+    # its own small caps: a runaway target must not be able to OOM the stack that
+    # is scanning it. Deliberately generous for a static file server.
+    mem_limit: ${SC_TARGET_MEM:-256m}
+    pids_limit: ${SC_TARGET_PIDS:-256}
+    cpus: ${SC_TARGET_CPUS:-1.0}
     # Source bind for fast iteration; the CMD runs /app/server.py from the
     # image, so this just overlays it.
     volumes:

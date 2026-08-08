@@ -108,6 +108,24 @@ async def _guarddog_impl(spec: str) -> str:
     # then raise AttributeError and crash the tool. Fail as data, not a crash.
     if not isinstance(data, dict):
         return "[ERROR] guarddog returned unexpected JSON shape (HTTP {})".format(resp.status_code)
+    # 409 = the resource governor refused to admit the analyzer container. This is
+    # TRANSIENT and retryable, unlike every other error here, so say so: told only
+    # "HTTP 409" an agent concludes the tool is broken and stops using it.
+    #
+    # Two refusal kinds reach here and they need different wording. "ram" means
+    # the host is genuinely short of memory; "hard" means an operator-set
+    # concurrency ceiling. Reporting a count cap as "no free memory" would send
+    # the agent (or the operator reading the transcript) after the wrong problem.
+    if resp.status_code == 409:
+        limit = data.get("detail") if isinstance(data.get("detail"), dict) else {}
+        cause = ("a concurrency limit ({})".format(limit.get("settingName") or "operator cap")
+                 if limit.get("limitType") == "hard"
+                 else "the host is low on memory")
+        detail = limit.get("detail") or "resource governor"
+        return ("[ERROR] guarddog deferred: the analyzer could not be started because "
+                "{} ({}). This is TEMPORARY - retry once running scans finish. The "
+                "package was NOT analyzed: do not treat this as a clean result."
+                .format(cause, detail))
     if resp.status_code >= 400 or data.get("error"):
         return "[ERROR] {}".format(data.get("error") or "guarddog HTTP {}".format(resp.status_code))
 

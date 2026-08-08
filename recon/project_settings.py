@@ -470,6 +470,14 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # GuardDog deep analysis (downloads untrusted tarballs). OFF by default
     # (S5.5); dispatch to the DIRTY analyzer is v2.
     'SUPPLY_CHAIN_RECON_DEEP_ANALYSIS_ENABLED': False,
+    # Import-mining budget. These are genuine in-memory accumulators (every JS
+    # file read is held while its specifiers are extracted), so they belong to
+    # the memory governor's BYTE-BUDGET model - see _GOV_BUDGET_KEYS. They were
+    # module-level os.environ reads in supply_chain_recon.py, which put them out
+    # of the governor's reach entirely: apply_memory_governor only walks this
+    # dict. Env vars still override, so existing deployments are unaffected.
+    'SUPPLY_CHAIN_IMPORT_MAX_FILES': 200,
+    'SUPPLY_CHAIN_IMPORT_MAX_BYTES': 64 * 1024 * 1024,
 
     # FFuf Directory Fuzzer
     'FFUF_ENABLED': False,
@@ -761,6 +769,19 @@ ALLOWED_TOOL_IMAGES = frozenset(
     v for k, v in DEFAULT_SETTINGS.items()
     if k.endswith('_DOCKER_IMAGE') and isinstance(v, str) and v
 )
+
+
+def _env_int(name: str, default: int) -> int:
+    """A positive int from env, else the default. Never raises: a typo'd env var
+    must not abort a scan's settings load, it just keeps the shipped value."""
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        val = int(raw.strip())
+    except (TypeError, ValueError):
+        return default
+    return val if val > 0 else default
 
 
 def _operator_allowed_images() -> frozenset:
@@ -1143,6 +1164,10 @@ def fetch_project_settings(project_id: str, webapp_url: str) -> dict[str, Any]:
     settings['SUPPLY_CHAIN_RECON_ENABLED'] = project.get('supplyChainReconEnabled', DEFAULT_SETTINGS['SUPPLY_CHAIN_RECON_ENABLED'])
     settings['SUPPLY_CHAIN_RECON_ECOSYSTEMS'] = project.get('supplyChainReconEcosystems', DEFAULT_SETTINGS['SUPPLY_CHAIN_RECON_ECOSYSTEMS'])
     settings['SUPPLY_CHAIN_RECON_DEEP_ANALYSIS_ENABLED'] = project.get('supplyChainReconDeepAnalysisEnabled', DEFAULT_SETTINGS['SUPPLY_CHAIN_RECON_DEEP_ANALYSIS_ENABLED'])
+    # Not exposed in the UI (internal budgets): env override, else the default.
+    # They live in settings so apply_memory_governor can byte-budget them.
+    settings['SUPPLY_CHAIN_IMPORT_MAX_FILES'] = _env_int('SUPPLY_CHAIN_IMPORT_MAX_FILES', DEFAULT_SETTINGS['SUPPLY_CHAIN_IMPORT_MAX_FILES'])
+    settings['SUPPLY_CHAIN_IMPORT_MAX_BYTES'] = _env_int('SUPPLY_CHAIN_IMPORT_MAX_BYTES', DEFAULT_SETTINGS['SUPPLY_CHAIN_IMPORT_MAX_BYTES'])
     settings['JS_RECON_ENABLED'] = project.get('jsReconEnabled', DEFAULT_SETTINGS['JS_RECON_ENABLED'])
     settings['JS_RECON_MAX_FILES'] = project.get('jsReconMaxFiles', DEFAULT_SETTINGS['JS_RECON_MAX_FILES'])
     settings['JS_RECON_TIMEOUT'] = project.get('jsReconTimeout', DEFAULT_SETTINGS['JS_RECON_TIMEOUT'])
@@ -1612,6 +1637,11 @@ _GOV_BUDGET_KEYS = {
     'HAKRAWLER_MAX_URLS': ('url', 1000), 'ZAP_AJAX_SPIDER_MAX_URLS': ('url', 100),
     'ARJUN_MAX_ENDPOINTS': ('url', 100),
     'JS_RECON_MAX_FILES': ('js_file', 50), 'JSLUICE_MAX_FILES': ('js_file', 50),
+    'SUPPLY_CHAIN_IMPORT_MAX_FILES': ('js_file', 20),
+    # A byte cap, not a count: per-unit 1 makes scaled_cap treat the value as
+    # bytes directly. Floor 4 MB so import mining still sees a useful sample on
+    # a starved host instead of being throttled to nothing.
+    'SUPPLY_CHAIN_IMPORT_MAX_BYTES': ('byte', 4 * 1024 * 1024),
     'VHOST_SNI_MAX_CANDIDATES_PER_IP': ('vhost_candidate', 50),
     'URLSCAN_MAX_RESULTS': ('osint_result', 100), 'FOFA_MAX_RESULTS': ('osint_result', 100),
     'NETLAS_MAX_RESULTS': ('osint_result', 100), 'ZOOMEYE_MAX_RESULTS': ('osint_result', 100),

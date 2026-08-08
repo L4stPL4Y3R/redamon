@@ -25,6 +25,13 @@ _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 REQUEST_FIELDS = {"ecosystem", "name", "version"}
 RESULT_FIELDS = {"issues", "rules_fired", "errors", "error"}
+# The lane has a SECOND response shape: when the memory governor refuses to admit
+# the analyzer container, the orchestrator raises HTTPException(409, detail=<typed
+# limit payload>), which FastAPI serialises as {"detail": {...}} - not a
+# GuarddogResult. The agent must be able to read it to tell a TRANSIENT refusal
+# ("retry when a scan finishes") from a real failure, so `detail` is legitimate,
+# but only on the error branch (asserted below).
+ERROR_ENVELOPE_FIELDS = {"detail"}
 ECOSYSTEMS = {"npm", "pypi", "go", "crates", "rubygems", "github_action", "extension"}
 
 
@@ -81,6 +88,57 @@ class OrchestratorReturnContract(unittest.TestCase):
                 "{}".format(RESULT_FIELDS - keys))
 
 
+class RefusalPayloadContract(unittest.TestCase):
+    """The lane has a second response shape and it crosses the same three
+    services: the ledger builds the payload, FastAPI wraps it as {"detail": ...},
+    and the agent reads fields out of it to decide whether to retry. Nothing else
+    ties those names together, so a rename in AdmissionResult.payload() would
+    leave the agent silently reading None and reporting the wrong cause."""
+
+    def setUp(self):
+        self.ledger = _read("recon_orchestrator", "admission_ledger.py")
+        self.tool = _read("agentic", "supply_chain_tools.py")
+
+    def _payload_keys(self):
+        """Keys of the dict AdmissionResult.payload() returns, via AST."""
+        tree = ast.parse(self.ledger)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "payload":
+                ret = next(n for n in ast.walk(node)
+                           if isinstance(n, ast.Return) and isinstance(n.value, ast.Dict))
+                return {k.value for k in ret.value.keys if isinstance(k, ast.Constant)}
+        raise AssertionError("AdmissionResult.payload() not found")
+
+    def test_agent_only_reads_fields_the_ledger_actually_emits(self):
+        emitted = self._payload_keys()
+        # Fields the agent pulls off the nested limit dict.
+        read = set(re.findall(r"limit\.get\([\"'](\w+)[\"']", self.tool))
+        self.assertTrue(read, "agent reads no fields off the limit payload?")
+        self.assertTrue(read <= emitted,
+                        "agent reads limit fields the ledger never emits: "
+                        "{}".format(read - emitted))
+
+    def test_the_limit_type_values_the_agent_branches_on_are_real(self):
+        # The agent picks its wording from limitType; both values must exist.
+        for value in ("hard", "ram"):
+            self.assertIn('limit_type="{}"'.format(value), self.ledger,
+                          "agent branches on a limitType the ledger never sets")
+
+    def test_orchestrator_returns_the_payload_on_the_guarddog_route(self):
+        api = _read("recon_orchestrator", "api.py")
+        guarddog = api[api.find("def supply_chain_guarddog"):][:1200]
+        self.assertIn("_value_error_http", guarddog,
+                      "guarddog route does not map AdmissionError to the typed 409")
+        self.assertIn("e.result.payload()", api)
+
+    def test_webapp_passes_the_status_code_through(self):
+        route = _read("webapp", "src", "app", "api", "internal", "supply-chain",
+                      "guarddog", "route.ts")
+        self.assertIn("status: response.status", route,
+                      "webapp flattens the orchestrator status; a 409 would reach "
+                      "the agent as 200 and read as a result")
+
+
 class AgentToolContract(unittest.TestCase):
     def setUp(self):
         self.tool = _read("agentic", "supply_chain_tools.py")
@@ -94,10 +152,32 @@ class AgentToolContract(unittest.TestCase):
     def test_reads_only_result_fields_from_the_response(self):
         read = set(re.findall(r"data\.get\([\"'](\w+)[\"']", self.tool))
         self.assertTrue(read, "tool reads no fields?")
+        allowed = RESULT_FIELDS | ERROR_ENVELOPE_FIELDS
         self.assertTrue(
-            read <= RESULT_FIELDS,
-            "agent reads response keys the result model does not define: "
-            "{}".format(read - RESULT_FIELDS))
+            read <= allowed,
+            "agent reads response keys neither the result model nor the error "
+            "envelope defines: {}".format(read - allowed))
+
+    def test_error_envelope_is_read_only_on_the_refusal_branch(self):
+        """`detail` must not leak into the success path: there it would silently
+        read a key GuarddogResult does not define. Guarded by requiring the 409
+        status check to appear before any `detail` read."""
+        for field in ERROR_ENVELOPE_FIELDS:
+            idx = self.tool.find('data.get("{}")'.format(field))
+            if idx < 0:
+                continue
+            guard = self.tool.find("status_code == 409")
+            self.assertGreater(guard, -1, "no 409 branch guards the error envelope")
+            self.assertLess(guard, idx, "{} is read before the 409 check".format(field))
+
+    def test_refusal_is_surfaced_as_retryable(self):
+        """A memory refusal is TRANSIENT. Told only 'HTTP 409' an agent concludes
+        the tool is broken and stops using it; it must also be told the package
+        was NOT analysed, so a refusal never reads as a clean verdict."""
+        self.assertIn("status_code == 409", self.tool)
+        window = self.tool[self.tool.find("status_code == 409"):][:800]
+        self.assertRegex(window, r"(?i)retry")
+        self.assertRegex(window, r"(?i)not (be )?(analyzed|analysed)")
 
     def test_ecosystems_match(self):
         m = re.search(r"_ECOSYSTEMS\s*=\s*\{(.*?)\}", self.tool, re.S)

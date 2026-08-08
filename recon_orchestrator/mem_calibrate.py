@@ -43,6 +43,12 @@ TOOL_KEYS = {
     "naabu": "naabu", "httpx": "httpx", "katana": "katana", "nuclei": "nuclei",
     "gau": "gau", "hakrawler": "hakrawler", "puredns": "puredns",
     "uncover": "uncover", "subfinder": "subfinder", "amass": "amass",
+    # The DIRTY supply-chain analyzer is a sibling like any other tool, and the
+    # one whose envelope three different spawn paths depend on. Without this hint
+    # its figure could never be measured on a real host: a calibration run would
+    # sample it and then throw the number away for want of a key.
+    # Requires SUPPLY_CHAIN_RECON_ENABLED so it actually runs inside the window.
+    "supply-chain-analyzer": "supply_chain_analyzer",
 }
 
 # Conservative bytes-per-unit defaults (need in-pipeline instrumentation to

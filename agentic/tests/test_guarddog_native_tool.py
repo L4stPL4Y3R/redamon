@@ -205,6 +205,90 @@ class DispatchTests(unittest.TestCase):
         self.assertIn("Unsupported ecosystem", out)
 
 
+class AdmissionRefusalTests(unittest.TestCase):
+    """The memory governor now admits the analyzer container before spawning it,
+    so a saturated host answers 409 with a TYPED limit payload instead of a
+    result. FastAPI wraps HTTPException(detail=...) as {"detail": {...}}, which
+    is a different response shape from GuarddogResult - hence its own tests.
+
+    The failure mode being guarded is not a crash: it is an agent that reads
+    "HTTP 409" as "the tool is broken" and stops using it, or worse, reads a
+    refusal as a clean package. Every branch must say RETRY and NOT ANALYZED.
+    """
+
+    RAM_REFUSAL = {"detail": {
+        "admitted": False, "limitType": "ram", "resource": "scan",
+        "current": 1234, "ceiling": 5678, "settingName": None,
+        "detail": "host memory critically low"}}
+    HARD_REFUSAL = {"detail": {
+        "admitted": False, "limitType": "hard", "resource": "scan",
+        "current": 30, "ceiling": 30,
+        "settingName": "RECON_MAX_CONCURRENT_GLOBAL",
+        "detail": "30 of 30 concurrent scans allowed"}}
+
+    def _refuse(self, payload):
+        client = _FakeClient(_FakeResp(409, payload))
+        with patch.object(sct.httpx, "AsyncClient", return_value=client):
+            return _invoke("npm event-stream")
+
+    def test_ram_refusal_is_marked_retryable(self):
+        out = self._refuse(self.RAM_REFUSAL)
+        self.assertIn("[ERROR]", out)
+        self.assertIn("TEMPORARY", out)
+        self.assertIn("retry", out.lower())
+        self.assertIn("low on memory", out)
+
+    def test_refusal_never_reads_as_a_clean_package(self):
+        # The exact false-clean class the soft_error design exists to prevent.
+        out = self._refuse(self.RAM_REFUSAL)
+        self.assertIn("NOT analyzed", out)
+        self.assertNotIn("issues: 0", out)
+        self.assertNotIn("[DATA]", out)
+
+    def test_count_cap_is_not_reported_as_a_memory_problem(self):
+        """A 'hard' refusal is an operator-set concurrency ceiling, not memory.
+        Calling it 'no free memory' sends whoever reads the transcript after the
+        wrong problem, and the fix (raise the setting) is completely different."""
+        out = self._refuse(self.HARD_REFUSAL)
+        self.assertIn("concurrency limit", out)
+        self.assertIn("RECON_MAX_CONCURRENT_GLOBAL", out)
+        self.assertNotIn("low on memory", out)
+
+    def test_underlying_detail_is_passed_through(self):
+        self.assertIn("host memory critically low", self._refuse(self.RAM_REFUSAL))
+        self.assertIn("30 of 30 concurrent scans", self._refuse(self.HARD_REFUSAL))
+
+    def test_malformed_409_payloads_still_produce_a_retryable_message(self):
+        # A hostile or refactored hop could send any of these; none may crash the
+        # tool or degrade into a clean-looking result.
+        for payload in ({"detail": "just a string"}, {"detail": None}, {},
+                        {"detail": []}, {"detail": {"limitType": None}}):
+            out = self._refuse(payload)
+            self.assertIn("[ERROR]", out, payload)
+            self.assertIn("TEMPORARY", out, payload)
+            self.assertIn("NOT analyzed", out, payload)
+
+    def test_a_409_does_not_fall_through_to_the_generic_error_branch(self):
+        # Before the typed branch this rendered as a bare "guarddog HTTP 409".
+        self.assertNotIn("guarddog HTTP 409", self._refuse(self.RAM_REFUSAL))
+
+    def test_other_4xx_still_use_the_generic_branch(self):
+        client = _FakeClient(_FakeResp(503, {"error": "Service not initialized"}))
+        with patch.object(sct.httpx, "AsyncClient", return_value=client):
+            out = _invoke("npm lodash")
+        self.assertIn("Service not initialized", out)
+        self.assertNotIn("TEMPORARY", out)
+
+    def test_success_path_is_untouched_by_the_new_branch(self):
+        client = _FakeClient(_FakeResp(200, {"issues": 0, "rules_fired": [],
+                                             "errors": [], "error": None}))
+        with patch.object(sct.httpx, "AsyncClient", return_value=client):
+            out = _invoke("npm lodash")
+        self.assertIn("[DATA]", out)
+        self.assertIn("issues: 0", out)
+        self.assertNotIn("TEMPORARY", out)
+
+
 class RegistrationTests(unittest.TestCase):
     def test_builder_exposes_the_tool(self):
         self.assertIn("execute_guarddog", sct.build_supply_chain_tools())

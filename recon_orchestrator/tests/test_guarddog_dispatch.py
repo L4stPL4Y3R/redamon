@@ -26,8 +26,11 @@ def _mgr(client):
     m.supply_chain_analyzer_mem = "1500m"
     m.supply_chain_analyzer_nanocpus = 2_000_000_000
     m.supply_chain_analyzer_pids = 512
-    # Neutralise helpers that read the governor / network.
+    # Neutralise helpers that read the governor / network. The analyzer is sized
+    # from the TOOL envelope (see tests.test_supply_chain_admission); stubbed
+    # here so these input-gate tests stay independent of host RAM.
     m._container_mem_limit = lambda *_a, **_k: None
+    m._tool_container_mem_limit = lambda *_a, **_k: None
     m._container_cpu_limit = lambda *_a, **_k: None
     m._ensure_supply_chain_network = lambda: None
     return m

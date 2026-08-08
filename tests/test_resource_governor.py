@@ -300,7 +300,8 @@ class TestScanJobEnvelopes(GovernorTestBase):
     so each type now carries its own figure in three places that must not drift."""
 
     SCAN_TYPES = ("full_recon", "partial_recon", "ai_attack", "gvm",
-                  "github_hunt", "trufflehog")
+                  "github_hunt", "trufflehog", "supply_chain",
+                  "partial_recon:SupplyChainRecon")
 
     def test_every_scan_type_has_its_own_fallback(self):
         env = g._FALLBACK_PROFILE["scan_job_envelope_bytes"]
@@ -329,6 +330,83 @@ class TestScanJobEnvelopes(GovernorTestBase):
             shipped = json.load(fh)
         self.assertEqual(shipped["scan_job_envelope_bytes"],
                          g._FALLBACK_PROFILE["scan_job_envelope_bytes"])
+        # Same contract for the SIBLING-tool table: the dirty supply-chain
+        # analyzer is sized from it on all three of its spawn paths.
+        self.assertEqual(shipped["tool_container_envelope_bytes"],
+                         g._FALLBACK_PROFILE["tool_container_envelope_bytes"])
+
+    def test_supply_chain_covers_its_analyzer_sibling(self):
+        """The L1 scan dispatches the dirty analyzer, so its envelope must be
+        larger than the analyzer alone. The original 900 MB was SMALLER, which
+        meant a deep L1 scan reserved less than one of its own containers."""
+        env = g._FALLBACK_PROFILE["scan_job_envelope_bytes"]
+        analyzer = g.tool_container_envelope("supply_chain_analyzer")
+        self.assertGreater(env["supply_chain"], analyzer)
+        self.assertGreater(env["partial_recon:SupplyChainRecon"], analyzer)
+
+    def test_supply_chain_partial_costs_more_than_a_plain_partial(self):
+        # It re-runs the JS fetch AND spawns the analyzer; charging it the
+        # generic single-step envelope under-reserved it by ~3x.
+        self.assertGreater(g.scan_job_envelope("partial_recon:SupplyChainRecon"),
+                           g.scan_job_envelope("partial_recon"))
+
+    def test_unknown_tool_falls_back_to_its_base_kind_not_default(self):
+        """A tool-qualified key with no entry must inherit its FAMILY's envelope.
+        Falling through to _default would silently promote every ordinary partial
+        from 768 MB to the 2 GB unknown-type figure and starve small hosts."""
+        self.assertEqual(g.scan_job_envelope("partial_recon:Naabu"),
+                         g.scan_job_envelope("partial_recon"))
+        self.assertNotEqual(g.scan_job_envelope("partial_recon:Naabu"),
+                            g._FALLBACK_PROFILE["scan_job_envelope_bytes"]["_default"])
+
+    def test_qualified_envelope_is_floored_at_its_base_kind(self):
+        """REGRESSION. A tool-qualified job is its base kind PLUS extra work, so it
+        can never legitimately reserve less. Calibration raises measured envelopes,
+        and once a measured `partial_recon` exceeded the shipped
+        `partial_recon:SupplyChainRecon`, the heavier job reserved LESS than the
+        lighter one - an under-reservation visible only on calibrated hosts."""
+        import json
+        import tempfile
+        fh = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+        json.dump({"scan_job_envelope_bytes": {"partial_recon": 3 * GB}}, fh)
+        fh.close()
+        self.addCleanup(os.unlink, fh.name)
+        os.environ["RESOURCE_PROFILE_PATH"] = fh.name
+        g.reset_profile_cache()
+        self.assertGreaterEqual(g.scan_job_envelope("partial_recon:SupplyChainRecon"),
+                                g.scan_job_envelope("partial_recon"))
+
+    def test_qualified_envelope_still_wins_when_it_is_larger(self):
+        # The floor must not flatten a genuinely larger qualified value onto base.
+        self.assertGreater(g.scan_job_envelope("partial_recon:SupplyChainRecon"),
+                           g.scan_job_envelope("partial_recon"))
+
+    def test_a_measured_qualified_value_is_honoured(self):
+        import json
+        import tempfile
+        fh = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+        json.dump({"scan_job_envelope_bytes":
+                   {"partial_recon:SupplyChainRecon": 3 * GB}}, fh)
+        fh.close()
+        self.addCleanup(os.unlink, fh.name)
+        os.environ["RESOURCE_PROFILE_PATH"] = fh.name
+        g.reset_profile_cache()
+        self.assertEqual(g.scan_job_envelope("partial_recon:SupplyChainRecon"), 3 * GB)
+
+    def test_qualified_key_with_extra_colons_uses_the_first_segment(self):
+        # tool_id is caller-supplied; a colon in it must not derail the base lookup.
+        self.assertEqual(g.scan_job_envelope("partial_recon:Weird:Tool:v2"),
+                         g.scan_job_envelope("partial_recon"))
+
+    def test_unknown_base_kind_still_reaches_default(self):
+        self.assertEqual(g.scan_job_envelope("not_a_kind:SomeTool"),
+                         g._FALLBACK_PROFILE["scan_job_envelope_bytes"]["_default"])
+
+    def test_byte_family_is_identity(self):
+        """SUPPLY_CHAIN_IMPORT_MAX_BYTES is already in bytes. Without an explicit
+        'byte' family it would hit the 1024 default and be budgeted as if each
+        byte cost a kilobyte, throttling a 64 MB cap to nothing."""
+        self.assertEqual(g.bytes_per_unit("byte"), 1)
 
     def test_module_under_test_is_the_graph_db_copy(self):
         # Guards the fix above: if sys.modules ordering ever hijacks this module
@@ -345,6 +423,87 @@ class TestScanJobEnvelopes(GovernorTestBase):
         # The whole fallback table, not just the envelopes: the copies must not
         # diverge on bytes_per_unit or the agent/session envelopes either.
         self.assertEqual(orch._FALLBACK_PROFILE, g._FALLBACK_PROFILE)
+
+
+class TestContainerCap(GovernorTestBase):
+    """container_cap(): the hard per-container mem_limit derived from an envelope.
+
+    It lives in the governor rather than in container_manager because THREE
+    processes spawn capped containers and only one of them can import the
+    orchestrator. When the clamp lived only there, supply_chain_common hardcoded
+    a "1500m" literal that never shrank under pressure.
+    """
+
+    def setUp(self):
+        super().setUp()
+        for k in ("CONTAINER_CAP_HEADROOM", "PER_CONTAINER_MAX"):
+            os.environ.pop(k, None)
+
+    tearDown_env = ("CONTAINER_CAP_HEADROOM", "PER_CONTAINER_MAX")
+
+    def tearDown(self):
+        for k in self.tearDown_env:
+            os.environ.pop(k, None)
+        super().tearDown()
+
+    def test_applies_headroom_over_the_envelope(self):
+        g.set_mem_override(64 * GB, 32 * GB)   # PER_CONTAINER_MAX ~35 GB, no clamp
+        self.assertEqual(g.container_cap(1 * GB), int(1 * GB * 1.5))
+
+    def test_headroom_is_configurable(self):
+        g.set_mem_override(64 * GB, 32 * GB)
+        os.environ["CONTAINER_CAP_HEADROOM"] = "2.0"
+        self.assertEqual(g.container_cap(1 * GB), 2 * GB)
+
+    def test_headroom_below_one_is_ignored(self):
+        # A cap BELOW the expected peak would OOM-kill every normal run.
+        g.set_mem_override(64 * GB, 32 * GB)
+        os.environ["CONTAINER_CAP_HEADROOM"] = "0.5"
+        self.assertEqual(g.container_cap(1 * GB), 1 * GB)
+
+    def test_clamped_by_per_container_max(self):
+        # Ceiling sits between the envelope and envelope x headroom, so it bites.
+        g.set_mem_override(64 * GB, 32 * GB)
+        os.environ["PER_CONTAINER_MAX"] = "1200m"
+        self.assertEqual(g.container_cap(1 * GB), 1200 * 1024 ** 2)
+
+    def test_never_sized_below_the_envelope(self):
+        # Even an absurdly low PER_CONTAINER_MAX must not produce a cap under the
+        # expected peak: admission would already have refused such a host, and a
+        # too-tight cap turns a normal run into an exit-137 mystery.
+        g.set_mem_override(64 * GB, 32 * GB)
+        os.environ["PER_CONTAINER_MAX"] = "100m"
+        self.assertEqual(g.container_cap(3 * GB), 3 * GB)
+
+    def test_floors_at_512mb(self):
+        g.set_mem_override(64 * GB, 32 * GB)
+        self.assertEqual(g.container_cap(1024), 512 * 1024 ** 2)
+
+    def test_fails_open_when_governor_disabled(self):
+        os.environ["REDAMON_MEM_GOVERNOR"] = "off"
+        self.assertIsNone(g.container_cap(1 * GB))
+
+    def test_none_for_unusable_envelope(self):
+        g.set_mem_override(64 * GB, 32 * GB)
+        self.assertIsNone(g.container_cap(0))
+        self.assertIsNone(g.container_cap(-1))
+
+    def test_analyzer_cap_reproduces_the_literal_it_replaced(self):
+        """The hardcoded value was 1500m. The envelope (1 GB) x headroom (1.5)
+        must land in the same neighbourhood, or swapping the literal for the
+        governor would silently re-size a security-sensitive sandbox."""
+        g.set_mem_override(64 * GB, 32 * GB)
+        cap = g.container_cap(g.tool_container_envelope("supply_chain_analyzer"))
+        self.assertGreaterEqual(cap, 1_500_000_000)
+        self.assertLess(cap, 2 * GB)
+
+    def test_shrinks_on_a_starved_host(self):
+        """The whole point of routing the analyzer through the governor: on a
+        small host PER_CONTAINER_MAX (55% of total) pulls the cap down, which the
+        fixed literal never did."""
+        g.set_mem_override(2 * GB, 512 * 1024 ** 2)
+        cap = g.container_cap(g.tool_container_envelope("supply_chain_analyzer"))
+        self.assertLess(cap, 1_500_000_000)
 
 
 class TestProfileLayering(GovernorTestBase):

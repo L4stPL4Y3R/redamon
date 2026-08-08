@@ -352,18 +352,42 @@ _FALLBACK_PROFILE = {
         "js_file": 65536,
         "osint_result": 1024,
         "vhost_candidate": 256,
+        # Identity family for knobs that are ALREADY expressed in bytes (e.g.
+        # SUPPLY_CHAIN_IMPORT_MAX_BYTES). Without it those keys would fall to
+        # the 1024 default and be budgeted as if each byte cost a kilobyte.
+        "byte": 1,
     },
     "tool_container_envelope_bytes": {
+        # The DIRTY supply-chain analyzer is a real, heavy SIBLING container (it
+        # unpacks registry tarballs and runs semgrep/YARA), not an in-process
+        # step. It is spawned from THREE places (orchestrator SDK, recon via the
+        # broker socket, L1 scan via the broker socket), so its size lives here
+        # rather than being hardcoded per call site — that is how the two dispatch
+        # paths silently drifted (one governed, one a fixed "1500m" literal).
+        #
+        # 1 GB is the EXPECTED PEAK, not the ceiling: container_cap() multiplies
+        # it by CONTAINER_CAP_HEADROOM (1.5) to 1.5 GB, reproducing the literal
+        # this replaced. Envelopes are peaks; caps are peaks x headroom.
+        "supply_chain_analyzer": 1_073_741_824,
         "_default": 1_500_000_000,
     },
     "scan_job_envelope_bytes": {
         "full_recon": 2_147_483_648,      # 2 GB   container + a dozen sibling tools
         "partial_recon": 805_306_368,     # 768 MB one step, few or no siblings
+        # A supply-chain PARTIAL is not a cheap single step: it re-runs the JS
+        # fetch AND spawns the dirty analyzer (retire.js always, GuardDog when
+        # deep analysis is on). Charging it the generic 768 MB under-reserved it
+        # by ~3x. Keyed "<kind>:<tool_id>" so only this tool pays; every other
+        # partial keeps the cheap envelope and small hosts stay admittable.
+        "partial_recon:SupplyChainRecon": 1_879_048_192,  # 1.75 GB step + analyzer
         "ai_attack": 1_073_741_824,       # 1 GB   probe workers (the local LLM is separate)
         "gvm": 2_684_354_560,             # 2.5 GB openvas is the heaviest scanner
         "github_hunt": 805_306_368,       # 768 MB clone + regex sweep
         "trufflehog": 805_306_368,        # 768 MB clone + verifier sweep
-        "supply_chain": 943_718_400,      # 900 MB clean writer + dirty analyzer sibling
+        # 1.75 GB = clean writer + the dirty analyzer sibling it dispatches for
+        # GuardDog deep analysis. The former 900 MB predated L1 deep analysis and
+        # was smaller than the analyzer alone, so a deep L1 scan under-reserved.
+        "supply_chain": 1_879_048_192,
         "_default": 2_147_483_648,        # 2 GB   unknown type: assume full-pipeline size
     },
     "agent_session_envelope_bytes": 512_000_000,
@@ -494,9 +518,62 @@ def tool_container_envelope(tool: str) -> int:
 
 
 def scan_job_envelope(scan_type: str) -> int:
+    """Expected peak RAM of one scan job of this type.
+
+    `scan_type` may be a plain kind ("full_recon") or a tool-qualified key
+    ("partial_recon:SupplyChainRecon"). A qualified key falls back to its BASE
+    kind before _default, so a tool with no entry of its own keeps its family's
+    cheap envelope instead of jumping to the 2 GB unknown-type figure.
+
+    A qualified envelope is also FLOORED at its base kind, because a qualified
+    job is definitionally its base kind PLUS extra work: a supply-chain partial
+    is a partial recon that additionally spawns the analyzer. Without the floor,
+    a calibration run that measured `partial_recon` higher than the shipped
+    `partial_recon:SupplyChainRecon` would make the heavier job reserve LESS than
+    the lighter one - an under-reservation that only appears on calibrated hosts.
+    """
     d = _profile_map("scan_job_envelope_bytes")
-    return _first_bytes(d.get(scan_type), d.get("_default"),
-                        _FALLBACK_PROFILE["scan_job_envelope_bytes"]["_default"])
+    fallback_default = _FALLBACK_PROFILE["scan_job_envelope_bytes"]["_default"]
+    if ":" not in scan_type:
+        return _first_bytes(d.get(scan_type), d.get("_default"), fallback_default)
+
+    base_kind = scan_type.split(":", 1)[0]
+    base = _first_bytes(d.get(base_kind), d.get("_default"), fallback_default)
+    qualified = _profile_bytes(d.get(scan_type))
+    return max(qualified, base) if qualified else base
+
+
+def container_cap(envelope_bytes: int) -> Optional[int]:
+    """Hard per-container memory ceiling (bytes) derived from an envelope.
+
+    `envelope x CONTAINER_CAP_HEADROOM`, clamped to PER_CONTAINER_MAX (so one
+    container can never take the whole host and starve the DB) and floored at
+    the envelope itself (so a NORMAL peak is never OOM-killed; the cap exists to
+    contain a runaway, not to enforce the estimate).
+
+    Lives here, not in the orchestrator, because THREE processes spawn capped
+    containers: the orchestrator (Docker SDK), the recon container and the L1
+    scan container (both shell out through the broker socket). When the clamp
+    lived only in container_manager the other two hardcoded a literal instead,
+    and the "identical hardening either way" contract quietly broke.
+
+    Returns None (no limit) when the governor is disabled or the envelope is
+    unusable — same fail-open contract as the rest of the module.
+    """
+    if not governor_enabled():
+        return None
+    if not envelope_bytes or envelope_bytes <= 0:
+        return None
+    headroom = _env_float("CONTAINER_CAP_HEADROOM", 1.5)
+    if headroom < 1.0:
+        headroom = 1.0
+    cap = int(envelope_bytes * headroom)
+    per_max = env_bytes("PER_CONTAINER_MAX", None)
+    if per_max is None:
+        mem = read_mem()
+        per_max = int(mem[0] * 0.55) if mem else cap
+    cap = min(cap, per_max)
+    return max(512 * 1024 ** 2, envelope_bytes, cap)
 
 
 def envelope(key: str) -> int:

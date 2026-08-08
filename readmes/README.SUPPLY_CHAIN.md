@@ -22,6 +22,7 @@ of RedAmon.
 - [Graph model](#graph-model)
 - [The Supply-Chain SCA table](#the-supply-chain-sca-table)
 - [Container topology](#container-topology)
+- [Memory accounting](#memory-accounting)
 - [Integration with RedAmon components](#integration-with-redamon-components)
 - [v1 scope and v2 roadmap](#v1-scope-and-v2-roadmap)
 - [Key files](#key-files)
@@ -32,7 +33,7 @@ of RedAmon.
 
 | Layer | Name | What it is | Where it runs | Writes graph nodes? |
 |---|---|---|---|---|
-| **L3** | Agent tools | On-demand MCP tools the AI agent calls mid-engagement | `kali-sandbox` (+ dispatch to the analyzer) | No - returns text to the agent |
+| **L3** | Agent tools | On-demand tools the AI agent calls mid-engagement | `kali-sandbox` (OSV) + `recon-orchestrator` -> analyzer (GuardDog) | No - returns text to the agent |
 | **L1** | Supply-Chain Scan | Standalone audit of an uploaded SBOM / lockfile | `redamon-supply-chain-PID` (spawned) | Yes - `Package`, `MalPackageFinding` |
 | **L2** | Supply-Chain Recon | Black-box harvest of a live target's served packages | `redamon-recon-PID` (recon GROUP 5.5) | Yes - `Package`, `MalPackageFinding` |
 
@@ -85,14 +86,15 @@ flowchart TB
     end
 
     subgraph L3Z[L3 agent tools]
-      KALI[kali-sandbox - execute_osv_scanner / execute_guarddog]
+      KALI[kali-sandbox - execute_osv_scanner only]
     end
 
     UI -->|start scan / upload SBOM| ORCH
-    AG -->|MCP tool call| KALI
+    AG -->|MCP tool call - passive OSV| KALI
+    AG -->|execute_guarddog via webapp passthrough| ORCH
     ORCH -->|spawn, hardened| L1C
     ORCH -->|spawn per scan| RECON
-    KALI -->|docker run, hardened| ANALYZER
+    ORCH -->|docker run, hardened + admitted| ANALYZER
 
     L1C -->|osv --offline| OSVDB
     RECON -->|osv --offline| OSVDB
@@ -103,8 +105,13 @@ flowchart TB
     RECON -->|MERGE nodes| NEO
 
     ORCH -.spawn via.-> BROKER
-    KALI -.spawn via.-> BROKER
+    L1C -.analyzer jobs via.-> BROKER
+    RECON -.analyzer jobs via.-> BROKER
 ```
+
+Kali holds **no Docker socket**: it is the least-trusted, target-facing worker, so
+the one L3 tool that spawns a container (`execute_guarddog`) goes through the
+orchestrator instead. See [Layer L3](#layer-l3--agent-tools).
 
 The **shared engine** (`supply_chain_common/`) is a pure-Python package of runners
 and parsers mounted read-only into every CLEAN/DIRTY container the same way
@@ -161,7 +168,7 @@ scan-spawn path**, TTL-guarded:
 | Full recon (`start_recon`) | Yes - the L2 module runs in GROUP 5.5 |
 | Partial recon | Only for `tool_id == SupplyChainRecon` |
 | L1 Supply-Chain scan (`start_supply_chain`) | Yes |
-| L3 agent tools | No - `kali-sandbox` is deliberately off the orchestrator network; it rides the L1/L2 refreshes |
+| L3 agent tools | No - `execute_osv_scanner` runs in `kali-sandbox`, deliberately off the orchestrator network, so it rides the L1/L2 refreshes. `execute_guarddog` is behavioural and does not read the OSV DB at all. |
 
 Semantics:
 
@@ -297,15 +304,23 @@ image is denied.
 
 ## Layer L3 - Agent tools
 
-Two MCP tools the AI agent calls mid-engagement, exposed on the existing
-`network_recon` MCP server inside `kali-sandbox`. **L3 writes no graph nodes** -
-it returns compact text summaries the agent reasons over (framed as data, never
+Two tools the AI agent calls mid-engagement. **L3 writes no graph nodes** - it
+returns compact text summaries the agent reasons over (framed as data, never
 instructions).
+
+They run in **two different lanes**, split by trust, not by convenience:
+
+| Tool | Lane | Why |
+|---|---|---|
+| `execute_osv_scanner` | Kali MCP (`network_recon_server.py`) | Passive, fully offline, reads a read-only DB. Nothing dangerous to isolate. |
+| `execute_guarddog` | Agent -> webapp -> **orchestrator** (`agentic/supply_chain_tools.py`) | Downloads an attacker-authored tarball, so it must run in the hardened analyzer image, and only the orchestrator holds the Docker socket. |
 
 ```mermaid
 sequenceDiagram
     participant AG as AI Agent
     participant KALI as kali-sandbox (MCP)
+    participant WEB as webapp (internal passthrough)
+    participant ORCH as recon-orchestrator (holds Docker socket)
     participant OSVDB as redamon-osv-db (ro)
     participant AN as supply-chain-analyzer (hardened)
 
@@ -315,28 +330,33 @@ sequenceDiagram
     OSVDB-->>KALI: JSON (MAL- / CVE- ids)
     KALI-->>AG: "[DATA] MALICIOUS: lodash -> MAL-..." (compact summary)
 
-    AG->>KALI: execute_guarddog("npm event-stream")
-    KALI->>AN: docker run --cap-drop ALL --read-only guarddog npm scan event-stream
+    AG->>WEB: execute_guarddog("npm event-stream") + X-Internal-Key
+    WEB->>ORCH: POST /supply-chain/guarddog (orchestrator key)
+    ORCH->>ORCH: ledger admission (analyzer envelope) or typed 409
+    ORCH->>AN: docker run --cap-drop ALL --read-only guarddog npm scan
     AN->>AN: download tarball + static semgrep/YARA analysis
-    AN-->>KALI: JSON (issues, rules fired)
-    KALI-->>AG: "[DATA] guarddog: issues=2, rules: npm-install-script, ..."
+    AN-->>ORCH: JSON (issues, rules fired)
+    ORCH-->>AG: "[DATA] guarddog: issues=2, rules: npm-install-script, ..."
 ```
 
 - **`execute_osv_scanner`** - passive, fully offline. Accepts a purl (synthesized
   into a one-component CycloneDX SBOM), a workspace lockfile path, or an SBOM
   path. Reads `redamon-osv-db`, zero egress. `MAL-` = terminal malicious verdict;
-  `CVE-`/`GHSA-` = known-vulnerable.
-- **`execute_guarddog`** - DANGEROUS (downloads an attacker-authored tarball). It
-  does **not** unpack inline in kali (kali is `seccomp:unconfined` + `NET_RAW`);
-  it dispatches to the hardened analyzer image via `docker run` with
-  `cap_drop=ALL`, `read_only`, resource caps. A hit is `suspicious`, never a
-  terminal verdict.
+  `CVE-`/`GHSA-` = known-vulnerable. Parsing is inline in
+  `network_recon_server.py` (kali is a separate image that does not import
+  `supply_chain_common`).
+- **`execute_guarddog`** - DANGEROUS (downloads an attacker-authored tarball).
+  Kali never touches Docker: kali is the least-trusted, target-facing worker
+  (`seccomp:unconfined` + `NET_RAW`), so handing it a socket would be the wrong
+  trust boundary. The agent reaches the orchestrator through the webapp's
+  internal passthrough (only the webapp holds `ORCHESTRATOR_API_KEY`), and the
+  orchestrator spawns the analyzer with `cap_drop=ALL`, `read_only` and governed
+  resource caps. A hit is `suspicious`, never a terminal verdict. A memory
+  refusal comes back as an explicitly **retryable** 409, never as a clean result.
 
 Registered in `agentic/prompts/tool_registry.py`; phase-gated in
 `agentic/project_settings.py` (`execute_osv_scanner` -> all phases;
 `execute_guarddog` -> informational + exploitation, and in `DANGEROUS_TOOLS`).
-The `network_recon_server.py` parsing is inline (kali is a separate image that
-does not import `supply_chain_common`).
 
 **Node generation:** none. L3 is a read-only intelligence lookup for the agent.
 
@@ -360,7 +380,7 @@ sequenceDiagram
     UI->>WEBROUTE: upload SBOM (-> supply_chain_uploads volume)
     UI->>WEBROUTE: POST start
     WEBROUTE->>ORCH: POST /supply-chain/PID/start
-    ORCH->>ORCH: _admit_scan (memory governor, 900 MB envelope)
+    ORCH->>ORCH: _admit_scan (memory governor, 1.75 GB envelope)
     ORCH->>SCAN: spawn (network=host, Neo4j creds, mounts uploads/osv-db/graph_db/sc_common)
     SCAN->>WEBROUTE: GET /api/projects/PID (X-Internal-Key: SCANNER_API_KEY)
     SCAN->>SCAN: resolve_input_path (basename-only, ext allowlist)
@@ -644,12 +664,56 @@ no rebuild) into recon / scan / analyzer at spawn.
 
 ---
 
+## Memory accounting
+
+Supply-chain is the only RedAmon feature that spawns a **second heavy container per
+job**: the dirty analyzer. That makes it the one place where "the scan container's
+`mem_limit` covers it" is false, so it needs its own accounting in the
+[memory governor](README.MEMORY_GOVERNOR.md).
+
+| Unit | Envelope (booked) | Hard cap (`mem_limit`) | Booked by |
+|---|---|---|---|
+| L1 scan (`supply_chain`) | 1.75 GB | envelope x 1.5 | `_admit_scan("supply_chain", …)` |
+| Supply-chain partial (`partial_recon:SupplyChainRecon`) | 1.75 GB | envelope x 1.5 | `_admit_scan(_partial_kind(tool_id), …)` |
+| L2 inside full recon | rides `full_recon` (2 GB) | recon's cap | the parent scan |
+| Dirty analyzer (`supply_chain_analyzer`, **tool** envelope) | 1 GB | ~1.5 GB | L3 only (see below) |
+
+Three things are worth knowing:
+
+- **The analyzer is a tool, not a scan.** It is sized from
+  `tool_container_envelope_bytes["supply_chain_analyzer"]`, not from whichever scan
+  dispatched it. It used to be capped by the L1 scan's envelope, which made no sense for
+  an L3 call that has no L1 scan anywhere near it. The envelope is the *expected peak*
+  (1 GB); `container_cap()` applies the 1.5x headroom to reach the ceiling.
+- **All three spawn paths resolve the same number.** The orchestrator uses the Docker
+  SDK; the recon and L1 containers shell out through the broker socket. Only the first
+  could reach `container_manager`, so the other two hardcoded `1500m` and never shrank
+  under memory pressure. `supply_chain_common/analyzer_dispatch.py` now resolves
+  `--memory` from the governor for every caller, falling back to the literal when the
+  governor is unreachable (the analyzer image has no `graph_db`). Precedence is
+  `SUPPLY_CHAIN_ANALYZER_MEM` > governor > literal, **read at call time**, identical on
+  both sides; an override larger than the tool envelope also raises what L3 admission
+  reserves, so the ledger never promises less than the container is allowed to use.
+- **L3 books a reservation.** `execute_guarddog` spawns a real container, so the
+  orchestrator admits it against the ledger before spawning and releases in a `finally`.
+  A full host returns a typed 409, which the agent tool renders as an explicitly
+  **retryable** condition carrying "the package was NOT analyzed" - a refusal must never
+  read as a clean verdict, the same false-clean class as `soft_error`.
+
+The L2 import-mining caps (`SUPPLY_CHAIN_IMPORT_MAX_FILES` / `_MAX_BYTES`) are genuine
+in-memory accumulators and are byte-budgeted by `apply_memory_governor`. They live in
+`recon/project_settings.py`, not as module-level `os.environ` reads, because the governor
+only walks the settings dict. `SUPPLY_CHAIN_DEEP_MAX_PACKAGES` is deliberately **not**
+budgeted: GuardDog runs the packages sequentially, so that knob bounds wall-clock, not RAM.
+
+---
+
 ## Integration with RedAmon components
 
 | RedAmon component | How supply-chain integrates |
 |---|---|
-| **recon-orchestrator** | Owns the L1 + L2 + analyzer lifecycle via the Docker SDK; `_active_scan_keys` + `_admit_scan` account for the 900 MB envelope; `cleanup()` and `refresh_all_scan_states()` sweep supply-chain so containers and reservations never leak. |
-| **Memory governor** | `scan_job_envelope_bytes["supply_chain"] = 900 MB` in both the fallback profile and the shipped `resource_profile.default.json`; `_container_mem_limit("supply_chain")` resolves the cap. |
+| **recon-orchestrator** | Owns the L1 + L2 + analyzer lifecycle via the Docker SDK; `_active_scan_keys` + `_admit_scan` account for the 1.75 GB envelope (and for in-flight L3 GuardDog jobs); `cleanup()` and `refresh_all_scan_states()` sweep supply-chain so containers and reservations never leak. |
+| **Memory governor** | Fully accounted, see [Memory accounting](#memory-accounting): per-scan envelopes for L1 and the supply-chain partial, a `supply_chain_analyzer` **tool** envelope shared by all three analyzer spawn paths, ledger admission for L3 GuardDog, and byte-budgeted import-mining caps. Details in [README.MEMORY_GOVERNOR.md](README.MEMORY_GOVERNOR.md). |
 | **docker-broker** | The two images + the `redamon-osv-db` volume are allowlisted; a look-alike image is denied. |
 | **Neo4j / graph_db** | `SupplyChainMixin` is added to `Neo4jClient`; two `CREATE CONSTRAINT`s in `graph_db/schema.py`. The agent's `query_graph` sees `Package` / `MalPackageFinding` like any other node. |
 | **Webapp** | Prisma fields (`supplyChain*`, `supplyChainRecon*`); `/api/supply-chain/[projectId]/*` proxy routes + SBOM upload; `useSupplyChainStatus` / `useSupplyChainSSE` hooks; a Supply Chain card in the Other Scans modal (with a logs drawer) and a Supply Chain settings section. |
@@ -696,16 +760,20 @@ only an OSV `MAL-` id is.
 > caps, no secrets) — a stronger boundary than GuardDog's in-process one, and
 > the reason the dirty analyzer exists. Never run `guarddog` outside that image.
 
+**Also shipped since the list below was written:**
+
+- **L1 GitHub-repo input** (`SUPPLY_CHAIN_REPO_URL` + `supply_chain_scan/repo_clone.py`,
+  anchored to `GithubRepository`).
+- **GuardDog in L1** (`supply_chain_scan/deep_analysis.py`): the scan container now does
+  get the **broker** socket and `DOCKER_HOST`, the same narrow privilege recon already
+  had, so it can dispatch to the dirty analyzer without a raw Docker socket.
+- **GuardDog from L3 in practice**: it no longer runs from `kali-sandbox` at all. The
+  agent calls the orchestrator (`POST /supply-chain/guarddog`), which holds the Docker
+  socket, so the least-trusted target-facing worker never touches Docker. See the
+  trust-boundary section of [README.TM.SYSTEM_OVERVIEW.md](README.TM.SYSTEM_OVERVIEW.md).
+
 **Deferred to v2:**
 
-- L1 **GitHub-repo** input (clone in the DIRTY analyzer, anchor to `GithubRepository`).
-- **GuardDog in L1**: the standalone scan container is spawned with no broker
-  socket and no `DOCKER_HOST`, so it cannot dispatch. Wiring it means granting
-  Docker access to a container that holds the Neo4j creds — a deliberate
-  decision, not an oversight.
-- **GuardDog from L3 in practice**: `execute_guarddog` is correct, but
-  `kali-sandbox` is mounted with no Docker socket at all, so the dispatch
-  returns "docker not available". Needs the broker socket to be useful.
 - Non-`MAL` OSV ids (`CVE`/`GHSA`) routed to the existing CVE node path.
 
 ---
@@ -714,6 +782,7 @@ only an OSV `MAL-` id is.
 
 ```
 supply_chain_common/        # shared engine: runners, parsers, security, artifact, db sync
+supply_chain_common/analyzer_dispatch.py         # ONE hardened argv for all 3 analyzer spawners
 supply_chain_analyzer/      # DIRTY image + entrypoint (sc-analyze)
 supply_chain_scan/          # L1 CLEAN writer (main, runner, project_settings, Dockerfile)
 recon/helpers/supply_chain/harvest.py            # L2 black-box harvest (pure, no network)
@@ -721,8 +790,10 @@ recon/main_recon_modules/supply_chain_recon.py   # L2 pipeline module (GROUP 5.5
 recon/partial_recon_modules/supply_chain.py      # L2 partial recon
 graph_db/mixins/supply_chain_mixin.py            # Package + MalPackageFinding writer
 graph_db/schema.py                               # uniqueness constraints
-mcp/servers/network_recon_server.py              # L3 execute_osv_scanner / execute_guarddog
-recon_orchestrator/{container_manager,api,models}.py  # L1 lifecycle + REST
+graph_db/resource_governor.py                    # envelopes + container_cap (memory accounting)
+mcp/servers/network_recon_server.py              # L3 execute_osv_scanner (passive, in kali)
+agentic/supply_chain_tools.py                    # L3 execute_guarddog (dispatched to orchestrator)
+recon_orchestrator/{container_manager,api,models}.py  # L1 lifecycle + REST + L3 guarddog admission
 webapp/src/app/api/supply-chain/                 # proxy routes + SBOM upload
 webapp/src/components/projects/ProjectForm/sections/SupplyChainSection.tsx
 webapp/src/app/api/analytics/redzone/supplyChainSca/route.ts    # SCA table API (3 sheets)

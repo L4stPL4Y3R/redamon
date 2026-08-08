@@ -317,11 +317,33 @@ def deep_analyze(artifact, *, image=None, timeout=_DEEP_TIMEOUT,
 # Import mining reads the served JS itself. Capped so a target cannot make the
 # recon process hold an unbounded amount of attacker-controlled text: js_recon
 # already caps each file at 5 MB, but nothing caps the file COUNT here.
+#
+# These are the FLOOR values only. The live caps come from `settings`, which
+# project_settings.apply_memory_governor has already byte-budgeted against
+# available RAM (they are genuine in-memory accumulators). Read straight from
+# os.environ, as they were, they bypassed the governor entirely: it only walks
+# the settings dict.
 _IMPORT_MAX_FILES = int(os.environ.get("SUPPLY_CHAIN_IMPORT_MAX_FILES", "200"))
 _IMPORT_MAX_BYTES = int(os.environ.get("SUPPLY_CHAIN_IMPORT_MAX_BYTES", str(64 * 1024 * 1024)))
 
 
-def _read_js_contents(combined_result):
+def _import_budget(settings):
+    """(max_files, max_bytes) for import mining: the governed setting when the
+    caller has one, else the module default. A non-positive or non-int value is
+    ignored rather than trusted, so a bad setting cannot disable the cap."""
+    settings = settings or {}
+
+    def pick(key, fallback):
+        val = settings.get(key)
+        if isinstance(val, int) and not isinstance(val, bool) and val > 0:
+            return val
+        return fallback
+
+    return (pick("SUPPLY_CHAIN_IMPORT_MAX_FILES", _IMPORT_MAX_FILES),
+            pick("SUPPLY_CHAIN_IMPORT_MAX_BYTES", _IMPORT_MAX_BYTES))
+
+
+def _read_js_contents(combined_result, settings=None):
     """Raw JS text for import mining, from the dir js_recon preserved.
 
     mine_import_packages was written and tested but never received any input:
@@ -339,6 +361,7 @@ def _read_js_contents(combined_result):
     if not work_dir or not os.path.isdir(work_dir):
         return []
 
+    max_files, max_bytes = _import_budget(settings)
     contents = []
     total = 0
     try:
@@ -346,7 +369,7 @@ def _read_js_contents(combined_result):
     except OSError:
         return []
     for name in names:
-        if len(contents) >= _IMPORT_MAX_FILES or total >= _IMPORT_MAX_BYTES:
+        if len(contents) >= max_files or total >= max_bytes:
             break
         if not name.lower().endswith(".js"):
             continue
@@ -355,7 +378,7 @@ def _read_js_contents(combined_result):
             if not os.path.isfile(path):
                 continue
             size = os.path.getsize(path)
-            if total + size > _IMPORT_MAX_BYTES:
+            if total + size > max_bytes:
                 continue
             with open(path, "r", encoding="utf-8", errors="replace") as fh:
                 contents.append(fh.read())
@@ -585,7 +608,7 @@ def run_supply_chain_recon(combined_result, settings=None):
     technologies = _extract_technologies(combined_result)
     base_urls = _extract_base_urls(combined_result)
 
-    js_contents = _read_js_contents(combined_result)
+    js_contents = _read_js_contents(combined_result, settings)
     packages = harvest_packages(source_maps=source_maps,
                                 technologies=technologies,
                                 js_contents=js_contents)

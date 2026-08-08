@@ -20,21 +20,52 @@ import project_settings as ps
 
 GB = 1024 ** 3
 
+# Force the lazy `import resource_governor` inside apply_memory_governor to
+# happen NOW, so _all_governors() below can see whichever copy it resolved.
+ps.apply_memory_governor({})
+
+
+def _all_governors():
+    """Every resource_governor copy currently loaded.
+
+    There are two maintained copies and several test modules that each put a
+    DIFFERENT directory on sys.path before `import resource_governor`, so
+    whichever ran first owns the bare module name for the whole process. In a
+    combined run this file's `rg` was therefore often NOT the object
+    apply_memory_governor resolved: set_mem_override applied to the wrong module
+    and these tests silently read REAL host RAM, passing alone and failing in a
+    suite. Fan the override out to every copy so run order stops mattering.
+    """
+    return [m for name, m in list(sys.modules.items())
+            if m is not None and name.split('.')[-1] == 'resource_governor'
+            and hasattr(m, 'set_mem_override')]
+
+
+def _set_mem(total, avail):
+    for m in _all_governors():
+        m.set_mem_override(total, avail)
+
+
+def _reset_governors():
+    for m in _all_governors():
+        m.set_mem_override(None, None)
+        m.reset_profile_cache()
+
+
 
 class ReconGovTestBase(unittest.TestCase):
     def setUp(self):
         for k in ("REDAMON_MEM_GOVERNOR", "MEM_BUDGET_FRACTION", "RESOURCE_PROFILE_PATH"):
             os.environ.pop(k, None)
-        rg.set_mem_override(None, None)
-        rg.reset_profile_cache()
+        _reset_governors()
 
     def tearDown(self):
-        rg.set_mem_override(None, None)
+        _reset_governors()
 
 
 class TestRatioScaling(ReconGovTestBase):
     def test_reduces_concurrency_under_pressure(self):
-        rg.set_mem_override(32 * GB, 2 * GB)  # scale -> floor 0.15
+        _set_mem(32 * GB, 2 * GB)  # scale -> floor 0.15
         s = {'NUCLEI_CONCURRENCY': 25, 'KATANA_PARALLELISM': 8, 'DNS_MAX_WORKERS': 80}
         out = ps.apply_memory_governor(s)
         self.assertEqual(out['NUCLEI_CONCURRENCY'], 4)   # round(3.75)
@@ -42,13 +73,13 @@ class TestRatioScaling(ReconGovTestBase):
         self.assertEqual(out['DNS_MAX_WORKERS'], 12)     # round(12.0)
 
     def test_unchanged_when_ample(self):
-        rg.set_mem_override(32 * GB, 32 * GB)  # scale 1.0
+        _set_mem(32 * GB, 32 * GB)  # scale 1.0
         s = {'NUCLEI_CONCURRENCY': 25, 'KATANA_MAX_URLS': 300000}
         out = ps.apply_memory_governor(dict(s))
         self.assertEqual(out, s)
 
     def test_floor_respected(self):
-        rg.set_mem_override(32 * GB, 1 * GB)  # very low
+        _set_mem(32 * GB, 1 * GB)  # very low
         s = {'NMAP_PARALLELISM': 5}
         out = ps.apply_memory_governor(s)
         self.assertEqual(out['NMAP_PARALLELISM'], 1)  # floor 1
@@ -56,14 +87,14 @@ class TestRatioScaling(ReconGovTestBase):
 
 class TestByteBudget(ReconGovTestBase):
     def test_caps_max_urls_when_tight(self):
-        rg.set_mem_override(32 * GB, 256 * 1024 * 1024)  # 256MB free
+        _set_mem(32 * GB, 256 * 1024 * 1024)  # 256MB free
         s = {'KATANA_MAX_URLS': 300000}
         out = ps.apply_memory_governor(s)
         self.assertLess(out['KATANA_MAX_URLS'], 300000)
         self.assertGreaterEqual(out['KATANA_MAX_URLS'], 1000)  # floor
 
     def test_max_urls_unchanged_when_ample(self):
-        rg.set_mem_override(64 * GB, 60 * GB)
+        _set_mem(64 * GB, 60 * GB)
         s = {'KATANA_MAX_URLS': 300000}
         out = ps.apply_memory_governor(s)
         self.assertEqual(out['KATANA_MAX_URLS'], 300000)
@@ -72,13 +103,13 @@ class TestByteBudget(ReconGovTestBase):
 class TestGuards(ReconGovTestBase):
     def test_governor_off_no_change(self):
         os.environ['REDAMON_MEM_GOVERNOR'] = 'false'
-        rg.set_mem_override(32 * GB, 1 * GB)
+        _set_mem(32 * GB, 1 * GB)
         s = {'NUCLEI_CONCURRENCY': 25, 'KATANA_MAX_URLS': 300000}
         out = ps.apply_memory_governor(dict(s))
         self.assertEqual(out, s)
 
     def test_bools_and_non_ints_untouched(self):
-        rg.set_mem_override(32 * GB, 2 * GB)
+        _set_mem(32 * GB, 2 * GB)
         s = {'GAU_ENABLED': True, 'HTTPX_THREADS': 50, 'SOME_STR': 'x'}
         out = ps.apply_memory_governor(s)
         self.assertIs(out['GAU_ENABLED'], True)   # bool not scaled
@@ -86,14 +117,14 @@ class TestGuards(ReconGovTestBase):
         self.assertLess(out['HTTPX_THREADS'], 50)  # the real int is scaled
 
     def test_missing_keys_ok(self):
-        rg.set_mem_override(32 * GB, 2 * GB)
+        _set_mem(32 * GB, 2 * GB)
         out = ps.apply_memory_governor({'UNRELATED': 1})
         self.assertEqual(out, {'UNRELATED': 1})
 
 
 class TestCapLog(ReconGovTestBase):
     def test_emits_resource_cap_on_reduction(self):
-        rg.set_mem_override(32 * GB, 2 * GB)
+        _set_mem(32 * GB, 2 * GB)
         buf = io.StringIO()
         with redirect_stdout(buf):
             ps.apply_memory_governor({'NUCLEI_CONCURRENCY': 25})
@@ -102,7 +133,7 @@ class TestCapLog(ReconGovTestBase):
         self.assertIn('NUCLEI_CONCURRENCY', out)
 
     def test_silent_when_no_reduction(self):
-        rg.set_mem_override(32 * GB, 32 * GB)
+        _set_mem(32 * GB, 32 * GB)
         buf = io.StringIO()
         with redirect_stdout(buf):
             ps.apply_memory_governor({'NUCLEI_CONCURRENCY': 25})

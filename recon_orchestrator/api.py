@@ -1739,10 +1739,13 @@ async def supply_chain_guarddog(request: GuarddogRequest):
     """
     if not container_manager:
         raise HTTPException(status_code=503, detail="Service not initialized")
-    # Blocking (docker run + wait) - keep it off the event loop.
-    result = await asyncio.to_thread(
-        container_manager.run_guarddog_package,
-        request.ecosystem, request.name, request.version)
+    # Memory-governed: this spawns a real ~1.5 GB analyzer container, so it books
+    # its envelope like a scan does. A full host raises AdmissionError -> 409.
+    try:
+        result = await container_manager.run_guarddog_package_governed(
+            request.ecosystem, request.name, request.version)
+    except ValueError as e:   # AdmissionError subclasses ValueError
+        raise _value_error_http(e)
     return GuarddogResult(**result)
 
 
