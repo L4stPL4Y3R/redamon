@@ -4,6 +4,7 @@ import { memo, useMemo, useState } from 'react'
 import { RedZoneTableShell } from './RedZoneTableShell'
 import { useRedZoneTable } from './useRedZoneTable'
 import type { RedZoneExportConfig } from './exportCsv'
+import { useRedZoneFilters, type RedZoneFilterColumn } from './useRedZoneFilters'
 import { ExternalLink } from '@/components/ui'
 import { githubSlugToUrl, isGithubSlug } from '@/lib/url-utils'
 import {
@@ -65,6 +66,26 @@ function TypeChip({ t }: { t: string }) {
   return <span className={rowStyles.listChip}>{TYPE_LABELS[t] || t}</span>
 }
 
+/** Module-level: the filter profiles are keyed off these, and a fresh array
+ *  literal per render would re-profile every row. */
+const COLUMNS: RedZoneFilterColumn[] = [
+  { key: 'findingType', header: 'Type' },
+  { key: 'severity', header: 'Severity' },
+  { key: 'confidence', header: 'Confidence' },
+  { key: 'title', header: 'Title' },
+  { key: 'detail', header: 'Detail' },
+  { key: 'evidence', header: 'Evidence' },
+  { key: 'packageName', header: 'Package / Framework' },
+  { key: 'version', header: 'Version' },
+  { key: 'cloudProvider', header: 'Cloud Provider' },
+  { key: 'cloudAssetType', header: 'Cloud Asset Type' },
+  { key: 'sourceUrl', header: 'Source URL' },
+  { key: 'parentJsUrl', header: 'Parent JS File' },
+  { key: 'baseUrl', header: 'BaseURL' },
+  { key: 'subdomain', header: 'Subdomain' },
+  { key: 'discoveredAt', header: 'Discovered At' },
+]
+
 interface Props { projectId: string | null }
 
 export const JsDepSignalsTable = memo(function JsDepSignalsTable({ projectId }: Props) {
@@ -73,7 +94,10 @@ export const JsDepSignalsTable = memo(function JsDepSignalsTable({ projectId }: 
   const [limit, setLimit] = useState(PAGE_SIZE)
 
   const rows = useMemo(() => data?.rows ?? [], [data])
-  const filtered = useMemo(() => filterRowsByText(rows, search), [rows, search])
+  const searched = useMemo(() => filterRowsByText(rows, search), [rows, search])
+  const { filteredRows: filtered, filterUi } = useRedZoneFilters({
+    rows: searched, columns: COLUMNS, projectId, slug: 'supplyChain',
+  })
   const sliced = useMemo(() => filtered.slice(0, limit), [filtered, limit])
 
   const exportConfig = useMemo<RedZoneExportConfig | undefined>(() =>
@@ -82,23 +106,7 @@ export const JsDepSignalsTable = memo(function JsDepSignalsTable({ projectId }: 
           rows: filtered,
           sheetName: 'JS-Dep-Signals',
           fileSlug: 'redzone-js-dep-signals',
-          columns: [
-            { key: 'findingType', header: 'Type' },
-            { key: 'severity', header: 'Severity' },
-            { key: 'confidence', header: 'Confidence' },
-            { key: 'title', header: 'Title' },
-            { key: 'detail', header: 'Detail' },
-            { key: 'evidence', header: 'Evidence' },
-            { key: 'packageName', header: 'Package / Framework' },
-            { key: 'version', header: 'Version' },
-            { key: 'cloudProvider', header: 'Cloud Provider' },
-            { key: 'cloudAssetType', header: 'Cloud Asset Type' },
-            { key: 'sourceUrl', header: 'Source URL' },
-            { key: 'parentJsUrl', header: 'Parent JS File' },
-            { key: 'baseUrl', header: 'BaseURL' },
-            { key: 'subdomain', header: 'Subdomain' },
-            { key: 'discoveredAt', header: 'Discovered At' },
-          ],
+          columns: COLUMNS,
         }
       : undefined,
     [filtered, rows.length],
@@ -117,6 +125,7 @@ export const JsDepSignalsTable = memo(function JsDepSignalsTable({ projectId }: 
       onSearchChange={setSearch}
       searchPlaceholder="Search package, framework, title, URL..."
       exportConfig={exportConfig}
+      filterUi={filterUi}
       onRefresh={refetch}
       isLoading={isLoading}
       error={error}

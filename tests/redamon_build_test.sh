@@ -37,10 +37,26 @@ info() { :; }
 warn() { :; }
 
 # --- docker stub: records every invocation + the parallel-limit env in effect ---
+# `builder prune` is special-cased so the Layer-3 cache prune can be driven
+# independently of the build: PRUNE_RC fails the prune while the build succeeds,
+# and PRUNE_OUT injects a realistic "Total:\t<size>" trailer to exercise the
+# reclaimed-space reporting path.
 CALLS=""
 DOCKER_RC=0
-docker() { printf 'LIMIT=%s|%s\n' "${COMPOSE_PARALLEL_LIMIT:-unset}" "$*" >> "$CALLS"; return "$DOCKER_RC"; }
-reset_calls() { CALLS="$(mktemp)"; DOCKER_RC=0; unset COMPOSE_PARALLEL_LIMIT; }
+PRUNE_RC=0
+PRUNE_OUT=""
+docker() {
+    printf 'LIMIT=%s|%s\n' "${COMPOSE_PARALLEL_LIMIT:-unset}" "$*" >> "$CALLS"
+    if [[ "${1:-} ${2:-}" == "builder prune" ]]; then
+        [[ -n "$PRUNE_OUT" ]] && printf '%s\n' "$PRUNE_OUT"
+        return "$PRUNE_RC"
+    fi
+    return "$DOCKER_RC"
+}
+reset_calls() {
+    CALLS="$(mktemp)"; DOCKER_RC=0; PRUNE_RC=0; PRUNE_OUT=""
+    unset COMPOSE_PARALLEL_LIMIT REDAMON_NO_AUTO_PRUNE
+}
 
 # Fix detected resources deterministically for integration tests.
 stub_resources() { detect_build_resources() { BUILD_MEM_MB="${1:-8192}"; BUILD_NCPU="${2:-8}"; BUILD_RES_SOURCE="stub"; }; }
@@ -117,10 +133,11 @@ assert_eq "adequate mem -> no warning" "$out" ""
 section "INTEGRATION: compose_build orchestration (stubbed docker)"
 stub_resources 8192 8   # -> parallelism 2
 
-# I1: install full build
+# I1: install full build. 3 calls, not 2: Layer 1 (webapp) + Layer 2 (the rest) +
+# Layer 3's build-cache prune. See the "build-cache auto-prune" section below.
 reset_calls; compose_build --profile tools build
 c1="$(sed -n 1p "$CALLS")"; c2="$(sed -n 2p "$CALLS")"; n="$(wc -l < "$CALLS")"
-assert_eq       "I1 full build: 2 docker calls" "$n" "2"
+assert_eq       "I1 full build: 3 docker calls (2 build + 1 prune)" "$n" "3"
 assert_contains "I1 webapp isolated first (unset limit)" "$c1" "LIMIT=unset|compose build webapp"
 assert_contains "I1 then full build capped"              "$c2" "LIMIT=2|compose --profile tools build"
 
@@ -130,10 +147,10 @@ c1="$(sed -n 1p "$CALLS")"; c2="$(sed -n 2p "$CALLS")"
 assert_contains "I2 webapp built FIRST"      "$c1" "LIMIT=unset|compose build webapp"
 assert_contains "I2 full list built after"   "$c2" "LIMIT=2|compose build recon-orchestrator kali-sandbox agent webapp docker-broker"
 
-# I3: update core WITHOUT webapp -> no isolation, single capped build
+# I3: update core WITHOUT webapp -> no isolation, single capped build (+ prune)
 reset_calls; compose_build build agent
 n="$(wc -l < "$CALLS")"; c1="$(sed -n 1p "$CALLS")"
-assert_eq       "I3 agent-only: 1 docker call"  "$n" "1"
+assert_eq       "I3 agent-only: 2 docker calls (1 build + 1 prune)" "$n" "2"
 assert_not_contains "I3 no webapp isolation"    "$(cat "$CALLS")" "build webapp"
 assert_contains "I3 capped single build"        "$c1" "LIMIT=2|compose build agent"
 
@@ -166,6 +183,52 @@ DOCKER_RC=0
 # I9: isolation command shape is exactly `build webapp` (no --profile leakage)
 reset_calls; compose_build --profile tools build
 assert_eq "I9 isolation call exact" "$(sed -n 1p "$CALLS" | cut -d'|' -f2)" "compose build webapp"
+
+# =============================================================================
+section "INTEGRATION: build-cache auto-prune (compose_build Layer 3)"
+# A rebuild leaves the previous version's layers in the BuildKit cache with
+# nothing referencing them, and Docker never collects them. Layer 3 reclaims that
+# after every successful build; these tests pin the safety properties.
+
+# P1: a successful build prunes, and does so AFTER the build, never before.
+reset_calls; compose_build build agent
+assert_contains "P1 prunes after a successful build" "$(cat "$CALLS")" "builder prune -f"
+assert_eq       "P1 prune is the LAST call" "$(tail -1 "$CALLS" | cut -d'|' -f2)" "builder prune -f"
+
+# P2: `-af` must NEVER be used. The plain form keeps the cache backing the images
+# just built, so the next update stays incremental. `-af` would additionally wipe
+# that warm cache and free no extra disk (those bytes are SHARED with the images
+# and stay on disk regardless), making every future rebuild cold for nothing.
+assert_not_contains "P2 never prunes with -a" "$(cat "$CALLS")" "builder prune -af"
+
+# P3: a FAILED build must NOT prune. The cache that looks orphaned after a
+# failure is the partial work the retry wants to resume from.
+reset_calls; DOCKER_RC=7
+( set -e; compose_build build agent ) >/dev/null 2>&1
+assert_not_contains "P3 no prune after a failed build" "$(cat "$CALLS")" "builder prune"
+DOCKER_RC=0
+
+# P4: the prune must not alter the build's exit status in either direction. A
+# wedged builder or an old daemon cannot be allowed to fail a good build.
+reset_calls; PRUNE_RC=1
+( set -e; compose_build build agent ) >/dev/null 2>&1; rc=$?
+assert_eq "P4 prune failure keeps build rc 0" "$rc" "0"
+PRUNE_RC=0
+
+# P5: REDAMON_NO_AUTO_PRUNE=1 opts out. The builder cache is per-DAEMON, not
+# per-project, so on a shared workstation this evicts other projects' cache too.
+reset_calls; REDAMON_NO_AUTO_PRUNE=1 compose_build build agent
+assert_not_contains "P5 opt-out skips the prune" "$(cat "$CALLS")" "builder prune"
+
+# P6: reclaimed space is reported only when non-zero (the no-op case must stay
+# silent rather than print "Reclaimed 0B" after every single build).
+reset_calls; PRUNE_OUT=$'abc123\nTotal:\t4.2GB'
+out="$( info() { echo "$*"; }; compose_build build agent 2>&1 )"
+assert_contains "P6 reports reclaimed space" "$out" "Reclaimed 4.2GB"
+reset_calls; PRUNE_OUT=$'Total:\t0B'
+out="$( info() { echo "$*"; }; compose_build build agent 2>&1 )"
+assert_not_contains "P6 silent when nothing reclaimed" "$out" "Reclaimed"
+reset_calls
 
 # =============================================================================
 section "SMOKE: real script + docker/compose"

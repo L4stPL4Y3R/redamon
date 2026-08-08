@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { rowCap } from '../rowCap'
 import { guardProject } from '@/lib/access'
 import { getGraphSession } from '@/app/api/graph/neo4j'
 
@@ -46,7 +47,7 @@ export async function GET(request: NextRequest) {
               null                           AS country,
               null                           AS ipAddress
        ORDER BY size(allHosts) DESC
-       LIMIT 200`,
+       LIMIT ${rowCap()}`,
       { pid: projectId }
     )
 
@@ -81,7 +82,7 @@ export async function GET(request: NextRequest) {
               countriesClean[0]               AS country,
               null                            AS ipAddress
        ORDER BY size(subsClean) DESC
-       LIMIT 200`,
+       LIMIT ${rowCap()}`,
       { pid: projectId }
     )
 
@@ -106,7 +107,7 @@ export async function GET(request: NextRequest) {
               ip.country                      AS country,
               ip.address                      AS ipAddress
        ORDER BY size(subsClean) DESC
-       LIMIT 200`,
+       LIMIT ${rowCap()}`,
       { pid: projectId }
     )
 

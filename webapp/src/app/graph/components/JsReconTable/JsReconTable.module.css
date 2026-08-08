@@ -274,3 +274,29 @@
   color: var(--text-primary);
   border-color: var(--accent);
 }
+
+/* ---- Column filters ----------------------------------------------------- */
+
+.chipRow {
+  padding: 6px 8px 0;
+}
+
+.subTabsRow {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.subTabsRow .subTabs {
+  border-bottom: none;
+  flex: 1;
+  min-width: 0;
+}
+
+/* The tab strip scrolls horizontally, so the control is pinned to the right of
+   it rather than being the last scrollable item. */
+.filterMenu {
+  display: inline-flex;
+  padding: 0 8px;
+  flex-shrink: 0;
+}

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { rowCap } from '../rowCap'
 import { guardProject } from '@/lib/access'
 import { getGraphSession } from '@/app/api/graph/neo4j'
 
@@ -54,16 +55,19 @@ function sevOrder(expr: string): string {
 // as ordinary suspicious hits.
 const NOT_ANALYSED = `(coalesce(f.soft_error, false) OR coalesce(f.advisory_id, '') = 'guarddog-not-run')`
 
-// Row caps. Exported through meta.truncated so the UI can say "there is more"
-// instead of presenting a capped list as the complete picture.
-const VERDICT_LIMIT = 1000
-const SHEET_LIMIT = 2000
-
 export async function GET(request: NextRequest) {
   const pid = request.nextUrl.searchParams.get('projectId')
   const __denied = await guardProject(pid || '')
   if (__denied) return __denied
   if (!pid) return NextResponse.json({ error: 'projectId is required' }, { status: 400 })
+
+  // Row caps, now the one global cap shared with every other RedZone route.
+  // Still exported through meta.truncated so the UI can say "there is more"
+  // instead of presenting a capped list as the complete picture. Read per
+  // request, not at module load, so REDAMON_REDZONE_ROW_CAP is honoured without
+  // depending on import order.
+  const VERDICT_LIMIT = rowCap()
+  const SHEET_LIMIT = rowCap()
 
   const session = getGraphSession()
   try {

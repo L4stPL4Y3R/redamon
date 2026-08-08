@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo, useEffect, useRef, Fragment } from 'react'
+import { useState, useMemo, useEffect, useRef, useCallback, Fragment } from 'react'
 import {
   useReactTable,
   getCoreRowModel,
@@ -13,6 +13,8 @@ import {
   type SortingState,
   type ExpandedState,
   type VisibilityState,
+  type ColumnFiltersState,
+  type FilterFn,
 } from '@tanstack/react-table'
 import {
   ChevronDown,
@@ -37,7 +39,8 @@ import { renderPropertyValue } from '../../utils/renderPropertyValue'
 import { ExpandedRowDetail } from '../DataTable/ExpandedRowDetail'
 import { ExternalLink } from '@/components/ui'
 import { useTableData, type TableRow } from '../../hooks/useTableData'
-import { useNodeDetailsPrefs } from '@/hooks/useUserPreferences'
+import { useNodeDetailsPrefs, tableFilterScope } from '@/hooks/useUserPreferences'
+import { useColumnFilterState } from '../../hooks/useColumnFilterState'
 import {
   groupRowsByType,
   deriveDynamicColumnKeys,
@@ -48,17 +51,61 @@ import {
   exportNodeDetailsJson,
   exportNodeDetailsMarkdown,
 } from './exportNodeDetails'
+import { ColumnFilterButton, ActiveFilterChips } from '../ColumnFilterPanel'
+import {
+  describeFilter,
+  getCellValue,
+  isFilterActive,
+  matchesFilter,
+  profileColumn,
+  propColumnId,
+  regexFor,
+  valueText,
+  IN_COLUMN_ID,
+  NAME_COLUMN_ID,
+  OUT_COLUMN_ID,
+  type ColumnFilter,
+  type ColumnKind,
+} from './nodeFilterHelpers'
 import styles from './NodeDetailsTable.module.css'
 
 interface NodeDetailsTableProps {
   data: GraphData | undefined
   isLoading: boolean
   error: Error | null
+  /** Scopes persisted column filters. Without it the table still filters, it
+   *  just forgets between visits (which is what tests and any embedding
+   *  without a project context get). */
+  projectId?: string | null
 }
 
 const columnHelper = createColumnHelper<TableRow>()
 
-export function NodeDetailsTable({ data, isLoading, error }: NodeDetailsTableProps) {
+/**
+ * The per-column filter value carried through TanStack. The compiled regex
+ * rides along so `matchesFilter` never compiles one inside the row loop.
+ */
+interface AdvancedFilterValue {
+  filter: ColumnFilter
+  kind: ColumnKind
+  rx: RegExp | null
+}
+
+/**
+ * One filterFn for every column: the behaviour is chosen by the inferred kind
+ * carried in the value, not by which column it is attached to.
+ *
+ * Registering these as real column filters (rather than filtering `rows` before
+ * handing them to the table) is what keeps pagination, the row counter, sorting
+ * and the CSV/JSON/MD export all reading from a single filtered row model.
+ */
+const advancedFilterFn: FilterFn<TableRow> = (row, columnId, value) => {
+  const v = value as AdvancedFilterValue | undefined
+  if (!v) return true
+  return matchesFilter(getCellValue(row.original, columnId), v.filter, v.kind, v.rx)
+}
+
+export function NodeDetailsTable({ data, isLoading, error, projectId = null }: NodeDetailsTableProps) {
   // Build full TableRow set (rows + connection maps) using the existing hook.
   const allRows = useTableData(data)
 
@@ -131,10 +178,11 @@ export function NodeDetailsTable({ data, isLoading, error }: NodeDetailsTablePro
         ),
       }),
       columnHelper.accessor(row => row.node.name, {
-        id: 'name',
+        id: NAME_COLUMN_ID,
         header: 'Name',
         size: 320,
         enableHiding: false,
+        filterFn: advancedFilterFn,
         cell: info => {
           const name = info.getValue()
           const url = getNodeUrl(info.row.original.node)
@@ -156,9 +204,10 @@ export function NodeDetailsTable({ data, isLoading, error }: NodeDetailsTablePro
 
     const dynamic = dynamicColumnKeys.map(key =>
       columnHelper.accessor(row => row.node.properties[key], {
-        id: `prop:${key}`,
+        id: propColumnId(key),
         header: key,
         size: 200,
+        filterFn: advancedFilterFn,
         cell: info => (
           <span className={styles.propCell} title={String(info.getValue() ?? '')}>
             {renderPropertyValue(info.getValue())}
@@ -169,9 +218,10 @@ export function NodeDetailsTable({ data, isLoading, error }: NodeDetailsTablePro
 
     const trailing = [
       columnHelper.accessor(row => row.connectionsIn.length, {
-        id: 'connectionsIn',
+        id: IN_COLUMN_ID,
         header: 'In',
         size: 70,
+        filterFn: advancedFilterFn,
         cell: info => {
           const n = info.getValue()
           return n > 0 ? (
@@ -182,9 +232,10 @@ export function NodeDetailsTable({ data, isLoading, error }: NodeDetailsTablePro
         },
       }),
       columnHelper.accessor(row => row.connectionsOut.length, {
-        id: 'connectionsOut',
+        id: OUT_COLUMN_ID,
         header: 'Out',
         size: 70,
+        filterFn: advancedFilterFn,
         cell: info => {
           const n = info.getValue()
           return n > 0 ? (
@@ -204,17 +255,99 @@ export function NodeDetailsTable({ data, isLoading, error }: NodeDetailsTablePro
   const [sorting, setSorting] = useState<SortingState>([])
   const [expanded, setExpanded] = useState<ExpandedState>({})
 
-  // Reset transient state when type changes
+  // -- Per-column filters ---------------------------------------------------
+  // Scoped to the node type: a filter on `registrar` is meaningless once the
+  // table is showing Ports, so each type carries its own set - saved, restored
+  // and cleared independently.
+  const filterScope = selectedNodeType ? tableFilterScope('nodeInspector', selectedNodeType) : null
+  const {
+    filters: colFilters,
+    setColumnFilter,
+    clearColumnFilter,
+    clearAllFilters,
+    pruneUnknown,
+  } = useColumnFilterState(projectId, filterScope)
+
+  // Reset transient state when type changes. Filters are NOT reset here - they
+  // are restored per type by `useColumnFilterState`.
   useEffect(() => {
     setExpanded({})
     setSorting([])
     setGlobalFilter('')
   }, [selectedNodeType])
 
+  /**
+   * Every column a user can filter on, including ones currently hidden: wanting
+   * to narrow by a property without also displaying it is normal, and the
+   * active-filter chips keep a hidden column's filter from being invisible.
+   */
+  const filterableColumns = useMemo(
+    () => [
+      { columnId: NAME_COLUMN_ID, label: 'Name' },
+      ...dynamicColumnKeys.map(k => ({ columnId: propColumnId(k), label: k })),
+      { columnId: IN_COLUMN_ID, label: 'In' },
+      { columnId: OUT_COLUMN_ID, label: 'Out' },
+    ],
+    [dynamicColumnKeys]
+  )
+
+  useEffect(() => {
+    pruneUnknown(filterableColumns.map(c => c.columnId))
+  }, [filterableColumns, pruneUnknown])
+
+  /**
+   * Inference is a full pass over every row for every column, so it is deferred
+   * until the user actually opens the filter panel once. A node type with 60
+   * properties and 20k rows would otherwise pay for 1.2M value inspections on
+   * every type switch, for a panel that is usually never opened.
+   *
+   * Keyed on the row set so it re-runs on type switch / refetch, but never on a
+   * keystroke inside the panel.
+   *
+   * RESTORED filters arm it too. The chips and the correct per-column kinds are
+   * both derived from these profiles, so a saved filter with no profile behind
+   * it would narrow the table on load while the UI showed no filter at all -
+   * the one state a filter bar must never be in.
+   */
+  const [panelOpened, setPanelOpened] = useState(false)
+  const filtersArmed = panelOpened || Object.keys(colFilters).length > 0
+  const profiles = useMemo(
+    () => (filtersArmed ? filterableColumns.map(c => profileColumn(c.columnId, c.label, rows, getCellValue)) : []),
+    [filtersArmed, filterableColumns, rows]
+  )
+
+  const kinds = useMemo(() => {
+    const m: Record<string, ColumnKind> = {}
+    for (const p of profiles) m[p.columnId] = p.kind
+    return m
+  }, [profiles])
+
+  // Handed to TanStack. Inactive columns are dropped entirely so an untouched
+  // filter object never costs a pass over the rows.
+  const columnFilters: ColumnFiltersState = useMemo(
+    () =>
+      Object.entries(colFilters)
+        .filter(([, f]) => isFilterActive(f))
+        .map(([id, f]) => ({
+          id,
+          value: { filter: f, kind: kinds[id] ?? 'text', rx: regexFor(f) } satisfies AdvancedFilterValue,
+        })),
+    [colFilters, kinds]
+  )
+
+  const activeChips = useMemo(
+    () =>
+      profiles
+        .filter(p => isFilterActive(colFilters[p.columnId]))
+        .map(p => ({ columnId: p.columnId, text: describeFilter(p.label, colFilters[p.columnId]) })),
+    [profiles, colFilters]
+  )
+
+
   const table = useReactTable({
     data: rows,
     columns,
-    state: { sorting, globalFilter, expanded, columnVisibility },
+    state: { sorting, globalFilter, expanded, columnVisibility, columnFilters },
     onSortingChange: setSorting,
     onGlobalFilterChange: setGlobalFilter,
     onExpandedChange: setExpanded,
@@ -233,7 +366,10 @@ export function NodeDetailsTable({ data, isLoading, error }: NodeDetailsTablePro
         if (HIDDEN_KEYS.has(k)) continue
         const v = props[k]
         if (v == null) continue
-        if (String(v).toLowerCase().includes(search)) return true
+        // `valueText`, not `String(v)`: Neo4j integers and timestamps are
+        // objects, and stringifying them gives "[object Object]" - so searching
+        // for a port or a date would silently match nothing.
+        if (valueText(v).toLowerCase().includes(search)) return true
       }
       return false
     },
@@ -477,8 +613,27 @@ export function NodeDetailsTable({ data, isLoading, error }: NodeDetailsTablePro
               </div>
             )}
           </div>
+          <ColumnFilterButton
+            profiles={profiles}
+            filters={colFilters}
+            kinds={kinds}
+            rows={rows}
+            accessor={getCellValue}
+            activeCount={activeChips.length}
+            onChange={setColumnFilter}
+            onClearColumn={clearColumnFilter}
+            onClearAll={clearAllFilters}
+            onArm={() => setPanelOpened(true)}
+            disabled={filterableColumns.length === 0}
+          />
         </div>
       </div>
+
+      <ActiveFilterChips
+        chips={activeChips}
+        onRemove={clearColumnFilter}
+        onClearAll={clearAllFilters}
+      />
 
       {/* Table */}
       <div className={styles.tableWrapper}>
@@ -522,6 +677,14 @@ export function NodeDetailsTable({ data, isLoading, error }: NodeDetailsTablePro
             ))}
           </thead>
           <tbody>
+            {filteredRowCount === 0 && (
+              <tr className={styles.noMatchRow}>
+                <td colSpan={visibleColCount}>
+                  No rows match the current filters. {rows.length} row{rows.length === 1 ? '' : 's'} in{' '}
+                  {selectedNodeType ?? 'this type'}.
+                </td>
+              </tr>
+            )}
             {table.getRowModel().rows.map(row => (
               <Fragment key={row.id}>
                 <tr className={`${styles.tr} ${row.getIsExpanded() ? styles.trExpanded : ''}`}>

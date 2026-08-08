@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { rowCap } from '../rowCap'
 import { guardProject } from '@/lib/access'
 import { getGraphSession } from '@/app/api/graph/neo4j'
 
@@ -61,7 +62,7 @@ export async function GET(request: NextRequest) {
          CASE j.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1
            WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END,
          j.finding_type
-       LIMIT 500`,
+       LIMIT ${rowCap()}`,
       { pid: projectId, types: SUPPLY_CHAIN_FINDING_TYPES }
     )
 

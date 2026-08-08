@@ -4,6 +4,7 @@ import { memo, useMemo, useState } from 'react'
 import { RedZoneTableShell } from './RedZoneTableShell'
 import { useRedZoneTable } from './useRedZoneTable'
 import type { RedZoneExportConfig } from './exportCsv'
+import { useRedZoneFilters, type RedZoneFilterColumn } from './useRedZoneFilters'
 import { ExternalLink } from '@/components/ui'
 import { capecToUrl, cveToUrl, cweToUrl } from '@/lib/url-utils'
 import {
@@ -42,6 +43,28 @@ interface KillChainRow {
 
 const PAGE_SIZE = 100
 
+/** Module-level: the filter profiles are keyed off these, and a fresh array
+ *  literal per render would re-profile every row. */
+const COLUMNS: RedZoneFilterColumn[] = [
+  { key: 'subdomain', header: 'Subdomain' },
+  { key: 'ipAddress', header: 'IP' },
+  { key: 'port', header: 'Port' },
+  { key: 'protocol', header: 'Proto' },
+  { key: 'serviceName', header: 'Service' },
+  { key: 'serviceProduct', header: 'Product' },
+  { key: 'serviceVersion', header: 'SvcVer' },
+  { key: 'techName', header: 'Technology' },
+  { key: 'techVersion', header: 'TechVer' },
+  { key: 'cveId', header: 'CVE' },
+  { key: 'cvss', header: 'CVSS' },
+  { key: 'cveSeverity', header: 'Severity' },
+  { key: 'cisaKev', header: 'CISA KEV' },
+  { key: 'cweId', header: 'CWE' },
+  { key: 'cweName', header: 'CWE Name' },
+  { key: 'capecId', header: 'CAPEC' },
+  { key: 'capecName', header: 'CAPEC Name' },
+]
+
 interface Props { projectId: string | null }
 
 export const KillChainTable = memo(function KillChainTable({ projectId }: Props) {
@@ -50,7 +73,10 @@ export const KillChainTable = memo(function KillChainTable({ projectId }: Props)
   const [limit, setLimit] = useState(PAGE_SIZE)
 
   const rows = useMemo(() => data?.rows ?? [], [data])
-  const filtered = useMemo(() => filterRowsByText(rows, search), [rows, search])
+  const searched = useMemo(() => filterRowsByText(rows, search), [rows, search])
+  const { filteredRows: filtered, filterUi } = useRedZoneFilters({
+    rows: searched, columns: COLUMNS, projectId, slug: 'killChain',
+  })
   const sliced = useMemo(() => filtered.slice(0, limit), [filtered, limit])
 
   const exportConfig = useMemo<RedZoneExportConfig | undefined>(() =>
@@ -59,25 +85,7 @@ export const KillChainTable = memo(function KillChainTable({ projectId }: Props)
           rows: filtered,
           sheetName: 'Kill-Chain',
           fileSlug: 'redzone-kill-chain',
-          columns: [
-            { key: 'subdomain', header: 'Subdomain' },
-            { key: 'ipAddress', header: 'IP' },
-            { key: 'port', header: 'Port' },
-            { key: 'protocol', header: 'Proto' },
-            { key: 'serviceName', header: 'Service' },
-            { key: 'serviceProduct', header: 'Product' },
-            { key: 'serviceVersion', header: 'SvcVer' },
-            { key: 'techName', header: 'Technology' },
-            { key: 'techVersion', header: 'TechVer' },
-            { key: 'cveId', header: 'CVE' },
-            { key: 'cvss', header: 'CVSS' },
-            { key: 'cveSeverity', header: 'Severity' },
-            { key: 'cisaKev', header: 'CISA KEV' },
-            { key: 'cweId', header: 'CWE' },
-            { key: 'cweName', header: 'CWE Name' },
-            { key: 'capecId', header: 'CAPEC' },
-            { key: 'capecName', header: 'CAPEC Name' },
-          ],
+          columns: COLUMNS,
         }
       : undefined,
     [filtered, rows.length],
@@ -94,6 +102,7 @@ export const KillChainTable = memo(function KillChainTable({ projectId }: Props)
       onSearchChange={setSearch}
       searchPlaceholder="Search subdomain, CVE, tech, CWE..."
       exportConfig={exportConfig}
+      filterUi={filterUi}
       onRefresh={refetch}
       isLoading={isLoading}
       error={error}

@@ -8,9 +8,21 @@
  */
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createElement } from 'react'
 
 import { AiSurfaceTable, AiRiskTable } from './AiTables'
+
+/**
+ * The shared shell now restores per-column filters from user preferences, so
+ * every table mounts a react-query consumer. Each test gets a fresh client so
+ * one test's cached preferences cannot leak into the next.
+ */
+function renderWithClient(ui: React.ReactElement) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+  return render(createElement(QueryClientProvider, { client }, ui))
+}
+
 
 const SURFACE = {
   sheets: {
@@ -56,7 +68,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
 describe('AiSurfaceTable', () => {
   test('fetches and renders the default (LLM Endpoints) sheet', async () => {
-    render(createElement(AiSurfaceTable, { projectId: 'p1' }))
+    renderWithClient(createElement(AiSurfaceTable, { projectId: 'p1' }))
     await waitFor(() => expect(screen.getByText('/v1/chat/completions')).toBeTruthy())
     expect(screen.getByText('llm-chat')).toBeTruthy()
     expect((global.fetch as any)).toHaveBeenCalledWith(
@@ -64,7 +76,7 @@ describe('AiSurfaceTable', () => {
   })
 
   test('renders every sheet tab (as buttons) with its count', async () => {
-    render(createElement(AiSurfaceTable, { projectId: 'p1' }))
+    renderWithClient(createElement(AiSurfaceTable, { projectId: 'p1' }))
     await waitFor(() => screen.getByText('/v1/chat/completions'))
     for (const label of ['LLM Endpoints', 'MCP Servers', 'AI Technologies', 'Vector DBs', 'Model Inventory']) {
       // sheet tabs are buttons; the same label also appears in the meta summary,
@@ -74,7 +86,7 @@ describe('AiSurfaceTable', () => {
   })
 
   test('switching to MCP Servers sheet shows MCP data', async () => {
-    render(createElement(AiSurfaceTable, { projectId: 'p1' }))
+    renderWithClient(createElement(AiSurfaceTable, { projectId: 'p1' }))
     await waitFor(() => screen.getByText('/v1/chat/completions'))
     fireEvent.click(screen.getByRole('button', { name: /MCP Servers/ }))
     await waitFor(() => expect(screen.getByText('redamon-poison-mcp')).toBeTruthy())
@@ -82,15 +94,18 @@ describe('AiSurfaceTable', () => {
   })
 
   test('does not fetch when projectId is null', async () => {
-    render(createElement(AiSurfaceTable, { projectId: null }))
+    renderWithClient(createElement(AiSurfaceTable, { projectId: null }))
     await new Promise(r => setTimeout(r, 20))
-    expect(global.fetch).not.toHaveBeenCalled()
+    // The shared user-preferences query is app-wide and mounts regardless; what
+    // must not happen is an analytics request for a project that isn't chosen.
+    const urls: string[] = (global.fetch as any).mock.calls.map((c: unknown[]) => String(c[0]))
+    expect(urls.some((u: string) => u.includes('/api/analytics/'))).toBe(false)
   })
 })
 
 describe('AiRiskTable', () => {
   test('renders findings with severity + OWASP/ATLAS', async () => {
-    render(createElement(AiRiskTable, { projectId: 'p1' }))
+    renderWithClient(createElement(AiRiskTable, { projectId: 'p1' }))
     await waitFor(() => expect(screen.getByText('mcp_tool_poisoning')).toBeTruthy())
     expect(screen.getByText('LLM01')).toBeTruthy()
     expect(screen.getByText('AML.T0051')).toBeTruthy()
@@ -99,14 +114,14 @@ describe('AiRiskTable', () => {
   })
 
   test('empty sheet (RAG Ingestion) shows the empty-state label', async () => {
-    render(createElement(AiRiskTable, { projectId: 'p1' }))
+    renderWithClient(createElement(AiRiskTable, { projectId: 'p1' }))
     await waitFor(() => screen.getByText('mcp_tool_poisoning'))
     fireEvent.click(screen.getByRole('button', { name: /RAG Ingestion/ }))
     await waitFor(() => expect(screen.getByText(/No RAG ingestion endpoints/i)).toBeTruthy())
   })
 
   test('null version cell renders without crashing', async () => {
-    render(createElement(AiRiskTable, { projectId: 'p1' }))
+    renderWithClient(createElement(AiRiskTable, { projectId: 'p1' }))
     await waitFor(() => screen.getByText('mcp_tool_poisoning'))
     fireEvent.click(screen.getByRole('button', { name: /Exposed Runtimes/ }))
     await waitFor(() => expect(screen.getByText('ollama')).toBeTruthy())

@@ -19,7 +19,26 @@ CORE_SERVICES="postgres neo4j docker-broker recon-orchestrator kali-sandbox agen
 # Vulnerability Scanner, run docker-in-docker by the recon container for the web
 # cache poisoning module.
 TOOL_IMAGES="redamon-recon:latest redamon-vuln-scanner:latest redamon-github-hunter:latest redamon-trufflehog:latest redamon-baddns:latest redamon-ai-attack-surface:latest redamon-codefix-sandbox:latest redamon-wcvs:latest redamon-supply-chain-analyzer:latest redamon-supply-chain:latest"
+# Core services whose images are BUILT from this repo (postgres/neo4j are pulled,
+# so they are absent here). Used to verify `up` has something to start; the tags
+# are resolved through `docker compose config` so a renamed compose project or a
+# clone directory other than "redamon" still matches.
+CORE_BUILD_SERVICES="docker-broker recon-orchestrator kali-sandbox agent webapp"
 DEV_COMPOSE="-f docker-compose.yml -f docker-compose.dev.yml"
+
+# Free disk (GB) required before a Docker build starts. A full build has to fit
+# the whole image set plus BuildKit's cache; a targeted rebuild of one or two
+# services needs far less. See preflight_disk_gate().
+DISK_FULL_BUILD_GB=40
+DISK_PARTIAL_BUILD_GB=15
+
+# Tracked files that RedAmon REWRITES at runtime. A modified copy makes
+# `git pull --ff-only` refuse to fast-forward, which stranded users on an old
+# version behind a confusing "you may have local changes" error. They are
+# machine-local bookkeeping (never user edits), so `update` restores them before
+# pulling. Kept as a list because the same trap applies to any future marker
+# file that ships in git and is written by a container at runtime.
+RUNTIME_TRACKED_PATHS="recon/main_recon_modules/data/mitre_db/.last_update"
 
 # Orchestrator-spawned containers that docker compose does NOT manage (they are
 # created at runtime via the Docker API, so `compose down` leaves them behind and
@@ -168,6 +187,17 @@ detect_build_resources() {
     fi
     if [[ -z "$ncpu" || "$ncpu" -lt 1 ]]; then ncpu=1; fi
     BUILD_NCPU="$ncpu"
+
+    # Third resource that decides whether a build can finish: the filesystem
+    # Docker writes images to. Resolved here with the others so a single
+    # detect_build_resources() call answers all of "can this build run?", and so
+    # stubbing that one function in tests stubs resource detection completely.
+    local root; root="$(_docker_info_field DockerRootDir)"
+    if [[ -n "$root" && -d "$root" ]]; then
+        BUILD_DISK_PATH="$root"
+    else
+        BUILD_DISK_PATH="$SCRIPT_DIR"
+    fi
 }
 
 # Echo the chosen COMPOSE_PARALLEL_LIMIT. "0" means "leave unbounded".
@@ -277,6 +307,100 @@ preflight_ram_gate() {
         error "Insufficient memory for RedAmon core services: ~$(( BUILD_MEM_MB / 1024 ))GB available to Docker (source: ${BUILD_RES_SOURCE}), need ~$(( required_mb / 1024 ))GB."
         error "Free up memory, raise the Docker VM memory, or set REDAMON_SKIP_RAM_GATE=1 to override."
         return 1
+    fi
+    return 0
+}
+
+# =============================================================================
+# Disk governor: refuse to START a build that cannot finish.
+#
+# The memory gate above stops a build from being OOM-killed; this stops it from
+# running out of DISK. That failure mode is far nastier: BuildKit dies partway
+# through ("no space left on device"), the half-written layers are cleaned up,
+# and a host that was one image short can end up with no usable images at all —
+# nothing listening on :3000 and a bare 502 from whatever proxy sits in front.
+# Checking first costs milliseconds and turns a dead install into a clear message.
+#
+# Sizing: the built image set is ~70GB on disk after layer dedup (the three heavy
+# ones are ai-attack-surface ~16GB, kali-sandbox ~15GB, agent ~11GB), and BuildKit
+# needs working room for its cache on top. 40GB is the floor for the incremental
+# work of one full build, NOT the total footprint — see "Disk sizing" in README.md
+# for what a real deployment needs.
+# =============================================================================
+
+# Free space (whole GB) on the filesystem holding <path>. Empty when unknown.
+# `df -Pk` is the POSIX form: GNU's --output=avail does not exist on macOS.
+_disk_free_gb() {
+    local path="${1:-}" kb=""
+    [[ -z "$path" ]] && { printf ''; return; }
+    kb="$(df -Pk -- "$path" 2>/dev/null | awk 'NR==2{print $4}')"
+    kb="${kb//[^0-9]/}"
+    [[ -z "$kb" ]] && { printf ''; return; }
+    printf '%s' $(( kb / 1048576 ))
+}
+
+# The filesystem that Docker actually writes images to, which is often NOT the
+# one holding this repo (/var/lib/docker, or a snap/devicemapper path, can be a
+# separate volume). On Mac/Windows the root lives inside the Docker VM and is
+# invisible from here, so fall back to the repo — the VM's disk image sits on
+# that filesystem anyway, making it a fair proxy.
+_docker_disk_path() {
+    # Already resolved by detect_build_resources()? Reuse it.
+    if [[ -n "${BUILD_DISK_PATH:-}" ]]; then
+        printf '%s' "$BUILD_DISK_PATH"
+        return
+    fi
+    local root
+    root="$(_docker_info_field DockerRootDir)"
+    if [[ -n "$root" && -d "$root" ]]; then
+        printf '%s' "$root"
+    else
+        printf '%s' "$SCRIPT_DIR"
+    fi
+}
+
+# preflight_disk_gate <required_gb> <what> [path]
+# Returns 1 (and explains how to reclaim space) when the build cannot fit.
+# <path> defaults to the Docker data directory; callers that already ran
+# detect_build_resources() pass $BUILD_DISK_PATH so no second `docker info` is
+# issued mid-build.
+# Override with REDAMON_SKIP_DISK_GATE=1 or REDAMON_MIN_DISK_GB=<gb>.
+preflight_disk_gate() {
+    local required_gb="${1:-$DISK_FULL_BUILD_GB}" what="${2:-build}" path="${3:-}"
+    [[ "${REDAMON_SKIP_DISK_GATE:-}" == "1" ]] && return 0
+    if [[ -n "${REDAMON_MIN_DISK_GB:-}" ]]; then
+        required_gb="${REDAMON_MIN_DISK_GB//[^0-9]/}"
+        [[ -z "$required_gb" ]] && required_gb="$DISK_FULL_BUILD_GB"
+    fi
+    [[ "$required_gb" -le 0 ]] && return 0
+
+    local free
+    [[ -z "$path" ]] && path="$(_docker_disk_path)"
+    free="$(_disk_free_gb "$path")"
+    if [[ -z "$free" ]]; then
+        # Unmeasurable (unusual df output, permissions). Never block on this:
+        # a false negative here would be worse than the risk it guards against.
+        warn "Could not read free disk space for Docker (${path}); skipping the disk check."
+        return 0
+    fi
+
+    if [[ "$free" -lt "$required_gb" ]]; then
+        error "Not enough disk space for the ${what}: ${free}GB free on ${path}, need ~${required_gb}GB."
+        error "RedAmon's images total ~70GB on disk and the build needs working room on top."
+        error "Reclaim space, then re-run:"
+        error "    docker builder prune -af     # build cache (usually the biggest win)"
+        error "    docker image prune -af       # unused images"
+        error "    docker system df             # see what is actually using space"
+        error "Override with REDAMON_SKIP_DISK_GATE=1 (the build may then fail part-way)."
+        return 1
+    fi
+
+    # Passing but close: the build will probably finish, yet leaves no room for
+    # the next one. Say so now rather than at the next update.
+    local comfortable=$(( required_gb + required_gb / 2 ))
+    if [[ "$free" -lt "$comfortable" ]]; then
+        warn "Disk is tight: ${free}GB free on ${path} (~${comfortable}GB recommended for the ${what})."
+        warn "  Free some space soon: docker builder prune -af"
     fi
     return 0
 }
@@ -414,6 +538,41 @@ setup_zram() {
     return 0
 }
 
+# Reclaim the BuildKit cache a rebuild just orphaned. Docker never collects this
+# on its own: a rebuild writes NEW layers and leaves the previous version's
+# behind unreferenced, so the cache grows by a few GB on every update and ends up
+# the single biggest reclaimable item on a long-lived install (measured: ~23GB of
+# orphaned cache on a box that had never pruned).
+#
+# `prune -f`, NEVER `prune -af`. The plain form drops only cache records that no
+# existing image still references, so the cache backing the images we just built
+# stays warm and the NEXT update is still incremental. `-af` would additionally
+# wipe that warm cache while recovering no extra disk -- those bytes are SHARED
+# with the images and stay on disk regardless -- turning every future rebuild
+# into a cold one for nothing.
+#
+# Opt out with REDAMON_NO_AUTO_PRUNE=1. The builder cache is per-DAEMON, not
+# per-project: there is no filter that scopes a prune to one compose project, so
+# on a shared workstation this also evicts other projects' orphaned cache.
+# Harmless on a dedicated deployment host, rude on a dev box.
+prune_stale_build_cache() {
+    [[ "${REDAMON_NO_AUTO_PRUNE:-}" == "1" ]] && return 0
+
+    local out reclaimed=""
+    # A prune failure (old daemon, wedged builder) must never turn a SUCCESSFUL
+    # build into a failed command. This is opportunistic housekeeping, not part
+    # of the build contract, so swallow everything and return 0.
+    out="$(docker builder prune -f 2>/dev/null)" || return 0
+
+    # `docker builder prune` ends with a "Total:  <size>" line. Report only when
+    # something was actually freed, so the common no-op case stays silent.
+    reclaimed="$(printf '%s\n' "$out" | awk '/^Total:/ {print $NF}' | tail -1)"
+    if [[ -n "$reclaimed" && "$reclaimed" != "0B" ]]; then
+        info "Reclaimed ${reclaimed} of stale build cache (disable: REDAMON_NO_AUTO_PRUNE=1)"
+    fi
+    return 0
+}
+
 # Memory-safe replacement for `docker compose ... build ...`. Pass exactly the
 # args that would follow `docker compose`, e.g.:
 #   compose_build --profile tools build
@@ -443,6 +602,21 @@ compose_build() {
         isolate_webapp=true
     fi
 
+    # Disk gate. Every build path in this script funnels through compose_build,
+    # so gating here covers install, update, and the lazy ensure_tool_images
+    # build with one check. Scale the requirement to the scope: an empty service
+    # list means "build everything" (the ~48GB set), a named list is targeted.
+    local need_gb="$DISK_PARTIAL_BUILD_GB" what="rebuild"
+    if [[ "$svc_count" -eq 0 ]]; then
+        need_gb="$DISK_FULL_BUILD_GB"; what="full image build"
+    fi
+    # Reuse the path detect_build_resources() just resolved: no extra `docker
+    # info` round-trip, and the gate stays measurable even when a caller stubs
+    # resource detection.
+    if ! preflight_disk_gate "$need_gb" "$what" "${BUILD_DISK_PATH:-$SCRIPT_DIR}"; then
+        return 1
+    fi
+
     info "Docker build resources: ~$(( BUILD_MEM_MB / 1024 ))GB RAM / ${BUILD_NCPU} CPU (${BUILD_RES_SOURCE}); parallelism=${parallel}"
     maybe_warn_low_memory
 
@@ -454,11 +628,27 @@ compose_build() {
 
     # Layer 2: build the (remaining) images with a capped parallel limit. If
     # webapp was in the set it is now cached, so re-passing it is a no-op.
+    #
+    # Capture the status instead of letting it propagate directly: Layer 3 has to
+    # run in between, and it must not overwrite the build's exit code. `return
+    # "$build_rc"` at the end restores the original contract, so a caller that
+    # invokes compose_build bare still aborts under `set -e`, and one that wraps
+    # it in `if ! compose_build ...` (cmd_update's tool build) still sees failure.
+    local build_rc=0
     if [[ -n "$parallel" && "$parallel" -ge 1 ]]; then
-        COMPOSE_PARALLEL_LIMIT="$parallel" docker compose "$@"
+        COMPOSE_PARALLEL_LIMIT="$parallel" docker compose "$@" || build_rc=$?
     else
-        docker compose "$@"   # REDAMON_BUILD_PARALLEL=0 -> unbounded
+        docker compose "$@" || build_rc=$?   # REDAMON_BUILD_PARALLEL=0 -> unbounded
     fi
+
+    # Layer 3: drop the cache the rebuild just orphaned. ONLY on success -- after
+    # a failed build the "orphaned" cache is the partial work the retry wants to
+    # resume from, and pruning it would force the retry to start cold.
+    if [[ "$build_rc" -eq 0 ]]; then
+        prune_stale_build_cache
+    fi
+
+    return "$build_rc"
 }
 
 # Best-effort POST to the orchestrator capture-proxy/start (idempotent reconcile:
@@ -585,6 +775,21 @@ check_prerequisites() {
 export_version() {
     export REDAMON_VERSION
     REDAMON_VERSION="$(get_version)"
+}
+
+# Restore any RUNTIME_TRACKED_PATHS the running stack has rewritten, so the
+# `git pull --ff-only` in `update` is not blocked by a file the user never
+# touched. Skips paths that are no longer tracked (the marker files are being
+# untracked release by release), so this is also the migration path for users
+# on an older version where they still are.
+_restore_runtime_tracked_files() {
+    local p
+    for p in $RUNTIME_TRACKED_PATHS; do
+        git -C "$SCRIPT_DIR" ls-files --error-unmatch -- "$p" &>/dev/null || continue
+        git -C "$SCRIPT_DIR" diff --quiet -- "$p" 2>/dev/null && continue
+        info "Restoring runtime-written file so the update can pull: $p"
+        git -C "$SCRIPT_DIR" checkout -- "$p" 2>/dev/null || true
+    done
 }
 
 # Repair data-volume ownership for the non-root webapp (uid 1001 nextjs).
@@ -1560,6 +1765,22 @@ cmd_install() {
     info "Building all images (this may take a while on first run)..."
     compose_build --profile tools --profile capture build
 
+    # Reap the images the build just orphaned. A rebuild does not replace an image
+    # in place: it builds a new one and MOVES the tag, leaving the previous image
+    # untagged and uncollected. On a genuinely fresh install this is a no-op (there
+    # is nothing to orphan), but `install` re-run on a host that already has RedAmon
+    # images rebuilds the ENTIRE set in one shot -- a retry after a failed install, a
+    # `--gvm`/`--kbase` mode switch, or an `install` used where `update` was meant.
+    # That is the largest orphaning event the script can produce, and it was the only
+    # build path with no cleanup; cmd_update has always done this after its rebuilds.
+    #
+    # `prune -f`, NEVER `prune -af`: the plain form removes only untagged images that
+    # no container references. `-af` removes every image not backing a RUNNING
+    # container, and at this point in install NOTHING is running yet -- it would
+    # delete the whole tool set that was just built (tool images are build-only and
+    # never run) and the core images too, immediately after paying for them.
+    docker image prune -f >/dev/null 2>&1 || true
+
     # AFTER the tool build: the sync runs inside the analyzer image, so calling
     # it earlier silently skipped on a fresh install and left the offline OSV
     # database empty - the supply-chain feature would then report "no <eco>
@@ -1578,6 +1799,14 @@ cmd_install() {
     else
         # shellcheck disable=SC2086
         docker compose up -d --force-recreate $CORE_SERVICES
+    fi
+
+    # Verify BEFORE announcing. See verify_core_running(). This matters most on a
+    # fresh install: it is the run where a wrong .env, an unwritable volume, or a
+    # container OOM is most likely, and the one where a false "ready!" sends the
+    # operator off to configure a reverse proxy in front of nothing.
+    if ! verify_core_running; then
+        exit 1
     fi
 
     # Show "ready" banner before the KB prompt so the user knows the app
@@ -1652,12 +1881,27 @@ cmd_update() {
     else
         old_head="$(git -C "$SCRIPT_DIR" rev-parse HEAD)"
 
+        # Drop RedAmon's own runtime scribbles first — they are the single most
+        # common reason this pull fails, and they are not the user's changes.
+        _restore_runtime_tracked_files
+
         # Pull latest (try upstream tracking branch first, then origin/master)
         if ! git -C "$SCRIPT_DIR" pull --ff-only 2>/dev/null; then
             if ! git -C "$SCRIPT_DIR" pull --ff-only origin master 2>/dev/null; then
-                error "Could not pull updates. You may have local changes."
+                error "Could not pull updates: the working tree has local changes."
+                local dirty
+                dirty="$(git -C "$SCRIPT_DIR" status --porcelain --untracked-files=no 2>/dev/null | head -20)"
+                if [[ -n "$dirty" ]]; then
+                    echo ""
+                    echo "  Modified files:"
+                    printf '%s\n' "$dirty" | while IFS= read -r line; do echo "    $line"; done
+                fi
                 echo ""
-                echo "  Try one of:"
+                echo "  If those are NOT your edits, discard them and re-run:"
+                echo "    git -C \"$SCRIPT_DIR\" checkout -- <file>     # one file"
+                echo "    git -C \"$SCRIPT_DIR\" reset --hard @{u}      # all of them (destructive)"
+                echo ""
+                echo "  If they ARE your edits, keep them first:"
                 echo "    git stash && ./redamon.sh update && git stash pop"
                 echo "    git commit -am 'local changes' && ./redamon.sh update"
                 exit 1
@@ -1804,6 +2048,27 @@ cmd_update() {
         rebuild_capture=true
     fi
 
+    # Remember whether the stack was serving BEFORE anything is touched. `update`
+    # only restarts what it rebuilds, so a user who ran `down` first, or who
+    # updates before ever starting, must not be told the update failed at the end.
+    local stack_was_up=false
+    if _service_running webapp; then
+        stack_was_up=true
+    fi
+
+    # Disk gate BEFORE the first build. compose_build gates itself too, but the
+    # tool-image build below runs in an `if !` condition so it only warns and
+    # continues — on a full disk that would march on and fail again at the core
+    # rebuild. Checking once here aborts the update while everything still works,
+    # which is the whole point: a failed update must never leave the host worse
+    # off than before it started.
+    if [[ ${#rebuild_core[@]} -gt 0 || ${#rebuild_tools[@]} -gt 0 || "$rebuild_capture" == "true" ]]; then
+        if ! preflight_disk_gate "$DISK_FULL_BUILD_GB" "update to v${new_version}"; then
+            error "Update aborted before any image was touched. v${old_version} is still installed and running."
+            exit 1
+        fi
+    fi
+
     # Export version for build arg
     export_version
 
@@ -1903,6 +2168,17 @@ cmd_update() {
         done
     fi
 
+    # An update that leaves the stack down must not report success. This is the
+    # exact gap the v6.1.1 -> v6.4.1 field report hit: the update finished, said
+    # nothing was wrong, and the operator only discovered the stack was gone when
+    # their reverse proxy started serving 502s.
+    if [[ "$stack_was_up" == "true" ]] && ! verify_core_running; then
+        error "Update to v${new_version} completed its build, but the stack is NOT running."
+        error "It was running before the update. Recover with:"
+        error "    ./redamon.sh up        (or ./redamon.sh install if images are missing)"
+        exit 1
+    fi
+
     echo ""
     success "Updated to v${new_version}!"
     if [[ ${#rebuild_core[@]} -gt 0 || ${#rebuild_tools[@]} -gt 0 ]]; then
@@ -1988,6 +2264,86 @@ ensure_tool_images() {
     fi
 }
 
+# Image tags compose would use for the core buildable services. Resolved through
+# `docker compose config` rather than hardcoded, because compose derives untagged
+# image names from the project name — a clone in a directory not called "redamon",
+# or a COMPOSE_PROJECT_NAME override, produces different tags. Empty output means
+# "could not resolve", and callers must then not block.
+#
+# Any leading args are passed to compose as file selectors (e.g. $DEV_COMPOSE),
+# so dev mode resolves ITS overrides: dev swaps webapp for a stock node image,
+# which the redamon- filter then correctly drops from the required set.
+_core_image_names() {
+    local files=("$@")
+    # `|| true`: the script runs with pipefail, and both a compose failure and a
+    # grep that matches nothing are legitimate "cannot resolve" answers here, not
+    # errors to abort on. The caller treats empty output as "do not block".
+    # shellcheck disable=SC2086
+    docker compose ${files[@]+"${files[@]}"} config --images $CORE_BUILD_SERVICES 2>/dev/null \
+        | grep '^redamon-' | sort -u || true
+}
+
+# Refuse to "start" a stack that has no images to start. Without this, `up` on a
+# host whose images were wiped (a build that ran out of disk, a `docker system
+# prune`) hands off to `docker compose up -d`, which silently tries to REBUILD
+# everything — the same 40GB build that just failed — or exits doing nothing.
+# Either way the user sees no explanation, only a 502 later.
+ensure_core_images() {
+    local names img missing=()
+    names="$(_core_image_names "$@")"
+    [[ -z "$names" ]] && return 0          # unresolvable: never block on a guess
+    while IFS= read -r img; do
+        [[ -z "$img" ]] && continue
+        docker image inspect "$img" &>/dev/null || missing+=("$img")
+    done <<< "$names"
+
+    [[ ${#missing[@]} -eq 0 ]] && return 0
+
+    error "Cannot start RedAmon: ${#missing[@]} core image(s) are missing."
+    for img in "${missing[@]}"; do
+        error "    ${img}"
+    done
+    error "Build them with:"
+    error "    ./redamon.sh install"
+    error "This is normal after a failed update or a 'docker system prune'."
+    return 1
+}
+
+# True when compose reports at least one RUNNING container for <service>.
+_service_running() {
+    local svc="$1" ids id state
+    ids="$(docker compose ps -q "$svc" 2>/dev/null)" || return 1
+    [[ -n "$ids" ]] || return 1
+    while IFS= read -r id; do
+        [[ -z "$id" ]] && continue
+        state="$(docker inspect -f '{{.State.Running}}' "$id" 2>/dev/null || echo false)"
+        [[ "$state" == "true" ]] && return 0
+    done <<< "$ids"
+    return 1
+}
+
+# Confirm the stack is actually serving before anything announces that it is.
+# `docker compose up -d` exits 0 once containers are CREATED, so a container that
+# dies a second later (bad env, unwritable volume, OOM) still leaves a green exit
+# code. Printing "RedAmon is ready!" over that is how a broken host stays broken:
+# the operator trusts the banner and only learns otherwise from a 502 served by
+# whatever proxy sits in front of :3000.
+verify_core_running() {
+    local failed=() svc
+    for svc in webapp agent; do
+        _service_running "$svc" || failed+=("$svc")
+    done
+    [[ ${#failed[@]} -eq 0 ]] && return 0
+
+    error "RedAmon did not start: ${failed[*]} not running."
+    error "Nothing is listening on port 3000. Diagnose with:"
+    error "    docker compose ps -a"
+    for svc in "${failed[@]}"; do
+        error "    docker compose logs --tail 50 ${svc}"
+    done
+    return 1
+}
+
 cmd_up_dev() {
     _migrate_legacy_kbase_flag
     _kb_export_env
@@ -1995,6 +2351,11 @@ cmd_up_dev() {
     local gvm_flag="false"
     if is_gvm_enabled; then
         gvm_flag="true"
+    fi
+
+    # shellcheck disable=SC2086
+    if ! ensure_core_images $DEV_COMPOSE; then
+        exit 1
     fi
 
     ensure_tool_images
@@ -2012,6 +2373,11 @@ cmd_up_dev() {
     else
         # shellcheck disable=SC2086
         docker compose $DEV_COMPOSE up -d $CORE_SERVICES
+    fi
+
+    # Verify BEFORE announcing. See verify_core_running().
+    if ! verify_core_running; then
+        exit 1
     fi
 
     # Show "ready" banner before the KB prompt so the user knows the app
@@ -2061,6 +2427,23 @@ cmd_up() {
     if ! preflight_ram_gate; then
         exit 1
     fi
+
+    # Nothing can start if nothing was ever built. Check before the tool-image
+    # build below, so a wiped host is told to run `install` in one second rather
+    # than after a long tool build that still leaves the core services missing.
+    if ! ensure_core_images; then
+        exit 1
+    fi
+
+    # Warn (never block) on a nearly-full disk: scans write into volumes, and
+    # Postgres/Neo4j fail hard when the filesystem fills under them.
+    local free_gb=""
+    free_gb="$(_disk_free_gb "$(_docker_disk_path)")" || true   # advisory only
+    if [[ -n "$free_gb" && "$free_gb" -lt 10 ]]; then
+        warn "Only ${free_gb}GB free on the Docker filesystem. Scans and the database need room."
+        warn "  Reclaim space with: docker builder prune -af"
+    fi
+
     export_resource_caps
     setup_zram   # optional one-time compressed-swap cushion (REDAMON_ENABLE_ZRAM=1)
 
@@ -2082,6 +2465,11 @@ cmd_up() {
     else
         # shellcheck disable=SC2086
         docker compose up -d $CORE_SERVICES
+    fi
+
+    # Verify BEFORE announcing. See verify_core_running().
+    if ! verify_core_running; then
+        exit 1
     fi
 
     # Show "ready" banner before the KB prompt so the user knows the app

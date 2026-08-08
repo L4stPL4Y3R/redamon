@@ -4,6 +4,7 @@ import { memo, useMemo, useState } from 'react'
 import { RedZoneTableShell } from './RedZoneTableShell'
 import { useRedZoneTable } from './useRedZoneTable'
 import type { RedZoneExportConfig } from './exportCsv'
+import { useRedZoneFilters, type RedZoneFilterColumn } from './useRedZoneFilters'
 import {
   SeverityBadge,
   Mono,
@@ -53,6 +54,26 @@ function ValidationChip({ status }: { status: string | null }) {
   return <span className={`${rowStyles.sevBadge} ${cls}`}>{label}</span>
 }
 
+/** Module-level: the filter profiles are keyed off these, and a fresh array
+ *  literal per render would re-profile every row. */
+const COLUMNS: RedZoneFilterColumn[] = [
+  { key: 'origin', header: 'Origin' },
+  { key: 'secretType', header: 'Type' },
+  { key: 'keyType', header: 'Category' },
+  { key: 'valueSample', header: 'Redacted Sample' },
+  { key: 'matchedText', header: 'Redacted Match' },
+  { key: 'entropy', header: 'Entropy' },
+  { key: 'confidence', header: 'Confidence' },
+  { key: 'severity', header: 'Severity' },
+  { key: 'validationStatus', header: 'Validation' },
+  { key: 'detectionMethod', header: 'Detection' },
+  { key: 'sourceModule', header: 'Source Module' },
+  { key: 'sourceUrl', header: 'Source URL' },
+  { key: 'jsFileUrl', header: 'Parent JS File' },
+  { key: 'baseUrl', header: 'BaseURL' },
+  { key: 'subdomain', header: 'Subdomain' },
+]
+
 interface Props { projectId: string | null }
 
 export const SecretsTable = memo(function SecretsTable({ projectId }: Props) {
@@ -61,7 +82,10 @@ export const SecretsTable = memo(function SecretsTable({ projectId }: Props) {
   const [limit, setLimit] = useState(PAGE_SIZE)
 
   const rows = useMemo(() => data?.rows ?? [], [data])
-  const filtered = useMemo(() => filterRowsByText(rows, search), [rows, search])
+  const searched = useMemo(() => filterRowsByText(rows, search), [rows, search])
+  const { filteredRows: filtered, filterUi } = useRedZoneFilters({
+    rows: searched, columns: COLUMNS, projectId, slug: 'secrets',
+  })
   const sliced = useMemo(() => filtered.slice(0, limit), [filtered, limit])
 
   const exportConfig = useMemo<RedZoneExportConfig | undefined>(() =>
@@ -70,23 +94,7 @@ export const SecretsTable = memo(function SecretsTable({ projectId }: Props) {
           rows: filtered.map(r => ({ ...r, valueSample: redactSecret(r.valueSample), matchedText: redactSecret(r.matchedText) })),
           sheetName: 'Secrets',
           fileSlug: 'redzone-secrets',
-          columns: [
-            { key: 'origin', header: 'Origin' },
-            { key: 'secretType', header: 'Type' },
-            { key: 'keyType', header: 'Category' },
-            { key: 'valueSample', header: 'Redacted Sample' },
-            { key: 'matchedText', header: 'Redacted Match' },
-            { key: 'entropy', header: 'Entropy' },
-            { key: 'confidence', header: 'Confidence' },
-            { key: 'severity', header: 'Severity' },
-            { key: 'validationStatus', header: 'Validation' },
-            { key: 'detectionMethod', header: 'Detection' },
-            { key: 'sourceModule', header: 'Source Module' },
-            { key: 'sourceUrl', header: 'Source URL' },
-            { key: 'jsFileUrl', header: 'Parent JS File' },
-            { key: 'baseUrl', header: 'BaseURL' },
-            { key: 'subdomain', header: 'Subdomain' },
-          ],
+          columns: COLUMNS,
         }
       : undefined,
     [filtered, rows.length],
@@ -100,6 +108,7 @@ export const SecretsTable = memo(function SecretsTable({ projectId }: Props) {
       onSearchChange={setSearch}
       searchPlaceholder="Search secret type, category, URL, subdomain..."
       exportConfig={exportConfig}
+      filterUi={filterUi}
       onRefresh={refetch}
       isLoading={isLoading}
       error={error}

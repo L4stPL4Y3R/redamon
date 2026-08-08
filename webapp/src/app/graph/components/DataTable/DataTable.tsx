@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo, memo, Fragment } from 'react'
+import { useState, useMemo, useEffect, useRef, memo, Fragment } from 'react'
 import {
   useReactTable,
   getCoreRowModel,
@@ -12,6 +12,8 @@ import {
   createColumnHelper,
   type SortingState,
   type ExpandedState,
+  type ColumnFiltersState,
+  type FilterFn,
 } from '@tanstack/react-table'
 import {
   ChevronDown,
@@ -30,7 +32,63 @@ import type { GraphData } from '../../types'
 import { NODE_COLORS } from '../../config'
 import type { TableRow } from '../../hooks/useTableData'
 import { ExpandedRowDetail } from './ExpandedRowDetail'
+import { ColumnFilterButton, ActiveFilterChips } from '../ColumnFilterPanel'
+import { useColumnFilterState } from '../../hooks/useColumnFilterState'
+import { tableFilterScope } from '@/hooks/useUserPreferences'
+import {
+  describeFilter,
+  isFilterActive,
+  matchesFilter,
+  profileColumn,
+  regexFor,
+  type CellAccessor,
+  type ColumnFilter,
+  type ColumnKind,
+} from '../../utils/columnFilters'
 import styles from './DataTable.module.css'
+
+/**
+ * All Nodes has a FIXED column set (unlike the Node Inspector, whose columns
+ * come from whatever the selected type carries), so the accessor is a small
+ * explicit map rather than a property lookup. It must agree with the column
+ * definitions below or a row would filter on one value and display another.
+ */
+const HIDDEN_PROP_KEYS = new Set(['project_id', 'user_id'])
+
+const cellValue: CellAccessor<TableRow> = (row, columnId) => {
+  switch (columnId) {
+    case 'type': return row.node.type
+    case 'name': return row.node.name
+    case 'properties':
+      return Object.keys(row.node.properties).filter(k => !HIDDEN_PROP_KEYS.has(k)).length
+    case 'connectionsIn': return row.connectionsIn.length
+    case 'connectionsOut': return row.connectionsOut.length
+    case 'totalConns': return row.connectionsIn.length + row.connectionsOut.length
+    default: return undefined
+  }
+}
+
+const FILTERABLE_COLUMNS = [
+  { columnId: 'type', label: 'Type' },
+  { columnId: 'name', label: 'Name' },
+  { columnId: 'properties', label: 'Props' },
+  { columnId: 'connectionsIn', label: 'In' },
+  { columnId: 'connectionsOut', label: 'Out' },
+  { columnId: 'totalConns', label: 'Conns' },
+]
+
+interface AdvancedFilterValue {
+  filter: ColumnFilter
+  kind: ColumnKind
+  rx: RegExp | null
+}
+
+/** Registered per column so pagination and the row counter see one row model. */
+const advancedFilterFn: FilterFn<TableRow> = (row, columnId, value) => {
+  const v = value as AdvancedFilterValue | undefined
+  if (!v) return true
+  return matchesFilter(cellValue(row.original, columnId), v.filter, v.kind, v.rx)
+}
 
 interface DataTableProps {
   data: GraphData | undefined
@@ -39,6 +97,8 @@ interface DataTableProps {
   rows: TableRow[]
   globalFilter: string
   onGlobalFilterChange: (value: string) => void
+  /** Scopes persisted column filters; without it they simply are not saved. */
+  projectId?: string | null
 }
 
 const columnHelper = createColumnHelper<TableRow>()
@@ -50,9 +110,51 @@ export const DataTable = memo(function DataTable({
   rows,
   globalFilter,
   onGlobalFilterChange,
+  projectId = null,
 }: DataTableProps) {
   const [sorting, setSorting] = useState<SortingState>([])
   const [expanded, setExpanded] = useState<ExpandedState>({})
+
+  const [panelOpened, setPanelOpened] = useState(false)
+  const {
+    filters: colFilters,
+    setColumnFilter,
+    clearColumnFilter,
+    clearAllFilters,
+  } = useColumnFilterState(projectId, tableFilterScope('allNodes', null))
+
+  // Restored filters arm the profiles too - the chips and the per-column kinds
+  // both come from them, and a saved filter with no profile would narrow the
+  // table while the UI showed nothing.
+  const filtersArmed = panelOpened || Object.keys(colFilters).length > 0
+  const profiles = useMemo(
+    () => (filtersArmed ? FILTERABLE_COLUMNS.map(c => profileColumn(c.columnId, c.label, rows, cellValue)) : []),
+    [filtersArmed, rows]
+  )
+  const kinds = useMemo(() => {
+    const m: Record<string, ColumnKind> = {}
+    for (const p of profiles) m[p.columnId] = p.kind
+    return m
+  }, [profiles])
+
+  const columnFilters: ColumnFiltersState = useMemo(
+    () =>
+      Object.entries(colFilters)
+        .filter(([, f]) => isFilterActive(f))
+        .map(([id, f]) => ({
+          id,
+          value: { filter: f, kind: kinds[id] ?? 'text', rx: regexFor(f) } satisfies AdvancedFilterValue,
+        })),
+    [colFilters, kinds]
+  )
+
+  const activeChips = useMemo(
+    () =>
+      profiles
+        .filter(p => isFilterActive(colFilters[p.columnId]))
+        .map(p => ({ columnId: p.columnId, text: describeFilter(p.label, colFilters[p.columnId]) })),
+    [profiles, colFilters]
+  )
 
   const columns = useMemo(() => [
     columnHelper.display({
@@ -72,6 +174,7 @@ export const DataTable = memo(function DataTable({
     }),
     columnHelper.accessor(row => row.node.type, {
       id: 'type',
+      filterFn: advancedFilterFn,
       header: 'Type',
       size: 160,
       cell: info => {
@@ -86,6 +189,7 @@ export const DataTable = memo(function DataTable({
     }),
     columnHelper.accessor(row => row.node.name, {
       id: 'name',
+      filterFn: advancedFilterFn,
       header: 'Name',
       size: 400,
       cell: info => {
@@ -129,6 +233,7 @@ export const DataTable = memo(function DataTable({
     }),
     columnHelper.accessor(row => Object.keys(row.node.properties).filter(k => k !== 'project_id' && k !== 'user_id').length, {
       id: 'properties',
+      filterFn: advancedFilterFn,
       header: 'Props',
       size: 70,
       cell: info => (
@@ -137,6 +242,7 @@ export const DataTable = memo(function DataTable({
     }),
     columnHelper.accessor(row => row.connectionsIn.length, {
       id: 'connectionsIn',
+      filterFn: advancedFilterFn,
       header: 'In',
       size: 70,
       cell: info => {
@@ -150,6 +256,7 @@ export const DataTable = memo(function DataTable({
     }),
     columnHelper.accessor(row => row.connectionsOut.length, {
       id: 'connectionsOut',
+      filterFn: advancedFilterFn,
       header: 'Out',
       size: 70,
       cell: info => {
@@ -163,6 +270,7 @@ export const DataTable = memo(function DataTable({
     }),
     columnHelper.accessor(row => row.connectionsIn.length + row.connectionsOut.length, {
       id: 'totalConns',
+      filterFn: advancedFilterFn,
       header: 'Conns',
       size: 60,
       cell: info => {
@@ -179,7 +287,7 @@ export const DataTable = memo(function DataTable({
   const table = useReactTable({
     data: rows,
     columns,
-    state: { sorting, globalFilter, expanded },
+    state: { sorting, globalFilter, expanded, columnFilters },
     onSortingChange: setSorting,
     onGlobalFilterChange: onGlobalFilterChange,
     onExpandedChange: setExpanded,
@@ -236,6 +344,30 @@ export const DataTable = memo(function DataTable({
 
   return (
     <div className={styles.container}>
+      {/* Chips grow from the left; the control itself stays pinned to the
+          right edge, as it is on every other table. */}
+      <div className={styles.filterBar}>
+        <div className={styles.filterBarChips}>
+          <ActiveFilterChips
+            chips={activeChips}
+            onRemove={clearColumnFilter}
+            onClearAll={clearAllFilters}
+          />
+        </div>
+        <ColumnFilterButton
+          profiles={profiles}
+          filters={colFilters}
+          kinds={kinds}
+          rows={rows}
+          accessor={cellValue}
+          activeCount={activeChips.length}
+          onChange={setColumnFilter}
+          onClearColumn={clearColumnFilter}
+          onClearAll={clearAllFilters}
+          onArm={() => setPanelOpened(true)}
+        />
+      </div>
+
       <div className={styles.tableWrapper}>
         <table className={styles.table}>
           <thead>

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { rowCap } from '../rowCap'
 import { guardProject } from '@/lib/access'
 import { getGraphSession } from '@/app/api/graph/neo4j'
 
@@ -46,7 +47,7 @@ export async function GET(request: NextRequest) {
               v.poc_link                  AS pocLink,
               v.curl_verify               AS curlVerify
        ORDER BY v.cvss_score DESC, v.confidence DESC
-       LIMIT 500`,
+       LIMIT ${rowCap()}`,
       { pid: projectId }
     )
 

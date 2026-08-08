@@ -4,6 +4,7 @@ import { memo, useMemo, useState } from 'react'
 import { RedZoneTableShell } from './RedZoneTableShell'
 import { useRedZoneTable } from './useRedZoneTable'
 import type { RedZoneExportConfig } from './exportCsv'
+import { useRedZoneFilters, type RedZoneFilterColumn } from './useRedZoneFilters'
 import {
   Mono,
   Truncated,
@@ -40,6 +41,27 @@ interface GraphqlRow {
 
 const PAGE_SIZE = 100
 
+/** Module-level: the filter profiles are keyed off these, and a fresh array
+ *  literal per render would re-profile every row. */
+const COLUMNS: RedZoneFilterColumn[] = [
+  { key: 'endpointUrl', header: 'Endpoint' },
+  { key: 'subdomain', header: 'Subdomain' },
+  { key: 'introspection', header: 'Introspection' },
+  { key: 'graphiqlExposed', header: 'GraphiQL' },
+  { key: 'fieldSuggestions', header: 'FieldSuggestions' },
+  { key: 'getAllowed', header: 'GET allowed' },
+  { key: 'batching', header: 'Batching' },
+  { key: 'tracing', header: 'Tracing' },
+  { key: 'queriesCount', header: 'Queries' },
+  { key: 'mutationsCount', header: 'Mutations' },
+  { key: 'subscriptionsCount', header: 'Subscriptions' },
+  { key: 'vulnTypes', header: 'Vulns' },
+  { key: 'vulnSeverities', header: 'VulnSeverities' },
+  { key: 'sensitiveFieldsSample', header: 'Sensitive Fields' },
+  { key: 'schemaHash', header: 'Schema Hash' },
+  { key: 'copScannedAt', header: 'Last graphql-cop scan' },
+]
+
 interface Props { projectId: string | null }
 
 export const GraphqlLedgerTable = memo(function GraphqlLedgerTable({ projectId }: Props) {
@@ -48,7 +70,10 @@ export const GraphqlLedgerTable = memo(function GraphqlLedgerTable({ projectId }
   const [limit, setLimit] = useState(PAGE_SIZE)
 
   const rows = useMemo(() => data?.rows ?? [], [data])
-  const filtered = useMemo(() => filterRowsByText(rows, search), [rows, search])
+  const searched = useMemo(() => filterRowsByText(rows, search), [rows, search])
+  const { filteredRows: filtered, filterUi } = useRedZoneFilters({
+    rows: searched, columns: COLUMNS, projectId, slug: 'graphql',
+  })
   const sliced = useMemo(() => filtered.slice(0, limit), [filtered, limit])
 
   const exportConfig = useMemo<RedZoneExportConfig | undefined>(() =>
@@ -57,24 +82,7 @@ export const GraphqlLedgerTable = memo(function GraphqlLedgerTable({ projectId }
           rows: filtered,
           sheetName: 'GraphQL',
           fileSlug: 'redzone-graphql',
-          columns: [
-            { key: 'endpointUrl', header: 'Endpoint' },
-            { key: 'subdomain', header: 'Subdomain' },
-            { key: 'introspection', header: 'Introspection' },
-            { key: 'graphiqlExposed', header: 'GraphiQL' },
-            { key: 'fieldSuggestions', header: 'FieldSuggestions' },
-            { key: 'getAllowed', header: 'GET allowed' },
-            { key: 'batching', header: 'Batching' },
-            { key: 'tracing', header: 'Tracing' },
-            { key: 'queriesCount', header: 'Queries' },
-            { key: 'mutationsCount', header: 'Mutations' },
-            { key: 'subscriptionsCount', header: 'Subscriptions' },
-            { key: 'vulnTypes', header: 'Vulns' },
-            { key: 'vulnSeverities', header: 'VulnSeverities' },
-            { key: 'sensitiveFieldsSample', header: 'Sensitive Fields' },
-            { key: 'schemaHash', header: 'Schema Hash' },
-            { key: 'copScannedAt', header: 'Last graphql-cop scan' },
-          ],
+          columns: COLUMNS,
         }
       : undefined,
     [filtered, rows.length],
@@ -91,6 +99,7 @@ export const GraphqlLedgerTable = memo(function GraphqlLedgerTable({ projectId }
       onSearchChange={setSearch}
       searchPlaceholder="Search endpoint, subdomain, vuln type..."
       exportConfig={exportConfig}
+      filterUi={filterUi}
       onRefresh={refetch}
       isLoading={isLoading}
       error={error}

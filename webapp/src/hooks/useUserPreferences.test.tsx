@@ -16,6 +16,8 @@ import {
   useGraphTypeFilterPrefs,
   useGraphViewPrefs,
   useThemePref,
+  useTableFilterPrefs,
+  tableFilterScope,
   GRAPH_VIEW_DEFAULTS,
 } from './useUserPreferences'
 
@@ -719,5 +721,213 @@ describe('useThemePref', () => {
     // Last patch should win per debounced featureKey — but each call here is
     // individually awaited past the debounce, so all three are sent.
     expect(patches.map(p => p.value)).toEqual(['light', 'dark', 'system'])
+  })
+})
+
+describe('useTableFilterPrefs', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  const SCOPE = 'nodeInspector:Domain'
+  const OTHER = 'redzone:takeover'
+
+  function blob(value: unknown) {
+    return { tableFilters: { p1: { [SCOPE]: { 'prop:status': { selected: ['live'] } } }, ...(value as object) } }
+  }
+
+  async function mountFor(projectId: string | null, scope: string | null, prefs: unknown) {
+    let lastPatch: { featureKey: string; value: any } | null = null
+    installFetchMock(async ({ url, init }) => {
+      if (url === '/api/user/preferences' && (!init?.method || init.method === 'GET')) {
+        return jsonResponse(prefs)
+      }
+      if (init?.method === 'PATCH') {
+        lastPatch = JSON.parse(init.body as string)
+        return jsonResponse({ tableFilters: lastPatch!.value })
+      }
+      return jsonResponse({})
+    })
+    const { result } = renderHook(() => useTableFilterPrefs(projectId, scope), { wrapper: makeWrapper() })
+    await vi.waitFor(() => expect(result.current.isLoading).toBe(false))
+    return { result, patch: () => lastPatch }
+  }
+
+  async function flushDebounce() {
+    await act(async () => {
+      vi.advanceTimersByTime(500)
+      await vi.advanceTimersByTimeAsync(0)
+    })
+  }
+
+  test('reads the entry for this project and scope only', async () => {
+    const { result } = await mountFor('p1', SCOPE, blob({}))
+    expect(result.current.storedFilters).toEqual({ 'prop:status': { selected: ['live'] } })
+  })
+
+  test('a different scope in the same project reads as empty', async () => {
+    const { result } = await mountFor('p1', OTHER, blob({}))
+    expect(result.current.storedFilters).toBeNull()
+  })
+
+  test('another project cannot see this project\'s filters', async () => {
+    const { result } = await mountFor('p2', SCOPE, blob({}))
+    expect(result.current.storedFilters).toBeNull()
+  })
+
+  test('a write leaves other scopes and other projects untouched', async () => {
+    const { result, patch } = await mountFor('p1', SCOPE, {
+      tableFilters: {
+        p1: { [SCOPE]: { a: 1 }, [OTHER]: { b: 2 } },
+        p2: { [SCOPE]: { c: 3 } },
+      },
+    })
+    act(() => { result.current.setStoredFilters({ a: 99 }) })
+    await flushDebounce()
+
+    expect(patch()!.value).toEqual({
+      p1: { [SCOPE]: { a: 99 }, [OTHER]: { b: 2 } },
+      p2: { [SCOPE]: { c: 3 } },
+    })
+  })
+
+  test('an empty set deletes the scope instead of storing {}', async () => {
+    // A dead key per table the user ever touched, in a row read on every page
+    // load, is how this column grows without bound.
+    const { result, patch } = await mountFor('p1', SCOPE, {
+      tableFilters: { p1: { [SCOPE]: { a: 1 }, [OTHER]: { b: 2 } } },
+    })
+    act(() => { result.current.setStoredFilters({}) })
+    await flushDebounce()
+
+    expect(patch()!.value).toEqual({ p1: { [OTHER]: { b: 2 } } })
+  })
+
+  test('emptying the last scope drops the project key too', async () => {
+    const { result, patch } = await mountFor('p1', SCOPE, {
+      tableFilters: { p1: { [SCOPE]: { a: 1 } } },
+    })
+    act(() => { result.current.setStoredFilters({}) })
+    await flushDebounce()
+
+    expect(patch()!.value).toEqual({})
+  })
+
+  test('without a project or a scope, writing is a no-op', async () => {
+    const a = await mountFor(null, SCOPE, {})
+    act(() => { a.result.current.setStoredFilters({ x: 1 }) })
+    await flushDebounce()
+    expect(a.patch()).toBeNull()
+
+    const b = await mountFor('p1', null, {})
+    act(() => { b.result.current.setStoredFilters({ x: 1 }) })
+    await flushDebounce()
+    expect(b.patch()).toBeNull()
+  })
+
+  test('a value shape this build does not recognise is preserved, not dropped', async () => {
+    // Forward compatibility: an older tab must not strip fields a newer build
+    // wrote for a scope it is not even looking at.
+    const { result, patch } = await mountFor('p1', SCOPE, {
+      tableFilters: { p1: { [OTHER]: { future: { unknownField: true } } } },
+    })
+    act(() => { result.current.setStoredFilters({ a: 1 }) })
+    await flushDebounce()
+    expect(patch()!.value.p1[OTHER]).toEqual({ future: { unknownField: true } })
+  })
+})
+
+describe('tableFilterScope', () => {
+  test('composes surface and view, and tolerates a missing view', () => {
+    expect(tableFilterScope('nodeInspector', 'Domain')).toBe('nodeInspector:Domain')
+    expect(tableFilterScope('redzone:aiRisk', 'sheet2')).toBe('redzone:aiRisk:sheet2')
+    expect(tableFilterScope('redzone:takeover', null)).toBe('redzone:takeover')
+  })
+})
+
+describe('pending writes are not lost', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  /**
+   * The debounce window is 400ms, and both of these happen inside it routinely:
+   * switching table view unmounts the component, and reloading takes the whole
+   * document away without React ever running cleanup. Dropping the queued write
+   * makes a setting the user just changed silently revert on their next visit.
+   */
+  test('unmounting flushes the debounced write instead of cancelling it', async () => {
+    const patches: { featureKey: string; value: unknown }[] = []
+    installFetchMock(async ({ url, init }) => {
+      if (url === '/api/user/preferences' && (!init?.method || init.method === 'GET')) {
+        return jsonResponse({})
+      }
+      if (init?.method === 'PATCH') {
+        patches.push(JSON.parse(init.body as string))
+        return jsonResponse({})
+      }
+      return jsonResponse({})
+    })
+
+    const { result, unmount } = renderHook(() => useUserPreferences(), { wrapper: makeWrapper() })
+    await vi.waitFor(() => expect(result.current.isLoading).toBe(false))
+
+    act(() => { result.current.updatePref('theme', 'dark') })
+    // Unmount well inside the debounce window.
+    act(() => { unmount() })
+
+    expect(patches).toHaveLength(1)
+    expect(patches[0]).toEqual({ featureKey: 'theme', value: 'dark' })
+  })
+
+  test('leaving the page flushes it, with keepalive so it outlives the document', async () => {
+    const inits: RequestInit[] = []
+    installFetchMock(async ({ url, init }) => {
+      if (url === '/api/user/preferences' && (!init?.method || init.method === 'GET')) {
+        return jsonResponse({})
+      }
+      if (init?.method === 'PATCH') {
+        inits.push(init)
+        return jsonResponse({})
+      }
+      return jsonResponse({})
+    })
+
+    const { result } = renderHook(() => useUserPreferences(), { wrapper: makeWrapper() })
+    await vi.waitFor(() => expect(result.current.isLoading).toBe(false))
+
+    act(() => { result.current.updatePref('theme', 'light') })
+    act(() => { window.dispatchEvent(new Event('pagehide')) })
+
+    // Hooks mounted by earlier tests in this file are never unmounted (no RTL
+    // auto-cleanup without `globals: true`), so they hear the same event; what
+    // matters is that THIS hook's write went out, and went out with keepalive.
+    const mine = inits.filter(i => JSON.parse(i.body as string).value === 'light')
+    expect(mine).toHaveLength(1)
+    expect((mine[0] as RequestInit & { keepalive?: boolean }).keepalive).toBe(true)
+  })
+
+  test('a flushed write is not sent a second time by the timer', async () => {
+    const patches: unknown[] = []
+    installFetchMock(async ({ url, init }) => {
+      if (url === '/api/user/preferences' && (!init?.method || init.method === 'GET')) {
+        return jsonResponse({})
+      }
+      if (init?.method === 'PATCH') {
+        patches.push(JSON.parse(init.body as string))
+        return jsonResponse({})
+      }
+      return jsonResponse({})
+    })
+
+    const { result } = renderHook(() => useUserPreferences(), { wrapper: makeWrapper() })
+    await vi.waitFor(() => expect(result.current.isLoading).toBe(false))
+
+    act(() => { result.current.updatePref('theme', 'dark') })
+    act(() => { window.dispatchEvent(new Event('pagehide')) })
+    await act(async () => {
+      vi.advanceTimersByTime(1000)
+      await vi.advanceTimersByTimeAsync(0)
+    })
+
+    expect(patches).toHaveLength(1)
   })
 })

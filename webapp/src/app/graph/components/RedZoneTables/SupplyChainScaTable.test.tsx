@@ -9,7 +9,20 @@
  */
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, fireEvent, cleanup } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { createElement } from 'react'
 import { SupplyChainScaTable } from './SupplyChainScaTable'
+
+/**
+ * The shared shell now restores per-column filters from user preferences, so
+ * every table mounts a react-query consumer. Each test gets a fresh client so
+ * one test's cached preferences cannot leak into the next.
+ */
+function renderWithClient(ui: React.ReactElement) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+  return render(createElement(QueryClientProvider, { client }, ui))
+}
+
 
 const RESPONSE = {
   sheets: {
@@ -20,7 +33,7 @@ const RESPONSE = {
         confidence: 'malicious', softError: false, aliases: ['GHSA-0001'],
         firstSeen: null, lastSeen: null, purl: 'pkg:npm/axios@1.14.1', name: 'axios',
         version: '1.14.1', ecosystem: 'npm', harvestSource: 'retirejs',
-        sourcePath: 'web/package-lock.json', baseUrls: ['https://t.invalid'], repos: [],
+        sourcePath: 'web/package-lock.json', baseUrls: ['https://t.invalid'], repos: [], sboms: [],
       },
       {
         findingId: 'f-soft', verdict: 'suspicious', severity: 'low', sourceTool: 'guarddog',
@@ -28,14 +41,14 @@ const RESPONSE = {
         confidence: 'suspicious', softError: true, aliases: [],
         firstSeen: null, lastSeen: null, purl: 'pkg:npm/axios@1.14.1', name: 'axios',
         version: '1.14.1', ecosystem: 'npm', harvestSource: 'retirejs',
-        sourcePath: null, baseUrls: [], repos: ['acme/app'],
+        sourcePath: null, baseUrls: [], repos: ['acme/app'], sboms: [],
       },
     ],
     packages: [
       {
         purl: 'pkg:npm/lodash', name: 'lodash', version: null, ecosystem: 'npm',
         harvestSource: 'sourcemap', sourcePath: null, firstSeen: null, lastSeen: null,
-        baseUrls: ['https://t.invalid'], repos: [],
+        baseUrls: ['https://t.invalid'], repos: [], sboms: [],
         maliciousCount: 0, suspiciousCount: 0, notAnalysedCount: 0,
         advisoryCount: 0, advisorySeverities: [],
       },
@@ -46,7 +59,7 @@ const RESPONSE = {
         title: 'SSRF', description: 'server side request forgery',
         purl: 'pkg:npm/axios@1.14.1', name: 'axios', version: '1.14.1',
         ecosystem: 'npm', harvestSource: 'retirejs', sourcePath: null,
-        firstSeen: null, updatedAt: null, baseUrls: [], repos: [],
+        firstSeen: null, updatedAt: null, baseUrls: [], repos: [], sboms: [],
       },
     ],
   },
@@ -73,7 +86,7 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
 describe('SupplyChainScaTable', () => {
   test('renders the verdicts sheet first and marks the malicious row', async () => {
-    render(<SupplyChainScaTable projectId="p1" />)
+    renderWithClient(<SupplyChainScaTable projectId="p1" />)
     expect(await screen.findByText('MAL-2026-9999')).toBeInTheDocument()
     expect(screen.getByText('malicious')).toBeInTheDocument()
   })
@@ -81,18 +94,18 @@ describe('SupplyChainScaTable', () => {
   // The distinction the whole feature turns on: a package GuardDog never
   // analysed must not render as a suspicious hit.
   test('a soft-error finding renders as "not analysed", not "suspicious"', async () => {
-    render(<SupplyChainScaTable projectId="p1" />)
+    renderWithClient(<SupplyChainScaTable projectId="p1" />)
     expect(await screen.findByText('not analysed')).toBeInTheDocument()
     expect(screen.queryByText('suspicious')).toBeNull()
   })
 
   test('the header surfaces the unversioned (unchecked) count', async () => {
-    render(<SupplyChainScaTable projectId="p1" />)
+    renderWithClient(<SupplyChainScaTable projectId="p1" />)
     await waitFor(() => expect(screen.getByText(/unversioned \(unchecked\): 5/)).toBeInTheDocument())
   })
 
   test('switching to Packages shows the unverdictable status and "no version"', async () => {
-    render(<SupplyChainScaTable projectId="p1" />)
+    renderWithClient(<SupplyChainScaTable projectId="p1" />)
     await screen.findByText('MAL-2026-9999')
     fireEvent.click(screen.getByRole('button', { name: /Packages/ }))
     expect(await screen.findByText('unverdictable')).toBeInTheDocument()
@@ -100,36 +113,36 @@ describe('SupplyChainScaTable', () => {
   })
 
   test('initialSheet deep-links straight into the advisories sheet', async () => {
-    render(<SupplyChainScaTable projectId="p1" initialSheet="advisories" />)
+    renderWithClient(<SupplyChainScaTable projectId="p1" initialSheet="advisories" />)
     expect(await screen.findByText('GHSA-it-cve')).toBeInTheDocument()
   })
 
   test('an unknown initialSheet falls back to verdicts instead of blanking', async () => {
-    render(<SupplyChainScaTable projectId="p1" initialSheet="bogus" />)
+    renderWithClient(<SupplyChainScaTable projectId="p1" initialSheet="bogus" />)
     expect(await screen.findByText('MAL-2026-9999')).toBeInTheDocument()
   })
 
   test('a capped sheet says so instead of presenting a partial list as complete', async () => {
     mockFetch({ ...RESPONSE, meta: { ...RESPONSE.meta, truncated: { verdicts: true, packages: false, advisories: false } } })
-    render(<SupplyChainScaTable projectId="p1" />)
+    renderWithClient(<SupplyChainScaTable projectId="p1" />)
     await waitFor(() => expect(screen.getByText(/SHEET CAPPED/)).toBeInTheDocument())
   })
 
   test('a response with no meta renders rather than crashing', async () => {
     mockFetch({ sheets: RESPONSE.sheets })
-    render(<SupplyChainScaTable projectId="p1" />)
+    renderWithClient(<SupplyChainScaTable projectId="p1" />)
     expect(await screen.findByText('MAL-2026-9999')).toBeInTheDocument()
   })
 
   test('a malformed response renders the empty state, not a crash', async () => {
     mockFetch({})
-    render(<SupplyChainScaTable projectId="p1" />)
+    renderWithClient(<SupplyChainScaTable projectId="p1" />)
     await waitFor(() => expect(screen.getByText(/No malicious or suspicious package verdicts/)).toBeInTheDocument())
   })
 
   test('a failed request surfaces the error', async () => {
     mockFetch({ error: 'neo4j down' }, false)
-    render(<SupplyChainScaTable projectId="p1" />)
+    renderWithClient(<SupplyChainScaTable projectId="p1" />)
     await waitFor(() => expect(screen.getByText('neo4j down')).toBeInTheDocument())
   })
 })

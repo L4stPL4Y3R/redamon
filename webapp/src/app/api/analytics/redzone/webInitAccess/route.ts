@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { rowCap } from '../rowCap'
 import { guardProject } from '@/lib/access'
 import { getGraphSession } from '@/app/api/graph/neo4j'
 import { deriveWebInitGrade, WEB_INIT_HEADER_CHECKS } from '@/app/graph/components/RedZoneTables/webInitGrade'
@@ -79,7 +80,7 @@ export async function GET(request: NextRequest) {
               [x IN vulnTags WHERE x IS NOT NULL]    AS vulnTags,
               [h IN secHeaders WHERE h IS NOT NULL]  AS securityHeadersPresent
        ORDER BY size([x IN vulnTags WHERE x IS NOT NULL]) DESC, size(authEps) DESC
-       LIMIT 500`,
+       LIMIT ${rowCap()}`,
       {
         pid: projectId,
         authCategories: AUTH_CATEGORIES,

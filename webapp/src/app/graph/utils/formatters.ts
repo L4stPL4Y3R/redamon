@@ -1,34 +1,39 @@
 /**
- * Format Neo4j datetime objects to readable string
+ * One component of a Neo4j temporal. The driver serialises integers as
+ * `{low, high}`, but a value that has been through a lossless-integer-disabled
+ * driver or a JSON round trip arrives as a plain number. Reading `.low` blindly
+ * turns the second shape into `undefined` and the whole timestamp into
+ * "undefined-NaN-undefined", so both are accepted and anything else rejects the
+ * value as not-a-datetime.
  */
-export function formatNeo4jDateTime(value: unknown): string | null {
-  if (
-    typeof value === 'object' &&
-    value !== null &&
-    'year' in value &&
-    'month' in value &&
-    'day' in value &&
-    'hour' in value &&
-    'minute' in value &&
-    'second' in value
-  ) {
-    const dt = value as {
-      year: { low: number }
-      month: { low: number }
-      day: { low: number }
-      hour: { low: number }
-      minute: { low: number }
-      second: { low: number }
-    }
-    const year = dt.year.low
-    const month = String(dt.month.low).padStart(2, '0')
-    const day = String(dt.day.low).padStart(2, '0')
-    const hour = String(dt.hour.low).padStart(2, '0')
-    const minute = String(dt.minute.low).padStart(2, '0')
-    const second = String(dt.second.low).padStart(2, '0')
-    return `${year}-${month}-${day} ${hour}:${minute}:${second}`
+function temporalPart(v: unknown): number | null {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null
+  if (v !== null && typeof v === 'object' && 'low' in (v as object)) {
+    const n = (v as { low: unknown }).low
+    return typeof n === 'number' && Number.isFinite(n) ? n : null
   }
   return null
+}
+
+/**
+ * Format Neo4j datetime objects to readable string.
+ *
+ * This is the single definition of how a graph timestamp LOOKS, so anything
+ * that searches, filters or exports one must go through it too - otherwise a
+ * user filters on what the cell displays and the code compares against
+ * `[object Object]`.
+ */
+export function formatNeo4jDateTime(value: unknown): string | null {
+  if (typeof value !== 'object' || value === null) return null
+
+  const parts = ['year', 'month', 'day', 'hour', 'minute', 'second'].map(k =>
+    k in value ? temporalPart((value as Record<string, unknown>)[k]) : null
+  )
+  if (parts.some(p => p === null)) return null
+
+  const [year, month, day, hour, minute, second] = parts as number[]
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${year}-${pad(month)}-${pad(day)} ${pad(hour)}:${pad(minute)}:${pad(second)}`
 }
 
 /**

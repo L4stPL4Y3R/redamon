@@ -1,9 +1,11 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo, memo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, memo } from 'react'
 import { Loader2, AlertTriangle, Copy, Check } from 'lucide-react'
 import { ExternalLink } from '@/components/ui'
 import styles from './JsReconTable.module.css'
+import { ColumnFilterButton, ActiveFilterChips } from '../ColumnFilterPanel'
+import { useRedZoneFilters, type RedZoneFilterColumn } from '../RedZoneTables/useRedZoneFilters'
 import {
   timestampSlug,
   downloadStreaming,
@@ -49,6 +51,67 @@ const SUB_TABS = [
 ] as const
 
 const PAGE_SIZE = 50
+
+/**
+ * Filterable columns per sub-tab.
+ *
+ * Only the four homogeneous tabs are here. `security` and `surface` each stack
+ * several different row shapes into one view (DOM sinks + frameworks + dev
+ * comments; subdomains + cloud assets + emails + IPs + external domains), and a
+ * single column set cannot describe them - a "severity" filter would silently
+ * drop every row from the lists that have no severity at all.
+ */
+const TAB_FILTER_COLUMNS: Record<string, RedZoneFilterColumn[]> = {
+  secrets: [
+    { key: 'severity', header: 'Severity' },
+    { key: 'name', header: 'Type' },
+    { key: 'category', header: 'Category' },
+    { key: 'source_url', header: 'Source URL' },
+    { key: 'detection_method', header: 'Detection' },
+    { key: 'validation.status', header: 'Validation' },
+    { key: 'confidence', header: 'Confidence' },
+    { key: 'line_number', header: 'Line' },
+  ],
+  endpoints: [
+    { key: 'severity', header: 'Severity' },
+    { key: 'method', header: 'Method' },
+    { key: 'path', header: 'Path' },
+    { key: 'full_url', header: 'Full URL' },
+    { key: 'type', header: 'Type' },
+    { key: 'category', header: 'Category' },
+    { key: 'base_url', header: 'BaseURL' },
+    { key: 'source_js', header: 'Source JS' },
+  ],
+  dependencies: [
+    { key: 'severity', header: 'Severity' },
+    { key: 'finding_type', header: 'Finding Type' },
+    { key: 'package_name', header: 'Package' },
+    { key: 'scope', header: 'Scope' },
+    { key: 'npm_exists', header: 'On npm' },
+    { key: 'confidence', header: 'Confidence' },
+  ],
+  sourcemaps: [
+    { key: 'severity', header: 'Severity' },
+    { key: 'finding_type', header: 'Finding Type' },
+    { key: 'js_url', header: 'JS URL' },
+    { key: 'map_url', header: 'Map URL' },
+    { key: 'accessible', header: 'Accessible' },
+    { key: 'discovery_method', header: 'Discovery' },
+    { key: 'files_count', header: 'Files' },
+  ],
+}
+
+const NO_COLUMNS: RedZoneFilterColumn[] = []
+
+/** Rows for one tab, or [] for the tabs that stack several row shapes. */
+function tabRows(data: JsReconData | null, tab: string): any[] {
+  if (!data) return []
+  if (tab === 'secrets') return data.secrets || []
+  if (tab === 'endpoints') return data.endpoints || []
+  if (tab === 'dependencies') return data.dependencies || []
+  if (tab === 'sourcemaps') return data.source_maps || []
+  return []
+}
 
 interface JsReconSheet {
   name: string
@@ -245,6 +308,20 @@ export const JsReconTable = memo(function JsReconTable({
     }
   }, [data])
 
+  // Every hook below must run before the early returns further down, so they
+  // sit here rather than beside the JSX that uses them.
+  const filterColumns = TAB_FILTER_COLUMNS[activeTab] ?? NO_COLUMNS
+  const rowsForTab = tabRows(data, activeTab)
+  const { filteredRows, filterUi } = useRedZoneFilters({
+    rows: rowsForTab,
+    columns: filterColumns,
+    projectId,
+    slug: 'jsRecon',
+    sheet: activeTab,
+    // `validation.status` is a dotted path into a nested object.
+    accessor: (row: any, columnId: string) => getCol(row, columnId),
+  })
+
   if (!projectId) return <div className={styles.stateContainer}>Select a project.</div>
   if (isLoading) return <div className={styles.stateContainer}><Loader2 size={24} className={styles.spinner} /> Loading JS Recon data...</div>
   if (error) return <div className={styles.stateContainer}><AlertTriangle size={20} />{error}</div>
@@ -253,6 +330,7 @@ export const JsReconTable = memo(function JsReconTable({
   return (
     <div className={styles.container}>
       {/* Sub-tabs */}
+      <div className={styles.subTabsRow}>
       <div className={styles.subTabs}>
         {SUB_TABS.map(tab => (
           <button
@@ -265,13 +343,41 @@ export const JsReconTable = memo(function JsReconTable({
           </button>
         ))}
       </div>
+        {filterColumns.length > 0 && (
+          <div className={styles.filterMenu}>
+            <ColumnFilterButton
+              profiles={filterUi.profiles}
+              filters={filterUi.filters}
+              kinds={filterUi.kinds}
+              rows={filterUi.rows}
+              accessor={filterUi.accessor}
+              activeCount={filterUi.chips.length}
+              onChange={filterUi.onChange}
+              onClearColumn={filterUi.onClearColumn}
+              onClearAll={filterUi.onClearAll}
+              onArm={filterUi.onArm}
+              disabled={rowsForTab.length === 0}
+            />
+          </div>
+        )}
+      </div>
+
+      {filterUi.chips.length > 0 && (
+        <div className={styles.chipRow}>
+          <ActiveFilterChips
+            chips={filterUi.chips}
+            onRemove={filterUi.onClearColumn}
+            onClearAll={filterUi.onClearAll}
+          />
+        </div>
+      )}
 
       {/* Content */}
       <div className={styles.tableWrapper}>
-        {activeTab === 'secrets' && <SecretsTable rows={data.secrets || []} search={search} limit={limit} />}
-        {activeTab === 'endpoints' && <EndpointsTable rows={data.endpoints || []} search={search} limit={limit} />}
-        {activeTab === 'dependencies' && <DepsTable rows={data.dependencies || []} search={search} limit={limit} />}
-        {activeTab === 'sourcemaps' && <SourceMapsTable rows={data.source_maps || []} search={search} limit={limit} />}
+        {activeTab === 'secrets' && <SecretsTable rows={filteredRows} search={search} limit={limit} />}
+        {activeTab === 'endpoints' && <EndpointsTable rows={filteredRows} search={search} limit={limit} />}
+        {activeTab === 'dependencies' && <DepsTable rows={filteredRows} search={search} limit={limit} />}
+        {activeTab === 'sourcemaps' && <SourceMapsTable rows={filteredRows} search={search} limit={limit} />}
         {activeTab === 'security' && <SecurityTable data={data} search={search} limit={limit} />}
         {activeTab === 'surface' && <SurfaceTable data={data} search={search} limit={limit} />}
       </div>
@@ -296,8 +402,8 @@ export const JsReconTable = memo(function JsReconTable({
 // Sub-table components
 // ============================================================
 
-function filterRows(rows: any[], search: string): any[] {
-  if (!search) return rows
+function filterRows(rows: readonly any[], search: string): any[] {
+  if (!search) return [...rows]
   const s = search.toLowerCase()
   return rows.filter(r => {
     // Search ALL string/number values in the object (universal search)
@@ -337,7 +443,7 @@ function CopyButton({ text }: { text: string }) {
   )
 }
 
-function SecretsTable({ rows, search, limit }: { rows: any[]; search: string; limit: number }) {
+function SecretsTable({ rows, search, limit }: { rows: readonly any[]; search: string; limit: number }) {
   const filtered = sortSecrets(filterRows(rows, search)).slice(0, limit)
   if (!filtered.length) return <div className={styles.stateContainer}>No secrets found.</div>
   return (
@@ -362,7 +468,7 @@ function SecretsTable({ rows, search, limit }: { rows: any[]; search: string; li
   )
 }
 
-function EndpointsTable({ rows, search, limit }: { rows: any[]; search: string; limit: number }) {
+function EndpointsTable({ rows, search, limit }: { rows: readonly any[]; search: string; limit: number }) {
   const filtered = filterRows(rows, search).slice(0, limit)
   if (!filtered.length) return <div className={styles.stateContainer}>No endpoints extracted.</div>
   return (
@@ -384,7 +490,7 @@ function EndpointsTable({ rows, search, limit }: { rows: any[]; search: string; 
   )
 }
 
-function DepsTable({ rows, search, limit }: { rows: any[]; search: string; limit: number }) {
+function DepsTable({ rows, search, limit }: { rows: readonly any[]; search: string; limit: number }) {
   const filtered = filterRows(rows, search).slice(0, limit)
   if (!filtered.length) return <div className={styles.stateContainer}>No dependency confusion findings.</div>
   return (
@@ -405,7 +511,7 @@ function DepsTable({ rows, search, limit }: { rows: any[]; search: string; limit
   )
 }
 
-function SourceMapsTable({ rows, search, limit }: { rows: any[]; search: string; limit: number }) {
+function SourceMapsTable({ rows, search, limit }: { rows: readonly any[]; search: string; limit: number }) {
   const filtered = filterRows(rows, search).slice(0, limit)
   if (!filtered.length) return <div className={styles.stateContainer}>No source maps discovered.</div>
   return (

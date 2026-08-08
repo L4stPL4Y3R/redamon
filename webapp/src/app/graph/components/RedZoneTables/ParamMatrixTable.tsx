@@ -4,6 +4,7 @@ import { memo, useMemo, useState } from 'react'
 import { RedZoneTableShell } from './RedZoneTableShell'
 import { useRedZoneTable } from './useRedZoneTable'
 import type { RedZoneExportConfig } from './exportCsv'
+import { useRedZoneFilters, type RedZoneFilterColumn } from './useRedZoneFilters'
 import { ExternalLink } from '@/components/ui'
 import {
   SeverityBadge,
@@ -61,6 +62,33 @@ function PositionChip({ position }: { position: string }) {
   return <span className={cls}>{position}</span>
 }
 
+/** Module-level: the filter profiles are keyed off these, and a fresh array
+ *  literal per render would re-profile every row. */
+const COLUMNS: RedZoneFilterColumn[] = [
+  { key: 'paramName', header: 'Parameter' },
+  { key: 'position', header: 'Position' },
+  { key: 'endpointMethod', header: 'Method' },
+  { key: 'endpointPath', header: 'Endpoint Path' },
+  { key: 'endpointFullUrl', header: 'Full URL' },
+  { key: 'baseUrl', header: 'BaseURL' },
+  { key: 'subdomain', header: 'Subdomain' },
+  { key: 'paramType', header: 'Param Type' },
+  { key: 'paramCategory', header: 'Param Category' },
+  { key: 'isInjectable', header: 'Injectable' },
+  { key: 'sampleValue', header: 'Sample Value' },
+  { key: 'vulnId', header: 'Vuln ID' },
+  { key: 'vulnName', header: 'Vuln Name' },
+  { key: 'vulnSeverity', header: 'Severity' },
+  { key: 'vulnSource', header: 'Source' },
+  { key: 'templateId', header: 'Template ID' },
+  { key: 'matcherName', header: 'Matcher' },
+  { key: 'extractorName', header: 'Extractor' },
+  { key: 'fuzzingMethod', header: 'Fuzz Method' },
+  { key: 'fuzzingPosition', header: 'Fuzz Position' },
+  { key: 'matchedAt', header: 'Matched At' },
+  { key: 'cvssScore', header: 'CVSS' },
+]
+
 interface Props { projectId: string | null }
 
 export const ParamMatrixTable = memo(function ParamMatrixTable({ projectId }: Props) {
@@ -69,7 +97,10 @@ export const ParamMatrixTable = memo(function ParamMatrixTable({ projectId }: Pr
   const [limit, setLimit] = useState(PAGE_SIZE)
 
   const rows = useMemo(() => data?.rows ?? [], [data])
-  const filtered = useMemo(() => filterRowsByText(rows, search), [rows, search])
+  const searched = useMemo(() => filterRowsByText(rows, search), [rows, search])
+  const { filteredRows: filtered, filterUi } = useRedZoneFilters({
+    rows: searched, columns: COLUMNS, projectId, slug: 'paramMatrix',
+  })
   const sliced = useMemo(() => filtered.slice(0, limit), [filtered, limit])
 
   const exportConfig = useMemo<RedZoneExportConfig | undefined>(() =>
@@ -78,30 +109,7 @@ export const ParamMatrixTable = memo(function ParamMatrixTable({ projectId }: Pr
           rows: filtered,
           sheetName: 'Param-Matrix',
           fileSlug: 'redzone-param-matrix',
-          columns: [
-            { key: 'paramName', header: 'Parameter' },
-            { key: 'position', header: 'Position' },
-            { key: 'endpointMethod', header: 'Method' },
-            { key: 'endpointPath', header: 'Endpoint Path' },
-            { key: 'endpointFullUrl', header: 'Full URL' },
-            { key: 'baseUrl', header: 'BaseURL' },
-            { key: 'subdomain', header: 'Subdomain' },
-            { key: 'paramType', header: 'Param Type' },
-            { key: 'paramCategory', header: 'Param Category' },
-            { key: 'isInjectable', header: 'Injectable' },
-            { key: 'sampleValue', header: 'Sample Value' },
-            { key: 'vulnId', header: 'Vuln ID' },
-            { key: 'vulnName', header: 'Vuln Name' },
-            { key: 'vulnSeverity', header: 'Severity' },
-            { key: 'vulnSource', header: 'Source' },
-            { key: 'templateId', header: 'Template ID' },
-            { key: 'matcherName', header: 'Matcher' },
-            { key: 'extractorName', header: 'Extractor' },
-            { key: 'fuzzingMethod', header: 'Fuzz Method' },
-            { key: 'fuzzingPosition', header: 'Fuzz Position' },
-            { key: 'matchedAt', header: 'Matched At' },
-            { key: 'cvssScore', header: 'CVSS' },
-          ],
+          columns: COLUMNS,
         }
       : undefined,
     [filtered, rows.length],
@@ -119,6 +127,7 @@ export const ParamMatrixTable = memo(function ParamMatrixTable({ projectId }: Pr
       onSearchChange={setSearch}
       searchPlaceholder="Search parameter, endpoint, vuln type..."
       exportConfig={exportConfig}
+      filterUi={filterUi}
       onRefresh={refetch}
       isLoading={isLoading}
       error={error}

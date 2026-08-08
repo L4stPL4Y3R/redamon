@@ -270,3 +270,22 @@ a.nameCell:hover {
   outline: 2px solid var(--border-focus);
   outline-offset: -1px;
 }
+
+/* ---- Column filters ----------------------------------------------------- */
+
+.filterBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* Matches the toolbar padding on the other tables so the control lines up on
+     the same vertical edge when switching views. */
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border-primary);
+  flex-shrink: 0;
+}
+
+/* Takes the slack so the button is flush right regardless of chip count. */
+.filterBarChips {
+  flex: 1;
+  min-width: 0;
+}

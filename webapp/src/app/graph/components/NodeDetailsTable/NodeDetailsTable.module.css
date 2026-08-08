@@ -491,3 +491,15 @@
   outline: 2px solid var(--border-focus);
   outline-offset: -1px;
 }
+
+/* Filter panel dropdown. The panel owns its own chrome (border, shadow,
+   scrolling), so this only positions it under the Filters button. */
+
+/* Shown when filters/search exclude every row, so an empty table never reads
+   as "this node type has no data". */
+.noMatchRow td {
+  padding: var(--space-4) var(--space-3);
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}

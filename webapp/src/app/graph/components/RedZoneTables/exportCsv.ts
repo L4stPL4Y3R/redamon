@@ -13,13 +13,15 @@ export interface RedZoneExportColumn {
 }
 
 export interface RedZoneExportConfig {
-  rows: object[]
+  // Readonly: exporting only ever iterates, and the rows handed in are a
+  // filtered view the table also renders from.
+  rows: readonly object[]
   sheetName: string
   fileSlug: string
-  columns: RedZoneExportColumn[]
+  columns: readonly RedZoneExportColumn[]
 }
 
-function* lazyDictRows(rows: object[], columns: RedZoneExportColumn[]): Iterable<Record<string, unknown>> {
+function* lazyDictRows(rows: readonly object[], columns: readonly RedZoneExportColumn[]): Iterable<Record<string, unknown>> {
   for (const row of rows) {
     const out: Record<string, unknown> = {}
     for (const col of columns) {
@@ -29,7 +31,7 @@ function* lazyDictRows(rows: object[], columns: RedZoneExportColumn[]): Iterable
   }
 }
 
-function* lazyDictRowsForJson(rows: object[], columns: RedZoneExportColumn[]): Iterable<Record<string, unknown>> {
+function* lazyDictRowsForJson(rows: readonly object[], columns: readonly RedZoneExportColumn[]): Iterable<Record<string, unknown>> {
   for (const row of rows) {
     const out: Record<string, unknown> = {}
     for (const col of columns) {
@@ -41,9 +43,9 @@ function* lazyDictRowsForJson(rows: object[], columns: RedZoneExportColumn[]): I
 }
 
 export async function exportRedZoneCsv<T extends object>(
-  rows: T[],
+  rows: readonly T[],
   _sheetName: string,
-  columns: RedZoneExportColumn[],
+  columns: readonly RedZoneExportColumn[],
   fileSlug: string,
 ): Promise<void> {
   const headers = columns.map(c => c.header)
@@ -55,9 +57,9 @@ export async function exportRedZoneCsv<T extends object>(
 }
 
 export async function exportRedZoneJson<T extends object>(
-  rows: T[],
+  rows: readonly T[],
   _sheetName: string,
-  columns: RedZoneExportColumn[],
+  columns: readonly RedZoneExportColumn[],
   fileSlug: string,
 ): Promise<void> {
   await downloadStreaming(
@@ -68,9 +70,9 @@ export async function exportRedZoneJson<T extends object>(
 }
 
 export async function exportRedZoneMarkdown<T extends object>(
-  rows: T[],
+  rows: readonly T[],
   sheetName: string,
-  columns: RedZoneExportColumn[],
+  columns: readonly RedZoneExportColumn[],
   fileSlug: string,
 ): Promise<void> {
   const headers = columns.map(c => c.header)

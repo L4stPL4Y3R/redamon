@@ -5,6 +5,7 @@ import { RedZoneTableShell } from './RedZoneTableShell'
 import { useRedZoneTable } from './useRedZoneTable'
 import { normalizeSeverity } from './types'
 import type { RedZoneExportConfig } from './exportCsv'
+import { useRedZoneFilters, type RedZoneFilterColumn } from './useRedZoneFilters'
 import {
   SeverityBadge,
   Mono,
@@ -37,6 +38,27 @@ interface WcpRow {
 
 const PAGE_SIZE = 100
 
+/** Module-level: the filter profiles are keyed off these, and a fresh array
+ *  literal per render would re-profile every row. */
+const COLUMNS: RedZoneFilterColumn[] = [
+  { key: 'endpointUrl', header: 'Endpoint' },
+  { key: 'cacheHeader', header: 'Header' },
+  { key: 'cacheParam', header: 'Param' },
+  { key: 'vectorType', header: 'Vector type' },
+  { key: 'impact', header: 'Impact' },
+  { key: 'severity', header: 'Severity' },
+  { key: 'cvss', header: 'CVSS' },
+  { key: 'tier', header: 'Confidence tier' },
+  { key: 'confidence', header: 'Confidence' },
+  { key: 'detectionMode', header: 'Detection mode' },
+  { key: 'technique', header: 'Technique' },
+  { key: 'engine', header: 'Engine' },
+  { key: 'cacheBuster', header: 'Cache buster' },
+  { key: 'crossVantage', header: 'Cross-vantage' },
+  { key: 'pocLink', header: 'PoC link' },
+  { key: 'curlVerify', header: 'curl PoC' },
+]
+
 interface Props { projectId: string | null }
 
 export const WebCachePoisonTable = memo(function WebCachePoisonTable({ projectId }: Props) {
@@ -45,7 +67,10 @@ export const WebCachePoisonTable = memo(function WebCachePoisonTable({ projectId
   const [limit, setLimit] = useState(PAGE_SIZE)
 
   const rows = useMemo(() => data?.rows ?? [], [data])
-  const filtered = useMemo(() => filterRowsByText(rows, search), [rows, search])
+  const searched = useMemo(() => filterRowsByText(rows, search), [rows, search])
+  const { filteredRows: filtered, filterUi } = useRedZoneFilters({
+    rows: searched, columns: COLUMNS, projectId, slug: 'webCachePoison',
+  })
   const sliced = useMemo(() => filtered.slice(0, limit), [filtered, limit])
 
   const exportConfig = useMemo<RedZoneExportConfig | undefined>(() =>
@@ -54,24 +79,7 @@ export const WebCachePoisonTable = memo(function WebCachePoisonTable({ projectId
           rows: filtered,
           sheetName: 'WebCachePoisoning',
           fileSlug: 'redzone-web-cache-poisoning',
-          columns: [
-            { key: 'endpointUrl', header: 'Endpoint' },
-            { key: 'cacheHeader', header: 'Header' },
-            { key: 'cacheParam', header: 'Param' },
-            { key: 'vectorType', header: 'Vector type' },
-            { key: 'impact', header: 'Impact' },
-            { key: 'severity', header: 'Severity' },
-            { key: 'cvss', header: 'CVSS' },
-            { key: 'tier', header: 'Confidence tier' },
-            { key: 'confidence', header: 'Confidence' },
-            { key: 'detectionMode', header: 'Detection mode' },
-            { key: 'technique', header: 'Technique' },
-            { key: 'engine', header: 'Engine' },
-            { key: 'cacheBuster', header: 'Cache buster' },
-            { key: 'crossVantage', header: 'Cross-vantage' },
-            { key: 'pocLink', header: 'PoC link' },
-            { key: 'curlVerify', header: 'curl PoC' },
-          ],
+          columns: COLUMNS,
         }
       : undefined,
     [filtered, rows.length],
@@ -91,6 +99,7 @@ export const WebCachePoisonTable = memo(function WebCachePoisonTable({ projectId
       onSearchChange={setSearch}
       searchPlaceholder="Search endpoint, header, impact, tier..."
       exportConfig={exportConfig}
+      filterUi={filterUi}
       onRefresh={refetch}
       isLoading={isLoading}
       error={error}

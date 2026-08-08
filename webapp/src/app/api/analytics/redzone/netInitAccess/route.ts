@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { rowCap } from '../rowCap'
 import { guardProject } from '@/lib/access'
 import { getGraphSession } from '@/app/api/graph/neo4j'
 
@@ -62,7 +63,7 @@ export async function GET(request: NextRequest) {
               ip.asn                                  AS asn,
               ip.country                              AS country,
               coalesce(ip.isp, ip.organization)       AS isp
-       LIMIT 500`,
+       LIMIT ${rowCap()}`,
       { pid: projectId, ports: sensitivePorts, vulnTypes: NET_VULN_TYPES }
     )
 
@@ -86,7 +87,7 @@ export async function GET(request: NextRequest) {
               ip.asn                                  AS asn,
               ip.country                              AS country,
               coalesce(ip.isp, ip.organization)       AS isp
-       LIMIT 500`,
+       LIMIT ${rowCap()}`,
       { pid: projectId, vulnTypes: NET_VULN_TYPES }
     )
 

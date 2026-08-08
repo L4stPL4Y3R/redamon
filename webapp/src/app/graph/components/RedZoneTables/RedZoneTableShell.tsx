@@ -3,6 +3,8 @@
 import { memo, useCallback, useState, type ReactNode } from 'react'
 import { Loader2, AlertTriangle, Database, Search, Download, RefreshCw, SearchX } from 'lucide-react'
 import styles from './RedZoneTableShell.module.css'
+import { ColumnFilterButton, ActiveFilterChips } from '../ColumnFilterPanel'
+import type { RedZoneFilterUi } from './useRedZoneFilters'
 import {
   exportRedZoneCsv,
   exportRedZoneJson,
@@ -11,6 +13,8 @@ import {
 } from './exportCsv'
 
 interface RedZoneTableShellProps {
+  /** Per-column filtering, from `useRedZoneFilters`. Omit for an unfilterable sheet. */
+  filterUi?: RedZoneFilterUi<any>
   title: string
   meta?: string
   search: string
@@ -34,6 +38,7 @@ interface RedZoneTableShellProps {
 }
 
 export const RedZoneTableShell = memo(function RedZoneTableShell({
+  filterUi,
   title,
   meta,
   search,
@@ -133,8 +138,34 @@ export const RedZoneTableShell = memo(function RedZoneTableShell({
               <span>CSV</span>
             </button>
           ) : null}
+
+          {filterUi && (
+            <ColumnFilterButton
+              profiles={filterUi.profiles}
+              filters={filterUi.filters}
+              kinds={filterUi.kinds}
+              rows={filterUi.rows}
+              accessor={filterUi.accessor}
+              activeCount={filterUi.chips.length}
+              onChange={filterUi.onChange}
+              onClearColumn={filterUi.onClearColumn}
+              onClearAll={filterUi.onClearAll}
+              onArm={filterUi.onArm}
+              disabled={rowCount === 0}
+            />
+          )}
         </div>
       </div>
+
+      {filterUi && filterUi.chips.length > 0 && (
+        <div className={styles.chipRow}>
+          <ActiveFilterChips
+            chips={filterUi.chips}
+            onRemove={filterUi.onClearColumn}
+            onClearAll={filterUi.onClearAll}
+          />
+        </div>
+      )}
 
       <div className={styles.body}>
         {toolbar}
@@ -158,7 +189,9 @@ export const RedZoneTableShell = memo(function RedZoneTableShell({
           <div className={styles.stateContainer}>
             <SearchX size={24} className={styles.emptyIcon} />
             <p className={styles.stateText}>{noMatchLabel}</p>
-            <p className={styles.stateSubtext}>{rowCount} total rows - clear the search to see them.</p>
+            <p className={styles.stateSubtext}>
+              {rowCount} total rows - clear the search{filterUi && filterUi.chips.length > 0 ? ' or the active filters' : ''} to see them.
+            </p>
           </div>
         ) : (
           <div className={styles.tableScroll}>{children}</div>

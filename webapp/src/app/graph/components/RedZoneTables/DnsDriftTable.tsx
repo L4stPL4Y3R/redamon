@@ -4,6 +4,7 @@ import { memo, useMemo, useState } from 'react'
 import { RedZoneTableShell } from './RedZoneTableShell'
 import { useRedZoneTable } from './useRedZoneTable'
 import type { RedZoneExportConfig } from './exportCsv'
+import { useRedZoneFilters, type RedZoneFilterColumn } from './useRedZoneFilters'
 import {
   Truncated,
   ListCell,
@@ -49,6 +50,26 @@ interface DnsDriftRow {
 
 const PAGE_SIZE = 50
 
+/** Module-level: the filter profiles are keyed off these, and a fresh array
+ *  literal per render would re-profile every row. */
+const COLUMNS: RedZoneFilterColumn[] = [
+  { key: 'domain', header: 'Domain' },
+  { key: 'historicIpCount', header: 'Historic IP Count' },
+  { key: 'historicIps', header: 'Historic IPs' },
+  { key: 'historicAsns', header: 'Historic ASNs' },
+  { key: 'historicCountries', header: 'Historic Countries' },
+  { key: 'lastResolutionDate', header: 'Last Resolution' },
+  { key: 'currentIps', header: 'Current IPs' },
+  { key: 'currentAsns', header: 'Current ASNs' },
+  { key: 'currentCountries', header: 'Current Countries' },
+  { key: 'asnDrift', header: 'ASN Drift' },
+  { key: 'countryDrift', header: 'Country Drift' },
+  { key: 'externalDomainCount', header: 'External Domain Count' },
+  { key: 'externalDomains', header: 'External Domains' },
+  { key: 'danglingSubCount', header: 'Dangling Subdomain Count' },
+  { key: 'danglingSubs', header: 'Dangling Subdomains' },
+]
+
 interface Props { projectId: string | null }
 
 export const DnsDriftTable = memo(function DnsDriftTable({ projectId }: Props) {
@@ -57,7 +78,10 @@ export const DnsDriftTable = memo(function DnsDriftTable({ projectId }: Props) {
   const [limit, setLimit] = useState(PAGE_SIZE)
 
   const rows = useMemo(() => data?.rows ?? [], [data])
-  const filtered = useMemo(() => filterRowsByText(rows, search), [rows, search])
+  const searched = useMemo(() => filterRowsByText(rows, search), [rows, search])
+  const { filteredRows: filtered, filterUi } = useRedZoneFilters({
+    rows: searched, columns: COLUMNS, projectId, slug: 'dnsDrift',
+  })
   const sliced = useMemo(() => filtered.slice(0, limit), [filtered, limit])
 
   const exportConfig = useMemo<RedZoneExportConfig | undefined>(() => {
@@ -83,23 +107,7 @@ export const DnsDriftTable = memo(function DnsDriftTable({ projectId }: Props) {
       rows: flat,
       sheetName: 'DNS-Drift',
       fileSlug: 'redzone-dns-drift',
-      columns: [
-        { key: 'domain', header: 'Domain' },
-        { key: 'historicIpCount', header: 'Historic IP Count' },
-        { key: 'historicIps', header: 'Historic IPs' },
-        { key: 'historicAsns', header: 'Historic ASNs' },
-        { key: 'historicCountries', header: 'Historic Countries' },
-        { key: 'lastResolutionDate', header: 'Last Resolution' },
-        { key: 'currentIps', header: 'Current IPs' },
-        { key: 'currentAsns', header: 'Current ASNs' },
-        { key: 'currentCountries', header: 'Current Countries' },
-        { key: 'asnDrift', header: 'ASN Drift' },
-        { key: 'countryDrift', header: 'Country Drift' },
-        { key: 'externalDomainCount', header: 'External Domain Count' },
-        { key: 'externalDomains', header: 'External Domains' },
-        { key: 'danglingSubCount', header: 'Dangling Subdomain Count' },
-        { key: 'danglingSubs', header: 'Dangling Subdomains' },
-      ],
+      columns: COLUMNS,
     }
   }, [filtered, rows.length])
 
@@ -111,6 +119,7 @@ export const DnsDriftTable = memo(function DnsDriftTable({ projectId }: Props) {
       onSearchChange={setSearch}
       searchPlaceholder="Search domain, ASN, country, external, dangling sub..."
       exportConfig={exportConfig}
+      filterUi={filterUi}
       onRefresh={refetch}
       isLoading={isLoading}
       error={error}

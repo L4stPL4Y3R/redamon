@@ -9,6 +9,15 @@ const toastError = vi.fn()
 
 vi.mock('@/components/ui', () => ({
   useToast: () => ({ success: toastSuccess, error: toastError }),
+  // The form also reaches for the alert modal; mocking the module wholesale
+  // means every hook it uses has to be listed here or the render throws.
+  useAlertModal: () => ({
+    alert: vi.fn(async () => {}),
+    alertError: vi.fn(async () => {}),
+    alertWarning: vi.fn(async () => {}),
+    confirm: vi.fn(async () => true),
+    dangerConfirm: vi.fn(async () => true),
+  }),
 }))
 
 import { LlmProviderForm } from './LlmProviderForm'

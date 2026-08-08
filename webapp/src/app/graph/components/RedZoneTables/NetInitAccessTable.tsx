@@ -4,6 +4,7 @@ import { memo, useMemo, useState } from 'react'
 import { RedZoneTableShell } from './RedZoneTableShell'
 import { useRedZoneTable } from './useRedZoneTable'
 import type { RedZoneExportConfig } from './exportCsv'
+import { useRedZoneFilters, type RedZoneFilterColumn } from './useRedZoneFilters'
 import {
   Mono,
   Truncated,
@@ -55,6 +56,26 @@ function CategoryChip({ category }: { category: string | null }) {
   return <span className={`${rowStyles.sevBadge} ${cls}`}>{category}</span>
 }
 
+/** Module-level: the filter profiles are keyed off these, and a fresh array
+ *  literal per render would re-profile every row. */
+const COLUMNS: RedZoneFilterColumn[] = [
+  { key: 'ipAddress', header: 'IP' },
+  { key: 'port', header: 'Port' },
+  { key: 'protocol', header: 'Proto' },
+  { key: 'category', header: 'Category' },
+  { key: 'serviceName', header: 'Service' },
+  { key: 'serviceProduct', header: 'Product' },
+  { key: 'serviceVersion', header: 'Version' },
+  { key: 'techs', header: 'Technologies' },
+  { key: 'subdomains', header: 'Subdomains' },
+  { key: 'vulnTags', header: 'Findings' },
+  { key: 'isCdn', header: 'CDN' },
+  { key: 'cdnName', header: 'CDN Name' },
+  { key: 'asn', header: 'ASN' },
+  { key: 'country', header: 'Country' },
+  { key: 'isp', header: 'ISP' },
+]
+
 interface Props { projectId: string | null }
 
 export const NetInitAccessTable = memo(function NetInitAccessTable({ projectId }: Props) {
@@ -63,7 +84,10 @@ export const NetInitAccessTable = memo(function NetInitAccessTable({ projectId }
   const [limit, setLimit] = useState(PAGE_SIZE)
 
   const rows = useMemo(() => data?.rows ?? [], [data])
-  const filtered = useMemo(() => filterRowsByText(rows, search), [rows, search])
+  const searched = useMemo(() => filterRowsByText(rows, search), [rows, search])
+  const { filteredRows: filtered, filterUi } = useRedZoneFilters({
+    rows: searched, columns: COLUMNS, projectId, slug: 'netInitAccess',
+  })
   const sliced = useMemo(() => filtered.slice(0, limit), [filtered, limit])
 
   const exportConfig = useMemo<RedZoneExportConfig | undefined>(() =>
@@ -72,23 +96,7 @@ export const NetInitAccessTable = memo(function NetInitAccessTable({ projectId }
           rows: filtered,
           sheetName: 'Net-Init-Access',
           fileSlug: 'redzone-net-init-access',
-          columns: [
-            { key: 'ipAddress', header: 'IP' },
-            { key: 'port', header: 'Port' },
-            { key: 'protocol', header: 'Proto' },
-            { key: 'category', header: 'Category' },
-            { key: 'serviceName', header: 'Service' },
-            { key: 'serviceProduct', header: 'Product' },
-            { key: 'serviceVersion', header: 'Version' },
-            { key: 'techs', header: 'Technologies' },
-            { key: 'subdomains', header: 'Subdomains' },
-            { key: 'vulnTags', header: 'Findings' },
-            { key: 'isCdn', header: 'CDN' },
-            { key: 'cdnName', header: 'CDN Name' },
-            { key: 'asn', header: 'ASN' },
-            { key: 'country', header: 'Country' },
-            { key: 'isp', header: 'ISP' },
-          ],
+          columns: COLUMNS,
         }
       : undefined,
     [filtered, rows.length],
@@ -102,6 +110,7 @@ export const NetInitAccessTable = memo(function NetInitAccessTable({ projectId }
       onSearchChange={setSearch}
       searchPlaceholder="Search IP, port, tag, service, country..."
       exportConfig={exportConfig}
+      filterUi={filterUi}
       onRefresh={refetch}
       isLoading={isLoading}
       error={error}
