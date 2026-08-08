@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest import mock
 
@@ -46,6 +47,14 @@ def _spawn(scan_mode):
     mgr.client = mock.Mock()
     mgr.client.containers = _Containers()
     mgr.client.images = mock.Mock()
+    # start_recon offloads its synchronous docker-py calls through _docker_op,
+    # which needs the real __init__'s thread pool. __new__ skips __init__, so
+    # supply one here or every spawn raises AttributeError before reaching the
+    # assertion under test.
+    mgr._docker_op_executor = ThreadPoolExecutor(max_workers=2)
+    # The recon spawn mounts the offline OSV database read-only for L2
+    # supply-chain recon, so the volume name is now part of the spawn path.
+    mgr.supply_chain_osv_db_volume = "redamon-osv-db"
     mgr.recon_image = "redamon-recon:latest"
     mgr.running_states = {}
     mgr.partial_recon_states = {}
@@ -60,6 +69,15 @@ def _spawn(scan_mode):
         return "key"
 
     mgr._admit_scan = _admit
+
+    # start_recon now also refreshes the offline OSV database before spawning
+    # (supply-chain lazy-on-scan sync). That is another collaborator this test
+    # does not exercise, and the real one wants constructor state (_osv_db_refresh_lock)
+    # that __new__ never built. Stub it like the others.
+    async def _osv_fresh(*a, **kw):
+        return None
+
+    mgr.ensure_osv_db_fresh_async = _osv_fresh
     mgr._get_container_name = lambda pid: f"redamon-recon-{pid}"
     mgr._scanner_env = lambda: {}
     mgr._scanner_hardening = lambda drop_caps=True: {}

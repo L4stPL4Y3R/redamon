@@ -1,11 +1,23 @@
 #!/usr/bin/env bash
 # =============================================================================
-# T3 — deploy patches: sha256 integrity + fatal-on-failure.
+# T3 — deploy source-mutation integrity + app-config passthrough.
 #
-# The real apply_one lives inside deploy.sh's remote heredoc, so we (a) statically
-# assert the deploy.sh wiring (pinned sha present, fatal exits, dropped patches
-# gone) and (b) exercise a faithful re-implementation of apply_one to prove the
-# integrity + apply gates return non-zero.
+# HISTORY: this suite used to verify that deploy.sh's deploy-time `git apply`
+# patches were sha256-pinned and fatal-on-failure. That mechanism is GONE
+# (d2d743fb): the last patch, which injected NEXT_PUBLIC_AGENT_WS_URL into
+# webapp/Dockerfile, was folded into the base Dockerfile as a first-class build
+# ARG. The suite kept asserting a pinned sha for a deleted file and had been red
+# ever since.
+#
+# The invariant worth guarding is the STRONGER one that replaced it: deploy.sh
+# must never mutate repo source on the host at all. A deploy-time edit dirties
+# the checkout, which breaks `redamon.sh update`'s `git pull --ff-only` on the
+# next run — the exact failure the patch removal was meant to end.
+#
+# Second half: operator app-config that deploy.sh must forward. redamon.sh reads
+# these from the server-side .env, so a knob missing from ANY of the three
+# plumbing points (defaults / deploy.env export list / seed) is silently inert
+# on a deployed host while working perfectly in a local install.
 #
 # Run: bash tests/deploy_patch_integrity_test.sh
 # =============================================================================
@@ -13,63 +25,73 @@ set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEPLOY="$REPO_ROOT/deploy/single-host/deploy.sh"
+DEPLOY_ENV_EXAMPLE="$REPO_ROOT/deploy/single-host/.env.example"
+COMPOSE="$REPO_ROOT/docker-compose.yml"
 PATCH_DIR="$REPO_ROOT/deploy/single-host/patches"
-KEEP="webapp-dockerfile-ws-arg.patch"
 
 PASS=0; FAIL=0
 pass() { PASS=$((PASS+1)); printf '  \033[0;32mPASS\033[0m %s\n' "$1"; }
 fail() { FAIL=$((FAIL+1)); printf '  \033[0;31mFAIL\033[0m %s\n' "$1"; }
 
-echo "== dropped patches are gone (folded by S12/S4) =="
-[ ! -f "$PATCH_DIR/secure-cookie.patch" ] && pass "secure-cookie.patch removed" || fail "secure-cookie.patch still present"
-[ ! -f "$PATCH_DIR/cypherfix-ws-origin.patch" ] && pass "cypherfix-ws-origin.patch removed" || fail "cypherfix-ws-origin.patch still present"
-
-echo "== deploy.sh no longer APPLIES the dropped patches =="
-if grep -qE 'apply_one .*secure-cookie\.patch|apply_one .*cypherfix-ws-origin\.patch' "$DEPLOY"; then
-  fail "deploy.sh still calls apply_one on a dropped patch"
+echo "== the deploy-time patch mechanism is gone, not merely unused =="
+[ ! -d "$PATCH_DIR" ] && pass "deploy/single-host/patches/ removed" || fail "patches/ is back (deploy must not mutate source)"
+if grep -qE 'apply_one|git apply|patch -p[0-9]' "$DEPLOY"; then
+  fail "deploy.sh applies a source patch on the host (dirties the checkout, breaks pull --ff-only)"
 else
-  pass "no apply_one call for dropped patches"
+  pass "deploy.sh never patches repo source"
+fi
+# `sed -i` against the app .env is legitimate (that is the seed() helper); against
+# tracked source is not. Guard the tracked paths specifically.
+if grep -qE "sed -i[^\n]*(webapp/|agentic/|recon/|docker-compose\.yml)" "$DEPLOY"; then
+  fail "deploy.sh sed -i's tracked source"
+else
+  pass "no in-place edit of tracked source"
 fi
 
-echo "== the remaining patch's sha256 is pinned in deploy.sh (init + update) =="
-ACTUAL_SHA="$(sha256sum "$PATCH_DIR/$KEEP" | awk '{print $1}')"
-PIN_COUNT="$(grep -c "$ACTUAL_SHA" "$DEPLOY")"
-[ "$PIN_COUNT" -eq 2 ] && pass "pinned sha256 matches the file at both apply sites" || fail "expected pinned sha256 x2, got $PIN_COUNT (drifted?)"
+echo "== the folded patch is a first-class build ARG instead =="
+if grep -q '^ARG NEXT_PUBLIC_AGENT_WS_URL' "$REPO_ROOT/webapp/Dockerfile" \
+   && grep -q '^ENV NEXT_PUBLIC_AGENT_WS_URL' "$REPO_ROOT/webapp/Dockerfile"; then
+  pass "webapp/Dockerfile declares the WS-URL ARG+ENV"
+else
+  fail "webapp/Dockerfile lost the NEXT_PUBLIC_AGENT_WS_URL ARG (prod builds would bake localhost:8090)"
+fi
+if grep -q 'NEXT_PUBLIC_AGENT_WS_URL' "$REPO_ROOT/deploy/single-host/compose/docker-compose.prod.yml"; then
+  pass "prod overlay passes the WS URL as a build arg"
+else
+  fail "prod overlay no longer supplies NEXT_PUBLIC_AGENT_WS_URL"
+fi
 
-echo "== apply is fatal (exit 1), not skip-with-warn =="
-# The new apply_one must exit 1 on a bad patch; the old code warned "SKIPPED".
-if grep -q 'SKIPPED' "$DEPLOY"; then fail "deploy.sh still has a non-fatal SKIPPED path"; else pass "no non-fatal SKIPPED path"; fi
-grep -q 'aborting deploy' "$DEPLOY" && pass "apply failure aborts the deploy" || fail "no abort-on-apply-failure"
+echo "== operator app-config reaches the server .env (all three plumbing points) =="
+# Every key here is read by the app from the server-side .env. deploy.sh needs it
+# (1) defaulted so `set -u` cannot kill the run, (2) in build_deploy_env's export
+# list so it crosses the SSH boundary, (3) seeded into the app .env on the host.
+for k in NVD_API_KEY TUNNELS_ENABLED \
+         OSV_DB_AUTO_REFRESH OSV_DB_ECOSYSTEMS OSV_DB_TTL_SECONDS OSV_DB_REFRESH_TIMEOUT; do
+  miss=""
+  # Defaults are packed several per line (`: "${A:=}"; : "${B:=}"`), so this
+  # cannot anchor at ^.
+  grep -qE ": \"\\\$\{${k}:=" "$DEPLOY"         || miss="${miss} default"
+  awk -v k="$k" '/^build_deploy_env\(\)/,/^}/ { if ($0 ~ k) found=1 } END { exit !found }' "$DEPLOY" \
+                                                || miss="${miss} deploy.env-export"
+  grep -qE "^seed ${k} " "$DEPLOY"              || miss="${miss} seed"
+  [ -z "$miss" ] && pass "$k plumbed (default + export + seed)" || fail "$k missing:${miss}"
+done
 
-echo "== the remaining patch still applies cleanly against HEAD =="
-( cd "$REPO_ROOT" && git apply --check "$PATCH_DIR/$KEEP" 2>/dev/null ) \
-  && pass "git apply --check passes for $KEEP" || fail "$KEEP no longer applies (rotted)"
+echo "== the OSV knobs are documented where an operator will look =="
+for k in OSV_DB_AUTO_REFRESH OSV_DB_ECOSYSTEMS; do
+  grep -q "$k" "$DEPLOY_ENV_EXAMPLE" && pass "$k in deploy .env.example" || fail "$k undocumented in deploy .env.example"
+done
 
-echo "== faithful apply_one: integrity + fatal behavior =="
-# Re-implementation mirroring deploy.sh's apply_one (host-runnable).
-apply_one() {
-  local p="$1" expected="$2"
-  local name; name="$(basename "$p")"
-  local actual; actual="$(sha256sum "$p" | awk '{print $1}')"
-  [ "$actual" = "$expected" ] || { echo "integrity FAILED for $name"; return 1; }
-  ( cd "$REPO_ROOT" && git apply --check "$p" 2>/dev/null ) || { echo "apply FAILED for $name"; return 1; }
-  return 0
-}
-
-# (iii) real patch + correct hash -> ok
-apply_one "$PATCH_DIR/$KEEP" "$ACTUAL_SHA" >/dev/null 2>&1 && pass "correct sha + appliable -> ok" || fail "real patch wrongly rejected"
-
-# (i) mismatched sha -> refused
-apply_one "$PATCH_DIR/$KEEP" "deadbeef" >/dev/null 2>&1 && fail "mismatched sha wrongly accepted" || pass "mismatched sha256 -> non-zero (refused)"
-
-# (ii) a patch that will not apply (corrupt content, but with a correct self-sha)
-TMP="$(mktemp -d)"; BAD="$TMP/bad.patch"
-printf 'diff --git a/nope.txt b/nope.txt\n--- a/nope.txt\n+++ b/nope.txt\n@@ -1 +1 @@\n-old\n+new\n' > "$BAD"
-BAD_SHA="$(sha256sum "$BAD" | awk '{print $1}')"
-apply_one "$BAD" "$BAD_SHA" >/dev/null 2>&1 && fail "un-appliable patch wrongly accepted" || pass "un-appliable patch -> non-zero (fatal)"
-rm -rf "$TMP"
+echo "== orchestrator knobs are wired in compose (it has NO env_file) =="
+# recon-orchestrator gets a variable ONLY if it is listed in its compose
+# environment block. A knob documented in .env.example but absent here is inert:
+# the operator sets it, nothing happens, and nothing says why.
+for k in OSV_DB_AUTO_REFRESH OSV_DB_ECOSYSTEMS OSV_DB_TTL_SECONDS OSV_DB_REFRESH_TIMEOUT \
+         SUPPLY_CHAIN_ANALYZER_MEM SUPPLY_CHAIN_ANALYZER_PIDS SUPPLY_CHAIN_ANALYZER_NANOCPUS; do
+  grep -qE "^ +${k}: \\\$\{${k}" "$COMPOSE" && pass "$k wired into compose" || fail "$k not wired into compose (inert in .env)"
+done
 
 echo
 echo "-----------------------------------------"
-printf 'Deploy patch integrity suite: \033[0;32m%d passed\033[0m, ' "$PASS"
+printf 'Deploy source-integrity suite: \033[0;32m%d passed\033[0m, ' "$PASS"
 if [[ $FAIL -gt 0 ]]; then printf '\033[0;31m%d failed\033[0m\n' "$FAIL"; exit 1; else printf '%d failed\n' "$FAIL"; fi

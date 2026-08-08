@@ -512,6 +512,19 @@ services:
       OSV_DB_ECOSYSTEMS: ${OSV_DB_ECOSYSTEMS:-npm,PyPI,Go,Maven,crates.io,Packagist,RubyGems,NuGet}
       OSV_DB_TTL_SECONDS: ${OSV_DB_TTL_SECONDS:-86400}
       OSV_DB_REFRESH_TIMEOUT: ${OSV_DB_REFRESH_TIMEOUT:-900}
+      # Supply-chain DIRTY analyzer caps. Same env_file caveat again: these are
+      # documented in .env.example and read by container_manager.py, but without
+      # these lines .env was silently inert and the knobs did nothing. ALL pass
+      # through EMPTY on purpose - an empty value means "no operator override",
+      # which hands the ceiling back to the memory governor (envelope x headroom,
+      # ~1.5 GB, shrinking on a starved host). Setting SUPPLY_CHAIN_ANALYZER_MEM
+      # pins a fixed cap and opts the container out of the governor. The
+      # orchestrator forwards whichever of these are set into every spawned
+      # recon/L1 scan container, so the second spawn implementation
+      # (supply_chain_common.analyzer_dispatch) resolves them identically.
+      SUPPLY_CHAIN_ANALYZER_MEM: ${SUPPLY_CHAIN_ANALYZER_MEM:-}
+      SUPPLY_CHAIN_ANALYZER_PIDS: ${SUPPLY_CHAIN_ANALYZER_PIDS:-}
+      SUPPLY_CHAIN_ANALYZER_NANOCPUS: ${SUPPLY_CHAIN_ANALYZER_NANOCPUS:-}
       # Memory-governor admission knobs (scan reservation ledger). Same rationale
       # as the D1 CPU/PID caps above: the orchestrator has NO env_file, so these
       # are wired explicitly or setting them in .env is silently inert. All pass
@@ -916,6 +929,13 @@ services:
       SCAN_SCHEDULE_ASSUMED_RUN_MINUTES: ${SCAN_SCHEDULE_ASSUMED_RUN_MINUTES:-}
       SCAN_SCHEDULE_DEFER_RETRY_MINUTES: ${SCAN_SCHEDULE_DEFER_RETRY_MINUTES:-}
       SCAN_SCHEDULE_MAX_DEFERRALS: ${SCAN_SCHEDULE_MAX_DEFERRALS:-}
+      # Global row cap for every RedZone analytics query (was a per-route LIMIT
+      # of 200/500/1000/2000). Passed through EMPTY so unset keeps the 200k code
+      # default in webapp/src/app/api/analytics/redzone/rowCap.ts. Lower it on a
+      # memory-tight host: the Neo4j driver buffers a whole result set before the
+      # route maps it, inside this service's 1g mem_limit. Wired here because the
+      # webapp has NO env_file, so a value set only in .env would be inert.
+      REDAMON_REDZONE_ROW_CAP: ${REDAMON_REDZONE_ROW_CAP:-}
       # S11: login lockout / backoff thresholds. SAFE DEFAULTS so an unset value
       # fails safe to a real limit, never to "no limit".
       LOGIN_MAX_ATTEMPTS: ${LOGIN_MAX_ATTEMPTS:-5}

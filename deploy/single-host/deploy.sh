@@ -108,6 +108,10 @@ fi
 : "${REVSHELL_TARGET_CIDRS:=}"; : "${TUNNELS_ENABLED:=false}"
 : "${ADMIN_NAME:=}"; : "${ADMIN_EMAIL:=}"; : "${ADMIN_PASSWORD:=}"
 : "${NVD_API_KEY:=}"; : "${KB_EMBEDDING_USE_API:=}"; : "${KB_EMBEDDING_API_BASE_URL:=}"; : "${KB_EMBEDDING_API_KEY:=}"
+# Offline OSV database (supply-chain SCA). Blank -> the app's own defaults
+# (refresh on, all 8 ecosystems, 24h TTL). Only an air-gapped host or a
+# bandwidth/disk-constrained one needs to pin these; see README "Supply-chain".
+: "${OSV_DB_AUTO_REFRESH:=}"; : "${OSV_DB_ECOSYSTEMS:=}"; : "${OSV_DB_TTL_SECONDS:=}"; : "${OSV_DB_REFRESH_TIMEOUT:=}"
 : "${REDAMON_VERSION:=}"
 : "${INIT_FORCE:=false}"; : "${BACKUP_BEFORE_UPDATE:=false}"; : "${DRY_RUN:=false}"; : "${VERBOSE:=false}"
 : "${ALLOW_INSECURE:=0}"
@@ -256,6 +260,7 @@ build_deploy_env() {
              REVSHELL_TARGET_CIDRS TUNNELS_ENABLED \
              ADMIN_NAME ADMIN_EMAIL ADMIN_PASSWORD \
              NVD_API_KEY KB_EMBEDDING_USE_API KB_EMBEDDING_API_BASE_URL KB_EMBEDDING_API_KEY \
+             OSV_DB_AUTO_REFRESH OSV_DB_ECOSYSTEMS OSV_DB_TTL_SECONDS OSV_DB_REFRESH_TIMEOUT \
              REDAMON_VERSION AUTH_MODE APPLY_SECURE_COOKIE \
              NEXT_PUBLIC_AGENT_WS_URL AGENT_CORS_ORIGINS CSP_CONNECT WEBAPP_NODE_ENV WS_SCHEME HTTP_SCHEME; do
       printf '%s=%q\n' "$k" "${!k:-}"
@@ -373,6 +378,16 @@ seed KB_EMBEDDING_USE_API "\${KB_EMBEDDING_USE_API}"
 seed KB_EMBEDDING_API_BASE_URL "\${KB_EMBEDDING_API_BASE_URL}"
 seed KB_EMBEDDING_API_KEY "\${KB_EMBEDDING_API_KEY}"
 seed TUNNELS_ENABLED "\${TUNNELS_ENABLED}"
+# Offline OSV database (supply-chain SCA). redamon.sh install/update/up call
+# ensure_osv_db, which downloads ~280 MB for all 8 ecosystems on a cold host.
+# These are read by recon-orchestrator (explicitly wired in its compose
+# environment block -- it has no env_file) and by redamon.sh's own sync step.
+# Seed BEFORE the install so the very first sync already honours them: an
+# air-gapped host must not spend 15 minutes on a download that cannot succeed.
+seed OSV_DB_AUTO_REFRESH "\${OSV_DB_AUTO_REFRESH}"
+seed OSV_DB_ECOSYSTEMS "\${OSV_DB_ECOSYSTEMS}"
+seed OSV_DB_TTL_SECONDS "\${OSV_DB_TTL_SECONDS}"
+seed OSV_DB_REFRESH_TIMEOUT "\${OSV_DB_REFRESH_TIMEOUT}"
 
 # Cap each per-service CPU limit to the host's CPU count. compose sets generous
 # \`cpus:\` defaults (neo4j 8, kali 10, agent 8) that assume a big host; Docker
@@ -581,6 +596,25 @@ sg docker -c "docker compose ps" || true
 # here and the loopback checks above are the correct prod assertion. Do NOT run it
 # in prod: it would report false failures for the very hardening prod requires.
 info "single-origin prod: webapp/agent/4444 loopback by design (dev-only test_port_bindings.sh not run)"
+step "Offline OSV database (supply-chain SCA)"
+# redamon.sh's ensure_osv_db is deliberately best-effort: a network failure warns
+# and lets the stack come up. Without a check here, that warning scrolls past in a
+# 40-minute install and the operator only discovers the empty DB when the first
+# supply-chain scan reports "no <ecosystem> ecosystem". Warn, never fail: the rest
+# of the platform is fully functional without it, and an air-gapped host that set
+# OSV_DB_AUTO_REFRESH=false has an empty DB on purpose.
+osv_mp=\$(sg docker -c "docker volume inspect -f '{{.Mountpoint}}' redamon-osv-db" 2>/dev/null || true)
+if [ -z "\$osv_mp" ]; then
+  warn "redamon-osv-db volume missing -- supply-chain scans cannot verdict anything (run './redamon.sh supply-chain-sync')"
+elif [ "\$(run_sudo ls -1 "\$osv_mp" 2>/dev/null | grep -c '^\.redamon_synced_')" -eq 0 ]; then
+  if is_true "\${OSV_DB_AUTO_REFRESH:-true}"; then
+    warn "offline OSV database is EMPTY -- supply-chain scans will report a missing ecosystem. Re-run: ./redamon.sh supply-chain-sync"
+  else
+    info "offline OSV database empty; OSV_DB_AUTO_REFRESH=false, so this is intentional"
+  fi
+else
+  success "OSV database synced: \$(run_sudo ls -1 "\$osv_mp" 2>/dev/null | sed -n 's/^\.redamon_synced_//p' | tr '\n' ' ')"
+fi
 step "Admin present"
 cnt=\$(sg docker -c "docker compose exec -T webapp node scripts/check-admin.mjs" 2>/dev/null | tr -d '[:space:]')
 [ "\${cnt:-0}" -ge 1 ] 2>/dev/null && success "admin count = \${cnt}" || { err "no admin user found"; rc=1; }

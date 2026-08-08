@@ -37,6 +37,19 @@ logger = logging.getLogger(__name__)
 ANSI_ESCAPE = re.compile(r'\x1b\[[0-9;]*m|\033\[[0-9;]*m')
 
 
+def _env_unset_if_blank(name: str, default: str) -> str:
+    """os.environ.get where a BLANK value counts as unset.
+
+    The orchestrator has no env_file, so every knob it honours must be listed in
+    its compose environment block - and the pass-through idiom for an optional
+    knob is ``VAR: ${VAR:-}``. That means "operator set nothing" arrives as an
+    empty string, not as a missing key, and a plain .get(name, default) returns
+    "" instead of the default. Mirrors supply_chain_common.analyzer_dispatch._env
+    so both analyzer spawn paths agree on what "unset" means."""
+    raw = os.environ.get(name)
+    return raw.strip() if raw and raw.strip() else default
+
+
 def sibling_host_path(host_path: str, name: str) -> str:
     """Return the sibling ``name`` of ``host_path`` on the DOCKER HOST filesystem.
 
@@ -203,14 +216,21 @@ class ContainerManager:
         # (tarballs, target-served JS, manifests/SBOMs). OSV path is fully
         # network-isolated; GuardDog (opt-in) needs registry egress. Modeled on
         # the codefix sandbox, NOT on trufflehog (which holds Neo4j creds).
-        self.supply_chain_analyzer_image = os.environ.get(
+        #
+        # Read through _env_unset_if_blank: docker-compose wires these as
+        # ${VAR:-}, so an operator who set nothing still hands this constructor
+        # an empty string. int("") would raise here, in __init__, crash-looping
+        # the orchestrator the moment the knobs were wired into compose.
+        self.supply_chain_analyzer_image = _env_unset_if_blank(
             "SUPPLY_CHAIN_ANALYZER_IMAGE", "redamon-supply-chain-analyzer:latest")
-        self.supply_chain_analyzer_network = os.environ.get(
+        self.supply_chain_analyzer_network = _env_unset_if_blank(
             "SUPPLY_CHAIN_ANALYZER_NETWORK", "redamon-supply-chain-net")
-        self.supply_chain_analyzer_mem = os.environ.get("SUPPLY_CHAIN_ANALYZER_MEM", "1500m")
+        self.supply_chain_analyzer_mem = _env_unset_if_blank(
+            "SUPPLY_CHAIN_ANALYZER_MEM", "1500m")
         self.supply_chain_analyzer_nanocpus = int(
-            os.environ.get("SUPPLY_CHAIN_ANALYZER_NANOCPUS", str(2_000_000_000)))
-        self.supply_chain_analyzer_pids = int(os.environ.get("SUPPLY_CHAIN_ANALYZER_PIDS", "512"))
+            _env_unset_if_blank("SUPPLY_CHAIN_ANALYZER_NANOCPUS", str(2_000_000_000)))
+        self.supply_chain_analyzer_pids = int(
+            _env_unset_if_blank("SUPPLY_CHAIN_ANALYZER_PIDS", "512"))
         self.supply_chain_osv_db_volume = os.environ.get(
             "SUPPLY_CHAIN_OSV_DB_VOLUME", "redamon-osv-db")
         # Named volume shared with the webapp: the operator's uploaded SBOM/
@@ -454,6 +474,34 @@ class ContainerManager:
             return {"SCANNER_API_KEY": scanner}
         return {"INTERNAL_API_KEY": os.environ.get("INTERNAL_API_KEY", "")}
 
+    # The dirty-analyzer knobs an operator may pin in .env. They are read from
+    # os.environ by BOTH spawn implementations (this module for the SDK path,
+    # supply_chain_common.analyzer_dispatch for the broker path), and the whole
+    # point of analyzer_dispatch is that the two agree. The dispatch copy runs
+    # INSIDE the recon / L1-scan container, which inherits nothing from the
+    # orchestrator, so without this passthrough an override reached only the
+    # orchestrator's own spawns: a `SUPPLY_CHAIN_ANALYZER_MEM=700m` produced a
+    # 700m analyzer from L3 and a governed ~1.5 GB one from every recon/L1 job.
+    # Exactly the divergence the parity contract exists to prevent.
+    _ANALYZER_PASSTHROUGH_ENV = (
+        "SUPPLY_CHAIN_ANALYZER_IMAGE",
+        "SUPPLY_CHAIN_ANALYZER_NETWORK",
+        "SUPPLY_CHAIN_ANALYZER_MEM",
+        "SUPPLY_CHAIN_ANALYZER_NANOCPUS",
+        "SUPPLY_CHAIN_ANALYZER_PIDS",
+    )
+
+    def _analyzer_env(self) -> dict:
+        """Forward the operator's analyzer overrides to a spawned scan container.
+
+        Only keys the operator actually SET are forwarded. Passing the resolved
+        values instead would be wrong: it would freeze the override precedence
+        (override > governor > literal) at spawn time, so the analyzer would
+        keep a stale ceiling even after the governor recalibrated, and an unset
+        knob would arrive looking like an explicit operator pin."""
+        return {k: os.environ[k] for k in self._ANALYZER_PASSTHROUGH_ENV
+                if os.environ.get(k, "").strip()}
+
     def _scanner_hardening(self, drop_caps: bool = False) -> dict:
         """S3/E6 per-spawn privilege reduction (D1 pattern). Returns kwargs to
         splat into containers.run(). Kept as the single hook for future cap
@@ -694,6 +742,8 @@ class ContainerManager:
                     # the default) makes the broker reject the spawn with
                     # "bind mount not allowed" and the whole retire.js pass dies.
                     "SUPPLY_CHAIN_COMMON_HOST_PATH": sibling_host_path(recon_path, "supply_chain_common"),
+                    # Operator overrides for the dirty analyzer L2 spawns itself.
+                    **self._analyzer_env(),
                 },
                 volumes={
                     # V4: mount the BROKER's filtered socket via a named volume,
@@ -1653,6 +1703,8 @@ class ContainerManager:
                     # the default) makes the broker reject the spawn with
                     # "bind mount not allowed" and the whole retire.js pass dies.
                     "SUPPLY_CHAIN_COMMON_HOST_PATH": sibling_host_path(recon_path, "supply_chain_common"),
+                    # Operator overrides for the dirty analyzer L2 spawns itself.
+                    **self._analyzer_env(),
                 },
                 volumes={
                     # V4: mount the BROKER's filtered socket via a named volume,
@@ -3663,6 +3715,8 @@ exit $RC
                     "NEO4J_USER": os.environ.get("NEO4J_USER", "neo4j"),
                     "NEO4J_PASSWORD": os.environ.get("NEO4J_PASSWORD", ""),
                     **self._scanner_env(),
+                    # Operator overrides for the dirty analyzer this scan spawns.
+                    **self._analyzer_env(),
                 },
                 volumes={
                     f"{supply_chain_path}/output": {"bind": "/app/supply_chain_scan/output", "mode": "rw"},

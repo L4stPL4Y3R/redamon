@@ -33,8 +33,20 @@ __all__ = [
     "analyzer_docker_argv", "write_job", "read_artifact", "run_analyzer_job",
 ]
 
-ANALYZER_IMAGE = os.environ.get("SUPPLY_CHAIN_ANALYZER_IMAGE",
-                                "redamon-supply-chain-analyzer:latest")
+def _env(name, default):
+    """os.environ.get, but a BLANK value means "unset" rather than "empty".
+
+    docker-compose wires every analyzer knob through as ${VAR:-}, so an operator
+    who set nothing still hands each of these an empty string. Plain .get() would
+    then take "" as an explicit override: an empty image name, an empty --network,
+    and int("") raising ValueError in the orchestrator's constructor - i.e. the
+    passthrough that exists to make the knobs work would crash-loop the service."""
+    raw = os.environ.get(name)
+    return raw.strip() if raw and raw.strip() else default
+
+
+ANALYZER_IMAGE = _env("SUPPLY_CHAIN_ANALYZER_IMAGE",
+                      "redamon-supply-chain-analyzer:latest")
 
 # Modes supply_chain_analyzer/entrypoint.py understands.
 JOB_MODES = {"lockfile", "sbom", "dir", "js-dir", "purls"}
@@ -55,14 +67,14 @@ JOB_MODES = {"lockfile", "sbom", "dir", "js-dir", "purls"}
 # Omitting --network entirely would be worse still: docker's DEFAULT bridge is
 # shared by every container that does not ask for one, so the analyzer could
 # reach RedAmon peers - exactly the property this network exists to remove.
-ANALYZER_NETWORK = os.environ.get("SUPPLY_CHAIN_ANALYZER_NETWORK",
-                                  "redamon-supply-chain-net")
+ANALYZER_NETWORK = _env("SUPPLY_CHAIN_ANALYZER_NETWORK",
+                        "redamon-supply-chain-net")
 
 # Mirrors ContainerManager.run_supply_chain_analyzer (plan section 5.2).
 # Last-resort literal: used only when the operator set nothing AND the governor
 # is unreachable. NOT read from the environment at import time - see _resolve_mem.
 _DEFAULT_MEM = "1500m"
-_DEFAULT_PIDS = os.environ.get("SUPPLY_CHAIN_ANALYZER_PIDS", "512")
+_DEFAULT_PIDS = _env("SUPPLY_CHAIN_ANALYZER_PIDS", "512")
 _DEFAULT_TMPFS = "size=1g,exec"
 
 # The analyzer's tool envelope in the memory governor's profile. The governor

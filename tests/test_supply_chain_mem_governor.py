@@ -15,10 +15,12 @@ These tests pin the pieces that keep the three paths honest:
 
 Run: python3 -m unittest tests.test_supply_chain_mem_governor
 """
+import importlib
 import importlib.util
 import os
 import sys
 import unittest
+import unittest.mock
 
 ROOT = os.path.join(os.path.dirname(__file__), '..')
 # graph_db dir on path so the dispatch module's `import resource_governor`
@@ -310,6 +312,48 @@ class TestImportBudgetIsActuallyUsed(SupplyChainGovBase):
         combined = {"js_recon": {"work_dir": work}}
         self.assertEqual(len(scr._read_js_contents(combined, {'SUPPLY_CHAIN_IMPORT_MAX_FILES': 2})), 2)
         self.assertEqual(len(scr._read_js_contents(combined, None)), 5)
+
+
+class TestBlankEnvIsUnset(unittest.TestCase):
+    """analyzer_dispatch's module constants are resolved at import, and the
+    orchestrator now forwards the analyzer knobs into the containers this module
+    runs in. Forwarding is filtered to keys the operator actually set, but the
+    module is also imported in the orchestrator itself, where compose delivers
+    every optional knob as an EMPTY STRING (`VAR: ${VAR:-}`). A plain
+    os.environ.get would then bind an empty image name and an empty --network -
+    a `docker run --network '' ''` at the first analyzer job."""
+
+    def test_blank_is_treated_as_unset(self):
+        with unittest.mock.patch.dict(os.environ, {"X_SC_KNOB": ""}):
+            self.assertEqual(ad._env("X_SC_KNOB", "default"), "default")
+        with unittest.mock.patch.dict(os.environ, {"X_SC_KNOB": "\t "}):
+            self.assertEqual(ad._env("X_SC_KNOB", "default"), "default")
+
+    def test_set_value_wins_and_is_stripped(self):
+        with unittest.mock.patch.dict(os.environ, {"X_SC_KNOB": " custom "}):
+            self.assertEqual(ad._env("X_SC_KNOB", "default"), "custom")
+
+    def test_module_constants_are_never_empty(self):
+        """Whatever the environment looked like at import, these must hold a
+        usable value: they go straight into the docker argv."""
+        self.assertTrue(ad.ANALYZER_IMAGE.strip())
+        self.assertTrue(ad.ANALYZER_NETWORK.strip())
+        self.assertTrue(str(ad._DEFAULT_PIDS).strip())
+        int(ad._DEFAULT_PIDS)  # must stay parseable as a pids-limit
+
+    def test_constants_survive_a_blank_environment_at_import(self):
+        blank = {k: "" for k in ("SUPPLY_CHAIN_ANALYZER_IMAGE",
+                                 "SUPPLY_CHAIN_ANALYZER_NETWORK",
+                                 "SUPPLY_CHAIN_ANALYZER_PIDS")}
+        with unittest.mock.patch.dict(os.environ, blank):
+            reimported = importlib.reload(ad)
+            try:
+                self.assertEqual(reimported.ANALYZER_IMAGE,
+                                 "redamon-supply-chain-analyzer:latest")
+                self.assertEqual(reimported.ANALYZER_NETWORK, "redamon-supply-chain-net")
+                self.assertEqual(reimported._DEFAULT_PIDS, "512")
+            finally:
+                importlib.reload(ad)  # restore the shared module for other tests
 
 
 if __name__ == '__main__':

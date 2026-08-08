@@ -34,10 +34,27 @@ def _reachable() -> bool:
         return False
 
 
+# Every route except /health now sits behind the X-Orchestrator-Key middleware.
+# /health is the ONE exempt path, so reachability alone never implied the smoke
+# calls would be authorized: without this header they 401 and the suite errors
+# out on a healthy stack. Read from the environment, which is where the
+# orchestrator process itself gets the key - running these from inside the
+# container (the documented invocation above) therefore needs no extra setup.
+_ORCH_KEY = os.environ.get("ORCHESTRATOR_API_KEY", "")
+
+
+def _get(path: str):
+    req = urllib.request.Request(f"{ORCH_URL}{path}")
+    if _ORCH_KEY:
+        req.add_header("X-Orchestrator-Key", _ORCH_KEY)
+    return urllib.request.urlopen(req, timeout=5)
+
+
 @unittest.skipUnless(_reachable(), f"no orchestrator at {ORCH_URL}")
+@unittest.skipUnless(_ORCH_KEY, "ORCHESTRATOR_API_KEY unset (run inside the orchestrator container)")
 class TestLocalLlmSmoke(unittest.TestCase):
     def test_status_endpoint_shape(self):
-        with urllib.request.urlopen(f"{ORCH_URL}/local-llm/status", timeout=5) as r:
+        with _get("/local-llm/status") as r:
             self.assertEqual(r.status, 200)
             body = json.loads(r.read().decode("utf-8"))
         self.assertEqual(set(body.keys()), _STATUS_KEYS)
@@ -48,7 +65,7 @@ class TestLocalLlmSmoke(unittest.TestCase):
     def test_status_is_read_only(self):
         # Two status reads must not change the lease count (no side effects).
         def leases():
-            with urllib.request.urlopen(f"{ORCH_URL}/local-llm/status", timeout=5) as r:
+            with _get("/local-llm/status") as r:
                 return json.loads(r.read().decode("utf-8"))["leases"]
         self.assertEqual(leases(), leases())
 

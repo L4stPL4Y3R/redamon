@@ -46,18 +46,25 @@ RedAmon is heavy. `redamon.sh` enforces a hard **8 GB** Docker-visible RAM floor
 
 | Profile | vCPU | RAM | Disk | Example | Notes |
 |---|---|---|---|---|---|
-| Bare minimum (core only, no GVM/KB) | 2 | 8 GB | 100 GB | t3.large | Fits the ~90 GB platform footprint with almost no operational headroom. Cap the build cache (`DOCKER_BUILD_CACHE_MAX_GB`) or the parallel build can hit 100%. Slow/swappy; keep swap on. |
-| Recommended (core + real scans, no GVM) | 4 | 16 GB | 200 GB | m5.xlarge | ~90 GB platform + ~100 GB free for operational data. Sane default. |
-| Full (GVM + KB + Ollama judge + parallel scans) | 8 | 32 GB | 250 GB | m5.2xlarge | ~120 GB platform + ~100 GB operational. Ollama alone needs ~5-6 GB RAM while scanning. |
+| Bare minimum (core only, no GVM/KB) | 2 | 8 GB | 100 GB | t3.large | Fits the ~91 GB platform footprint with almost no operational headroom. Cap the build cache (`DOCKER_BUILD_CACHE_MAX_GB`) or the parallel build can hit 100%. Slow/swappy; keep swap on. Supply-chain scans will be admission-rejected here (see below). |
+| Recommended (core + real scans, no GVM) | 4 | 16 GB | 200 GB | m5.xlarge | ~91 GB platform + ~100 GB free for operational data. Sane default, and the floor for supply-chain SCA. |
+| Full (GVM + KB + Ollama judge + parallel scans) | 8 | 32 GB | 250 GB | m5.2xlarge | ~121 GB platform + ~100 GB operational. Ollama alone needs ~5-6 GB RAM while scanning. |
 
-**Disk sizing.** The fixed platform footprint is **~90 GB without GVM** (OS ~9 GB + the 13 built
-images ~60 GB + build cache ~20 GB) and **~120 GB with GVM** (its images plus the
-vulnerability-feed volumes/DB add ~25-30 GB, and those grow on every feed update). On top of
-that, budget **~100 GB of free space for operational data** - the Neo4j attack graph, scan
-artifacts/outputs, Postgres, and container logs all grow with use. That lands at **200 GB
-without GVM, 250 GB with GVM**, each leaving roughly 100 GB free for operations. gp3 EBS
-resizes online, so you can start smaller and grow in place. Set `DOCKER_BUILD_CACHE_MAX_GB` so
+**Disk sizing.** The fixed platform footprint is **~91 GB without GVM** (OS ~9 GB + the 15 built
+images ~61 GB + build cache ~20 GB + the ~0.3 GB offline OSV database volume) and **~121 GB with
+GVM** (its images plus the vulnerability-feed volumes/DB add ~25-30 GB, and those grow on every
+feed update). On top of that, budget **~100 GB of free space for operational data** - the Neo4j
+attack graph, scan artifacts/outputs, Postgres, and container logs all grow with use. That lands
+at **200 GB without GVM, 250 GB with GVM**, each leaving roughly 100 GB free for operations. gp3
+EBS resizes online, so you can start smaller and grow in place. Set `DOCKER_BUILD_CACHE_MAX_GB` so
 the build cache (which `update` reuses but never prunes) can't slowly eat that headroom.
+
+**RAM and supply-chain SCA.** Supply-chain is the only feature that spawns a *second* heavy
+container per job: the scan/partial books a 1.75 GB envelope and the network-isolated "dirty"
+analyzer another ~1.5 GB alongside it. The memory governor reserves both, so a starved host
+*rejects the scan* rather than OOM-killing the stack - but on the 8 GB bare-minimum profile that
+rejection is the normal outcome once anything else is running. Plan on the 16 GB profile if you
+intend to use supply-chain SCA.
 
 ## The `.env` reference (every variable)
 
@@ -148,8 +155,20 @@ flag it manages. Control KB with `ENABLE_KB` only.
 |---|---|
 | `NVD_API_KEY` | Faster NVD lookups. |
 | `KB_EMBEDDING_USE_API` / `KB_EMBEDDING_API_BASE_URL` / `KB_EMBEDDING_API_KEY` | Use a remote embedding API instead of the baked local model. |
+| `OSV_DB_AUTO_REFRESH` | `false` disables the lazy-on-scan refresh of the offline OSV database. Set it for an **air-gapped** host, otherwise every supply-chain scan burns `OSV_DB_REFRESH_TIMEOUT` on a download that cannot succeed. Blank -> `true`. |
+| `OSV_DB_ECOSYSTEMS` | Comma-separated ecosystems to keep synced. Blank -> all eight (~280 MB). `npm` alone is ~208 MB and a noticeably shorter first install. An ecosystem you drop here is never refreshed, and a scan against it reports a missing ecosystem rather than a clean result. |
+| `OSV_DB_TTL_SECONDS` | Freshness window before a re-sync (blank -> 86400). |
+| `OSV_DB_REFRESH_TIMEOUT` | Ceiling on a single refresh, seconds (blank -> 900). |
 
 LLM provider keys are configured in the UI, not here.
+
+**Supply-chain SCA / offline OSV database.** `init` and `update` call `redamon.sh`'s
+`ensure_osv_db`, which populates the `redamon-osv-db` volume (~280 MB for all eight ecosystems)
+after the tool images are built. It is **best-effort**: a network failure warns and lets the
+stack come up, so `verify` re-checks the volume and warns if it is empty. To fix one by hand:
+`ssh` in and run `./redamon.sh supply-chain-sync` (optionally `... npm PyPI Go`). The download
+is plain HTTPS egress to the OSV GCS bucket, which the default ufw policy (`allow outgoing`)
+already permits.
 
 ### Behaviour / safety
 | Key | Purpose |
@@ -370,7 +389,7 @@ application `.env`.
 | (fixed) | `COMPOSE_FILE` = base + prod overlay, made sticky |
 | `APP_DIR` | `COMPOSE_PROJECT_NAME` (do not change between init/update) |
 | `ADMIN_*` | first-admin creation on init |
-| `NVD_API_KEY`, `KB_EMBEDDING_*`, `TUNNELS_ENABLED` | appended to the server `.env` |
+| `NVD_API_KEY`, `KB_EMBEDDING_*`, `TUNNELS_ENABLED`, `OSV_DB_*` | appended to the server `.env` |
 
 Intentionally hands-off (redamon.sh owns these; the deploy only verifies): `AUTH_SECRET`,
 `INTERNAL_API_KEY`, `SCANNER_API_KEY`, `ORCHESTRATOR_API_KEY`, `MCP_AUTH_TOKEN`,

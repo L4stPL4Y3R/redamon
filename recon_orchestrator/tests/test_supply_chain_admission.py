@@ -26,6 +26,7 @@ from unittest import mock
 
 import resource_governor as rg
 from admission_ledger import AdmissionError, AdmissionResult, ReservationLedger
+import container_manager as cm
 from container_manager import ContainerManager
 
 GB = 1024 ** 3
@@ -513,6 +514,79 @@ class TestAnalyzerReservationTracksTheOverride(unittest.TestCase):
             asyncio.run(self.m.run_guarddog_package_governed("npm", "left-pad"))
         self.assertEqual(seen["committed"], 4 * GB)
         self.assertEqual(self.m.ledger.committed_bytes(), 0)
+
+
+class TestBlankEnvIsUnset(unittest.TestCase):
+    """The orchestrator has NO env_file, so an optional knob only reaches it if
+    compose lists it as ``VAR: ${VAR:-}``. That idiom delivers an EMPTY STRING
+    when the operator set nothing - not a missing key - so every reader has to
+    treat blank as unset. The analyzer knobs are read in __init__, where
+    ``int("")`` is not a wrong value but a crash-loop of the whole service."""
+
+    def test_blank_falls_back_to_default(self):
+        with mock.patch.dict("os.environ", {"X_TEST_KNOB": ""}):
+            self.assertEqual(cm._env_unset_if_blank("X_TEST_KNOB", "fallback"), "fallback")
+        with mock.patch.dict("os.environ", {"X_TEST_KNOB": "   "}):
+            self.assertEqual(cm._env_unset_if_blank("X_TEST_KNOB", "fallback"), "fallback")
+
+    def test_missing_falls_back_to_default(self):
+        env = dict(os.environ)
+        env.pop("X_TEST_KNOB", None)
+        with mock.patch.dict("os.environ", env, clear=True):
+            self.assertEqual(cm._env_unset_if_blank("X_TEST_KNOB", "fallback"), "fallback")
+
+    def test_set_value_wins_and_is_stripped(self):
+        with mock.patch.dict("os.environ", {"X_TEST_KNOB": " 700m "}):
+            self.assertEqual(cm._env_unset_if_blank("X_TEST_KNOB", "fallback"), "700m")
+
+    def test_blank_numeric_knobs_do_not_raise(self):
+        """The regression this guards: compose passing the PID/CPU knobs through
+        empty made int() raise inside ContainerManager.__init__."""
+        with mock.patch.dict("os.environ", {"SUPPLY_CHAIN_ANALYZER_PIDS": "",
+                                            "SUPPLY_CHAIN_ANALYZER_NANOCPUS": ""}):
+            self.assertEqual(int(cm._env_unset_if_blank("SUPPLY_CHAIN_ANALYZER_PIDS", "512")), 512)
+            self.assertEqual(
+                int(cm._env_unset_if_blank("SUPPLY_CHAIN_ANALYZER_NANOCPUS", str(2_000_000_000))),
+                2_000_000_000)
+
+
+class TestAnalyzerEnvPassthrough(unittest.TestCase):
+    """The analyzer is spawned from three processes, but only this one reads the
+    operator's .env. The recon (L2) and supply-chain (L1) containers run the
+    OTHER implementation (supply_chain_common.analyzer_dispatch) and inherit
+    nothing, so an override that is not forwarded at spawn applies to L3 alone -
+    the same two-implementations-disagree failure the parity contract exists to
+    prevent, just relocated to the process boundary."""
+
+    def test_forwards_only_keys_the_operator_set(self):
+        m = _mgr()
+        env = {k: v for k, v in os.environ.items()
+               if not k.startswith("SUPPLY_CHAIN_ANALYZER_")}
+        env["SUPPLY_CHAIN_ANALYZER_MEM"] = "700m"
+        with mock.patch.dict("os.environ", env, clear=True):
+            self.assertEqual(m._analyzer_env(), {"SUPPLY_CHAIN_ANALYZER_MEM": "700m"})
+
+    def test_blank_knobs_are_not_forwarded(self):
+        """A forwarded empty string would read as an explicit pin on the far
+        side and defeat the governor there."""
+        m = _mgr()
+        with mock.patch.dict("os.environ", {"SUPPLY_CHAIN_ANALYZER_MEM": "",
+                                            "SUPPLY_CHAIN_ANALYZER_PIDS": "  "}):
+            self.assertEqual(m._analyzer_env(), {})
+
+    def test_forwards_every_documented_knob(self):
+        m = _mgr()
+        pinned = {k: "1" for k in m._ANALYZER_PASSTHROUGH_ENV}
+        with mock.patch.dict("os.environ", pinned):
+            self.assertEqual(set(m._analyzer_env()), set(m._ANALYZER_PASSTHROUGH_ENV))
+
+    def test_passthrough_list_covers_what_dispatch_reads(self):
+        """Source-level parity: analyzer_dispatch resolves these from its own
+        environment, so anything it reads must be forwarded or it silently
+        falls back while the orchestrator uses the operator's value."""
+        for knob in ("SUPPLY_CHAIN_ANALYZER_IMAGE", "SUPPLY_CHAIN_ANALYZER_NETWORK",
+                     "SUPPLY_CHAIN_ANALYZER_MEM", "SUPPLY_CHAIN_ANALYZER_PIDS"):
+            self.assertIn(knob, ContainerManager._ANALYZER_PASSTHROUGH_ENV)
 
 
 if __name__ == "__main__":
