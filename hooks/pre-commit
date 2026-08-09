@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+#
+# Tracked pre-commit hook. Installed into .git/hooks/ by hooks/install-hooks.sh.
+#
+# Its only job today is the ADVISORY skills citation check: on every commit it
+# reports which skills / AGENTS.md files cite the files being committed, so you
+# know you may have just invalidated a rule. It NEVER blocks a commit.
+#
+# The check runs from an EXIT trap rather than a plain call at the bottom, so
+# that if this hook ever grows early `exit` paths (formatters, lint) the notice
+# still fires on every path, runs LAST, and never changes the commit's status.
+#
+PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+
+_skill_citation_check() {
+  local rc=$?
+  local script="$PROJECT_ROOT/skills/skill-sync/assets/citation-check.sh"
+  if [ "$rc" -eq 0 ] && [ -x "$script" ]; then
+    "$script" || true          # advisory only: never let it fail the commit
+  fi
+  return "$rc"
+}
+trap _skill_citation_check EXIT
+
+# --- other pre-commit logic, if any, goes ABOVE this line ------------------
+# (none yet)
