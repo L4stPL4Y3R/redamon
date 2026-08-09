@@ -53,11 +53,20 @@ export async function describeLiveGraphWriters(projectId: string): Promise<strin
   return describeSecondaryScanWriters(projectId)
 }
 
+// AI attack surface runs are enumerated (like partial recon), not exposed as one
+// project-level status. These are the states in which a run still writes findings.
+const ACTIVE_AI_ATTACK_STATUSES = new Set(['running', 'starting', 'stopping'])
+
 /**
- * The GVM / GitHub-secret / TruffleHog subset. Each runs in its own container and
- * writes findings into the live graph keyed by project_id. Used by ACTIVATION only
- * (a full scan legitimately runs alongside these today, same as an agent session,
- * so describeScanWriters deliberately omits them).
+ * The GVM / GitHub-secret / TruffleHog / supply-chain / AI-attack-surface subset.
+ * Each runs in its own container and writes findings into the live graph keyed by
+ * project_id. Used by ACTIVATION only (a full scan legitimately runs alongside
+ * these today, same as an agent session, so describeScanWriters deliberately omits
+ * them).
+ *
+ * Supply chain and AI attack surface were missing from this list (C-2): both write
+ * into the live graph, so activation could delete+rebuild the graph out from under
+ * a running supply-chain or AI-attack scan.
  *
  * FAIL CLOSED: an unverifiable status is reported as busy, never assumed idle.
  */
@@ -66,6 +75,7 @@ export async function describeSecondaryScanWriters(projectId: string): Promise<s
     { path: `/gvm/${projectId}/status`, label: 'a GVM vulnerability scan is running' },
     { path: `/github-hunt/${projectId}/status`, label: 'a GitHub Secret Hunt is running' },
     { path: `/trufflehog/${projectId}/status`, label: 'a TruffleHog scan is running' },
+    { path: `/supply-chain/${projectId}/status`, label: 'a supply-chain scan is running' },
   ]
 
   for (const { path, label } of checks) {
@@ -81,6 +91,23 @@ export async function describeSecondaryScanWriters(projectId: string): Promise<s
       console.error(`[graphWriters] ${path} check failed (treating as busy):`, err)
       return `${label.replace(' is running', '')} status could not be verified`
     }
+  }
+
+  // AI attack surface: run-list shaped, so check each run like partial recon.
+  try {
+    const res = await orchestratorFetch(`${RECON_ORCHESTRATOR_URL}/ai-attack-surface/${projectId}/all`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    })
+    if (!res.ok) return 'the AI attack-surface scan status could not be verified'
+    const data = await res.json()
+    const runs: Array<{ status?: string }> = Array.isArray(data?.runs) ? data.runs : []
+    if (runs.some(r => r.status && ACTIVE_AI_ATTACK_STATUSES.has(r.status))) {
+      return 'an AI attack-surface scan is running'
+    }
+  } catch (err) {
+    console.error('[graphWriters] ai-attack-surface check failed (treating as busy):', err)
+    return 'the AI attack-surface scan status could not be verified'
   }
 
   return null

@@ -3719,6 +3719,12 @@ exit $RC
                     **self._analyzer_env(),
                 },
                 volumes={
+                    # Shared scratch the analyzer_dispatch job.json is written to,
+                    # then bind-mounted by the dirty analyzer. Recon, partial recon
+                    # and AI attack all mount this; supply chain omitted it, so the
+                    # analyzer read a path the scan container never wrote (L1
+                    # GuardDog deep analysis broken). See Phase 0.1.
+                    "/tmp/redamon": {"bind": "/tmp/redamon", "mode": "rw"},
                     f"{supply_chain_path}/output": {"bind": "/app/supply_chain_scan/output", "mode": "rw"},
                     f"{supply_chain_path}": {"bind": "/app/supply_chain_scan", "mode": "rw"},
                     sibling_host_path(supply_chain_path, "graph_db"): {"bind": "/app/graph_db", "mode": "ro"},

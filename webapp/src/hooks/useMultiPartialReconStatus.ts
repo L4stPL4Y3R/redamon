@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import type { PartialReconState, PartialReconStatus, PartialReconParams } from '@/lib/recon-types'
+import type { ScanStartError } from '@/lib/scanStartError'
 
 interface UseMultiPartialReconStatusOptions {
   projectId: string | null
@@ -20,6 +21,7 @@ interface UseMultiPartialReconStatusReturn {
   startPartialRecon: (params: PartialReconParams) => Promise<PartialReconState | null>
   stopPartialRecon: (runId: string) => Promise<PartialReconState | null>
   refetch: () => Promise<void>
+  getLastStartError: () => ScanStartError | null
 }
 
 const DEFAULT_POLLING_INTERVAL = 5000
@@ -37,6 +39,7 @@ export function useMultiPartialReconStatus({
   const [error, setError] = useState<string | null>(null)
 
   const pollingRef = useRef<NodeJS.Timeout | null>(null)
+  const lastStartErrorRef = useRef<ScanStartError | null>(null)
   const previousStatusesRef = useRef<Record<string, PartialReconStatus>>({})
   const onRunCompleteRef = useRef(onRunComplete)
   const onRunErrorRef = useRef(onRunError)
@@ -91,6 +94,7 @@ export function useMultiPartialReconStatus({
 
     setIsLoading(true)
     setError(null)
+    lastStartErrorRef.current = null
 
     try {
       const response = await fetch(`/api/recon/${projectId}/partial`, {
@@ -101,6 +105,7 @@ export function useMultiPartialReconStatus({
 
       if (!response.ok) {
         const data = await response.json().catch(() => ({}))
+        lastStartErrorRef.current = { message: data.error || 'Failed to start partial recon', limit: data.limit, status: response.status }
         throw new Error(data.error || 'Failed to start partial recon')
       }
 
@@ -112,6 +117,7 @@ export function useMultiPartialReconStatus({
 
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+      if (!lastStartErrorRef.current) lastStartErrorRef.current = { message: errorMessage }
       setError(errorMessage)
       onRunErrorRef.current?.('', errorMessage)
       return null
@@ -120,6 +126,8 @@ export function useMultiPartialReconStatus({
       setIsLoading(false)
     }
   }, [projectId])
+
+  const getLastStartError = useCallback(() => lastStartErrorRef.current, [])
 
   const stopPartialRecon = useCallback(async (runId: string): Promise<PartialReconState | null> => {
     if (!projectId) return null
@@ -204,6 +212,7 @@ export function useMultiPartialReconStatus({
     startPartialRecon,
     stopPartialRecon,
     refetch: fetchAllStatuses,
+    getLastStartError,
   }
 }
 

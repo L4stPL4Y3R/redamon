@@ -233,8 +233,13 @@ export async function reconcileScanJobStatus(
   if (!mapped) return
 
   try {
+    // C-1: only ever close out a GENUINELY running job. A 'queued' row has no
+    // container, so the orchestrator reports 'idle', which this function maps to
+    // 'canceled' -- an ordinary browser status poll would then silently cancel a
+    // queued scan just by looking at the page. The JobQueue row is the pending
+    // record; a ScanJob exists only for an attempt that really started.
     const open = await prisma.scanJob.findFirst({
-      where: { projectId, status: { in: ['queued', 'running'] } },
+      where: { projectId, status: { in: ['running'] } },
       orderBy: { createdAt: 'desc' },
       select: { id: true, versionId: true },
     })

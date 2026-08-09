@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type { GvmState, GvmStatus } from '@/lib/recon-types'
+import type { ScanStartError } from '@/lib/scanStartError'
 
 interface UseGvmStatusOptions {
   projectId: string | null
@@ -21,6 +22,7 @@ interface UseGvmStatusReturn {
   stopGvm: () => Promise<GvmState | null>
   pauseGvm: () => Promise<GvmState | null>
   resumeGvm: () => Promise<GvmState | null>
+  getLastStartError: () => ScanStartError | null
 }
 
 const DEFAULT_POLLING_INTERVAL = 5000
@@ -44,6 +46,7 @@ export function useGvmStatus({
   // so hold the optimistic status ('pausing' / 'stopping') and skip polling until
   // the request resolves -- a poll landing mid-freeze would revert the button.
   const transitionRef = useRef(false)
+  const lastStartErrorRef = useRef<ScanStartError | null>(null)
 
   const onStatusChangeRef = useRef(onStatusChange)
   const onCompleteRef = useRef(onComplete)
@@ -93,6 +96,7 @@ export function useGvmStatus({
 
     setIsLoading(true)
     setError(null)
+    lastStartErrorRef.current = null
 
     try {
       const response = await fetch(`/api/gvm/${projectId}/start`, {
@@ -100,7 +104,11 @@ export function useGvmStatus({
       })
 
       if (!response.ok) {
-        const data = await response.json()
+        const data = await response.json().catch(() => ({}))
+        // Capture limit + HTTP status so the caller can read getLastStartError()
+        // and show a tailored modal (Scan Queue Phase 0.2). GVM keeps the
+        // return-null contract; handleConfirmGvm reads the error branch.
+        lastStartErrorRef.current = { message: data.error || 'Failed to start GVM scan', limit: data.limit, status: response.status }
         throw new Error(data.error || 'Failed to start GVM scan')
       }
 
@@ -111,6 +119,7 @@ export function useGvmStatus({
 
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+      if (!lastStartErrorRef.current) lastStartErrorRef.current = { message: errorMessage }
       setError(errorMessage)
       onErrorRef.current?.(errorMessage)
       return null
@@ -119,6 +128,8 @@ export function useGvmStatus({
       setIsLoading(false)
     }
   }, [projectId])
+
+  const getLastStartError = useCallback(() => lastStartErrorRef.current, [])
 
   const stopGvm = useCallback(async (): Promise<GvmState | null> => {
     if (!projectId) return null
@@ -254,6 +265,7 @@ export function useGvmStatus({
     stopGvm,
     pauseGvm,
     resumeGvm,
+    getLastStartError,
   }
 }
 

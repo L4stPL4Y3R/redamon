@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type { ReconState, ReconStatus } from '@/lib/recon-types'
+import type { ScanStartError, ScanStartLimit } from '@/lib/scanStartError'
 
 interface UseReconStatusOptions {
   projectId: string | null
@@ -13,17 +14,10 @@ interface UseReconStatusOptions {
 }
 
 // Memory governor (Part 5): structured limit info from a rejected start.
-export interface ReconStartLimit {
-  limitType?: 'hard' | 'ram'
-  settingName?: string | null
-  detail?: string
-  current?: number
-  ceiling?: number
-}
-export interface ReconStartError {
-  message: string
-  limit?: ReconStartLimit
-}
+// Kept as re-exports for backwards compatibility; the canonical shape now lives
+// in @/lib/scanStartError and carries the HTTP `status` too (Scan Queue Phase 0.2).
+export type ReconStartLimit = ScanStartLimit
+export type ReconStartError = ScanStartError
 
 /**
  * Scan Timeline: what happens to the graph this scan is about to rebuild.
@@ -130,9 +124,10 @@ export function useReconStatus({
 
       if (!response.ok) {
         const data = await response.json().catch(() => ({}))
-        // Capture structured limit info (Part 5) before throwing, so the caller
-        // can show a tailored modal.
-        lastStartErrorRef.current = { message: data.error || 'Failed to start recon', limit: data.limit }
+        // Capture structured limit info (Part 5) and the HTTP status before
+        // throwing, so the caller can show a tailored modal and classify the
+        // failure as temporary (queueable) or permanent.
+        lastStartErrorRef.current = { message: data.error || 'Failed to start recon', limit: data.limit, status: response.status }
         throw new Error(data.error || 'Failed to start recon')
       }
 

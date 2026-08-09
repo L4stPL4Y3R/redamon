@@ -398,6 +398,7 @@ export default function GraphPage() {
     stopGvm,
     pauseGvm,
     resumeGvm,
+    getLastStartError: getGvmStartError,
   } = useGvmStatus({
     projectId,
     enabled: !!projectId,
@@ -1176,8 +1177,23 @@ export default function GraphPage() {
       setIsGvmModalOpen(false)
       setActiveLogsDrawer('gvm')
       toast.info('GVM scan started')
+      return
     }
-  }, [startGvm, clearGvmLogs, toast, isViewingPastVersion, alertError])
+    // Failed to start: surface the reason (Scan Queue Phase 0.3). startGvm keeps
+    // its return-null contract, so read the captured error and mirror the recon
+    // path's tailored titles.
+    const startErr = getGvmStartError?.()
+    if (startErr) {
+      setIsGvmModalOpen(false)
+      const title =
+        startErr.limit?.limitType === 'hard'
+          ? 'Scan limit reached'
+          : startErr.limit?.limitType === 'ram'
+            ? 'Not enough memory'
+            : 'Could not start scan'
+      alertError(startErr.message, title)
+    }
+  }, [startGvm, clearGvmLogs, toast, isViewingPastVersion, alertError, getGvmStartError])
 
   const handleDownloadGvmJSON = useCallback(async () => {
     if (!projectId) return
