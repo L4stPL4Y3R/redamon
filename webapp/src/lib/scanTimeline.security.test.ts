@@ -83,7 +83,9 @@ describe('the scheduler internal API is internal-key only', () => {
     const { internalKeyRouteAllowed } = await import('@/middleware')
     expect(internalKeyRouteAllowed('GET', '/api/internal/scan-schedules/due')).toBe(true)
     expect(internalKeyRouteAllowed('POST', '/api/internal/scan-schedules/s1/run')).toBe(true)
-    expect(internalKeyRouteAllowed('POST', '/api/internal/scan-schedules/s1/defer')).toBe(true)
+    // The /defer route was removed in Scan Queue Phase 4 (temporary refusals now
+    // enqueue), so it is no longer allowlisted.
+    expect(internalKeyRouteAllowed('POST', '/api/internal/scan-schedules/s1/defer')).toBe(false)
     // Nothing wider than that.
     expect(internalKeyRouteAllowed('POST', '/api/internal/scan-schedules/due')).toBe(false)
     expect(internalKeyRouteAllowed('DELETE', '/api/internal/scan-schedules/s1/run')).toBe(false)

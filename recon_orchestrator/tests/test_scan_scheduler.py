@@ -108,7 +108,7 @@ class TestConfig(unittest.TestCase):
 class TestTick(unittest.TestCase):
     def test_nothing_due_is_a_no_op(self):
         summary, calls = _run_tick([("/due", {"schedules": []})])
-        self.assertEqual(summary, {"due": 0, "started": 0, "deferred": 0, "failed": 0})
+        self.assertEqual(summary, {"due": 0, "started": 0, "queued": 0, "failed": 0})
         self.assertEqual(len(calls), 1)
 
     def test_runs_a_due_schedule_via_the_webapp(self):
@@ -122,46 +122,43 @@ class TestTick(unittest.TestCase):
         self.assertEqual(run_calls[0]["method"], "POST")
         self.assertIn("/api/internal/scan-schedules/sched1/run", run_calls[0]["url"])
 
-    def test_F3_defers_instead_of_spawning_during_an_activation(self):
-        summary, calls = _run_tick([
-            ("/due", _due(activationInProgress=True)),
-            ("/defer", {"ok": True}),
-        ])
-        self.assertEqual(summary["deferred"], 1)
-        self.assertEqual(summary["started"], 0)
-        self.assertFalse([c for c in calls if c["url"].endswith("/run")],
-                         "a scan must NEVER be started into an in-flight graph swap")
-        defer = [c for c in calls if c["url"].endswith("/defer")][0]
-        self.assertIn("graph busy", defer["payload"]["reason"])
-
-    def test_defers_when_the_ledger_has_no_headroom(self):
+    def test_a_temporary_refusal_is_ENQUEUED_not_deferred(self):
+        # Phase 4: the worker no longer pre-checks or defers. It always calls /run;
+        # a temporary refusal comes back as {ok:false, queued:true} because the run
+        # route turned the occurrence into a durable queue row.
         ledger = _Ledger(remaining=100 * MB, envelope=2000 * MB)
         summary, calls = _run_tick(
-            [("/due", _due()), ("/defer", {"ok": True})],
+            [("/due", _due()), ("/run", {"ok": False, "queued": True, "blockedCode": "ram"})],
             manager=_Manager(ledger),
         )
-        self.assertEqual(summary["deferred"], 1)
-        self.assertFalse([c for c in calls if c["url"].endswith("/run")])
-        defer = [c for c in calls if c["url"].endswith("/defer")][0]
-        self.assertIn("not enough free memory", defer["payload"]["reason"])
-        # Non-reserving: the authoritative reservation happens in start_recon.
+        self.assertEqual(summary["queued"], 1)
+        self.assertEqual(summary["started"], 0)
+        self.assertEqual(summary["failed"], 0)
+        # It STILL calls /run (never a removed /defer route) ...
+        self.assertTrue([c for c in calls if c["url"].endswith("/run")])
+        self.assertFalse([c for c in calls if c["url"].endswith("/defer")])
+        # ... and R1 holds: the worker never reserves.
         self.assertEqual(ledger.admit_calls, [])
 
-    def test_runs_when_headroom_exactly_covers_the_envelope(self):
-        ledger = _Ledger(remaining=2000 * MB, envelope=2000 * MB)
-        summary, _ = _run_tick(
+    def test_always_runs_even_with_a_tight_ledger(self):
+        # No pre-check remains, so a tight ledger does not stop the /run call.
+        ledger = _Ledger(remaining=1 * MB, envelope=2000 * MB)
+        summary, calls = _run_tick(
             [("/due", _due()), ("/run", {"ok": True})],
             manager=_Manager(ledger),
         )
         self.assertEqual(summary["started"], 1)
+        self.assertTrue([c for c in calls if c["url"].endswith("/run")])
+        self.assertEqual(ledger.admit_calls, [])
 
-    def test_a_rejected_run_is_counted_but_does_not_raise(self):
+    def test_a_permanent_rejection_is_counted_but_does_not_raise(self):
         summary, _ = _run_tick([
             ("/due", _due()),
-            ("/run", {"ok": False, "error": "Outside the RoE time window"}),
+            ("/run", {"ok": False, "error": "Project has no target domain configured"}),
         ])
         self.assertEqual(summary["failed"], 1)
         self.assertEqual(summary["started"], 0)
+        self.assertEqual(summary["queued"], 0)
 
     def test_a_transport_failure_on_run_is_counted_but_does_not_raise(self):
         summary, _ = _run_tick([("/due", _due()), ("/run", None)])
@@ -169,7 +166,7 @@ class TestTick(unittest.TestCase):
 
     def test_an_unreachable_webapp_skips_the_tick(self):
         summary, _ = _run_tick([("/due", None)])
-        self.assertEqual(summary, {"due": 0, "started": 0, "deferred": 0, "failed": 0})
+        self.assertEqual(summary, {"due": 0, "started": 0, "queued": 0, "failed": 0})
 
     def test_without_an_internal_key_the_worker_does_nothing(self):
         calls = []

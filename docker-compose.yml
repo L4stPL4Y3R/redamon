@@ -935,8 +935,6 @@ services:
       ACTIVATION_LOCK_TTL_MS: ${ACTIVATION_LOCK_TTL_MS:-}
       SCAN_SCHEDULE_MIN_INTERVAL_MINUTES: ${SCAN_SCHEDULE_MIN_INTERVAL_MINUTES:-}
       SCAN_SCHEDULE_ASSUMED_RUN_MINUTES: ${SCAN_SCHEDULE_ASSUMED_RUN_MINUTES:-}
-      SCAN_SCHEDULE_DEFER_RETRY_MINUTES: ${SCAN_SCHEDULE_DEFER_RETRY_MINUTES:-}
-      SCAN_SCHEDULE_MAX_DEFERRALS: ${SCAN_SCHEDULE_MAX_DEFERRALS:-}
       # Global row cap for every RedZone analytics query (was a per-route LIMIT
       # of 200/500/1000/2000). Passed through EMPTY so unset keeps the 200k code
       # default in webapp/src/app/api/analytics/redzone/rowCap.ts. Lower it on a
