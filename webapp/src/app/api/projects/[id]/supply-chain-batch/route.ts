@@ -117,6 +117,11 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       }
 
       return batch
+    }, {
+      // Up to maxRepos (default 50) x 2 writes; the 5s default is too tight under
+      // load. Cap the enumeration at maxRepos keeps this bounded.
+      timeout: 30_000,
+      maxWait: 10_000,
     })
 
     return NextResponse.json({ ok: true, batchId: result.id, totalItems: repos.length }, { status: 201 })

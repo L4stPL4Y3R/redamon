@@ -276,7 +276,11 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     } catch (e) {
       console.warn('Could not cancel queued jobs before project delete:', e)
     }
-    // Best-effort stop of each project-level scan container.
+    // Best-effort stop of each PROJECT-LEVEL scan container. Run-based scans
+    // (partial_recon, ai_attack) are keyed by run-id, not project, so they are not
+    // stopped here; they finish on their own and their orphaned nodes are swept by
+    // the graph read-path reconcile. Still strictly better than the prior behavior
+    // (which stopped nothing).
     await Promise.allSettled(
       ['recon', 'gvm', 'github-hunt', 'trufflehog', 'supply-chain'].map(kind =>
         orchestratorFetch(`${RECON_ORCHESTRATOR_URL}/${kind}/${id}/stop`, { method: 'POST' }),

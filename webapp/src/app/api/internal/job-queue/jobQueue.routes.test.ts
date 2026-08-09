@@ -230,4 +230,24 @@ describe('reconcile route (C-6)', () => {
     const body = await res.json()
     expect(body.closed).toBe(0)
   })
+
+  test('the close is guarded on status=running, so a repeat reconcile is idempotent', async () => {
+    h.jqFindMany.mockResolvedValue([
+      { id: 'j1', projectId: 'p1', startedAt: new Date(Date.now() - 5 * 60_000) },
+    ])
+    h.jqUpdateMany.mockResolvedValue({ count: 1 })
+    await reconcile(post('http://x/api/internal/job-queue/reconcile', { activeProjects: [] }))
+    // The WHERE clause re-checks status='running', so a concurrent close (or a
+    // second reconcile pass) can never double-transition the same row.
+    expect(h.jqUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 'j1', status: 'running' }),
+    }))
+  })
+
+  test('a malformed body (activeProjects absent / not an array) is treated as no active projects', async () => {
+    h.jqFindMany.mockResolvedValue([{ id: 'j1', projectId: 'p1', startedAt: new Date(Date.now() - 5 * 60_000) }])
+    h.jqUpdateMany.mockResolvedValue({ count: 1 })
+    const res = await reconcile(post('http://x/api/internal/job-queue/reconcile', { activeProjects: 'oops' }))
+    expect((await res.json()).closed).toBe(1) // nothing active -> the stale row closes
+  })
 })

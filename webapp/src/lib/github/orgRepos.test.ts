@@ -101,4 +101,26 @@ describe('listOwnerRepos', () => {
     await expect(listOwnerRepos('bad owner', { fetchImpl })).rejects.toBeInstanceOf(GithubEnumError)
     expect(fetchImpl).not.toHaveBeenCalled()
   })
+
+  test('regression F1: the org endpoint uses type=sources, the user fallback uses type=owner (never sources)', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(ghResponse('not found', { status: 404 }))
+      .mockResolvedValueOnce(ghResponse([repo('alice/dotfiles')]))
+    await listOwnerRepos('alice', { fetchImpl })
+    const orgUrl = String(fetchImpl.mock.calls[0][0])
+    const userUrl = String(fetchImpl.mock.calls[1][0])
+    expect(orgUrl).toContain('/orgs/alice/repos')
+    expect(orgUrl).toContain('type=sources')
+    // The /users endpoint 422s on type=sources; it must switch to a valid value.
+    expect(userUrl).toContain('/users/alice/repos')
+    expect(userUrl).not.toContain('type=sources')
+    expect(userUrl).toContain('type=owner')
+  })
+
+  test('regression F2: clone url is built from the validated owner/repo, not the untrusted clone_url', async () => {
+    const hostile = { full_name: 'acme/app', clone_url: 'https://evil.example/x.git', default_branch: 'main', fork: false, archived: false }
+    const repos = await listOwnerRepos('acme', { fetchImpl: vi.fn().mockResolvedValue(ghResponse([hostile])) })
+    expect(repos[0].url).toBe('https://github.com/acme/app.git')
+    expect(repos[0].url).not.toContain('evil.example')
+  })
 })

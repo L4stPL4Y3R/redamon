@@ -95,11 +95,15 @@ export async function listOwnerRepos(owner: string, opts: ListOwnerReposOptions 
   const collected: OrgRepo[] = []
 
   // Try the org endpoint first; a 404 means it's a user account, not an org.
+  // The `type` enum DIFFERS per endpoint: /orgs accepts `sources` (non-forks),
+  // /users does NOT (valid: all|owner|member) and 422s on `sources`. Forks are
+  // filtered client-side anyway, so `owner` is the right user-endpoint value.
   let base = `https://api.github.com/orgs/${owner}/repos`
+  let repoType = 'sources'
   let triedUserFallback = false
 
   for (let page = 1; page <= maxPages; page++) {
-    const url = `${base}?per_page=${perPage}&page=${page}&type=sources&sort=updated`
+    const url = `${base}?per_page=${perPage}&page=${page}&type=${repoType}&sort=updated`
     let res: Response
     try {
       res = await fetchImpl(url, { headers })
@@ -109,7 +113,9 @@ export async function listOwnerRepos(owner: string, opts: ListOwnerReposOptions 
 
     if (res.status === 404 && !triedUserFallback && base.includes('/orgs/')) {
       // Not an org -> fall back to the user endpoint and restart pagination.
+      // Switch `type` to a value the /users endpoint accepts (F1).
       base = `https://api.github.com/users/${owner}/repos`
+      repoType = 'owner'
       triedUserFallback = true
       page = 0 // loop ++ makes this page 1
       continue
@@ -141,7 +147,10 @@ export async function listOwnerRepos(owner: string, opts: ListOwnerReposOptions 
         fullName,
         owner: parsed.owner,
         repo: parsed.repo,
-        url: typeof r.clone_url === 'string' ? r.clone_url : `https://github.com/${fullName}.git`,
+        // Construct the clone URL from the VALIDATED owner/repo, never from the
+        // untrusted clone_url field (F2 defense-in-depth): it becomes git clone
+        // argv in the scan container.
+        url: `https://github.com/${parsed.owner}/${parsed.repo}.git`,
         defaultBranch: typeof r.default_branch === 'string' ? r.default_branch : '',
         fork,
         archived,
