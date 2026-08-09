@@ -1084,6 +1084,7 @@ model Project {
   scanVersions                      ScanVersion[]
   scanJobs                          ScanJob[]
   scanSchedules                     ScanSchedule[]
+  jobQueue                          JobQueue[]
 
   @@map("projects")
 }
@@ -1144,6 +1145,60 @@ model ScanJob {
   @@index([projectId, createdAt])
   @@index([status])
   @@map("scan_jobs")
+}
+
+/// One row = one unit of work waiting, dispatching, or running (Scan Queue).
+/// Deliberately has NO versionId: the version is chosen at dispatch by
+/// prepareVersionsForFullScan, and a FK here would be cascade-deleted by
+/// retention while the job waits (see plan C-3).
+model JobQueue {
+  id            String   @id @default(cuid())
+  projectId     String   @map("project_id")
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  /// Owner at enqueue. Re-read from the project at dispatch: ownership can change,
+  /// and it drives both the per-user ceiling and the GitHub token lookup.
+  userId        String   @map("user_id")
+
+  /// full_recon | partial_recon | gvm | github_hunt | trufflehog
+  /// | supply_chain | supply_chain_repo | ai_attack
+  kind          String
+  /// Restart parameters. Never a secret. Re-validated at dispatch.
+  payload       Json     @default("{}")
+  /// sha256 of the scan-relevant project settings at enqueue (C-4).
+  /// A mismatch at dispatch moves the row to needs_review, never runs it.
+  settingsHash  String   @map("settings_hash")
+
+  envelopeBytes BigInt   @map("envelope_bytes")
+  /// manual 10 > scheduled 0 > batch item -10
+  priority      Int      @default(0)
+
+  /// queued | dispatching | running | done | failed | canceled | needs_review
+  status        String   @default("queued")
+  attempts      Int      @default(0)
+  maxAttempts   Int      @default(20) @map("max_attempts")
+  notBefore     DateTime? @map("not_before")
+
+  /// ram | hard | busy | activating | agent_running | disk | settings_changed
+  blockedCode   String   @default("") @map("blocked_code")
+  blockedReason String   @default("") @map("blocked_reason")
+
+  runId         String   @default("") @map("run_id")
+  scanJobId     String?  @map("scan_job_id")   // set at dispatch, not at enqueue (C-1)
+  scheduleId    String?  @map("schedule_id")
+  batchId       String?  @map("batch_id")
+  error         String   @default("")
+
+  enqueuedAt    DateTime  @default(now()) @map("enqueued_at")
+  dispatchedAt  DateTime? @map("dispatched_at")
+  startedAt     DateTime? @map("started_at")
+  finishedAt    DateTime? @map("finished_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  @@index([status, priority, enqueuedAt])
+  @@index([projectId, status])
+  @@index([userId, status])
+  @@map("job_queue")
 }
 
 // A future/recurring full scan. The orchestrator worker polls due rows.
