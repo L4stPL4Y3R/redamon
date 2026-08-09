@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.7.0] - 2026-08-09
+
+### Added
+
+- **Agent-skills ruleset system.** Tiered `AGENTS.md` at the repo root and 6 component scopes (each with a `CLAUDE.md` symlink), plus 13 on-demand skills under `skills/` that record the project's hard-won conventions: testing, agent tools, built-in and community skills, recon tool and AI enrichment, partial recon, settings cascade, graph writes, LLM providers, container spawn, traffic capture, and supply-chain. `sync.sh` compiles each skill's declared triggers into the per-scope auto-invoke tables, while `drift-audit.sh` and a committed advisory pre-commit `citation-check` keep citations honest. System doc in [readmes/skills_management/SKILLS_MANAGEMENT.md](readmes/skills_management/SKILLS_MANAGEMENT.md) ([9b32b8dc]).
+- **Modern testing foundation.** A per-file-isolation Docker gate ([scripts/pytest_isolated.py](scripts/pytest_isolated.py)) run via `./redamon.sh test`, with unit, integration and live tiers auto-marked by filename across every section image, plus per-section coverage floors so a green run stops lying. Guide in [readmes/README.TESTING.md](readmes/README.TESTING.md) ([b84f6cd1]).
+
+---
+
 ## [6.6.0] - 2026-08-08
 
 ### Added
