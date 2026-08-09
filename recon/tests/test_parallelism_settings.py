@@ -283,7 +283,7 @@ def test_rate_limiter_thread_safety():
 # ============================================================
 
 def test_shodan_workers():
-    source = (PROJECT_ROOT / "recon" / "shodan_enrich.py").read_text()
+    source = (PROJECT_ROOT / "recon" / "main_recon_modules" / "shodan_enrich.py").read_text()
 
     assert 'SHODAN_WORKERS' in source, "Shodan should reference SHODAN_WORKERS"
     assert 'class _RateLimiter' in source, "Shodan should have _RateLimiter class"
@@ -298,7 +298,7 @@ def test_shodan_workers():
 # ============================================================
 
 def test_dns_parallel_source():
-    source = (PROJECT_ROOT / "recon" / "domain_recon.py").read_text()
+    source = (PROJECT_ROOT / "recon" / "main_recon_modules" / "domain_recon.py").read_text()
 
     assert 'parallel: bool = True' in source, "dns_lookup should have parallel param"
     assert 'record_parallelism: bool = True' in source, "resolve_all_dns should have record_parallelism param"
@@ -364,7 +364,7 @@ def test_preset_schema_fields():
 # ============================================================
 
 def test_resource_enum_wiring():
-    source = (PROJECT_ROOT / "recon" / "resource_enum.py").read_text()
+    source = (PROJECT_ROOT / "recon" / "main_recon_modules" / "resource_enum.py").read_text()
 
     # All settings should be extracted
     for setting in [
@@ -431,7 +431,7 @@ def test_partial_recon_jsluice_fixed():
 # ============================================================
 
 def test_kiterunner_wired():
-    source = (PROJECT_ROOT / "recon" / "resource_enum.py").read_text()
+    source = (PROJECT_ROOT / "recon" / "main_recon_modules" / "resource_enum.py").read_text()
 
     assert 'KITERUNNER_PARALLELISM' in source, "KITERUNNER_PARALLELISM should be in resource_enum.py"
     # The TODO should be replaced
@@ -461,7 +461,7 @@ def test_stealth_preset_values():
 
 def test_rate_limiter_no_lock_during_sleep():
     """Verify the RateLimiter sleeps outside the lock for true parallelism."""
-    source = (PROJECT_ROOT / "recon" / "shodan_enrich.py").read_text()
+    source = (PROJECT_ROOT / "recon" / "main_recon_modules" / "shodan_enrich.py").read_text()
 
     # Find the wait() method in _RateLimiter
     class_start = source.find('class _RateLimiter')
@@ -503,7 +503,7 @@ def test_rate_limiter_no_lock_during_sleep():
 # ============================================================
 
 def test_nmap_parallelism():
-    source = (PROJECT_ROOT / "recon" / "nmap_scan.py").read_text()
+    source = (PROJECT_ROOT / "recon" / "main_recon_modules" / "nmap_scan.py").read_text()
 
     assert 'NMAP_PARALLELISM' in source, "Nmap should reference NMAP_PARALLELISM"
     assert 'ThreadPoolExecutor' in source, "Nmap should use ThreadPoolExecutor"
