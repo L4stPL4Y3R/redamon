@@ -30,6 +30,8 @@ def _value_error_http(e: ValueError) -> "HTTPException":
     return _HTTPException(status_code=409, detail=str(e))
 from local_llm_manager import LocalLlmManager
 from scan_scheduler import scan_scheduler_loop
+from job_dispatcher import job_dispatcher_loop, run_one_dispatch_tick
+from webapp_client import internal_key as _webapp_internal_key, request_json as _webapp_request, webapp_base as _webapp_base
 from models import (
     HealthResponse,
     CaptureProxyConfig,
@@ -188,6 +190,47 @@ local_llm_manager: LocalLlmManager = None
 AI_ATTACK_REAP_INTERVAL_S = int(os.environ.get("AI_ATTACK_REAP_INTERVAL", "30"))
 
 
+# C-10: capture retention/quota housekeeping is not scheduled anywhere in the repo
+# (README.TRAFFIC.md), so a busier queue grows captured_http_transactions unbounded.
+# Fire it from the reaper on a TTL, alongside the existing sweeps.
+TRAFFIC_MAINTENANCE_INTERVAL_S = int(os.environ.get("TRAFFIC_MAINTENANCE_INTERVAL", "3600"))
+_last_traffic_maintenance = 0.0
+
+
+async def _post_job_queue_reconcile(cm) -> None:
+    """Post the set of projects with a live scan so the webapp can close finished
+    'running' JobQueue rows (Scan Queue C-6). Best-effort; never raises."""
+    key = _webapp_internal_key()
+    if not key or cm is None:
+        return
+    try:
+        active = sorted(cm.active_scan_projects())
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[jobDispatcher] could not enumerate active projects: %s", e)
+        return
+    await asyncio.to_thread(
+        _webapp_request, f"{_webapp_base()}/api/internal/job-queue/reconcile", key,
+        "POST", {"activeProjects": active}, 15.0, "jobDispatcher",
+    )
+
+
+async def _maybe_run_traffic_maintenance() -> None:
+    """POST /api/traffic/maintenance at most once per TTL (C-10). Best-effort."""
+    global _last_traffic_maintenance
+    import time
+    now = time.monotonic()
+    if now - _last_traffic_maintenance < TRAFFIC_MAINTENANCE_INTERVAL_S:
+        return
+    _last_traffic_maintenance = now
+    key = _webapp_internal_key()
+    if not key:
+        return
+    await asyncio.to_thread(
+        _webapp_request, f"{_webapp_base()}/api/traffic/maintenance", key,
+        "POST", {}, 30.0, "trafficMaintenance",
+    )
+
+
 async def _ai_attack_reaper():
     """Periodically release Ollama leases from finished-but-unpolled runs."""
     try:
@@ -212,6 +255,21 @@ async def _ai_attack_reaper():
                         logger.info(f"[governor] reconciled {released} stale scan reservation(s)")
                 except Exception as e:
                     logger.warning(f"Reservation reconcile iteration failed: {e}")
+                # Scan Queue: tell the webapp which projects still have a live scan
+                # (C-6), then fire one dispatch tick — capacity just freed is exactly
+                # when a queued job can move.
+                try:
+                    await _post_job_queue_reconcile(container_manager)
+                except Exception as e:
+                    logger.warning(f"[jobDispatcher] reconcile post failed: {e}")
+                try:
+                    await run_one_dispatch_tick(container_manager)
+                except Exception as e:
+                    logger.warning(f"[jobDispatcher] post-reconcile dispatch failed: {e}")
+                try:
+                    await _maybe_run_traffic_maintenance()
+                except Exception as e:
+                    logger.warning(f"traffic maintenance failed: {e}")
     except asyncio.CancelledError:
         pass
 
@@ -324,11 +382,16 @@ async def lifespan(app: FastAPI):
     # orchestrator owns admission + the spawn. It only ticks; the webapp performs
     # the run through the same start path a manual scan uses.
     scan_scheduler = asyncio.create_task(scan_scheduler_loop(lambda: container_manager))
+    # Scan Queue (Phase 2): the dispatcher worker lives here too — same reason as
+    # the scheduler (the orchestrator owns admission + the spawn). It peeks the
+    # queue, applies its own ceiling, and asks the webapp to run each job that fits.
+    job_dispatcher = asyncio.create_task(job_dispatcher_loop(lambda: container_manager))
     yield
     logger.info("Shutting down Recon Orchestrator...")
     reaper.cancel()
     capture_reconciler.cancel()
     scan_scheduler.cancel()
+    job_dispatcher.cancel()
     if local_llm_manager:
         local_llm_manager.shutdown()
     await container_manager.cleanup()

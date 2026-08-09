@@ -487,6 +487,14 @@ services:
       # .env would be silently inert here.
       SCAN_SCHEDULER_ENABLED: ${SCAN_SCHEDULER_ENABLED:-true}
       SCAN_SCHEDULER_TICK_SECONDS: ${SCAN_SCHEDULER_TICK_SECONDS:-60}
+      # Scan Queue dispatcher (Phase 2). The orchestrator has no env_file, so these
+      # are inert unless listed here. MAX_CONCURRENT is the REAL ceiling (the
+      # ledger count cap is None when RECON_MAX_CONCURRENT_GLOBAL is unset).
+      JOB_QUEUE_DISPATCHER_ENABLED: ${JOB_QUEUE_DISPATCHER_ENABLED:-true}
+      JOB_QUEUE_TICK_SECONDS: ${JOB_QUEUE_TICK_SECONDS:-20}
+      JOB_QUEUE_MAX_CONCURRENT: ${JOB_QUEUE_MAX_CONCURRENT:-4}
+      JOB_QUEUE_MIN_FREE_DISK: ${JOB_QUEUE_MIN_FREE_DISK:-10737418240}
+      TRAFFIC_MAINTENANCE_INTERVAL: ${TRAFFIC_MAINTENANCE_INTERVAL:-3600}
       # D3: global + per-user concurrent-scan ceilings enforced at admission.
       # SAFE, GENEROUS DEFAULTS so unset resolves to a real limit (never "no cap").
       RECON_MAX_CONCURRENT_GLOBAL: ${RECON_MAX_CONCURRENT_GLOBAL:-30}

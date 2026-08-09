@@ -26,14 +26,18 @@ that dies silently is worse than one that skips a tick.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
-import urllib.error
-import urllib.request
 from typing import Optional
 
+from webapp_client import request_json
+
 logger = logging.getLogger(__name__)
+
+# Kept as a module-level name so mock.patch.object(scan_scheduler, "_request", ...)
+# in the existing tests still resolves (Scan Queue plan Phase 2). The body now
+# lives in webapp_client.request_json, shared with the queue dispatcher.
+_request = request_json
 
 DEFAULT_TICK_SECONDS = 60.0
 # Below this, a tick costs more than it can possibly gain (a scan runs for minutes).
@@ -59,30 +63,6 @@ def _webapp_base() -> str:
 
 def _internal_key() -> str:
     return os.environ.get("INTERNAL_API_KEY", "")
-
-
-def _request(url: str, key: str, method: str = "GET", payload: Optional[dict] = None,
-             timeout: float = 15.0) -> Optional[dict]:
-    """Blocking JSON request to the webapp's internal API. None on any failure —
-    the caller treats that as "skip this tick" rather than guessing."""
-    data = None
-    headers = {"x-internal-key": key}
-    if payload is not None:
-        data = json.dumps(payload).encode("utf-8")
-        headers["Content-Type"] = "application/json"
-    req = urllib.request.Request(url, data=data, headers=headers, method=method)
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            if getattr(r, "status", 200) not in (200, 201):
-                return None
-            body = r.read().decode("utf-8")
-            return json.loads(body) if body else {}
-    except urllib.error.HTTPError as e:
-        logger.warning("[scanScheduler] %s %s -> HTTP %s", method, url, e.code)
-        return None
-    except Exception as e:  # noqa: BLE001 - a scheduler must never die on I/O
-        logger.warning("[scanScheduler] %s %s failed: %s", method, url, e)
-        return None
 
 
 def _admission_headroom(container_manager) -> Optional[tuple]:

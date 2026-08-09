@@ -327,6 +327,36 @@ class ContainerManager:
         keys |= self.guarddog_jobs
         return keys
 
+    def active_scan_projects(self) -> set:
+        """Project IDs with at least one scan container currently RUNNING/STARTING/
+        PAUSED. Used by the Scan Queue reconcile (C-6) to close 'running' JobQueue
+        rows whose project no longer has any live scan, even with no browser open."""
+        projects = set()
+        for pid, st in self.running_states.items():
+            if st.status in (ReconStatus.RUNNING, ReconStatus.STARTING, ReconStatus.PAUSED):
+                projects.add(pid)
+        for pid, runs in self.partial_recon_states.items():
+            if any(st.status in (PartialReconStatus.RUNNING, PartialReconStatus.STARTING)
+                   for st in runs.values()):
+                projects.add(pid)
+        for pid, runs in self.ai_attack_states.items():
+            if any(st.status in (AiAttackSurfaceStatus.RUNNING, AiAttackSurfaceStatus.STARTING)
+                   for st in runs.values()):
+                projects.add(pid)
+        for pid, st in self.gvm_states.items():
+            if st.status in (GvmStatus.RUNNING, GvmStatus.STARTING, GvmStatus.PAUSED):
+                projects.add(pid)
+        for pid, st in self.github_hunt_states.items():
+            if st.status in (GithubHuntStatus.RUNNING, GithubHuntStatus.STARTING, GithubHuntStatus.PAUSED):
+                projects.add(pid)
+        for pid, st in self.trufflehog_states.items():
+            if st.status in (TrufflehogStatus.RUNNING, TrufflehogStatus.STARTING, TrufflehogStatus.PAUSED):
+                projects.add(pid)
+        for pid, st in self.supply_chain_states.items():
+            if st.status in (SupplyChainStatus.RUNNING, SupplyChainStatus.STARTING, SupplyChainStatus.PAUSED):
+                projects.add(pid)
+        return projects
+
     async def refresh_all_scan_states(self) -> None:
         """Advance every scan's in-memory status by polling Docker, so reconcile()
         sees terminal (COMPLETED/ERROR) states even when no client is polling the

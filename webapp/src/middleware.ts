@@ -34,6 +34,13 @@ const INTERNAL_ALLOWLIST: { method: string; pattern: RegExp }[] = [
   // asks the webapp to run or defer them (the webapp owns the version freeze).
   { method: 'GET', pattern: /^\/api\/internal\/scan-schedules\/due$/ },
   { method: 'POST', pattern: /^\/api\/internal\/scan-schedules\/[^/]+\/(run|defer)$/ },
+  // Scan Queue: the orchestrator dispatcher peeks candidates, asks the webapp to
+  // dispatch one (same start path the button uses), and posts terminal state.
+  // The allowlist is FAIL-OPEN unless INTERNAL_KEY_ALLOWLIST_ENFORCE=true, so the
+  // real control is isInternalRequest() in each route body, never this entry.
+  { method: 'GET', pattern: /^\/api\/internal\/job-queue\/candidates$/ },
+  { method: 'POST', pattern: /^\/api\/internal\/job-queue\/[^/]+\/dispatch$/ },
+  { method: 'POST', pattern: /^\/api\/internal\/job-queue\/reconcile$/ },
 ]
 
 // Fail-open rollout: default log-only (never blocks), so an omitted route shows
