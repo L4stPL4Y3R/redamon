@@ -93,6 +93,15 @@ export async function dispatchStart(
     path = simple.path(projectId)
     fallback = simple.fallback
     body = { project_id: projectId, user_id: project.userId, webapp_api_url: WEBAPP_URL }
+    // A supply_chain_repo (org-batch) item carries its target repo in the payload;
+    // forward it as a per-repo override so the container scans THIS repo, not the
+    // project's default supply-chain config (Phase 6).
+    if (kind === 'supply_chain_repo') {
+      body.repo_override_url = typeof payload.repo_url === 'string' ? payload.repo_url : ''
+      body.repo_override_ref = typeof payload.ref === 'string' ? payload.ref : ''
+      body.repo_override_scope = typeof payload.scope === 'string' ? payload.scope : ''
+      body.repo_override_deep = !!payload.deep_analysis
+    }
   } else if (kind === 'ai_attack') {
     path = `/ai-attack-surface/${projectId}/start`
     fallback = 'Failed to start AI Attack Surface scan'

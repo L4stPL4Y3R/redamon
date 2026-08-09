@@ -325,6 +325,18 @@ model Project {
   supplyChainInputMode            String  @default("upload") @map("supply_chain_input_mode")
   supplyChainRepoUrl              String  @default("") @map("supply_chain_repo_url")
   supplyChainRepoRef              String  @default("") @map("supply_chain_repo_ref")
+  // Optional subpath/scope inside a repo to restrict the scan to (e.g. a monorepo
+  // package dir). Separate from supplyChainInputMode, which stays a two-value
+  // contract (upload | github); part of the supply_chain C-4 fingerprint.
+  supplyChainRepoScope            String  @default("") @map("supply_chain_repo_scope")
+  // ========== SUPPLY-CHAIN ORG BATCH (Scan Queue Phase 6) ==========
+  // Enumerate a GitHub org's repos and queue one supply_chain_repo scan per repo.
+  supplyChainOrgName                 String  @default("") @map("supply_chain_org_name")
+  supplyChainOrgIncludeForks         Boolean @default(false) @map("supply_chain_org_include_forks")
+  supplyChainOrgIncludeArchived      Boolean @default(false) @map("supply_chain_org_include_archived")
+  supplyChainOrgMaxRepos             Int     @default(50) @map("supply_chain_org_max_repos")
+  supplyChainOrgRef                  String  @default("") @map("supply_chain_org_ref")
+  supplyChainOrgDeepAnalysisEnabled  Boolean @default(false) @map("supply_chain_org_deep_analysis_enabled")
   // ========== SUPPLY-CHAIN RECON (L2 pipeline) ==========
   supplyChainReconEnabled              Boolean @default(false) @map("supply_chain_recon_enabled")
   supplyChainReconEcosystems           String  @default("npm") @map("supply_chain_recon_ecosystems")
@@ -1085,6 +1097,7 @@ model Project {
   scanJobs                          ScanJob[]
   scanSchedules                     ScanSchedule[]
   jobQueue                          JobQueue[]
+  supplyChainBatches                SupplyChainBatch[]
 
   @@map("projects")
 }
@@ -1145,6 +1158,49 @@ model ScanJob {
   @@index([projectId, createdAt])
   @@index([status])
   @@map("scan_jobs")
+}
+
+/// Scan Queue Phase 6: a GitHub-org supply-chain batch. One batch enumerates an
+/// org's repos and fans out one supply_chain_repo JobQueue row per repo.
+model SupplyChainBatch {
+  id          String   @id @default(cuid())
+  projectId   String   @map("project_id")
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId      String   @map("user_id")
+  /// The GitHub org/owner that was enumerated.
+  org         String
+  /// running | done | failed | canceled
+  status      String   @default("running")
+  totalItems  Int      @default(0) @map("total_items")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  items       SupplyChainBatchItem[]
+
+  @@index([projectId, status])
+  @@index([userId])
+  @@map("supply_chain_batches")
+}
+
+/// One repo in a SupplyChainBatch, linked to its JobQueue row.
+model SupplyChainBatchItem {
+  id           String   @id @default(cuid())
+  batchId      String   @map("batch_id")
+  batch        SupplyChainBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  /// owner/repo, charset-validated before it is stored and before git clone.
+  repoFullName String   @map("repo_full_name")
+  repoUrl      String   @map("repo_url")
+  /// branch/tag/sha; "" = the repo's default branch.
+  ref          String   @default("")
+  /// queued | running | done | failed | canceled
+  status       String   @default("queued")
+  /// The JobQueue row that runs this repo (set at batch creation).
+  jobId        String?  @map("job_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@index([batchId, status])
+  @@map("supply_chain_batch_items")
 }
 
 /// One row = one unit of work waiting, dispatching, or running (Scan Queue).

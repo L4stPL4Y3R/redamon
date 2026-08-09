@@ -1781,6 +1781,10 @@ async def start_supply_chain(project_id: str, request: SupplyChainStartRequest):
             user_id=request.user_id,
             webapp_api_url=_spawned_webapp_url(),
             supply_chain_path=SUPPLY_CHAIN_PATH,
+            repo_override_url=request.repo_override_url,
+            repo_override_ref=request.repo_override_ref,
+            repo_override_scope=request.repo_override_scope,
+            repo_override_deep=request.repo_override_deep,
         )
     except ValueError as e:
         raise _value_error_http(e)

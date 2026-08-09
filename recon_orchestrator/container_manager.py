@@ -3693,7 +3693,11 @@ exit $RC
         return f"redamon-supply-chain-{safe_id}"
 
     async def start_supply_chain(self, project_id: str, user_id: str,
-                                 webapp_api_url: str, supply_chain_path: str) -> "SupplyChainState":
+                                 webapp_api_url: str, supply_chain_path: str,
+                                 repo_override_url: Optional[str] = None,
+                                 repo_override_ref: Optional[str] = None,
+                                 repo_override_scope: Optional[str] = None,
+                                 repo_override_deep: Optional[bool] = None) -> "SupplyChainState":
         current = await self.get_supply_chain_status(project_id)
         if current.status in (SupplyChainStatus.RUNNING, SupplyChainStatus.PAUSED):
             raise ValueError(f"Supply-chain scan already active for project {project_id}")
@@ -3716,6 +3720,18 @@ exit $RC
             project_id=project_id, status=SupplyChainStatus.STARTING,
             started_at=datetime.now(timezone.utc))
         self.supply_chain_states[project_id] = state
+
+        # Scan Queue Phase 6: per-repo override for an org-batch item. When set, the
+        # scan container forces github input mode and scans THIS repo, overriding
+        # the project's supply-chain config (see supply_chain_scan/project_settings.
+        # _apply_repo_override). Absent for a normal single supply-chain scan.
+        repo_override_env: dict[str, str] = {}
+        if repo_override_url:
+            repo_override_env["SUPPLY_CHAIN_REPO_OVERRIDE_URL"] = str(repo_override_url)
+            repo_override_env["SUPPLY_CHAIN_REPO_OVERRIDE_REF"] = str(repo_override_ref or "")
+            repo_override_env["SUPPLY_CHAIN_REPO_OVERRIDE_SCOPE"] = str(repo_override_scope or "")
+            if repo_override_deep is not None:
+                repo_override_env["SUPPLY_CHAIN_REPO_OVERRIDE_DEEP"] = "1" if repo_override_deep else "0"
 
         try:
             try:
@@ -3756,6 +3772,8 @@ exit $RC
                     **self._scanner_env(),
                     # Operator overrides for the dirty analyzer this scan spawns.
                     **self._analyzer_env(),
+                    # Per-repo override for an org-batch item (Phase 6); empty otherwise.
+                    **repo_override_env,
                 },
                 volumes={
                     # Shared scratch the analyzer_dispatch job.json is written to,
