@@ -263,7 +263,28 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       console.warn('Could not enumerate captured body refs before project delete:', e)
     }
 
-    // 1. Delete project from PostgreSQL (cascades captured_http_transactions rows)
+    // C-7: stop in-flight work BEFORE deleting. A container that is mid-write keeps
+    // writing project_id-stamped nodes after the row is gone, resurrecting the
+    // deleted project's graph as unreachable orphans; and a scanner falls back to
+    // DEFAULT_*_SETTINGS on a 404, so a job dispatched against a deleted project
+    // would scan with defaults. Cancel queued work and stop running scans first.
+    try {
+      await prisma.jobQueue.updateMany({
+        where: { projectId: id, status: { in: ['queued', 'dispatching', 'running', 'needs_review'] } },
+        data: { status: 'canceled', finishedAt: new Date() },
+      })
+    } catch (e) {
+      console.warn('Could not cancel queued jobs before project delete:', e)
+    }
+    // Best-effort stop of each project-level scan container.
+    await Promise.allSettled(
+      ['recon', 'gvm', 'github-hunt', 'trufflehog', 'supply-chain'].map(kind =>
+        orchestratorFetch(`${RECON_ORCHESTRATOR_URL}/${kind}/${id}/stop`, { method: 'POST' }),
+      ),
+    )
+
+    // 1. Delete project from PostgreSQL (cascades captured_http_transactions +
+    //    job_queue rows)
     await prisma.project.delete({
       where: { id }
     })

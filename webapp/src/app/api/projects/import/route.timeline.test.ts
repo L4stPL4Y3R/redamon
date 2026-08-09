@@ -19,6 +19,7 @@ const h = vi.hoisted(() => ({
   versionCreate: vi.fn(),
   scheduleCreate: vi.fn(),
   jobCreate: vi.fn(),
+  jobQueueCreate: vi.fn(),
 }))
 
 vi.mock('@/lib/access', () => ({
@@ -30,6 +31,7 @@ vi.mock('@/lib/prisma', () => ({
     scanVersion: { create: (...a: unknown[]) => h.versionCreate(...a) },
     scanSchedule: { create: (...a: unknown[]) => h.scheduleCreate(...a) },
     scanJob: { create: (...a: unknown[]) => h.jobCreate(...a) },
+    jobQueue: { create: (...a: unknown[]) => h.jobQueueCreate(...a) },
     conversation: { create: vi.fn() },
     chatMessage: { createMany: vi.fn() },
     remediation: { createMany: vi.fn() },
@@ -96,6 +98,7 @@ beforeEach(() => {
   h.versionCreate.mockImplementation(async () => ({ id: `newV${++v}` }))
   h.scheduleCreate.mockImplementation(async () => ({ id: 'newS1' }))
   h.jobCreate.mockResolvedValue({ id: 'newJ' })
+  h.jobQueueCreate.mockResolvedValue({ id: 'newJQ' })
 })
 
 describe('import — Scan Timeline history', () => {
@@ -165,6 +168,24 @@ describe('import — Scan Timeline history', () => {
     expect(currents).toHaveLength(1)
     // The highest seq wins, so the newest graph is the live one.
     expect(currents[0][0].data.seq).toBe(3)
+  })
+
+  test('C-8: a crafted archive with queue rows imports them as canceled', async () => {
+    const zip = new JSZip()
+    zip.file('manifest.json', JSON.stringify({ version: '1.0.0', projectName: 'src', stats: {} }))
+    zip.file('project.json', JSON.stringify({ id: 'oldProject', userId: 'oldOwner', name: 'src' }))
+    zip.file('timeline/job-queue.json', JSON.stringify([
+      { id: 'q1', kind: 'full_recon', status: 'queued', payload: { mode: 'new' } },
+      { id: 'q2', kind: 'gvm', status: 'running', payload: {} },
+    ]))
+    const buf = new Uint8Array(await zip.generateAsync({ type: 'nodebuffer' }))
+    const res = await POST(formReq(new File([buf], 'export.zip', { type: 'application/zip' })))
+    expect(res.status).toBe(200)
+    expect(h.jobQueueCreate).toHaveBeenCalledTimes(2)
+    for (const call of h.jobQueueCreate.mock.calls) {
+      expect(call[0].data.status).toBe('canceled')
+      expect(call[0].data.projectId).toBe('newProject')
+    }
   })
 
   test('an export without timeline files imports fine (older archives)', async () => {
