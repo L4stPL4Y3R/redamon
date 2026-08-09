@@ -220,6 +220,26 @@ class TestTick(unittest.TestCase):
         self.assertTrue(any("/q/dispatch" in u for u in urls), "Q must not be starved by P's big sibling")
         self.assertEqual(ledger.admit_calls, [])
 
+    def test_F2b_a_same_project_needs_review_sibling_does_not_break_the_line(self):
+        # A small P job goes to needs_review (per-job, no RAM reserved); P's BIG
+        # sibling behind it must be skipped, not trip the head-of-line break and
+        # starve Q. Regression for the gap where only busy/agent (not needs_review)
+        # marked the project handled.
+        ledger = _Ledger(remaining=1000 * MB, envelopes={"full_recon": 2000 * MB, "trufflehog": 768 * MB})
+        _, calls = _run_tick([
+            ("/candidates", {"candidates": [
+                _cand("p_a", kind="trufflehog", project="P", envelope=768 * MB),
+                _cand("p_b", kind="full_recon", project="P", envelope=2000 * MB),
+                _cand("q", kind="trufflehog", project="Q", envelope=768 * MB),
+            ], "activeCount": 0}),
+            ("/job-queue/p_a/dispatch", {"ok": False, "needsReview": True}),  # no 'blocked' key
+            ("/job-queue/q/dispatch", {"ok": True}),
+        ], manager=_Manager(ledger))
+        urls = [c["url"] for c in calls if "/dispatch" in c["url"]]
+        self.assertTrue(any("/p_a/dispatch" in u for u in urls))
+        self.assertFalse(any("/p_b/dispatch" in u for u in urls), "P's big sibling skipped after needs_review")
+        self.assertTrue(any("/q/dispatch" in u for u in urls), "Q must not be starved after a same-project needs_review")
+
     def test_try_admit_is_never_called_over_a_full_tick(self):
         ledger = _Ledger()
         _run_tick([

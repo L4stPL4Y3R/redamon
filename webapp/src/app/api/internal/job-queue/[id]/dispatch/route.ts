@@ -63,8 +63,11 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       select: { id: true },
     })
     if (otherActive) {
-      await prisma.jobQueue.update({
-        where: { id },
+      // Guarded on status='dispatching' so a cancel that raced our claim is not
+      // overwritten (Finding 1). If it was canceled, this is a no-op and the
+      // canceled state stands.
+      await prisma.jobQueue.updateMany({
+        where: { id, status: 'dispatching' },
         data: {
           status: 'queued',
           blockedCode: 'busy',
@@ -79,8 +82,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     // project (the scanners fall back to DEFAULT_*_SETTINGS on a 404 otherwise).
     const project = await prisma.project.findUnique({ where: { id: row.projectId } })
     if (!project) {
-      await prisma.jobQueue.update({
-        where: { id },
+      await prisma.jobQueue.updateMany({
+        where: { id, status: 'dispatching' },
         data: {
           status: 'failed',
           error: 'project no longer exists',
@@ -95,8 +98,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     // operator changed where/what this job scans; never silently run the new config.
     const currentHash = settingsFingerprint(row.kind, project as unknown as Record<string, unknown>)
     if (currentHash !== row.settingsHash) {
-      await prisma.jobQueue.update({
-        where: { id },
+      await prisma.jobQueue.updateMany({
+        where: { id, status: 'dispatching' },
         data: {
           status: 'needs_review',
           blockedCode: 'settings_changed',
@@ -114,8 +117,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         select: { id: true },
       })
       if (agent) {
-        await prisma.jobQueue.update({
-          where: { id },
+        await prisma.jobQueue.updateMany({
+          where: { id, status: 'dispatching' },
           data: {
             status: 'queued',
             blockedCode: 'agent_running',
@@ -167,8 +170,10 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const attempts = row.attempts + 1
 
     if (cls.temporary && attempts < row.maxAttempts) {
-      await prisma.jobQueue.update({
-        where: { id },
+      // Guarded on 'dispatching' (Finding 1): the start FAILED, so no scan runs; if
+      // a cancel raced, do not resurrect the row to 'queued' - leave it canceled.
+      await prisma.jobQueue.updateMany({
+        where: { id, status: 'dispatching' },
         data: {
           status: 'queued',
           attempts,
@@ -180,8 +185,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ ok: false, blocked: cls.blockedCode, temporary: true })
     }
 
-    await prisma.jobQueue.update({
-      where: { id },
+    await prisma.jobQueue.updateMany({
+      where: { id, status: 'dispatching' },
       data: {
         status: 'failed',
         attempts,

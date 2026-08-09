@@ -101,7 +101,9 @@ describe('dispatch route fail-closed checks', () => {
     const body = await res.json()
     expect(body.needsReview).toBe(true)
     expect(h.dispatchStart).not.toHaveBeenCalled()
-    expect(h.jqUpdate).toHaveBeenCalledWith(expect.objectContaining({
+    // Guarded on status='dispatching' (Finding 1b) so a racing cancel is not overwritten.
+    expect(h.jqUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 'j1', status: 'dispatching' }),
       data: expect.objectContaining({ status: 'needs_review', blockedCode: 'settings_changed' }),
     }))
   })
@@ -112,7 +114,7 @@ describe('dispatch route fail-closed checks', () => {
     const body = await res.json()
     expect(body.ok).toBe(false)
     expect(h.dispatchStart).not.toHaveBeenCalled()
-    expect(h.jqUpdate).toHaveBeenCalledWith(expect.objectContaining({
+    expect(h.jqUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ status: 'failed' }),
     }))
   })
@@ -131,7 +133,7 @@ describe('dispatch route fail-closed checks', () => {
     const body = await res.json()
     expect(body.blocked).toBe('agent_running')
     expect(h.dispatchStart).not.toHaveBeenCalled()
-    expect(h.jqUpdate).toHaveBeenCalledWith(expect.objectContaining({
+    expect(h.jqUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ status: 'queued', blockedCode: 'agent_running' }),
     }))
   })
@@ -174,12 +176,15 @@ describe('dispatch route happy + failure paths', () => {
     expect(h.stopScan).toHaveBeenCalledWith('full_recon', 'p1', 'r1')
   })
 
-  test('a temporary RAM refusal requeues with backoff', async () => {
+  test('a temporary RAM refusal requeues with backoff (guarded on dispatching, Finding 1b)', async () => {
     h.dispatchStart.mockResolvedValue({ ok: false, status: 429, error: 'no mem', limit: { limitType: 'ram' } })
     const res = await dispatch(post('http://x/api/internal/job-queue/j1/dispatch'), sp('j1'))
     const body = await res.json()
     expect(body.temporary).toBe(true)
-    expect(h.jqUpdate).toHaveBeenCalledWith(expect.objectContaining({
+    // The requeue is conditional on status='dispatching', so a cancel that raced a
+    // dispatch which then FAILED is not resurrected to 'queued'.
+    expect(h.jqUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 'j1', status: 'dispatching' }),
       data: expect.objectContaining({ status: 'queued', blockedCode: 'ram', attempts: 1 }),
     }))
   })
@@ -189,7 +194,7 @@ describe('dispatch route happy + failure paths', () => {
     const res = await dispatch(post('http://x/api/internal/job-queue/j1/dispatch'), sp('j1'))
     const body = await res.json()
     expect(body.failed).toBe(true)
-    expect(h.jqUpdate).toHaveBeenCalledWith(expect.objectContaining({
+    expect(h.jqUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ status: 'failed' }),
     }))
   })

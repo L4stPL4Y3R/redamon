@@ -156,16 +156,16 @@ def run_dispatcher_tick(container_manager) -> dict:
             remaining = budget()
             continue
 
-        # Not dispatched. A capacity-bound block (RAM / hard cap) means every later
-        # job is also capacity-bound, so stop. A per-project block (busy / agent) or
-        # needs_review / permanent failure is specific to THIS job, so try others,
-        # and remember the project so a sibling job cannot trip the RAM break below.
+        # Not dispatched. A capacity-bound block (RAM / hard cap / disk) means every
+        # later job is also capacity-bound, so stop. Any OTHER outcome (busy, agent,
+        # needs_review, permanent failure) is per-project/per-job, so try other
+        # projects - but mark THIS project handled so a sibling of it cannot trip the
+        # head-of-line RAM break below and starve everyone (Finding 2).
         summary["deferred"] += 1
         blocked = res.get("blocked")
         if blocked in ("ram", "hard", "disk"):
             break
-        if blocked in ("busy", "agent_running"):
-            dispatched_projects.add(pid)
+        dispatched_projects.add(pid)
 
     return summary
 
