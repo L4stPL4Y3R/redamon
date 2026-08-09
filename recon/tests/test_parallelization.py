@@ -162,7 +162,7 @@ def test_resolve_all_dns_parallel():
 
     call_times = []
 
-    def fake_dns_lookup(hostname, max_retries=3):
+    def fake_dns_lookup(hostname, max_retries=3, **kwargs):
         call_times.append(time.monotonic())
         time.sleep(0.05)  # 50ms per lookup
         return {

@@ -99,7 +99,7 @@ def test_fp_cascade_full_path_through_requests_post():
     body = "HTTP/1.1 429\n\nslow down"
     f = _finding(body, template_id="sqli/blind", tags=["sqli", "blind", "injection"])
     captured = {}
-    def fake_post(url, json=None, timeout=None):
+    def fake_post(url, json=None, timeout=None, **kwargs):
         captured['url'] = url
         captured['json'] = json
         return _mock_post(payload={"is_blocked": True, "confidence": 80, "reason": "rate limit"})
@@ -126,7 +126,7 @@ def test_fp_cascade_full_path_real_post_when_static_misses():
     body = "HTTP/1.1 503\n\n<html>boom</html>"
     f = _finding(body, template_id="sqli/error", tags=["sqli", "injection"])
     captured = {}
-    def fake_post(url, json=None, timeout=None):
+    def fake_post(url, json=None, timeout=None, **kwargs):
         captured['url'] = url
         captured['json'] = json
         return _mock_post(payload={"is_blocked": True, "confidence": 90, "reason": "503 block"})
@@ -155,7 +155,7 @@ def test_fp_cascade_truncates_large_body():
     huge = "HTTP/1.1 503\n\n" + ("A" * 50000)
     f = _finding(huge, template_id="sqli/x")
     captured = {}
-    def fake_post(url, json=None, timeout=None):
+    def fake_post(url, json=None, timeout=None, **kwargs):
         captured['json'] = json
         return _mock_post(payload={"is_blocked": True, "confidence": 80, "reason": "x"})
     with mock.patch('recon.helpers.ai_planner.nuclei_response_filter.requests.post',
@@ -345,7 +345,7 @@ def test_takeover_classify_truncates_large_body():
     trim before POSTing."""
     huge = "B" * 50000
     captured = {}
-    def fake_post(url, json=None, timeout=None):
+    def fake_post(url, json=None, timeout=None, **kwargs):
         captured['json'] = json
         return _mock_post(payload={"is_waf_block": True, "confidence": 85, "reason": "x"})
     with mock.patch('recon.helpers.ai_planner.takeover_classifier.requests.post',
@@ -368,7 +368,7 @@ def test_takeover_classify_filters_uninteresting_headers():
         "Last-Modified": "earlier",  # noise -- should be dropped
     }
     captured = {}
-    def fake_post(url, json=None, timeout=None):
+    def fake_post(url, json=None, timeout=None, **kwargs):
         captured['json'] = json
         return _mock_post(payload={"is_waf_block": True, "confidence": 85, "reason": "x"})
     with mock.patch('recon.helpers.ai_planner.takeover_classifier.requests.post',
@@ -383,7 +383,7 @@ def test_takeover_classify_filters_uninteresting_headers():
 def test_takeover_classify_payload_shape():
     """Verify the agent gets exactly the fields the endpoint expects."""
     captured = {}
-    def fake_post(url, json=None, timeout=None):
+    def fake_post(url, json=None, timeout=None, **kwargs):
         captured['url'] = url
         captured['json'] = json
         return _mock_post(payload={"is_waf_block": True, "confidence": 85, "reason": "x"})

@@ -347,7 +347,7 @@ def test_get_ai_tags_respects_agent_api_url_env():
     _reset_candidates_cache()
     nt._candidates_cache = ['cve']
     captured = {}
-    def _fake_post(url, json, timeout):
+    def _fake_post(url, json=None, timeout=None, **kwargs):
         captured['url'] = url
         return _mock_resp(json_data={'tags': ['cve']})
     with mock.patch.dict(_os.environ, {'AGENT_API_URL': 'http://agent.docker:8090'}, clear=False), \
