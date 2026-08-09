@@ -231,6 +231,14 @@ export function ScanScheduleTable({ projectId }: ScanScheduleTableProps) {
 
         {loadError && <div className={styles.loadError}>{loadError}</div>}
 
+        {/* C-11: queue-origin jobs never appear in this schedule-keyed view. Point
+            operators at the canonical live queue surface (the bottom-bar meter). */}
+        <p className={styles.hint}>
+          A scan that cannot start now is queued and runs automatically when
+          resources free up. See live queue state in Scan activity (click the
+          RAM/CPU meters in the bottom bar).
+        </p>
+
         <div className={styles.form}>
           <label className={styles.field}>
             When

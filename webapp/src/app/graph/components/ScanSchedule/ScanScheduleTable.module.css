@@ -197,3 +197,11 @@
   font-size: var(--text-xs);
   color: #ef4444;
 }
+
+/* C-11: pointer to the live Scan activity view. */
+.hint {
+  font-size: 0.8rem;
+  color: var(--text-secondary, #9aa);
+  margin: 0.25rem 0 0.75rem;
+  line-height: 1.4;
+}

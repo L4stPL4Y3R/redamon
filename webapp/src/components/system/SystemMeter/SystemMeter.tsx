@@ -1,6 +1,8 @@
 'use client'
 
+import { useState } from 'react'
 import { useSystemStats, toGB } from '@/hooks/useSystemStats'
+import { ActivityDrawer } from '@/components/system/ActivityDrawer/ActivityDrawer'
 import styles from './SystemMeter.module.css'
 
 function Meter({ label, pct, value, detail, tone }: { label: string; pct: number; value?: string; detail: string; tone?: 'low' | 'mid' | 'high' }) {
@@ -27,6 +29,7 @@ function Meter({ label, pct, value, detail, tone }: { label: string; pct: number
  */
 export function SystemMeter() {
   const { data } = useSystemStats()
+  const [activityOpen, setActivityOpen] = useState(false)
   if (!data?.mem) return null
 
   const m = data.mem
@@ -47,18 +50,27 @@ export function SystemMeter() {
   ].join('\n')
 
   return (
-    <div className={styles.wrap}>
-      <Meter label="RAM" pct={ramPct} tone="high" value={`${toGB(used)}/${toGB(total, 0)} GB used`} detail={ramTooltip} />
-      {diskTotal > 0 && (
-        <Meter
-          label="DISK"
-          pct={diskPct}
-          tone="high"
-          value={`${toGB(diskTotal - diskFree)}/${toGB(diskTotal, 0)} GB used`}
-          detail={`${toGB(diskFree)} GB free of ${toGB(diskTotal)} GB (${Math.round(diskPct)}% used)`}
-        />
-      )}
-      <Meter label="CPU" pct={cpuPct} tone="high" detail={`${Math.round(cpuPct)}% of ${data.cpu?.cores ?? '?'} cores`} />
-    </div>
+    <>
+      <button
+        type="button"
+        className={styles.wrap}
+        onClick={() => setActivityOpen(true)}
+        title="Open scan activity"
+        aria-label="Open scan activity"
+      >
+        <Meter label="RAM" pct={ramPct} tone="high" value={`${toGB(used)}/${toGB(total, 0)} GB used`} detail={ramTooltip} />
+        {diskTotal > 0 && (
+          <Meter
+            label="DISK"
+            pct={diskPct}
+            tone="high"
+            value={`${toGB(diskTotal - diskFree)}/${toGB(diskTotal, 0)} GB used`}
+            detail={`${toGB(diskFree)} GB free of ${toGB(diskTotal)} GB (${Math.round(diskPct)}% used)`}
+          />
+        )}
+        <Meter label="CPU" pct={cpuPct} tone="high" detail={`${Math.round(cpuPct)}% of ${data.cpu?.cores ?? '?'} cores`} />
+      </button>
+      <ActivityDrawer isOpen={activityOpen} onClose={() => setActivityOpen(false)} />
+    </>
   )
 }
