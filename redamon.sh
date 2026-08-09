@@ -2893,23 +2893,38 @@ cmd_help() {
 #   ./redamon.sh test              # unit gate across all sections (canonical)
 #   ./redamon.sh test unit|integration|live|all|coverage
 #
-# Section spec: name|image|workdir|PYTHONPATH|testpaths|covpkg
+# The root `tests/` dir is a grab-bag: most files exercise the agent image, but a
+# set of them import recon enrichment modules (recon/main_recon_modules/*) and so
+# must run in the recon image, not the agent image. We route them explicitly.
+_ROOT_RECON_TESTS="test_censys_enrich.py,test_criminalip_enrich.py,test_fofa_enrich.py,test_netlas_enrich.py,test_otx_enrich.py,test_uncover_enrich.py,test_virustotal_enrich.py,test_zoomeye_enrich.py,test_gau_parallel.py,test_gau_urlscan_api_key.py,test_recon_mixin_split.py"
+
+# Section spec: name|image|workdir|PYTHONPATH|testpaths|covpkg|exclude
 _TEST_SECTIONS=(
-    "agent|redamon-agent|/repo/agentic|/repo/agentic:/repo:/repo/mcp/servers:/repo/recon_orchestrator|tests|."
-    "root|redamon-agent|/repo|/repo:/repo/agentic:/repo/mcp/servers|tests supply_chain_common supply_chain_analyzer supply_chain_scan graph_db knowledge_base mcp|supply_chain_common"
-    "recon|redamon-recon|/repo/recon|/repo/recon:/repo|tests|."
-    "recon_orchestrator|redamon-recon-orchestrator|/repo/recon_orchestrator|/repo/recon_orchestrator:/repo|. tests|."
-    "ai_attack_surface|redamon-ai-attack-surface|/repo/ai_attack_surface_scan|/repo/ai_attack_surface_scan:/repo|tests adapters|."
-    "capture_proxy|redamon-capture-proxy|/repo/capture_proxy|/repo/capture_proxy:/repo|tests|."
-    "docker_broker|redamon-docker-broker|/repo/docker_broker|/repo/docker_broker:/repo|.|."
+    "agent|redamon-agent|/repo/agentic|/repo/agentic:/repo:/repo/mcp/servers:/repo/recon_orchestrator|tests|.|"
+    "root-agent|redamon-agent|/repo|/repo:/repo/agentic:/repo/mcp/servers|tests supply_chain_common supply_chain_analyzer supply_chain_scan graph_db knowledge_base mcp|supply_chain_common|${_ROOT_RECON_TESTS}"
+    "root-recon|redamon-recon|/repo|/repo:/repo/recon:/repo/recon/main_recon_modules|tests|.|"
+    "recon|redamon-recon|/repo/recon|/repo/recon:/repo|tests|.|"
+    "recon_orchestrator|redamon-recon-orchestrator|/repo/recon_orchestrator|/repo/recon_orchestrator:/repo|. tests|.|"
+    "ai_attack_surface|redamon-ai-attack-surface|/repo/ai_attack_surface_scan|/repo/ai_attack_surface_scan:/repo|tests adapters|.|"
+    "capture_proxy|redamon-capture-proxy|/repo/capture_proxy|/repo/capture_proxy:/repo|tests|.|"
+    "docker_broker|redamon-docker-broker|/repo/docker_broker|/repo/docker_broker:/repo|.|.|"
 )
 
+# For the root-recon section we run ONLY the recon-oriented files, not the whole
+# tests/ tree. The runner passes them as explicit files when name == root-recon.
+_ROOT_RECON_PATHS=""
+for _f in ${_ROOT_RECON_TESTS//,/ }; do _ROOT_RECON_PATHS="$_ROOT_RECON_PATHS tests/$_f"; done
+
 _test_run_section() {
-    local name="$1" image="$2" workdir="$3" pypath="$4" testpaths="$5" covpkg="$6"
-    local tier="$7"
+    local name="$1" image="$2" workdir="$3" pypath="$4" testpaths="$5" covpkg="$6" exclude="$7"
+    local tier="$8"
     if ! docker image inspect "$image" >/dev/null 2>&1; then
         warn "SKIP section '$name' ($image not built)"
         return 0
+    fi
+    # root-recon runs ONLY the recon-oriented files from tests/, in the recon image.
+    if [[ "$name" == "root-recon" ]]; then
+        testpaths="$_ROOT_RECON_PATHS"
     fi
     info "=== section: $name  (image: $image, tier: $tier) ==="
     local cov_args=""
@@ -2917,6 +2932,7 @@ _test_run_section() {
         cov_args="--cov $covpkg --cov-floor ${REDAMON_COV_FLOOR:-0}"
         tier="all"
     fi
+    [[ -n "$exclude" ]] && cov_args="$cov_args --exclude $exclude"
     # Ensure pytest is available (baked in the daily images; runtime-installed
     # for the slim ones), silence git's dubious-ownership guard on the mount.
     local prep='python -c "import pytest" 2>/dev/null || pip install -q -r /repo/requirements-test.txt >/dev/null 2>&1; git config --global --add safe.directory "*" 2>/dev/null || true;'
@@ -2939,8 +2955,8 @@ cmd_test() {
     esac
     local failed=0 spec
     for spec in "${_TEST_SECTIONS[@]}"; do
-        IFS='|' read -r name image workdir pypath testpaths covpkg <<< "$spec"
-        if ! _test_run_section "$name" "$image" "$workdir" "$pypath" "$testpaths" "$covpkg" "$tier"; then
+        IFS='|' read -r name image workdir pypath testpaths covpkg exclude <<< "$spec"
+        if ! _test_run_section "$name" "$image" "$workdir" "$pypath" "$testpaths" "$covpkg" "$exclude" "$tier"; then
             failed=1
             error "section '$name' had failures"
         fi

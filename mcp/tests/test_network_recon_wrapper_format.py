@@ -17,6 +17,7 @@ import os
 import sys
 import unittest
 from subprocess import CompletedProcess
+from unittest import mock
 
 # Import the helper. The MCP server module lives one dir up from tests/.
 _mcp_servers_dir = os.path.join(
@@ -24,6 +25,22 @@ _mcp_servers_dir = os.path.join(
     "servers",
 )
 sys.path.insert(0, _mcp_servers_dir)
+
+# fastmcp only ships inside the kali-sandbox image; stub it so the server module
+# imports for a pure-logic unit test (identity @mcp.tool() decorator).
+if "fastmcp" not in sys.modules:
+    class _FakeMCP:
+        def __init__(self, *a, **kw):
+            pass
+        def tool(self, *a, **kw):
+            def _identity(fn):
+                return fn
+            return _identity
+        def __getattr__(self, name):
+            return mock.MagicMock()
+    _fastmcp_mod = mock.MagicMock()
+    _fastmcp_mod.FastMCP = _FakeMCP
+    sys.modules["fastmcp"] = _fastmcp_mod
 
 from network_recon_server import _format_subprocess_result  # noqa: E402
 

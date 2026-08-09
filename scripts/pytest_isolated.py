@@ -49,17 +49,28 @@ def wanted(t: str, want: str) -> bool:
     return t == want
 
 
-def collect_files(testdirs, want):
+def collect_files(testpaths, want, exclude=()):
+    """Collect test files from the given paths. Each path may be a directory
+    (walked for test_*.py) or an explicit file. `exclude` is a set of basenames
+    to skip (used to route certain files to a different section/image)."""
+    exclude = set(exclude or ())
     files = []
-    for d in testdirs:
-        if not os.path.isdir(d):
+    for p in testpaths:
+        if os.path.isfile(p):
+            base = os.path.basename(p)
+            if base.startswith("test_") and base.endswith(".py") and base not in exclude:
+                if wanted(tier_of(base), want):
+                    files.append(p)
             continue
-        for root, _dirs, names in os.walk(d):
-            # skip caches / vendored trees
+        if not os.path.isdir(p):
+            continue
+        for root, _dirs, names in os.walk(p):
             if "__pycache__" in root or "/node_modules/" in root:
                 continue
             for name in sorted(names):
                 if not (name.startswith("test_") and name.endswith(".py")):
+                    continue
+                if name in exclude:
                     continue
                 if wanted(tier_of(name), want):
                     files.append(os.path.join(root, name))
@@ -85,13 +96,15 @@ def run_one(path, extra):
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("tier", choices=["unit", "integration", "live", "all"])
-    ap.add_argument("testdirs", nargs="+")
+    ap.add_argument("testdirs", nargs="+", help="directories and/or explicit test files")
     ap.add_argument("--parallel", type=int, default=int(os.environ.get("REDAMON_TEST_PARALLEL", "8")))
     ap.add_argument("--cov", default=None, help="package/path to measure coverage for")
     ap.add_argument("--cov-floor", type=float, default=None)
+    ap.add_argument("--exclude", default="", help="comma-separated basenames to skip")
     args = ap.parse_args()
 
-    files = collect_files(args.testdirs, args.tier)
+    exclude = [x for x in (args.exclude or "").split(",") if x]
+    files = collect_files(args.testdirs, args.tier, exclude=exclude)
     if not files:
         print(f">> {args.tier}: no test files found under {args.testdirs}")
         return 0

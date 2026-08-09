@@ -142,7 +142,10 @@ class TestAPIEmbedder:
             api_key="sk-test",
         )
         fake_vector = [0.1] * 1536
-        embedder._embed = MagicMock(return_value=[fake_vector])
+        # _embed returns ONE vector per input text, so a batch of N yields N
+        # vectors (the previous fixed [fake_vector] made every batch return a
+        # single vector, so 3 calls produced only 3 vectors instead of 5).
+        embedder._embed = MagicMock(side_effect=lambda batch: [fake_vector] * len(batch))
 
         texts = [f"doc {i}" for i in range(5)]
         result = embedder.embed_documents_batch(texts, batch_size=2)

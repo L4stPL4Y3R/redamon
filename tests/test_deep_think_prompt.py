@@ -414,7 +414,9 @@ class TestFormatHelpers:
             {
                 "objective": {"content": "Scan target ports"},
                 "success": True,
-                "findings": ["Found port 80 open"],
+                # findings is a dict keyed by vulnerabilities/ports/sessions (the
+                # shape format_objective_history consumes), not a flat list.
+                "findings": {"ports": ["80"], "vulnerabilities": [], "sessions": []},
             },
         ]
         result = format_objective_history(history)

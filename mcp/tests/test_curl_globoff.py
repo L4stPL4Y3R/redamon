@@ -15,10 +15,27 @@ from __future__ import annotations
 import os
 import sys
 import unittest
+from unittest import mock
 
 _mcp_servers_dir = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "servers")
 sys.path.insert(0, _mcp_servers_dir)
+
+# fastmcp only ships inside the kali-sandbox image; stub it so the server module
+# imports for a pure-logic unit test (identity @mcp.tool() decorator).
+if "fastmcp" not in sys.modules:
+    class _FakeMCP:
+        def __init__(self, *a, **kw):
+            pass
+        def tool(self, *a, **kw):
+            def _identity(fn):
+                return fn
+            return _identity
+        def __getattr__(self, name):
+            return mock.MagicMock()
+    _fastmcp_mod = mock.MagicMock()
+    _fastmcp_mod.FastMCP = _FakeMCP
+    sys.modules["fastmcp"] = _fastmcp_mod
 
 from network_recon_server import _globoff_args  # noqa: E402
 

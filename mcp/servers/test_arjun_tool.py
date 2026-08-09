@@ -68,11 +68,12 @@ class TestExecuteArjunBasic:
         assert cmd == ["arjun", "-u", "http://10.0.0.5/api"]
 
     @mock.patch("network_recon_server.subprocess.run")
-    def test_timeout_is_300s(self, mock_run):
-        """Tool uses 300s timeout."""
+    def test_timeout_is_1200s(self, mock_run):
+        """Tool uses a 1200s (20 min) timeout (raised from 300s: depth-2 param
+        mining on real sites routinely exceeds 5 min)."""
         mock_run.return_value = _mock_result()
         execute_arjun("-u http://target")
-        assert mock_run.call_args[1]["timeout"] == 300
+        assert mock_run.call_args[1]["timeout"] == 1200
 
     @mock.patch("network_recon_server.subprocess.run")
     def test_complex_args_parsed(self, mock_run):

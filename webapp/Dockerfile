@@ -12,7 +12,14 @@ WORKDIR /app
 
 COPY package.json package-lock.json* ./
 COPY prisma ./prisma
-RUN npm ci --no-audit --no-fund && npm cache clean --force
+# Same retry/timeout tuning as the runner stage (npm config is per-stage: it
+# writes /root/.npmrc, which does not carry across FROM). This is the heaviest
+# download in the build, so it is the layer most likely to hit ECONNRESET.
+RUN npm config set fetch-retries 5 && \
+    npm config set fetch-retry-mintimeout 20000 && \
+    npm config set fetch-retry-maxtimeout 180000 && \
+    npm config set fetch-timeout 900000 && \
+    npm ci --no-audit --no-fund && npm cache clean --force
 
 # Stage 2: Builder
 FROM node:22-slim AS builder
@@ -79,7 +86,15 @@ COPY --from=builder --chown=nextjs:nodejs /app/scripts ./scripts
 # Prisma schema + CLI for automatic migration on startup
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/node_modules/prisma/package.json /tmp/prisma-pkg.json
+# npm retry/timeout tuning: this layer pulls the Prisma query-engine binaries
+# (~100MB), and on a slow or flaky link the default single-shot fetch dies with
+#   npm error code ECONNRESET / npm error network aborted
+# killing the whole build. Retry with backoff instead of failing on one reset.
 RUN PRISMA_VER=$(node -p "require('/tmp/prisma-pkg.json').version") && \
+    npm config set fetch-retries 5 && \
+    npm config set fetch-retry-mintimeout 20000 && \
+    npm config set fetch-retry-maxtimeout 180000 && \
+    npm config set fetch-timeout 900000 && \
     npm install --no-save "prisma@${PRISMA_VER}" bcryptjs && \
     npm cache clean --force && rm /tmp/prisma-pkg.json
 
