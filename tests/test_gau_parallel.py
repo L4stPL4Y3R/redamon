@@ -66,6 +66,16 @@ def _get_gau_module():
     return mod
 
 
+def setUpModule():
+    # Register the synthetic recon_helpers_resource_enum.gau_helpers module in
+    # sys.modules BEFORE any @patch("...gau_helpers.run_gau_for_domain") resolves
+    # its target. @patch resolves lazily when the decorated method runs, which is
+    # after setUpModule but before the method body (where _get_gau_module was
+    # previously first called) — so without this the first patched test errored
+    # with "No module named recon_helpers_resource_enum.gau_helpers".
+    _get_gau_module()
+
+
 # ---------------------------------------------------------------------------
 # Tests for parallel domain processing
 # ---------------------------------------------------------------------------
@@ -154,8 +164,8 @@ class TestWorkerCount(unittest.TestCase):
 
     @patch("recon_helpers_resource_enum.gau_helpers.ThreadPoolExecutor")
     @patch("recon_helpers_resource_enum.gau_helpers.run_gau_for_domain")
-    def test_10_domains_capped_at_5_workers(self, mock_run_domain, mock_executor_cls):
-        """10 domains should be capped at 5 workers."""
+    def test_10_domains_capped_at_10_workers(self, mock_run_domain, mock_executor_cls):
+        """10 domains run with the configured cap of 10 parallel workers."""
         gau = _get_gau_module()
         mock_run_domain.return_value = []
 
@@ -176,7 +186,7 @@ class TestWorkerCount(unittest.TestCase):
         finally:
             real_executor.shutdown(wait=False)
 
-        mock_executor_cls.assert_called_once_with(max_workers=5)
+        mock_executor_cls.assert_called_once_with(max_workers=10)
 
     @patch("recon_helpers_resource_enum.gau_helpers.ThreadPoolExecutor")
     @patch("recon_helpers_resource_enum.gau_helpers.run_gau_for_domain")

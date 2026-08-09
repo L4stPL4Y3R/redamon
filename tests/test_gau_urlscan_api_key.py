@@ -444,11 +444,11 @@ class TestSourceIntegrity(unittest.TestCase):
     """Static checks on source files for correct wiring."""
 
     def test_resource_enum_reads_urlscan_key(self):
-        source = (REPO_ROOT / "recon" / "resource_enum.py").read_text()
+        source = (REPO_ROOT / "recon" / "main_recon_modules" / "resource_enum.py").read_text()
         self.assertIn("URLSCAN_API_KEY = settings.get('URLSCAN_API_KEY', '')", source)
 
     def test_resource_enum_passes_key_to_gau(self):
-        source = (REPO_ROOT / "recon" / "resource_enum.py").read_text()
+        source = (REPO_ROOT / "recon" / "main_recon_modules" / "resource_enum.py").read_text()
         idx = source.find("futures['gau'] = executor.submit(")
         self.assertNotEqual(idx, -1, "GAU submit block not found")
         block = source[idx:idx + 500]
