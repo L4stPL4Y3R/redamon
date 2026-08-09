@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { AlertTriangle, ArrowLeft, KeyRound, Loader2, Lock, Play, Plus, SlidersHorizontal, Square, Swords, Table2, Terminal, Trash2, X } from 'lucide-react'
 import { useProject } from '@/providers/ProjectProvider'
 import { useAiAttackSurface } from '@/hooks/useAiAttackSurface'
+import { useScanStartFailure } from '@/hooks/useScanStartFailure'
 import {
   ALL_CARDS, ATTACK_CHIPS, resolveAuth, splitUrl,
   type AuthMode, type ChipKey, type CustomTarget, type ToolCard,
@@ -31,6 +32,8 @@ function sevColor(sev: string): string {
 export default function AiAttackSurfacePage() {
   const { projectId } = useProject()
   const s = useAiAttackSurface(projectId)
+  // Scan Queue (Phase 3): a temporary launch refusal offers Cancel / Add to queue.
+  const { handleStartFailure } = useScanStartFailure(projectId)
   const [filters, setFilters] = useState<Set<ChipKey>>(new Set())
   const [openTool, setOpenTool] = useState<string | null>(null)
 
@@ -162,7 +165,7 @@ export default function AiAttackSurfacePage() {
       mode: authMode, bearerToken,
       headerName: customHeaderName, headerValue: customHeaderValue,
     })
-    await s.launch({
+    const payload = {
       tool: openCard.id,
       targets: [...graphTargets, ...custom],
       bounds: { trials, asr_threshold: asrThreshold, judge_model: judgeModel, max_turns: maxTurns, seed, parallelism, timeout: timeoutMin * 60 },
@@ -172,7 +175,13 @@ export default function AiAttackSurfacePage() {
       objective: openCard.id === 'pyrit' && objective.trim() ? objective.trim() : undefined,
       target_purpose: targetPurpose.trim() || undefined,
       ...auth,
-    })
+    }
+    const state = await s.launch(payload)
+    if (!state) {
+      // A launch carrying an inline api_key is not queueable; the handler shows
+      // Cancel only in that case (Scan Queue Phase 3).
+      await handleStartFailure('ai_attack', s.getLastStartError?.(), payload as Record<string, unknown>)
+    }
   }
 
   const totalTargets = selectedTargets.size + customTargets.length
