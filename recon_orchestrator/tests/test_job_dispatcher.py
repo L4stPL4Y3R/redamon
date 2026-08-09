@@ -184,6 +184,42 @@ class TestTick(unittest.TestCase):
         disp = [c for c in calls if "/dispatch" in c["url"]]
         self.assertEqual(len(disp), 2)
 
+    def test_F2_a_same_project_sibling_is_skipped_and_does_not_break_the_line(self):
+        # After dispatching P's first job the ledger tightens; P's SECOND (big) job
+        # must be SKIPPED (one-per-project) rather than trip the head-of-line RAM
+        # break, so another tenant's small job behind it is not starved (Finding 2).
+        class _DecrementingLedger:
+            def __init__(self):
+                self._values = [3000 * MB, 1000 * MB, 0]  # budget() before/after each dispatch
+                self._env = {"full_recon": 2000 * MB, "trufflehog": 768 * MB}
+                self.admit_calls = []
+
+            def remaining_for_new(self):
+                return self._values.pop(0) if self._values else 0
+
+            def envelope_for(self, kind):
+                return self._env.get(kind, 2000 * MB)
+
+            async def try_admit(self, *a, **kw):
+                self.admit_calls.append((a, kw))
+                raise AssertionError("no reserve")
+
+        ledger = _DecrementingLedger()
+        _, calls = _run_tick([
+            ("/candidates", {"candidates": [
+                _cand("p_a", kind="full_recon", project="P", envelope=2000 * MB),
+                _cand("p_b", kind="full_recon", project="P", envelope=2000 * MB),
+                _cand("q", kind="trufflehog", project="Q", envelope=768 * MB),
+            ], "activeCount": 0}),
+            ("/job-queue/p_a/dispatch", {"ok": True}),
+            ("/job-queue/q/dispatch", {"ok": True}),
+        ], manager=_Manager(ledger))
+        urls = [c["url"] for c in calls if "/dispatch" in c["url"]]
+        self.assertTrue(any("/p_a/dispatch" in u for u in urls), "P's first job dispatches")
+        self.assertFalse(any("/p_b/dispatch" in u for u in urls), "P's sibling is skipped, not attempted")
+        self.assertTrue(any("/q/dispatch" in u for u in urls), "Q must not be starved by P's big sibling")
+        self.assertEqual(ledger.admit_calls, [])
+
     def test_try_admit_is_never_called_over_a_full_tick(self):
         ledger = _Ledger()
         _run_tick([

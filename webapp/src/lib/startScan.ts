@@ -52,6 +52,34 @@ function runId(state: unknown): string {
   return ''
 }
 
+/** Orchestrator stop endpoint per kind. Run-based kinds need the run id. */
+const STOP_ENDPOINT: Record<string, (p: string, r: string) => string | null> = {
+  full_recon: p => `/recon/${p}/stop`,
+  gvm: p => `/gvm/${p}/stop`,
+  github_hunt: p => `/github-hunt/${p}/stop`,
+  trufflehog: p => `/trufflehog/${p}/stop`,
+  supply_chain: p => `/supply-chain/${p}/stop`,
+  supply_chain_repo: p => `/supply-chain/${p}/stop`,
+  ai_attack: (p, r) => (r ? `/ai-attack-surface/${p}/${r}/stop` : null),
+  partial_recon: (p, r) => (r ? `/recon/${p}/partial/${r}/stop` : null),
+}
+
+/**
+ * Best-effort stop of a scan that was just started. Used when a job is canceled in
+ * the narrow window between dispatch claiming it and marking it running (Finding 1):
+ * the scan already began, so we tell the orchestrator to stop it. Never throws.
+ */
+export async function stopScan(kind: string, projectId: string, runId = ''): Promise<void> {
+  const build = STOP_ENDPOINT[kind]
+  const path = build ? build(projectId, runId) : null
+  if (!path) return
+  try {
+    await orchestratorFetch(`${RECON_ORCHESTRATOR_URL}${path}`, { method: 'POST' })
+  } catch (e) {
+    console.warn(`[jobQueue] best-effort stop of ${kind} for ${projectId} failed:`, e)
+  }
+}
+
 export async function dispatchStart(
   kind: string,
   projectId: string,

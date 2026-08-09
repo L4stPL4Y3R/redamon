@@ -22,10 +22,25 @@ export async function GET(request: NextRequest) {
 
   try {
     const now = new Date()
+
+    // Projects that already have an in-flight job (one-per-project, C-12). Their
+    // queued jobs CANNOT run this pass, so exclude them from candidates entirely
+    // (Finding 2): otherwise a big, per-project-blocked job at the head of the
+    // queue would trigger the dispatcher's head-of-line RAM `break` and starve
+    // other tenants' fittable jobs. The in-flight rows also give the concurrency
+    // count in one query.
+    const inflight = await prisma.jobQueue.findMany({
+      where: { status: { in: ['dispatching', 'running'] } },
+      select: { projectId: true },
+    })
+    const activeCount = inflight.length
+    const busyProjectIds = Array.from(new Set(inflight.map(r => r.projectId)))
+
     const rows = await prisma.jobQueue.findMany({
       where: {
         status: 'queued',
         OR: [{ notBefore: null }, { notBefore: { lte: now } }],
+        ...(busyProjectIds.length ? { projectId: { notIn: busyProjectIds } } : {}),
       },
       orderBy: [{ priority: 'desc' }, { enqueuedAt: 'asc' }],
       take: CANDIDATE_LIMIT,
@@ -40,11 +55,6 @@ export async function GET(request: NextRequest) {
         attempts: true,
         maxAttempts: true,
       },
-    })
-
-    // In-flight rows count against the dispatcher's hard concurrency ceiling.
-    const activeCount = await prisma.jobQueue.count({
-      where: { status: { in: ['dispatching', 'running'] } },
     })
 
     const candidates = rows.map(r => ({

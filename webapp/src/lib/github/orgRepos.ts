@@ -37,6 +37,8 @@ export interface ListOwnerReposOptions {
   includeForks?: boolean
   includeArchived?: boolean
   maxRepos?: number
+  /** Per-request timeout (ms). A stalled GitHub must not hang the batch (Finding 3). */
+  timeoutMs?: number
   fetchImpl?: typeof fetch
 }
 
@@ -85,6 +87,7 @@ export async function listOwnerRepos(owner: string, opts: ListOwnerReposOptions 
   const perPage = Math.min(100, Math.max(1, opts.perPage ?? 100))
   const maxPages = Math.max(1, opts.maxPages ?? 10)
   const maxRepos = opts.maxRepos && opts.maxRepos > 0 ? opts.maxRepos : Infinity
+  const timeoutMs = opts.timeoutMs && opts.timeoutMs > 0 ? opts.timeoutMs : 15_000
 
   const headers: Record<string, string> = {
     Accept: 'application/vnd.github+json',
@@ -106,8 +109,14 @@ export async function listOwnerRepos(owner: string, opts: ListOwnerReposOptions 
     const url = `${base}?per_page=${perPage}&page=${page}&type=${repoType}&sort=updated`
     let res: Response
     try {
-      res = await fetchImpl(url, { headers })
+      // Bound each page so a stalled GitHub cannot hang the batch (Finding 3).
+      // AbortSignal.timeout is available in Node 18+/undici and the browser; test
+      // fetchImpls simply ignore the extra option.
+      res = await fetchImpl(url, { headers, signal: AbortSignal.timeout(timeoutMs) })
     } catch (e) {
+      if (e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError')) {
+        throw new GithubEnumError(`GitHub request timed out after ${timeoutMs}ms`, 504)
+      }
       throw new GithubEnumError(scrub(`GitHub request failed: ${e instanceof Error ? e.message : String(e)}`, token))
     }
 

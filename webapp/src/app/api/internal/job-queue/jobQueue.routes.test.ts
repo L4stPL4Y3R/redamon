@@ -24,6 +24,7 @@ const h = vi.hoisted(() => ({
   projectFindUnique: vi.fn(),
   conversationFindFirst: vi.fn(),
   dispatchStart: vi.fn(),
+  stopScan: vi.fn(),
 }))
 
 vi.mock('@/lib/session', () => ({ isInternalRequest: (...a: unknown[]) => h.isInternal(...a) }))
@@ -41,7 +42,10 @@ vi.mock('@/lib/prisma', () => ({
     conversation: { findFirst: (...a: unknown[]) => h.conversationFindFirst(...a) },
   },
 }))
-vi.mock('@/lib/startScan', () => ({ dispatchStart: (...a: unknown[]) => h.dispatchStart(...a) }))
+vi.mock('@/lib/startScan', () => ({
+  dispatchStart: (...a: unknown[]) => h.dispatchStart(...a),
+  stopScan: (...a: unknown[]) => h.stopScan(...a),
+}))
 
 import { POST as dispatch } from './[id]/dispatch/route'
 import { GET as candidates } from './candidates/route'
@@ -78,6 +82,7 @@ beforeEach(() => {
   h.projectFindUnique.mockResolvedValue(PROJECT)
   h.conversationFindFirst.mockResolvedValue(null)
   h.dispatchStart.mockResolvedValue({ ok: true, runId: 'r1', scanJobId: 'sj1' })
+  h.stopScan.mockResolvedValue(undefined)
 })
 
 describe('dispatch route auth', () => {
@@ -140,14 +145,33 @@ describe('dispatch route fail-closed checks', () => {
 })
 
 describe('dispatch route happy + failure paths', () => {
-  test('all checks pass -> running, start called, ids recorded', async () => {
+  test('all checks pass -> running (conditional on still dispatching), start called, ids recorded', async () => {
+    // claim updateMany -> {count:1}; success updateMany -> {count:1} (won the race)
+    h.jqUpdateMany.mockResolvedValue({ count: 1 })
     const res = await dispatch(post('http://x/api/internal/job-queue/j1/dispatch'), sp('j1'))
     const body = await res.json()
     expect(body.ok).toBe(true)
     expect(h.dispatchStart).toHaveBeenCalledWith('full_recon', 'p1', expect.objectContaining({ actorUserId: 'u1' }))
-    expect(h.jqUpdate).toHaveBeenCalledWith(expect.objectContaining({
+    // The success write is guarded on status='dispatching' so a concurrent cancel wins.
+    expect(h.jqUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 'j1', status: 'dispatching' }),
       data: expect.objectContaining({ status: 'running', runId: 'r1', scanJobId: 'sj1' }),
     }))
+    expect(h.stopScan).not.toHaveBeenCalled()
+  })
+
+  test('regression F1: a cancel during dispatch is NOT resurrected; the started scan is stopped', async () => {
+    // claim wins (count 1); the success write loses because a cancel flipped the row
+    // out of 'dispatching' (count 0).
+    h.jqUpdateMany
+      .mockResolvedValueOnce({ count: 1 })   // claim
+      .mockResolvedValueOnce({ count: 0 })   // success write lost to the cancel
+    const res = await dispatch(post('http://x/api/internal/job-queue/j1/dispatch'), sp('j1'))
+    const body = await res.json()
+    expect(body.ok).toBe(false)
+    expect(body.canceledDuringDispatch).toBe(true)
+    // The scan already started, so it must be stopped rather than left orphaned.
+    expect(h.stopScan).toHaveBeenCalledWith('full_recon', 'p1', 'r1')
   })
 
   test('a temporary RAM refusal requeues with backoff', async () => {
@@ -180,15 +204,28 @@ describe('dispatch route happy + failure paths', () => {
 })
 
 describe('candidates route', () => {
-  test('returns ordered ready rows + activeCount', async () => {
-    h.jqFindMany.mockResolvedValue([
-      { id: 'a', projectId: 'p1', userId: 'u1', kind: 'gvm', envelopeBytes: BigInt(2684354560), priority: 10, enqueuedAt: new Date('2026-08-09T00:00:00Z'), attempts: 0, maxAttempts: 20 },
-    ])
-    h.jqCount.mockResolvedValue(2)
+  test('returns ordered ready rows + activeCount from the in-flight set', async () => {
+    h.jqFindMany
+      .mockResolvedValueOnce([{ projectId: 'pBusy' }, { projectId: 'pBusy' }]) // in-flight (2 rows, 1 project)
+      .mockResolvedValueOnce([
+        { id: 'a', projectId: 'p1', userId: 'u1', kind: 'gvm', envelopeBytes: BigInt(2684354560), priority: 10, enqueuedAt: new Date('2026-08-09T00:00:00Z'), attempts: 0, maxAttempts: 20 },
+      ])
     const res = await candidates(get('http://x/api/internal/job-queue/candidates'))
     const body = await res.json()
     expect(body.activeCount).toBe(2)
     expect(body.candidates[0]).toMatchObject({ id: 'a', kind: 'gvm', envelopeBytes: 2684354560 })
+  })
+
+  test('regression F2: queued jobs of an already-busy project are excluded from candidates', async () => {
+    h.jqFindMany
+      .mockResolvedValueOnce([{ projectId: 'pBusy' }]) // in-flight for pBusy
+      .mockResolvedValueOnce([])
+    await candidates(get('http://x/api/internal/job-queue/candidates'))
+    // The queued query must exclude pBusy, so its big head job can't trip the
+    // dispatcher's head-of-line RAM break and starve other tenants.
+    expect(h.jqFindMany).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ projectId: { notIn: ['pBusy'] } }),
+    }))
   })
 
   test('rejects non-internal', async () => {

@@ -123,4 +123,19 @@ describe('listOwnerRepos', () => {
     expect(repos[0].url).toBe('https://github.com/acme/app.git')
     expect(repos[0].url).not.toContain('evil.example')
   })
+
+  test('regression F3: a stalled GitHub (abort/timeout) fails fast with a clear 504, not a hang', async () => {
+    const fetchImpl = vi.fn().mockRejectedValue(Object.assign(new Error('The operation was aborted'), { name: 'TimeoutError' }))
+    const err = await listOwnerRepos('acme', { fetchImpl, timeoutMs: 5 }).catch(e => e as GithubEnumError)
+    expect(err).toBeInstanceOf(GithubEnumError)
+    expect((err as GithubEnumError).status).toBe(504)
+    expect(err.message).toMatch(/timed out/i)
+  })
+
+  test('F3: an abort signal is passed to fetch so a slow request can be cut off', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(ghResponse([repo('acme/a')]))
+    await listOwnerRepos('acme', { fetchImpl })
+    const opts = fetchImpl.mock.calls[0][1] as RequestInit
+    expect(opts.signal).toBeDefined()
+  })
 })

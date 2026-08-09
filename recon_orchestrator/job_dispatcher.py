@@ -115,10 +115,19 @@ def run_dispatcher_tick(container_manager) -> dict:
             return None
 
     remaining = budget()
+    # Projects we have already dispatched THIS tick. The candidates endpoint already
+    # excludes projects busy from a PRIOR tick, but two queued jobs for one project
+    # can both arrive in the same list; once we dispatch one, the other cannot run
+    # (one-per-project), so skip it BEFORE the head-of-line RAM break, or it would
+    # starve everyone behind it (Finding 2).
+    dispatched_projects: set = set()
 
     for job in candidates:
         if active >= cap:
             break
+        pid = job.get("projectId")
+        if pid in dispatched_projects:
+            continue  # already dispatched a job for this project this tick
         kind = job.get("kind", "")
         # This job's OWN envelope; do not hardcode full_recon's.
         env = 0
@@ -143,16 +152,20 @@ def run_dispatcher_tick(container_manager) -> dict:
         if res.get("ok"):
             summary["dispatched"] += 1
             active += 1
+            dispatched_projects.add(pid)
             remaining = budget()
             continue
 
         # Not dispatched. A capacity-bound block (RAM / hard cap) means every later
         # job is also capacity-bound, so stop. A per-project block (busy / agent) or
-        # needs_review / permanent failure is specific to THIS job, so try others.
+        # needs_review / permanent failure is specific to THIS job, so try others,
+        # and remember the project so a sibling job cannot trip the RAM break below.
         summary["deferred"] += 1
         blocked = res.get("blocked")
         if blocked in ("ram", "hard", "disk"):
             break
+        if blocked in ("busy", "agent_running"):
+            dispatched_projects.add(pid)
 
     return summary
 

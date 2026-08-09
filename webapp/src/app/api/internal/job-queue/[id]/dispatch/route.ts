@@ -21,7 +21,7 @@ import prisma from '@/lib/prisma'
 import { isInternalRequest } from '@/lib/session'
 import { settingsFingerprint, nextBackoff } from '@/lib/jobQueue'
 import { classifyStartFailure } from '@/lib/scanStartOutcome'
-import { dispatchStart } from '@/lib/startScan'
+import { dispatchStart, stopScan } from '@/lib/startScan'
 
 export const runtime = 'nodejs'
 
@@ -132,8 +132,12 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const result = await dispatchStart(row.kind, row.projectId, { actorUserId: row.userId, payload })
 
     if (result.ok) {
-      await prisma.jobQueue.update({
-        where: { id },
+      // CONDITIONAL on still being 'dispatching' (Finding 1): a cancel that landed
+      // during the (multi-second, for full_recon) start window set the row to
+      // 'canceled'. Do NOT resurrect it to 'running'; instead, since the scan has
+      // already started, best-effort stop it so it does not run orphaned.
+      const won = await prisma.jobQueue.updateMany({
+        where: { id, status: 'dispatching' },
         data: {
           status: 'running',
           blockedCode: '',
@@ -145,6 +149,11 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           startedAt: new Date(),
         },
       })
+      if (won.count === 0) {
+        console.warn(`[jobQueue] job ${id} was canceled during dispatch; stopping the scan that started`)
+        await stopScan(row.kind, row.projectId, result.runId ?? '')
+        return NextResponse.json({ ok: false, canceledDuringDispatch: true })
+      }
       return NextResponse.json({ ok: true, runId: result.runId ?? '', scanJobId: result.scanJobId ?? null })
     }
 
