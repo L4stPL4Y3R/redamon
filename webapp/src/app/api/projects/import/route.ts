@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { Prisma } from '@prisma/client'
 import prisma from '@/lib/prisma'
 import { getGraphSession } from '@/app/api/graph/neo4j'
 import { clearProjectGraph, restoreGraph } from '@/lib/graphRestore'
@@ -446,7 +447,7 @@ export async function POST(request: NextRequest) {
             projectId: newProject.id,
             userId,
             kind,
-            payload: (r.payload && typeof r.payload === 'object' ? r.payload : {}) as object,
+            payload: (r.payload && typeof r.payload === 'object' ? r.payload : {}) as Prisma.InputJsonValue,
             settingsHash: '',
             envelopeBytes: BigInt(envelopeForKind(kind)),
             status: 'canceled', // NEVER queued/running on import

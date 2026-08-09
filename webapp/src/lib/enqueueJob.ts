@@ -8,6 +8,7 @@
  * config (C-4). The version is deliberately NOT captured (C-3): it is chosen at
  * dispatch by prepareVersionsForFullScan.
  */
+import { Prisma } from '@prisma/client'
 import prisma from '@/lib/prisma'
 import { envelopeForKind, settingsFingerprint } from '@/lib/jobQueue'
 
@@ -72,7 +73,7 @@ export async function enqueueJob(input: EnqueueInput): Promise<EnqueueResult> {
       projectId,
       userId,
       kind,
-      payload,
+      payload: payload as Prisma.InputJsonValue,
       settingsHash,
       envelopeBytes,
       priority: input.priority ?? 10,
