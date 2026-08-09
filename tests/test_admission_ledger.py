@@ -106,6 +106,31 @@ class TestAdmission(LedgerTestBase):
         self.assertEqual(led.committed_bytes(), 0)
         self.assertEqual(led.active_count(), 0)
 
+    async def test_account_reserves_unconditionally_and_pushes_back_on_scans(self):
+        # Phase 7: account() never refuses (CodeFix always runs) but its bytes ARE
+        # counted, so it reduces the headroom a later scan sees.
+        led = al.ReservationLedger()
+        # Fill the 24G pool with a single 24G unconditional accounting reservation.
+        led.account("codefix:job1", 24 * GB)
+        self.assertEqual(led.committed_bytes(), 24 * GB)
+        self.assertEqual(led.remaining_for_new(), 0)
+        # A scan on top is now refused for RAM (accounting pushed it out).
+        r = await led.try_admit("full_recon:p1", 4 * GB)
+        self.assertFalse(r.admitted)
+        self.assertEqual(r.limit_type, "ram")
+        # Releasing the accounted reservation frees the budget again.
+        led.release_nowait("codefix:job1")
+        self.assertEqual(led.committed_bytes(), 0)
+        self.assertTrue((await led.try_admit("full_recon:p1", 4 * GB)).admitted)
+
+    async def test_account_never_denies_even_when_over_pool(self):
+        led = al.ReservationLedger()
+        # Two 24G accounting reservations exceed the pool, yet neither is refused.
+        led.account("codefix:a", 24 * GB)
+        led.account("codefix:b", 24 * GB)
+        self.assertEqual(led.committed_bytes(), 48 * GB)
+        self.assertEqual(led.active_count(), 2)
+
     async def test_idempotent_readmit(self):
         led = al.ReservationLedger()
         await led.try_admit("job", 4 * GB)

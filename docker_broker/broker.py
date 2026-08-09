@@ -341,6 +341,11 @@ BROKER_TOOL_MEM = _parse_size(os.environ.get("BROKER_TOOL_MEM_BYTES", ""), 2 * 1
 # Defensive parse: a non-integer (e.g. "512m") must not crash the broker at import,
 # which would leave recon unable to spawn ANY tool container.
 BROKER_TOOL_PIDS = max(0, _parse_int(os.environ.get("BROKER_TOOL_PIDS", "0"), 0))  # 0 = don't set
+# Phase 7: sibling tool containers had NO count cap, so a runaway scan (or many
+# concurrent scans) could spawn unbounded containers the memory governor never
+# sees. A generous backstop; 0 disables it. A create is denied once this many
+# broker-owned containers are already running.
+BROKER_MAX_CONTAINERS = max(0, _parse_int(os.environ.get("BROKER_MAX_CONTAINERS", "0"), 0))
 
 
 def inject_limits(cfg: dict) -> dict:
@@ -434,6 +439,44 @@ async def _upstream_inspect_labels(cid: str):
 async def _is_broker_owned(cid: str) -> bool:
     labels = await _upstream_inspect_labels(cid)
     return bool(labels) and labels.get(_OWNER_LABEL) == "1"
+
+
+async def _count_broker_owned_running() -> int:
+    """Count currently-running broker-owned containers via an upstream
+    GET /containers/json filtered by the ownership label (Phase 7 count cap).
+    Returns -1 if the count cannot be determined, so the caller can fail OPEN
+    (never block a legitimate spawn on a transient upstream hiccup)."""
+    from urllib.parse import quote
+    filt = quote(json.dumps({"label": [f"{_OWNER_LABEL}=1"], "status": ["running"]}))
+    r = w = None
+    try:
+        r, w = await asyncio.open_unix_connection(UPSTREAM_SOCK)
+        req = (f"GET /containers/json?filters={filt} HTTP/1.1\r\n"
+               f"Host: docker\r\nConnection: close\r\n\r\n").encode("latin1")
+        w.write(req)
+        await w.drain()
+        raw = await r.read()
+    except Exception:
+        return -1
+    finally:
+        if w is not None:
+            try:
+                w.close()
+            except Exception:
+                pass
+    if b"\r\n\r\n" not in raw:
+        return -1
+    head_b, body = raw.split(b"\r\n\r\n", 1)
+    head_text = head_b.decode("latin1")
+    if " 200 " not in head_text.split("\r\n", 1)[0]:
+        return -1
+    if "transfer-encoding: chunked" in head_text.lower():
+        body = _dechunk(body)
+    try:
+        arr = json.loads(body or b"[]")
+        return len(arr) if isinstance(arr, list) else -1
+    except Exception:
+        return -1
 
 
 def _rewrite_list_filters(head: bytes, path: str) -> bytes:
@@ -617,6 +660,15 @@ async def handle_client(client_reader, client_writer):
                 _reject(reason)
                 await client_writer.drain()
                 return
+            # Phase 7: sibling-container count cap. Fail OPEN on an unknown count so
+            # a transient upstream hiccup never blocks a legitimate spawn.
+            if BROKER_MAX_CONTAINERS > 0:
+                running = await _count_broker_owned_running()
+                if running >= BROKER_MAX_CONTAINERS:
+                    _log(f"DENY create: container count cap reached ({running}/{BROKER_MAX_CONTAINERS})")
+                    _reject(f"broker container count cap reached ({running}/{BROKER_MAX_CONTAINERS})")
+                    await client_writer.drain()
+                    return
             # Memory governor (Part 4d): inject the hard mem cap; E1: stamp the
             # broker-owned marker label; then re-serialize the body (Content-Length
             # is corrected in the head rebuild below).

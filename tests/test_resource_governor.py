@@ -301,7 +301,7 @@ class TestScanJobEnvelopes(GovernorTestBase):
 
     SCAN_TYPES = ("full_recon", "partial_recon", "ai_attack", "gvm",
                   "github_hunt", "trufflehog", "supply_chain",
-                  "partial_recon:SupplyChainRecon")
+                  "partial_recon:SupplyChainRecon", "codefix")
 
     def test_every_scan_type_has_its_own_fallback(self):
         env = g._FALLBACK_PROFILE["scan_job_envelope_bytes"]

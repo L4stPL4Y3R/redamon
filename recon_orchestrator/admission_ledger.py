@@ -235,6 +235,17 @@ class ReservationLedger:
         self._committed.pop(key, None)
         self._key_user.pop(key, None)  # D3
 
+    def account(self, key: str, envelope: int) -> None:
+        """Reserve `envelope` for `key` UNCONDITIONALLY - no gate, no refusal.
+
+        For always-run consumers whose RAM the ledger must still SEE so it stops
+        over-admitting scans on top of them (Phase 7: the CodeFix build sandbox).
+        Unlike try_admit this never denies: the consumer runs regardless, but its
+        bytes push back on the NEXT scan's admission. Release via release_nowait or
+        reconcile, exactly like a scan reservation (dict assignment is atomic under
+        the GIL, so no async lock is needed)."""
+        self._committed[key] = envelope
+
     def reconcile(self, active_keys) -> int:
         """Drop any reservation whose scan is no longer active. Leak-proof
         alternative to hooking every terminal path: the caller passes the set of

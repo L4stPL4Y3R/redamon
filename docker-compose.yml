@@ -384,6 +384,10 @@ services:
       # D1: fork-bomb ceiling injected into every sibling tool container
       # (katana/nuclei/httpx/...). Was 0 (unlimited); 512 is generous per tool.
       BROKER_TOOL_PIDS: ${BROKER_TOOL_PIDS:-512}
+      # Phase 7: cap the NUMBER of concurrently-running broker-owned containers the
+      # memory governor cannot see. Generous backstop; 0 disables. Raise if legit
+      # parallel scans (each spawns a dozen tools) hit it.
+      BROKER_MAX_CONTAINERS: ${BROKER_MAX_CONTAINERS:-48}
       # T1/T2: extra host prefixes a tool bind may mount READ-WRITE. Empty passes
       # through so broker.py keeps its restrictive default (["/tmp/redamon"] only);
       # every other source-tree bind is forced :ro. Wired here (broker has no
@@ -568,6 +572,9 @@ services:
       LOCAL_LLM_MODEL: ${LOCAL_LLM_MODEL:-qwen2.5:7b}
       LOCAL_LLM_PORT: ${LOCAL_LLM_PORT:-11434}
       LOCAL_LLM_GPU: ${LOCAL_LLM_GPU:-}
+      # Phase 7: RAM cap on the Ollama judge (was uncapped). Raise for a larger
+      # judge model; set to 0/none to disable (e.g. GPU or a very large model).
+      LOCAL_LLM_MEM: ${LOCAL_LLM_MEM:-8g}
       # V1 isolation: the on-demand Ollama judge must spawn on the orchestrator's
       # own (worker-isolated) network so the orchestrator reaches it by DNS.
       LOCAL_LLM_NETWORK: redamon-orchestrator-net

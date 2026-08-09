@@ -364,6 +364,9 @@ _FALLBACK_PROFILE = {
         # GuardDog deep analysis. The former 900 MB predated L1 deep analysis and
         # was smaller than the analyzer alone, so a deep L1 scan under-reserved.
         "supply_chain": 1_879_048_192,
+        # CodeFix build sandbox (agent-driven). 2 GB matches CODEFIX_SANDBOX_MEM.
+        # Not a scan, but it holds real RAM the ledger must ACCOUNT for (Phase 7).
+        "codefix": 2_147_483_648,
         "_default": 2_147_483_648,        # 2 GB   unknown type: assume full-pipeline size
     },
     "agent_session_envelope_bytes": 512_000_000,

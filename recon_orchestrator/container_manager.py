@@ -325,6 +325,10 @@ class ContainerManager:
         # they DO hold a reservation. Without them here the 30 s reaper would
         # free a live job's bytes and the ledger would under-count.
         keys |= self.guarddog_jobs
+        # Phase 7: CodeFix build sandboxes hold an accounted reservation; keep it
+        # until the sandbox is stopped/reaped, or the reaper would free live bytes.
+        for job_id in self.codefix_sandboxes:
+            keys.add(self._scan_key("codefix", job_id))
         return keys
 
     def active_scan_projects(self) -> set:
@@ -927,6 +931,9 @@ class ContainerManager:
             "container_id": container.id,
             "created_at": datetime.now(timezone.utc),
         }
+        # Phase 7: account for the sandbox's 2 GB in the ledger (non-gating) so the
+        # governor stops over-admitting scans on top of a running agent build.
+        self.ledger.account(self._scan_key("codefix", job_id), self.ledger.envelope_for("codefix"))
         logger.info(f"[codefix] started sandbox {name} ({container.id[:12]}) for job {job_id}")
         return {"job_id": job_id, "container": name}
 
@@ -968,6 +975,8 @@ class ContainerManager:
         """Remove the sandbox container and (optionally) the per-job worktree."""
         job_id = self._safe_job_id(job_id)
         entry = self.codefix_sandboxes.pop(job_id, None)
+        # Phase 7: release the sandbox's ledger reservation (accounted at spawn).
+        self.ledger.release_nowait(self._scan_key("codefix", job_id))
         if entry:
             try:
                 container = self.client.containers.get(entry["container_id"])
