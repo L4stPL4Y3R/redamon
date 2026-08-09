@@ -143,5 +143,11 @@ async def main():
     return 0 if FAIL == 0 else 1
 
 
+def test_main_all_checks_pass():
+    """pytest entrypoint: main() returns non-zero if any check failed."""
+    import asyncio
+    assert asyncio.run(main()) == 0
+
+
 if __name__ == "__main__":
     sys.exit(asyncio.run(main()))

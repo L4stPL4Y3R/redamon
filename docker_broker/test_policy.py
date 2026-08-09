@@ -159,6 +159,13 @@ check("ALLOW create docker.io/ prefix", ok is True)
 ok, _ = broker.validate_create({"Image": "docker.io/attacker/evil:latest"})
 check("DENY create docker.io/ non-allowlisted", ok is False)
 
-print()
-print(f"RESULT: PASS={PASS} FAIL={FAIL}")
-sys.exit(0 if FAIL == 0 else 1)
+
+def test_all_policy_checks_pass():
+    """pytest entrypoint: the module-level checks above populate PASS/FAIL
+    at import; assert none failed (bucket-1 runner-compat conversion)."""
+    assert FAIL == 0, f"{FAIL} policy checks failed (see printed FAIL lines)"
+
+
+if __name__ == "__main__":
+    print(f"RESULT: PASS={PASS} FAIL={FAIL}")
+    sys.exit(0 if FAIL == 0 else 1)

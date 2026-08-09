@@ -40,6 +40,22 @@ for mod_name in ["dns", "dns.resolver", "dns.rdatatype", "dns.name"]:
 from key_rotation import KeyRotator
 
 
+def _importable(name):
+    """True if `name` can be imported in this image. Some classes here exercise
+    recon-only modules (shodan_enrich, ...) and one exercises the agentic
+    orchestrator_helpers copy; each image has only one side, so classes self-skip
+    (bucket-2) when their side is not importable rather than hard-failing."""
+    import importlib.util
+    try:
+        return importlib.util.find_spec(name) is not None
+    except Exception:
+        return False
+
+
+_RECON_AVAILABLE = _importable("shodan_enrich")
+_AGENTIC_KR_AVAILABLE = _importable("orchestrator_helpers.key_rotation")
+
+
 class TestKeyRotatorBasic(unittest.TestCase):
     """Test the KeyRotator class fundamental behavior."""
 
@@ -169,6 +185,7 @@ def _load_recon_project_settings():
     return mod
 
 
+@unittest.skipUnless(_RECON_AVAILABLE, "recon enrichment modules not importable in this image")
 class TestReconProjectSettingsRotator(unittest.TestCase):
     """Test that project_settings builds rotators from user settings."""
 
@@ -239,6 +256,7 @@ class TestReconProjectSettingsRotator(unittest.TestCase):
 # 3. Shodan enrichment — rotator passed to _shodan_get
 # =============================================================================
 
+@unittest.skipUnless(_RECON_AVAILABLE, "recon enrichment modules not importable in this image")
 class TestShodanEnrichRotation(unittest.TestCase):
     """Test that Shodan enrichment passes rotator through the call chain."""
 
@@ -299,6 +317,7 @@ class TestShodanEnrichRotation(unittest.TestCase):
 # 4. CVE helpers — rotator threading
 # =============================================================================
 
+@unittest.skipUnless(_RECON_AVAILABLE, "recon enrichment modules not importable in this image")
 class TestCveHelpersRotation(unittest.TestCase):
     """Test NVD and Vulners lookups use key rotation."""
 
@@ -392,6 +411,7 @@ class TestCveHelpersRotation(unittest.TestCase):
 # 5. URLScan enrichment — rotator integration
 # =============================================================================
 
+@unittest.skipUnless(_RECON_AVAILABLE, "recon enrichment modules not importable in this image")
 class TestUrlscanEnrichRotation(unittest.TestCase):
     """Test URLScan enrichment uses key rotation."""
 
@@ -432,6 +452,7 @@ class TestUrlscanEnrichRotation(unittest.TestCase):
 # 6. Agentic KeyRotator — verify identical behavior
 # =============================================================================
 
+@unittest.skipUnless(_AGENTIC_KR_AVAILABLE, "agentic orchestrator_helpers not importable in this image")
 class TestAgenticKeyRotator(unittest.TestCase):
     """Verify the agentic copy of KeyRotator works identically."""
 

@@ -2904,7 +2904,7 @@ _TEST_SECTIONS=(
     "root-agent|redamon-agent|/repo|/repo:/repo/agentic:/repo/mcp/servers|tests supply_chain_common supply_chain_analyzer supply_chain_scan graph_db knowledge_base mcp|supply_chain_common|${_ROOT_RECON_TESTS}"
     "root-recon|redamon-recon|/repo|/repo:/repo/recon:/repo/recon/main_recon_modules|tests|.|"
     "recon|redamon-recon|/repo/recon|/repo/recon:/repo|tests|.|"
-    "recon_orchestrator|redamon-recon-orchestrator|/repo/recon_orchestrator|/repo/recon_orchestrator:/repo|. tests|.|"
+    "recon_orchestrator|redamon-recon-orchestrator|/repo/recon_orchestrator|/repo/recon_orchestrator:/repo|.|.|"
     "ai_attack_surface|redamon-ai-attack-surface|/repo/ai_attack_surface_scan|/repo/ai_attack_surface_scan:/repo|tests adapters|.|"
     "capture_proxy|redamon-capture-proxy|/repo/capture_proxy|/repo/capture_proxy:/repo|tests|.|"
     "docker_broker|redamon-docker-broker|/repo/docker_broker|/repo/docker_broker:/repo|.|.|"
@@ -2943,6 +2943,16 @@ _test_run_section() {
         -e COVERAGE_FILE=/tmp/redamon.coverage \
         -e HOME=/tmp \
         -e REDAMON_TEST_PARALLEL="${REDAMON_TEST_PARALLEL:-8}" \
+        `# recon_orchestrator/api.py resolves host paths at import; satisfy the` \
+        `# *_PATH lookups so its tests import outside docker-compose (harmless elsewhere).` \
+        -e RECON_PATH=/repo/recon \
+        -e GVM_SCAN_PATH=/repo/gvm_scan \
+        -e GITHUB_HUNT_PATH=/repo/github_secret_hunt \
+        -e TRUFFLEHOG_PATH=/repo/trufflehog_scan \
+        -e SUPPLY_CHAIN_PATH=/repo/supply_chain_scan \
+        -e AI_ATTACK_SURFACE_PATH=/repo/ai_attack_surface_scan \
+        -e CUSTOM_TEMPLATES_PATH=/repo/custom_templates \
+        -e CODEFIX_WORK_PATH=/repo/codefix_sandbox \
         --entrypoint sh \
         "$image" -c "$prep exec python /repo/scripts/pytest_isolated.py $tier $testpaths $cov_args"
 }

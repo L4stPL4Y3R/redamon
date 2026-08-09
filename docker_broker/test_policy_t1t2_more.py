@@ -96,6 +96,13 @@ check("_rw_host_path_allowed traversal escapes -> False",
 check("_rw_host_path_allowed prefix-adjacent sibling -> False",
       broker._rw_host_path_allowed("/tmp/redamon-evil/x") is False)
 
-print()
-print(f"RESULT: PASS={PASS} FAIL={FAIL}")
-sys.exit(0 if FAIL == 0 else 1)
+
+def test_all_policy_checks_pass():
+    """pytest entrypoint: the module-level checks above populate PASS/FAIL
+    at import; assert none failed (bucket-1 runner-compat conversion)."""
+    assert FAIL == 0, f"{FAIL} policy checks failed (see printed FAIL lines)"
+
+
+if __name__ == "__main__":
+    print(f"RESULT: PASS={PASS} FAIL={FAIL}")
+    sys.exit(0 if FAIL == 0 else 1)
