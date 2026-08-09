@@ -157,6 +157,25 @@ def run_dispatcher_tick(container_manager) -> dict:
     return summary
 
 
+# Both the periodic loop AND the reaper's "capacity just freed" trigger want to
+# dispatch. They must not run concurrently, or both fetch the same candidates and
+# race on the per-row claim (the loser gets a benign 409 that looks like a
+# failure). asyncio is single-threaded, so the check-and-set below is atomic (no
+# await between them); a tick already in flight makes the other a no-op.
+_tick_in_progress = False
+
+
+async def _guarded_tick(container_manager) -> Optional[dict]:
+    global _tick_in_progress
+    if _tick_in_progress:
+        return None
+    _tick_in_progress = True
+    try:
+        return await asyncio.to_thread(run_dispatcher_tick, container_manager)
+    finally:
+        _tick_in_progress = False
+
+
 async def job_dispatcher_loop(get_container_manager) -> None:
     """Background task: tick forever. `get_container_manager` is a callable so the
     loop picks up the manager once lifespan startup has created it."""
@@ -172,8 +191,8 @@ async def job_dispatcher_loop(get_container_manager) -> None:
                 cm = get_container_manager()
                 if cm is None:
                     continue
-                summary = await asyncio.to_thread(run_dispatcher_tick, cm)
-                if summary["candidates"]:
+                summary = await _guarded_tick(cm)
+                if summary and summary["candidates"]:
                     logger.info(
                         "[jobDispatcher] tick: %s candidates, %s dispatched, %s deferred, %s failed",
                         summary["candidates"], summary["dispatched"],
@@ -191,7 +210,9 @@ async def run_one_dispatch_tick(container_manager) -> dict:
     if not dispatcher_enabled() or container_manager is None:
         return {"candidates": 0, "dispatched": 0, "deferred": 0, "failed": 0, "disk_blocked": False}
     try:
-        return await asyncio.to_thread(run_dispatcher_tick, container_manager)
+        # Serialized against the periodic loop; a no-op if a tick is already running.
+        return await _guarded_tick(container_manager) or {
+            "candidates": 0, "dispatched": 0, "deferred": 0, "failed": 0, "disk_blocked": False}
     except Exception as e:  # noqa: BLE001
         logger.warning("[jobDispatcher] one-shot tick failed: %s", e)
         return {"candidates": 0, "dispatched": 0, "deferred": 0, "failed": 0, "disk_blocked": False}

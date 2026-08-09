@@ -226,6 +226,28 @@ class TestLoop(unittest.TestCase):
         with mock.patch.dict(os.environ, {"JOB_QUEUE_DISPATCHER_ENABLED": "false"}):
             asyncio.run(asyncio.wait_for(jd.job_dispatcher_loop(lambda: None), timeout=2))
 
+    def test_a_concurrent_tick_is_skipped_while_one_is_in_flight(self):
+        # The periodic loop and the reaper trigger must not both dispatch at once
+        # (they would race on the per-row claim). asyncio single-threading + the
+        # in-flight flag make the second call a no-op.
+        import time
+
+        def slow(cm):
+            time.sleep(0.05)
+            return {"candidates": 0, "dispatched": 0, "deferred": 0, "failed": 0, "disk_blocked": False}
+
+        async def drive():
+            with mock.patch.object(jd, "run_dispatcher_tick", side_effect=slow):
+                r1, r2 = await asyncio.gather(jd._guarded_tick(_Manager()), jd._guarded_tick(_Manager()))
+            # Exactly one ran; the other was skipped (returned None).
+            self.assertTrue((r1 is None) != (r2 is None), (r1, r2))
+
+        jd._tick_in_progress = False
+        try:
+            asyncio.run(drive())
+        finally:
+            jd._tick_in_progress = False
+
     def test_a_failing_tick_does_not_kill_the_loop(self):
         async def drive():
             with mock.patch.dict(os.environ, {
