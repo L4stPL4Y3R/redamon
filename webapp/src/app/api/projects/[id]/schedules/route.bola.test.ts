@@ -17,6 +17,7 @@ const h = vi.hoisted(() => ({
   create: vi.fn(),
   findMany: vi.fn(),
   jobFindMany: vi.fn(),
+  queueFindMany: vi.fn(),
   envelope: vi.fn(),
   audit: vi.fn(),
 }))
@@ -32,6 +33,7 @@ vi.mock('@/lib/prisma', () => ({
       findMany: (...a: unknown[]) => h.findMany(...a),
     },
     scanJob: { findMany: (...a: unknown[]) => h.jobFindMany(...a) },
+    jobQueue: { findMany: (...a: unknown[]) => h.queueFindMany(...a) },
   },
 }))
 vi.mock('@/lib/audit', () => ({ writeAudit: (...a: unknown[]) => h.audit(...a) }))
@@ -54,6 +56,7 @@ beforeEach(() => {
   h.requireProjectAccess.mockResolvedValue({ project: { id: 'p1', userId: 'owner' } })
   h.findMany.mockResolvedValue([])
   h.jobFindMany.mockResolvedValue([])
+  h.queueFindMany.mockResolvedValue([])
   h.envelope.mockResolvedValue({ envelopeBytes: 2000 * MB, scanPoolBytes: 8000 * MB })
   h.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) =>
     ({ id: 'sched1', ...data }))
@@ -71,6 +74,7 @@ describe('GET — BOLA', () => {
     expect((await GET(get(), params('victimProj'))).status).toBe(404)
     expect(h.findMany).not.toHaveBeenCalled()
     expect(h.jobFindMany).not.toHaveBeenCalled()
+    expect(h.queueFindMany).not.toHaveBeenCalled()
   })
 
   test('owner → schedules + run history, BigInt safely serialized', async () => {
@@ -78,7 +82,7 @@ describe('GET — BOLA', () => {
       { id: 's1', projectId: 'p1', mode: 'cron', estimatedEnvelopeBytes: BigInt(2000 * MB) },
     ])
     h.jobFindMany.mockResolvedValue([
-      { id: 'j1', trigger: 'scheduled', mode: 'new', status: 'completed', startedAt: null,
+      { id: 'j1', kind: 'full_recon', trigger: 'scheduled', mode: 'new', status: 'completed', startedAt: null,
         finishedAt: null, createdAt: new Date(), nodeCount: 5, ramReason: null,
         scheduleId: 's1', version: { seq: 2, label: 'Scan 2' } },
     ])
@@ -87,6 +91,42 @@ describe('GET — BOLA', () => {
     const body = await res.json()
     expect(body.schedules[0].estimatedEnvelopeBytes).toBe(2000 * MB)
     expect(body.jobs[0].version).toEqual({ seq: 2, label: 'Scan 2' })
+    // Only full recon writes a ScanJob, so its rows are labelled as such.
+    expect(body.jobs[0].kind).toBe('full_recon')
+  })
+
+  // Every non-full-recon run that finished is a JobQueue row; without them the
+  // Type column would read 'Full recon' on every line forever.
+  test('finished queue jobs join the run history, newest first, typed by kind', async () => {
+    h.jobFindMany.mockResolvedValue([
+      { id: 'j1', kind: 'full_recon', trigger: 'manual', mode: 'new', status: 'completed', startedAt: null,
+        finishedAt: null, createdAt: new Date('2026-08-09T10:00:00Z'), nodeCount: 5,
+        ramReason: null, scheduleId: null, version: null },
+    ])
+    h.queueFindMany.mockResolvedValue([
+      { id: 'q1', kind: 'trufflehog', status: 'failed', error: 'exit 2', blockedReason: '',
+        enqueuedAt: new Date('2026-08-09T12:00:00Z'), startedAt: null, finishedAt: null,
+        scheduleId: null },
+      { id: 'q2', kind: 'gvm', status: 'canceled', error: '', blockedReason: 'ram',
+        enqueuedAt: new Date('2026-08-09T08:00:00Z'), startedAt: null, finishedAt: null,
+        scheduleId: 'sched9' },
+    ])
+    const body = await (await GET(get(), params('p1'))).json()
+    expect(body.jobs.map((j: { id: string }) => j.id)).toEqual(['q1', 'j1', 'q2'])
+    expect(body.jobs[0]).toMatchObject({ kind: 'trufflehog', status: 'failed', ramReason: 'exit 2' })
+    // A queue job carrying a scheduleId came from the scheduler.
+    expect(body.jobs[2]).toMatchObject({ kind: 'gvm', status: 'canceled', trigger: 'scheduled' })
+  })
+
+  test('only terminal queue rows are pulled into the history', async () => {
+    await GET(get(), params('p1'))
+    expect(h.queueFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        projectId: 'p1',
+        status: { in: ['done', 'failed', 'canceled'] },
+        kind: { not: 'full_recon' },
+      }),
+    }))
   })
 })
 

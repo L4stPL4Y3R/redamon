@@ -1,0 +1,197 @@
+'use client'
+
+/**
+ * Every in-flight scan for the open project, whatever started it, in one table.
+ *
+ * Three sources behind `GET /api/system/jobs`, because no single one sees them
+ * all: the JobQueue (only queued work), ScanJob rows (only full recon) and the
+ * orchestrator's live state (every kind, but lost on its restart). Rows carry a
+ * `source` so the UI knows which ones it can act on - only a queue row can be
+ * canceled or re-confirmed; the rest are stopped from the toolbar.
+ *
+ * Scope: this project in full, the operator's other projects as a count only.
+ */
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Loader2, Activity } from 'lucide-react'
+import styles from './ScanScheduleTable.module.css'
+
+export interface QueueJob {
+  id: string
+  projectId: string
+  projectName: string
+  kind: string
+  status: string
+  blockedReason: string
+  error: string
+  /** Extra identity for a run-keyed kind (the partial-recon tool, the AI tool). */
+  detail?: string
+  enqueuedAt: string
+  startedAt: string | null
+  /** 'queue': a JobQueue row, the only source that can be canceled or re-confirmed.
+   *  'scan':  a running ScanJob (full recon).
+   *  'live':  the orchestrator is holding it right now, any kind. */
+  source: 'queue' | 'scan' | 'live'
+}
+
+interface ActivityPayload {
+  mine: { running: QueueJob[]; queued: QueueJob[]; needsReview: QueueJob[]; recent: QueueJob[] }
+  others: { queued: number; running: number; needsReview: number }
+}
+
+const KIND_LABEL: Record<string, string> = {
+  full_recon: 'Full recon',
+  partial_recon: 'Partial recon',
+  gvm: 'GVM',
+  github_hunt: 'GitHub hunt',
+  trufflehog: 'TruffleHog',
+  supply_chain: 'Supply chain',
+  supply_chain_repo: 'Supply chain (repo)',
+  ai_attack: 'AI attack surface',
+}
+
+const POLL_MS = 8000
+
+/** Shared with the Run history table so one scan kind reads the same in both. */
+export function kindLabel(k: string) { return KIND_LABEL[k] ?? k }
+
+function fmt(iso: string | null): string {
+  if (!iso) return '-'
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? '-' : d.toISOString().slice(0, 16).replace('T', ' ') + ' UTC'
+}
+
+function statusClass(status: string): string {
+  // 'starting' and 'stopping' come from the orchestrator's live state.
+  if (status === 'running' || status === 'dispatching' || status === 'starting') return styles.statusRunning
+  if (status === 'queued' || status === 'paused' || status === 'stopping') return styles.statusDeferred
+  if (status === 'needs_review') return styles.statusBad
+  return styles.badgeOff
+}
+
+/** Everything that is not waiting in the queue is, to an operator, in flight. */
+function isRunning(status: string): boolean {
+  return status !== 'queued' && status !== 'needs_review'
+}
+
+export function ScanQueuePanel({ projectId }: { projectId: string | null }) {
+  const [data, setData] = useState<ActivityPayload | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [busyId, setBusyId] = useState<string | null>(null)
+
+  const refresh = useCallback(async () => {
+    try {
+      const res = await fetch('/api/system/jobs')
+      if (!res.ok) { setError('Could not load scan activity.'); return }
+      setData(await res.json())
+      setError(null)
+    } catch {
+      setError('Could not load scan activity.')
+    }
+  }, [])
+
+  useEffect(() => {
+    refresh()
+    const t = setInterval(refresh, POLL_MS)
+    return () => clearInterval(t)
+  }, [refresh])
+
+  const act = useCallback(async (id: string, action: 'cancel' | 'reconfirm') => {
+    setBusyId(id)
+    try {
+      const res = await fetch(`/api/job-queue/${id}/${action}`, { method: 'POST' })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        setError(body.error || `Could not ${action} the job.`)
+      } else {
+        await refresh()
+      }
+    } catch {
+      setError(`Could not ${action} the job.`)
+    } finally {
+      setBusyId(null)
+    }
+  }, [refresh])
+
+  const { here, elsewhere } = useMemo(() => {
+    const mine = data?.mine
+    const all = [...(mine?.running ?? []), ...(mine?.needsReview ?? []), ...(mine?.queued ?? [])]
+    return {
+      here: all.filter(j => j.projectId === projectId),
+      elsewhere: all.filter(j => j.projectId !== projectId),
+    }
+  }, [data, projectId])
+
+  const elsewhereRunning = elsewhere.filter(j => isRunning(j.status)).length
+  const elsewhereQueued = elsewhere.length - elsewhereRunning
+  const others = data?.others
+
+  return (
+    <section className={styles.section}>
+      <h3 className={styles.heading}>
+        <Activity size={14} /> Scan queue
+        {!data && !error && <Loader2 size={12} className={styles.spinner} />}
+      </h3>
+
+      {error && <div className={styles.loadError}>{error}</div>}
+
+      <table className={styles.table}>
+        <thead>
+          <tr>
+            <th>Scan</th><th>Status</th><th>Since</th><th>Reason</th><th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {here.length === 0 && (
+            <tr><td colSpan={5} className={styles.empty}>Nothing running or queued for this project.</td></tr>
+          )}
+          {here.map(j => (
+            <tr key={`${j.source}:${j.id}`}>
+              <td>{kindLabel(j.kind)}</td>
+              <td><span className={statusClass(j.status)}>{j.status.replace('_', ' ')}</span></td>
+              <td className={styles.muted}>{fmt(j.startedAt ?? j.enqueuedAt)}</td>
+              <td className={styles.muted}>{j.detail || j.blockedReason || j.error || '-'}</td>
+              <td className={styles.actions}>
+                {/* A 'scan' row has no queue row behind it: stop it from the toolbar. */}
+                {j.source === 'queue' && j.status === 'needs_review' && (
+                  <button
+                    className={`${styles.iconBtn} ${styles.textBtn}`}
+                    disabled={busyId === j.id}
+                    onClick={() => act(j.id, 'reconfirm')}
+                    title="Re-confirm with the current project settings"
+                  >
+                    Re-confirm
+                  </button>
+                )}
+                {j.source === 'queue' && !isRunning(j.status) && (
+                  <button
+                    className={`${styles.iconBtn} ${styles.textBtn} ${styles.dangerBtn}`}
+                    disabled={busyId === j.id}
+                    onClick={() => act(j.id, 'cancel')}
+                    title="Cancel this queued job"
+                  >
+                    Cancel
+                  </button>
+                )}
+                {j.source !== 'queue' && <span className={styles.muted}>-</span>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {(elsewhere.length > 0 || (others && others.running + others.queued + others.needsReview > 0)) && (
+        <p className={styles.hint}>
+          {elsewhere.length > 0 && (
+            <>Your other projects: {elsewhereRunning} running, {elsewhereQueued} queued. </>
+          )}
+          {others && others.running + others.queued + others.needsReview > 0 && (
+            <>Other users: {others.running} running, {others.queued} queued
+              {others.needsReview ? `, ${others.needsReview} awaiting review` : ''}.</>
+          )}
+        </p>
+      )}
+    </section>
+  )
+}
+
+export default ScanQueuePanel

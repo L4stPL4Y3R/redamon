@@ -29,7 +29,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
   if (access instanceof NextResponse) return access
 
   try {
-    const [schedules, jobs] = await Promise.all([
+    const [schedules, jobs, queueHistory] = await Promise.all([
       prisma.scanSchedule.findMany({
         where: { projectId: id },
         orderBy: [{ enabled: 'desc' }, { nextRunAt: 'asc' }],
@@ -40,7 +40,43 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
         take: JOB_HISTORY_LIMIT,
         include: { version: { select: { seq: true, label: true } } },
       }),
+      // Directly-started scans of every kind now write a ScanJob, so the history
+      // above is already multi-kind. This adds the runs the QUEUE owns: a job that
+      // was canceled or failed before it ever started has no ScanJob at all, and
+      // a queue-dispatched non-full-recon scan is recorded only here.
+      prisma.jobQueue.findMany({
+        where: {
+          projectId: id,
+          status: { in: ['done', 'failed', 'canceled'] },
+          kind: { not: 'full_recon' },
+        },
+        orderBy: { finishedAt: 'desc' },
+        take: JOB_HISTORY_LIMIT,
+        select: {
+          id: true, kind: true, status: true, error: true, blockedReason: true,
+          enqueuedAt: true, startedAt: true, finishedAt: true, scheduleId: true,
+        },
+      }),
     ])
+
+    // ScanJob status vocabulary, so one column reads consistently.
+    const QUEUE_STATUS: Record<string, string> = {
+      done: 'completed', failed: 'failed', canceled: 'canceled',
+    }
+    const queueRuns = queueHistory.map(q => ({
+      id: q.id,
+      kind: q.kind,
+      trigger: q.scheduleId ? 'scheduled' : 'manual',
+      mode: null,
+      status: QUEUE_STATUS[q.status] ?? q.status,
+      startedAt: q.startedAt,
+      finishedAt: q.finishedAt,
+      createdAt: q.enqueuedAt,
+      nodeCount: null,
+      ramReason: q.error || q.blockedReason || null,
+      scheduleId: q.scheduleId,
+      version: null,
+    }))
 
     return NextResponse.json(
       {
@@ -51,19 +87,25 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
             ? null
             : Number(s.estimatedEnvelopeBytes),
         })),
-        jobs: jobs.map(j => ({
-          id: j.id,
-          trigger: j.trigger,
-          mode: j.mode,
-          status: j.status,
-          startedAt: j.startedAt,
-          finishedAt: j.finishedAt,
-          createdAt: j.createdAt,
-          nodeCount: j.nodeCount,
-          ramReason: j.ramReason,
-          scheduleId: j.scheduleId,
-          version: j.version ? { seq: j.version.seq, label: j.version.label } : null,
-        })),
+        jobs: [
+          ...jobs.map(j => ({
+            id: j.id,
+            kind: j.kind,
+            trigger: j.trigger,
+            mode: j.mode,
+            status: j.status,
+            startedAt: j.startedAt,
+            finishedAt: j.finishedAt,
+            createdAt: j.createdAt,
+            nodeCount: j.nodeCount,
+            ramReason: j.ramReason,
+            scheduleId: j.scheduleId,
+            version: j.version ? { seq: j.version.seq, label: j.version.label } : null,
+          })),
+          ...queueRuns,
+        ]
+          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+          .slice(0, JOB_HISTORY_LIMIT),
       },
       { headers: { 'Cache-Control': 'private, no-cache' } }
     )

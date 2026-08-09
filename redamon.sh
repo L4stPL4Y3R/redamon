@@ -2161,10 +2161,22 @@ cmd_update() {
     #
     # Recreating also still picks up the volume-mounted source change, so this
     # is strictly better; it costs one container recreate.
+    #
+    # `--force-recreate` is REQUIRED, not optional. A volume-mounted `.py`-only
+    # change alters no image and no container config, so a plain `up -d` sees no
+    # drift and leaves the OLD process running — the long-lived uvicorn/python
+    # process never re-reads the file, and the new code (e.g. a new orchestrator
+    # endpoint) is on disk but not served until some unrelated later recreate.
+    # Without force it only "worked" incidentally, when the per-service resource
+    # caps the previous `up` exported happened to differ from this update shell;
+    # an install that pins those caps in .env has no such drift and would silently
+    # ship stale orchestrator/MCP code. Forcing the recreate makes the restart
+    # deterministic. Safe: these services are stateless per-container (code is
+    # mounted, persistent state lives in volumes/DB).
     if [[ ${#restart_only[@]} -gt 0 ]]; then
         info "Recreating services for code changes: ${restart_only[*]}"
         for svc in "${restart_only[@]}"; do
-            docker compose up -d --no-deps "$svc"
+            docker compose up -d --no-deps --force-recreate "$svc"
         done
     fi
 

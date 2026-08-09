@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { guardProject } from '@/lib/access'
+import { reconcileRunScanJobs } from '@/lib/scanTimeline'
 import { orchestratorFetch } from '@/lib/orchestrator'
 
 const RECON_ORCHESTRATOR_URL = process.env.RECON_ORCHESTRATOR_URL || 'http://localhost:8010'
@@ -21,7 +22,9 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     if (!response.ok) {
       return NextResponse.json({ project_id: projectId, runs: [] })
     }
-    return NextResponse.json(await response.json())
+    const data = await response.json()
+    await reconcileRunScanJobs(projectId, 'ai_attack', data?.runs)
+    return NextResponse.json(data)
   } catch {
     // Orchestrator unreachable - degrade to empty list.
     return NextResponse.json({ project_id: projectId, runs: [] })

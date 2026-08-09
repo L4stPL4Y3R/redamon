@@ -3,6 +3,14 @@
  * queue state. Tenancy: the caller sees THEIR OWN rows in full, and everyone
  * else's in-flight work only as an anonymised aggregate count. Also returns the
  * orchestrator ledger snapshot so the UI can show why the queue is waiting.
+ *
+ * "Running" is a union of three sources, because no single one sees every scan:
+ *   1. JobQueue rows in running/dispatching - only work the QUEUE started.
+ *   2. ScanJob rows - only full recon (nothing else writes one).
+ *   3. GET /system/active-scans on the orchestrator - every kind, but in-memory,
+ *      so it is empty for scans that predate the orchestrator's last restart.
+ * Deduplicated on kind|projectId|runId, preferring the source that carries the
+ * most identity: a queue row (has cancel/re-confirm) > a ScanJob > a live entry.
  */
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
@@ -28,12 +36,16 @@ type Row = {
   enqueuedAt: Date
   startedAt: Date | null
   finishedAt: Date | null
+  scanJobId: string | null
+  runId: string
+  project: { name: string } | null
 }
 
 function serialize(r: Row) {
   return {
     id: r.id,
     projectId: r.projectId,
+    projectName: r.project?.name ?? '',
     kind: r.kind,
     status: r.status,
     priority: r.priority,
@@ -41,17 +53,105 @@ function serialize(r: Row) {
     blockedCode: r.blockedCode,
     blockedReason: r.blockedReason,
     error: r.error,
+    detail: '',
     envelopeBytes: Number(r.envelopeBytes),
     enqueuedAt: r.enqueuedAt.toISOString(),
     startedAt: r.startedAt ? r.startedAt.toISOString() : null,
     finishedAt: r.finishedAt ? r.finishedAt.toISOString() : null,
+    // 'queue' rows are cancellable through /api/job-queue/{id}; 'scan' rows are a
+    // running scan that was never queued, so the UI must not offer queue actions.
+    source: 'queue' as const,
   }
+}
+
+/**
+ * A scan started straight from its Start button never becomes a JobQueue row (the
+ * queue's producers are the refusal modal, the scheduler and the batch), so the
+ * queue alone cannot see it. Every kind now writes a ScanJob at start, so this is
+ * the durable record - it survives an orchestrator restart, which the live source
+ * does not.
+ */
+type ScanRow = {
+  id: string
+  projectId: string
+  kind: string
+  runId: string
+  startedAt: Date | null
+  createdAt: Date
+  project: { name: string } | null
+}
+
+function serializeScan(s: ScanRow) {
+  return {
+    id: s.id,
+    projectId: s.projectId,
+    projectName: s.project?.name ?? '',
+    kind: s.kind,
+    status: 'running',
+    priority: 0,
+    attempts: 0,
+    blockedCode: '',
+    blockedReason: '',
+    error: '',
+    detail: '',
+    envelopeBytes: 0,
+    enqueuedAt: s.createdAt.toISOString(),
+    startedAt: s.startedAt ? s.startedAt.toISOString() : null,
+    finishedAt: null,
+    source: 'scan' as const,
+  }
+}
+
+/** A scan the orchestrator is holding right now, of any kind. */
+interface LiveScan {
+  kind: string
+  project_id: string
+  run_id: string
+  tool_id: string
+  status: string
+  started_at: string | null
+}
+
+function serializeLive(s: LiveScan, projectName: string) {
+  return {
+    id: `${s.kind}:${s.project_id}:${s.run_id}`,
+    projectId: s.project_id,
+    projectName,
+    kind: s.kind,
+    status: s.status,
+    priority: 0,
+    attempts: 0,
+    blockedCode: '',
+    blockedReason: '',
+    error: '',
+    // Which tool this run is: several partial recons in one project are otherwise
+    // indistinguishable rows.
+    detail: s.tool_id || '',
+    envelopeBytes: 0,
+    enqueuedAt: s.started_at ?? '',
+    startedAt: s.started_at,
+    finishedAt: null,
+    source: 'live' as const,
+  }
+}
+
+/** Identity of an in-flight scan across the three sources. partial_recon and
+ *  ai_attack can have several concurrent runs in one project, so the run id is
+ *  part of the key when there is one. */
+function runKey(kind: string, projectId: string, runId = ''): string {
+  return runId ? `${kind}|${projectId}|${runId}` : `${kind}|${projectId}`
 }
 
 const SELECT = {
   id: true, projectId: true, kind: true, status: true, priority: true, attempts: true,
   blockedCode: true, blockedReason: true, error: true, envelopeBytes: true,
-  enqueuedAt: true, startedAt: true, finishedAt: true,
+  enqueuedAt: true, startedAt: true, finishedAt: true, scanJobId: true, runId: true,
+  project: { select: { name: true } },
+} as const
+
+const SCAN_SELECT = {
+  id: true, projectId: true, kind: true, runId: true, startedAt: true, createdAt: true,
+  project: { select: { name: true } },
 } as const
 
 export async function GET(_request: NextRequest) {
@@ -59,7 +159,10 @@ export async function GET(_request: NextRequest) {
   if (eff instanceof NextResponse) return eff
 
   try {
-    const [mine, recent, othersActive, othersNeedsReview] = await Promise.all([
+    const [
+      mine, recent, othersActive, othersNeedsReview, runningScans, othersRunningScans,
+      myProjects, liveScans,
+    ] = await Promise.all([
       prisma.jobQueue.findMany({
         where: { userId: eff.userId, status: { in: ['running', 'dispatching', 'queued', 'needs_review'] } },
         orderBy: [{ priority: 'desc' }, { enqueuedAt: 'asc' }],
@@ -72,24 +175,106 @@ export async function GET(_request: NextRequest) {
         select: SELECT,
       }),
       prisma.jobQueue.groupBy({
-        by: ['status'],
+        // projectId is in the grouping only so a live scan can be matched against
+        // these rows exactly, instead of by kind alone.
+        by: ['status', 'kind', 'projectId'],
         where: { userId: { not: eff.userId }, status: { in: ['running', 'dispatching', 'queued'] } },
         _count: { _all: true },
       }),
       prisma.jobQueue.count({
         where: { userId: { not: eff.userId }, status: 'needs_review' },
       }),
+      // Scoped by PROJECT OWNERSHIP, not by initiator: a scan the agent or a
+      // schedule started has no initiator, and it is still this operator's scan.
+      prisma.scanJob.findMany({
+        where: { status: 'running', project: { userId: eff.userId } },
+        orderBy: { startedAt: 'desc' },
+        select: SCAN_SELECT,
+      }),
+      prisma.scanJob.count({
+        where: { status: 'running', project: { userId: { not: eff.userId } } },
+      }),
+      // Which projects are mine, so a live scan can be attributed without a second
+      // round trip per row.
+      prisma.project.findMany({
+        where: { userId: eff.userId },
+        select: { id: true, name: true },
+      }),
+      // Every kind the orchestrator is holding right now. Best effort: if it is
+      // unreachable the DB sources still answer.
+      (async (): Promise<LiveScan[]> => {
+        try {
+          const res = await orchestratorFetch(`${RECON_ORCHESTRATOR_URL}/system/active-scans`, { method: 'GET' })
+          if (!res.ok) return []
+          const body = await res.json()
+          return Array.isArray(body?.scans) ? body.scans as LiveScan[] : []
+        } catch {
+          return []
+        }
+      })(),
     ])
 
-    const running = mine.filter(r => r.status === 'running' || r.status === 'dispatching').map(serialize)
     const queued = mine.filter(r => r.status === 'queued').map(serialize)
     const needsReview = mine.filter(r => r.status === 'needs_review').map(serialize)
 
-    const othersAgg = { queued: 0, running: 0, needsReview: othersNeedsReview }
+    const projectNames = new Map(myProjects.map(p => [p.id, p.name]))
+
+    // Union the three running sources, richest identity first.
+    //
+    // `seen` holds exact keys. `pending` counts rows claimed WITHOUT a run id (a
+    // queue row between dispatch and recording its run id, and every ScanJob):
+    // the live entry for such a scan carries a run id the DB row does not have
+    // yet, so it can only be matched on kind+project. It is a counter, not a flag,
+    // so a project genuinely running two partial recons still lists both.
+    const seen = new Set<string>()
+    const pending = new Map<string, number>()
+    const claim = (kind: string, projectId: string, runId = '') => {
+      seen.add(runKey(kind, projectId, runId))
+      if (!runId) {
+        const k = runKey(kind, projectId)
+        pending.set(k, (pending.get(k) ?? 0) + 1)
+      }
+    }
+
+    const queueRunning = mine.filter(r => r.status === 'running' || r.status === 'dispatching')
+    for (const r of queueRunning) claim(r.kind, r.projectId, r.runId)
+
+    // A queue row that reached dispatch carries the ScanJob it started, so the two
+    // sources would otherwise list the same scan twice.
+    const claimedScanJobs = new Set(queueRunning.map(r => r.scanJobId).filter((v): v is string => !!v))
+    const freeScans = runningScans.filter(s => !claimedScanJobs.has(s.id))
+    for (const s of freeScans) claim(s.kind, s.projectId, s.runId)
+
+    const freeLive = liveScans.filter(s => {
+      if (!projectNames.has(s.project_id)) return false        // not mine: an anonymous count
+      if (seen.has(runKey(s.kind, s.project_id, s.run_id))) return false
+      const k = runKey(s.kind, s.project_id)
+      const waiting = pending.get(k) ?? 0
+      if (waiting > 0) { pending.set(k, waiting - 1); return false }
+      return true
+    })
+
+    const running = [
+      ...queueRunning.map(serialize),
+      ...freeScans.map(serializeScan),
+      ...freeLive.map(s => serializeLive(s, projectNames.get(s.project_id) ?? '')),
+    ]
+
+    // Everyone else's in-flight work, as one anonymised number. Counted from the DB
+    // only: a scan is EITHER started directly (ScanJob, every kind) or by the queue
+    // (JobQueue row, and only full_recon then also writes a ScanJob). The live
+    // source is not consulted here - without per-project rows there is no key to
+    // de-duplicate it against, and after this change it can see nothing the DB
+    // does not already have.
+    const othersAgg = {
+      queued: 0,
+      running: othersRunningScans,
+      needsReview: othersNeedsReview,
+    }
     for (const g of othersActive) {
       const n = g._count._all
       if (g.status === 'queued') othersAgg.queued += n
-      else othersAgg.running += n // running + dispatching
+      else if (g.kind !== 'full_recon') othersAgg.running += n // running + dispatching
     }
 
     // Best-effort ledger snapshot from the orchestrator (drives the "waiting for

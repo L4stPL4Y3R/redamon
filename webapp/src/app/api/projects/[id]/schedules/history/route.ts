@@ -38,15 +38,25 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     : { projectId: id }
 
   try {
-    const result = await prisma.scanJob.deleteMany({ where })
+    // The history table lists finished queue jobs alongside ScanJobs (they are the
+    // only record of a non-full-recon run), so a selected id can be either. Only
+    // TERMINAL queue rows are deletable: a queued or running job is live state, and
+    // dropping its row would orphan the scan the dispatcher is about to start.
+    const [result, queueResult] = await Promise.all([
+      prisma.scanJob.deleteMany({ where }),
+      prisma.jobQueue.deleteMany({
+        where: { ...where, status: { in: ['done', 'failed', 'canceled'] } },
+      }),
+    ])
+    const deleted = result.count + queueResult.count
     await writeAudit({
       actorId: eff.userId,
       action: 'scan-job.history-clear',
       targetType: 'project',
       targetId: id,
-      after: { deleted: result.count, scope: ids ? 'selected' : 'all' },
+      after: { deleted, scope: ids ? 'selected' : 'all' },
     })
-    return NextResponse.json({ ok: true, deleted: result.count })
+    return NextResponse.json({ ok: true, deleted })
   } catch (error) {
     console.error('[scanTimeline] run-history delete failed:', error)
     return NextResponse.json(

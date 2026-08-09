@@ -2,12 +2,20 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { Upload, Github, FileText, Loader2, Trash2 } from 'lucide-react'
+import { Upload, Github, FileText, Loader2, Trash2, PackageSearch, Building2 } from 'lucide-react'
 import { parseGithubRepo, isValidGitRef } from '@/lib/validation/supplyChainInput'
 import { SETTINGS_KEYS_HREF } from '@/lib/settingsLinks'
+import { useToast } from '@/components/ui'
+import { useAlertModal } from '@/components/ui/AlertModal/AlertModal'
 import styles from './OtherScansModal.module.css'
 
-export type SupplyChainSource = 'upload' | 'github'
+/** 'upload' and 'github' are the project's PERSISTED input for one scan. 'org' is
+ *  a different action entirely - it queues one scan per repo in an organization -
+ *  so it is a view-only mode here and is never written to supplyChainInputMode. */
+export type SupplyChainSource = 'upload' | 'github' | 'org'
+
+/** GitHub owner/org: alphanumeric and dashes, 39 chars max. */
+const OWNER_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/
 
 interface Props {
   projectId: string
@@ -53,12 +61,20 @@ export default function SupplyChainInput({
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [org, setOrg] = useState('')
+  const [orgBusy, setOrgBusy] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const toast = useToast()
+  const { alertError } = useAlertModal()
 
   // Report input availability to the parent so Start can be gated on the
   // SELECTED source - a repo is not a substitute for a missing upload.
   useEffect(() => {
-    const hasInput = source === 'github' ? !!parseGithubRepo(repoUrl) : !!file
+    // In 'org' mode there is nothing for Start to run: the batch has its own
+    // button and queues N scans rather than starting this project's single one.
+    const hasInput = source === 'org' ? false
+      : source === 'github' ? !!parseGithubRepo(repoUrl)
+      : !!file
     onInputAvailabilityChange?.(hasInput)
   }, [source, file, repoUrl, onInputAvailabilityChange])
 
@@ -112,8 +128,43 @@ export default function SupplyChainInput({
   const chooseSource = async (next: SupplyChainSource) => {
     if (next === source || disabled) return
     setSource(next)
-    await persist({ supplyChainInputMode: next })
+    // 'org' is not a scan input, so it must not overwrite the project's saved
+    // mode - coming back to the card would otherwise find no input at all.
+    if (next !== 'org') await persist({ supplyChainInputMode: next })
   }
+
+  const orgValid = OWNER_RE.test(org.trim())
+
+  /**
+   * Enumerate the org's repositories server-side and queue one supply_chain_repo
+   * scan per repo (priority -10). The dispatcher runs them as capacity frees up,
+   * so this returns immediately with a count rather than starting anything.
+   */
+  const launchOrgBatch = useCallback(async () => {
+    if (!projectId || !orgValid || orgBusy) return
+    setOrgBusy(true)
+    try {
+      const res = await fetch(`/api/projects/${projectId}/supply-chain-batch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ org: org.trim() }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        await alertError(data.error || 'Could not start the org batch.', 'Supply-chain org batch')
+        return
+      }
+      toast.success(
+        `Queued ${data.totalItems} repo scan${data.totalItems === 1 ? '' : 's'} for ${org.trim()}. ` +
+        'They run as capacity frees up - follow them in Scans -> Scan queue.'
+      )
+      setOrg('')
+    } catch {
+      await alertError('Could not start the org batch.', 'Supply-chain org batch')
+    } finally {
+      setOrgBusy(false)
+    }
+  }, [projectId, org, orgValid, orgBusy, toast, alertError])
 
   const onFilePicked = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const picked = e.target.files?.[0]
@@ -187,6 +238,17 @@ export default function SupplyChainInput({
           <Github size={13} />
           <span>GitHub repository</span>
         </button>
+        <button
+          type="button"
+          role="radio"
+          aria-checked={source === 'org'}
+          disabled={disabled}
+          onClick={() => void chooseSource('org')}
+          className={`${styles.sourceOption} ${source === 'org' ? styles.sourceOptionActive : ''}`}
+        >
+          <Building2 size={13} />
+          <span>GitHub organization</span>
+        </button>
       </div>
 
       <div className={styles.inputPanel}>
@@ -241,6 +303,48 @@ export default function SupplyChainInput({
               poetry.lock, go.sum, Gemfile.lock, ...). Max 10 MB. A new upload
               replaces the current file. No API key is needed for an upload; keys
               and tokens live in{' '}
+              <Link href={SETTINGS_KEYS_HREF} style={{ color: 'var(--accent-primary)', fontWeight: 500 }}>
+                Global Settings
+              </Link>.
+            </p>
+          </>
+        ) : source === 'org' ? (
+          <>
+            <div className={styles.inputRow}>
+              <label className={styles.fieldLabel} htmlFor="sc-org">Organization</label>
+              <input
+                id="sc-org"
+                type="text"
+                className={styles.textField}
+                placeholder="github-org-or-user"
+                value={org}
+                disabled={disabled || orgBusy}
+                onChange={(e) => setOrg(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') void launchOrgBatch() }}
+              />
+              <button
+                type="button"
+                className={styles.sourceOption}
+                style={{ flex: '0 0 auto' }}
+                disabled={disabled || orgBusy || !orgValid}
+                onClick={() => void launchOrgBatch()}
+              >
+                {orgBusy ? <Loader2 size={13} className={styles.spinner} /> : <PackageSearch size={13} />}
+                <span>Queue org batch</span>
+              </button>
+            </div>
+            {org.trim() !== '' && !orgValid && (
+              <p className={styles.inlineError}>
+                An organization or user name: letters, digits and dashes, 39 characters max.
+              </p>
+            )}
+            <p className={styles.hint}>
+              Enumerates the organization&apos;s repositories and queues one supply-chain
+              scan per repo, which run as capacity frees up (follow them in the Scans
+              tab &rarr; Scan queue). Start above stays disabled here: this queues
+              many scans rather than running this project&apos;s single configured input.
+              Uses the project&apos;s saved org options (forks, archived, max repos, deep
+              analysis). Private organizations need the GitHub Access Token from{' '}
               <Link href={SETTINGS_KEYS_HREF} style={{ color: 'var(--accent-primary)', fontWeight: 500 }}>
                 Global Settings
               </Link>.

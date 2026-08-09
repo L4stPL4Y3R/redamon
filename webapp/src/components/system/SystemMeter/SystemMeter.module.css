@@ -2,16 +2,7 @@
   display: inline-flex;
   align-items: center;
   gap: 14px;
-  /* Now a button opening the scan-activity drawer: strip button chrome. */
-  background: none;
-  border: none;
-  padding: 0;
-  margin: 0;
-  font: inherit;
-  color: inherit;
-  cursor: pointer;
 }
-.wrap:hover { opacity: 0.85; }
 
 .meter {
   display: inline-flex;

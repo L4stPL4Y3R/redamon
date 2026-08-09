@@ -35,7 +35,7 @@ const SCHEDULE = {
   nextRunAt: '2026-08-01T03:00:00.000Z', lastRunAt: null,
 }
 const JOB = {
-  id: 'j1', trigger: 'scheduled' as const, mode: 'new' as const, status: 'deferred_ram',
+  id: 'j1', kind: 'full_recon', trigger: 'scheduled' as const, mode: 'new' as const, status: 'deferred_ram',
   startedAt: null, finishedAt: null, createdAt: '2026-07-30T03:00:00.000Z',
   nodeCount: null, ramReason: 'graph busy: a version activation is in progress',
 }
@@ -43,6 +43,12 @@ const JOB = {
 let fetchMock: ReturnType<typeof vi.fn>
 const ok = (body: unknown) => ({ ok: true, json: async () => body })
 const fail = (status: number, body: unknown) => ({ ok: false, status, json: async () => body })
+
+/** GETs of the schedules endpoint only: the embedded Scan queue panel polls
+ *  /api/system/jobs on its own, and that is not this component's load. */
+const scheduleGets = () => fetchMock.mock.calls.filter(
+  c => String(c[1]?.method ?? 'GET') === 'GET' && String(c[0]).includes('/schedules')
+)
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -63,13 +69,37 @@ describe('ScanScheduleTable', () => {
     expect(screen.getByText(/graph busy/)).toBeTruthy()
   })
 
+  // Run history now mixes ScanJobs (every kind) with finished queue jobs, so the
+  // row has to say which kind it was.
+  test('run history names the scan type of each row', async () => {
+    fetchMock.mockResolvedValue(ok({
+      schedules: [],
+      jobs: [JOB, { ...JOB, id: 'q1', kind: 'trufflehog', status: 'failed' }],
+    }))
+    render(<ScanScheduleTable projectId="p1" />)
+    await waitFor(() => expect(screen.getByText('TruffleHog')).toBeTruthy())
+    expect(screen.getByText('Full recon')).toBeTruthy()
+  })
+
+  // Order on the page: what will run, what is running, what already ran.
+  test('sections read Scheduled scans, then Scan queue, then Run history', async () => {
+    render(<ScanScheduleTable projectId="p1" />)
+    await waitFor(() => expect(screen.getByText('nightly')).toBeTruthy())
+    // The mocked WikiInfoButton renders inside the first heading, so match a prefix.
+    const headings = Array.from(document.querySelectorAll('h3')).map(h => h.textContent?.trim())
+    expect(headings).toHaveLength(3)
+    expect(headings[0]).toMatch(/^Scheduled scans/)
+    expect(headings[1]).toBe('Scan queue')
+    expect(headings[2]).toBe('Run history')
+  })
+
   test('a failing load is reported ONCE, not retried in a loop', async () => {
     fetchMock.mockResolvedValue(fail(500, { error: 'schedules exploded' }))
     render(<ScanScheduleTable projectId="p1" />)
     await waitFor(() => expect(fetchMock).toHaveBeenCalled())
     // Give a runaway effect plenty of turns to pile requests up.
     for (let i = 0; i < 10; i++) await new Promise(r => setTimeout(r, 5))
-    expect(fetchMock.mock.calls.filter(c => String(c[1]?.method ?? 'GET') === 'GET')).toHaveLength(1)
+    expect(scheduleGets()).toHaveLength(1)
     await waitFor(() => expect(screen.getByText(/schedules exploded/)).toBeTruthy())
   })
 
@@ -77,7 +107,7 @@ describe('ScanScheduleTable', () => {
     render(<ScanScheduleTable projectId="p1" />)
     await waitFor(() => expect(screen.getByText('nightly')).toBeTruthy())
     for (let i = 0; i < 5; i++) await new Promise(r => setTimeout(r, 5))
-    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(scheduleGets()).toHaveLength(1)
   })
 
   test('toggling enabled PATCHes the schedule and reloads', async () => {

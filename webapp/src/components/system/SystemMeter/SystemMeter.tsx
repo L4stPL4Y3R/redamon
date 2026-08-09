@@ -1,8 +1,6 @@
 'use client'
 
-import { useState } from 'react'
 import { useSystemStats, toGB } from '@/hooks/useSystemStats'
-import { ActivityDrawer } from '@/components/system/ActivityDrawer/ActivityDrawer'
 import styles from './SystemMeter.module.css'
 
 function Meter({ label, pct, value, detail, tone }: { label: string; pct: number; value?: string; detail: string; tone?: 'low' | 'mid' | 'high' }) {
@@ -29,7 +27,6 @@ function Meter({ label, pct, value, detail, tone }: { label: string; pct: number
  */
 export function SystemMeter() {
   const { data } = useSystemStats()
-  const [activityOpen, setActivityOpen] = useState(false)
   if (!data?.mem) return null
 
   const m = data.mem
@@ -49,28 +46,21 @@ export function SystemMeter() {
       (m.active_scans ? ` (${m.active_scans} scan${m.active_scans === 1 ? '' : 's'} reserving ${toGB(m.committed)} GB)` : ''),
   ].join('\n')
 
+  // Meters only. Queue/scan state lives in the Scans tab on /graph, not
+  // behind a click on the RAM/CPU readout.
   return (
-    <>
-      <button
-        type="button"
-        className={styles.wrap}
-        onClick={() => setActivityOpen(true)}
-        title="Open scan activity"
-        aria-label="Open scan activity"
-      >
-        <Meter label="RAM" pct={ramPct} tone="high" value={`${toGB(used)}/${toGB(total, 0)} GB used`} detail={ramTooltip} />
-        {diskTotal > 0 && (
-          <Meter
-            label="DISK"
-            pct={diskPct}
-            tone="high"
-            value={`${toGB(diskTotal - diskFree)}/${toGB(diskTotal, 0)} GB used`}
-            detail={`${toGB(diskFree)} GB free of ${toGB(diskTotal)} GB (${Math.round(diskPct)}% used)`}
-          />
-        )}
-        <Meter label="CPU" pct={cpuPct} tone="high" detail={`${Math.round(cpuPct)}% of ${data.cpu?.cores ?? '?'} cores`} />
-      </button>
-      <ActivityDrawer isOpen={activityOpen} onClose={() => setActivityOpen(false)} />
-    </>
+    <div className={styles.wrap}>
+      <Meter label="RAM" pct={ramPct} tone="high" value={`${toGB(used)}/${toGB(total, 0)} GB used`} detail={ramTooltip} />
+      {diskTotal > 0 && (
+        <Meter
+          label="DISK"
+          pct={diskPct}
+          tone="high"
+          value={`${toGB(diskTotal - diskFree)}/${toGB(diskTotal, 0)} GB used`}
+          detail={`${toGB(diskFree)} GB free of ${toGB(diskTotal)} GB (${Math.round(diskPct)}% used)`}
+        />
+      )}
+      <Meter label="CPU" pct={cpuPct} tone="high" detail={`${Math.round(cpuPct)}% of ${data.cpu?.cores ?? '?'} cores`} />
+    </div>
   )
 }

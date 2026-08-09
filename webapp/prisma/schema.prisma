@@ -1139,6 +1139,16 @@ model ScanJob {
   project            Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
   versionId          String?      @map("version_id")
   version            ScanVersion? @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  /// Which scan this row records. Historically every ScanJob was a full recon and
+  /// nothing else wrote one, which left a directly-started GVM / TruffleHog /
+  /// supply-chain / AI-attack run with NO record at all: invisible while running
+  /// once the orchestrator forgot it, and absent from run history forever.
+  /// full_recon | partial_recon | gvm | github_hunt | trufflehog | supply_chain |
+  /// supply_chain_repo | ai_attack
+  kind               String       @default("full_recon")
+  /// Orchestrator run id for the kinds that allow several concurrent runs per
+  /// project (partial_recon, ai_attack). Empty for the one-per-project kinds.
+  runId              String       @default("") @map("run_id")
   // "manual" | "scheduled"
   trigger            String       @default("manual")
   // "new" | "overwrite" | null
@@ -1157,6 +1167,8 @@ model ScanJob {
 
   @@index([projectId, createdAt])
   @@index([status])
+  // Closing out a run looks up the open row for one project + kind.
+  @@index([projectId, kind, status])
   @@map("scan_jobs")
 }
 

@@ -55,7 +55,7 @@ const TABLE_MODE_LABELS: Record<TableViewMode, string> = {
   dnsDrift: 'DNS Drift',
   webCachePoison: 'Web Cache Poisoning',
   reconDelta: 'Recon Delta',
-  scanSchedule: 'Scan Scheduler',
+  scanSchedule: 'Scans',
 }
 
 const TABLE_VIEW_MODES = new Set<string>(Object.keys(TABLE_MODE_LABELS))
@@ -310,7 +310,7 @@ export const ViewTabs = memo(function ViewTabs({
           <span>Graph Map</span>
         </button>
 
-        {/* Scan Timeline: Recon Delta + Scan Scheduler are their own top-level tabs
+        {/* Scan Timeline: Recon Delta + Scans are their own top-level tabs
             (not buried in the table dropdown), each flagged NEW. */}
         <button
           role="tab"
@@ -329,7 +329,7 @@ export const ViewTabs = memo(function ViewTabs({
           onClick={() => { onTableViewModeChange?.('scanSchedule'); onViewChange('table') }}
         >
           <CalendarClock size={14} />
-          <span>Scan Scheduler</span>
+          <span>Scans</span>
           <span className={styles.newBadge}>NEW</span>
         </button>
 
@@ -341,7 +341,7 @@ export const ViewTabs = memo(function ViewTabs({
             onClick={() => onViewChange('table')}
           >
             {(() => {
-              // Recon Delta / Scan Scheduler are their own tabs now, so the table
+              // Recon Delta / Scans are their own tabs now, so the table
               // dropdown never advertises them - fall back to its default label.
               const mode = (tableViewMode === 'reconDelta' || tableViewMode === 'scanSchedule')
                 ? 'all' : (tableViewMode ?? 'all')

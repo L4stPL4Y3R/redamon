@@ -167,6 +167,14 @@
 .iconBtn:disabled { opacity: 0.4; cursor: not-allowed; }
 .dangerBtn:hover:not(:disabled) { color: #ef4444; }
 
+/* Same button, carrying a word instead of a glyph (queue actions). */
+.textBtn {
+  padding: 1px var(--space-2);
+  border-color: var(--border-default);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
 .badgeOn, .badgeOff, .statusOk, .statusBad, .statusRunning, .statusDeferred {
   display: inline-block;
   padding: 1px var(--space-1);
@@ -198,7 +206,7 @@
   color: #ef4444;
 }
 
-/* C-11: pointer to the live Scan activity view. */
+/* C-11: pointer to the Scan queue section above. */
 .hint {
   font-size: 0.8rem;
   color: var(--text-secondary, #9aa);

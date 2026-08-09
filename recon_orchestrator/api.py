@@ -499,6 +499,68 @@ async def system_stats():
     }
 
 
+"""Statuses that mean "this scan still occupies the host". Everything else is
+terminal (completed / error) or means nothing is there (idle)."""
+_ACTIVE_SCAN_STATUSES = {"starting", "running", "paused", "stopping"}
+
+
+@app.get("/system/active-scans")
+async def system_active_scans():
+    """Every in-flight scan the orchestrator is holding, across ALL kinds.
+
+    The per-kind `/{kind}/{project_id}/status` endpoints answer one project and one
+    kind at a time, which is why a directly-started GVM or TruffleHog scan was
+    invisible to any cross-project view: only full recon leaves a DB row
+    (`scan_jobs`), and only queued work leaves a `job_queue` row. This is the
+    single read that makes "what is running right now" answerable for every kind.
+
+    Read-only, no secrets, no reservation side-effect.
+    """
+    if not container_manager:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    cm = container_manager
+    out: list[dict] = []
+
+    def add(kind: str, state, run_id: str = "", tool_id: str = ""):
+        status = getattr(state, "status", None)
+        status = getattr(status, "value", status)
+        if status not in _ACTIVE_SCAN_STATUSES:
+            return
+        started = getattr(state, "started_at", None)
+        out.append({
+            "kind": kind,
+            "project_id": getattr(state, "project_id", ""),
+            "run_id": run_id,
+            "tool_id": tool_id,
+            "status": status,
+            "current_phase": getattr(state, "current_phase", None),
+            "started_at": started.isoformat() if started else None,
+        })
+
+    # One state per project.
+    for state in cm.running_states.values():
+        add("full_recon", state)
+    for state in cm.gvm_states.values():
+        add("gvm", state)
+    for state in cm.github_hunt_states.values():
+        add("github_hunt", state)
+    for state in cm.trufflehog_states.values():
+        add("trufflehog", state)
+    for state in cm.supply_chain_states.values():
+        add("supply_chain", state)
+
+    # Run-keyed: {project_id: {run_id: state}}.
+    for runs in cm.partial_recon_states.values():
+        for run_id, state in runs.items():
+            add("partial_recon", state, run_id=run_id, tool_id=getattr(state, "tool_id", ""))
+    for runs in cm.ai_attack_states.values():
+        for run_id, state in runs.items():
+            add("ai_attack", state, run_id=run_id, tool_id=getattr(state, "tool", ""))
+
+    return {"scans": out}
+
+
 @app.get("/local-llm/status")
 async def local_llm_status():
     """Current state of the on-demand local LLM (Ollama) judge service.
