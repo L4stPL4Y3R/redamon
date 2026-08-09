@@ -226,27 +226,37 @@ class TestLoop(unittest.TestCase):
         with mock.patch.dict(os.environ, {"JOB_QUEUE_DISPATCHER_ENABLED": "false"}):
             asyncio.run(asyncio.wait_for(jd.job_dispatcher_loop(lambda: None), timeout=2))
 
-    def test_a_concurrent_tick_is_skipped_while_one_is_in_flight(self):
+    def test_a_second_tick_is_skipped_while_one_is_in_flight(self):
         # The periodic loop and the reaper trigger must not both dispatch at once
-        # (they would race on the per-row claim). asyncio single-threading + the
-        # in-flight flag make the second call a no-op.
-        import time
-
-        def slow(cm):
-            time.sleep(0.05)
-            return {"candidates": 0, "dispatched": 0, "deferred": 0, "failed": 0, "disk_blocked": False}
+        # (they would race on the per-row claim). The in-flight flag makes an
+        # overlapping call a no-op. Deterministic: pre-set the flag to model "a tick
+        # is already running" and confirm the guard returns None without dispatching.
+        called = []
 
         async def drive():
-            with mock.patch.object(jd, "run_dispatcher_tick", side_effect=slow):
-                r1, r2 = await asyncio.gather(jd._guarded_tick(_Manager()), jd._guarded_tick(_Manager()))
-            # Exactly one ran; the other was skipped (returned None).
-            self.assertTrue((r1 is None) != (r2 is None), (r1, r2))
+            with mock.patch.object(jd, "run_dispatcher_tick", side_effect=lambda cm: called.append(cm)):
+                jd._tick_in_progress = True   # a tick is already in flight
+                try:
+                    r = await jd._guarded_tick(_Manager())
+                finally:
+                    jd._tick_in_progress = False
+            self.assertIsNone(r, "an overlapping tick must be a no-op")
+            self.assertEqual(called, [], "the guarded tick must not dispatch while one is in flight")
 
-        jd._tick_in_progress = False
-        try:
-            asyncio.run(drive())
-        finally:
+        asyncio.run(drive())
+
+    def test_a_tick_runs_and_clears_the_flag_when_idle(self):
+        # When no tick is in flight, the guard runs the tick and always clears the
+        # flag afterwards (so the next trigger is not blocked forever).
+        async def drive():
             jd._tick_in_progress = False
+            # No INTERNAL_API_KEY -> run_dispatcher_tick returns its empty summary.
+            with mock.patch.dict(os.environ, {"INTERNAL_API_KEY": ""}):
+                r = await jd._guarded_tick(_Manager())
+            self.assertIsNotNone(r)
+            self.assertFalse(jd._tick_in_progress, "the flag must be cleared after a tick")
+
+        asyncio.run(drive())
 
     def test_a_failing_tick_does_not_kill_the_loop(self):
         async def drive():
