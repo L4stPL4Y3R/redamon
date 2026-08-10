@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { guardProject } from '@/lib/access'
+import { reconcileScanJobStatus } from '@/lib/scanTimeline'
 import { orchestratorFetch } from '@/lib/orchestrator'
 
 const RECON_ORCHESTRATOR_URL = process.env.RECON_ORCHESTRATOR_URL || 'http://localhost:8010'
@@ -19,7 +20,11 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       const errorData = await response.json().catch(() => ({}))
       return NextResponse.json({ error: errorData.detail || 'Failed to get Supply-Chain status' }, { status: response.status })
     }
-    return NextResponse.json(await response.json())
+    const data = await response.json()
+    // The orchestrator owns liveness; this only mirrors a TERMINAL state onto the
+    // history row, so the run stops reading as running once it ends.
+    await reconcileScanJobStatus(projectId, data?.status, { kind: 'supply_chain' })
+    return NextResponse.json(data)
   } catch (error) {
     if (error instanceof TypeError && error.message.includes('fetch')) {
       return NextResponse.json({

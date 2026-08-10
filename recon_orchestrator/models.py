@@ -258,6 +258,13 @@ class SupplyChainStartRequest(BaseModel):
     project_id: str
     user_id: str
     webapp_api_url: str
+    # Scan Queue Phase 6: a supply_chain_repo (org-batch) item targets ONE repo,
+    # overriding the project's supply-chain config. Optional; absent for a normal
+    # single supply-chain scan.
+    repo_override_url: Optional[str] = None
+    repo_override_ref: Optional[str] = None
+    repo_override_scope: Optional[str] = None
+    repo_override_deep: Optional[bool] = None
 
 
 class GuarddogRequest(BaseModel):

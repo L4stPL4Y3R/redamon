@@ -325,7 +325,41 @@ class ContainerManager:
         # they DO hold a reservation. Without them here the 30 s reaper would
         # free a live job's bytes and the ledger would under-count.
         keys |= self.guarddog_jobs
+        # Phase 7: CodeFix build sandboxes hold an accounted reservation; keep it
+        # until the sandbox is stopped/reaped, or the reaper would free live bytes.
+        for job_id in self.codefix_sandboxes:
+            keys.add(self._scan_key("codefix", job_id))
         return keys
+
+    def active_scan_projects(self) -> set:
+        """Project IDs with at least one scan container currently RUNNING/STARTING/
+        PAUSED. Used by the Scan Queue reconcile (C-6) to close 'running' JobQueue
+        rows whose project no longer has any live scan, even with no browser open."""
+        projects = set()
+        for pid, st in self.running_states.items():
+            if st.status in (ReconStatus.RUNNING, ReconStatus.STARTING, ReconStatus.PAUSED):
+                projects.add(pid)
+        for pid, runs in self.partial_recon_states.items():
+            if any(st.status in (PartialReconStatus.RUNNING, PartialReconStatus.STARTING)
+                   for st in runs.values()):
+                projects.add(pid)
+        for pid, runs in self.ai_attack_states.items():
+            if any(st.status in (AiAttackSurfaceStatus.RUNNING, AiAttackSurfaceStatus.STARTING)
+                   for st in runs.values()):
+                projects.add(pid)
+        for pid, st in self.gvm_states.items():
+            if st.status in (GvmStatus.RUNNING, GvmStatus.STARTING, GvmStatus.PAUSED):
+                projects.add(pid)
+        for pid, st in self.github_hunt_states.items():
+            if st.status in (GithubHuntStatus.RUNNING, GithubHuntStatus.STARTING, GithubHuntStatus.PAUSED):
+                projects.add(pid)
+        for pid, st in self.trufflehog_states.items():
+            if st.status in (TrufflehogStatus.RUNNING, TrufflehogStatus.STARTING, TrufflehogStatus.PAUSED):
+                projects.add(pid)
+        for pid, st in self.supply_chain_states.items():
+            if st.status in (SupplyChainStatus.RUNNING, SupplyChainStatus.STARTING, SupplyChainStatus.PAUSED):
+                projects.add(pid)
+        return projects
 
     async def refresh_all_scan_states(self) -> None:
         """Advance every scan's in-memory status by polling Docker, so reconcile()
@@ -897,6 +931,9 @@ class ContainerManager:
             "container_id": container.id,
             "created_at": datetime.now(timezone.utc),
         }
+        # Phase 7: account for the sandbox's 2 GB in the ledger (non-gating) so the
+        # governor stops over-admitting scans on top of a running agent build.
+        self.ledger.account(self._scan_key("codefix", job_id), self.ledger.envelope_for("codefix"))
         logger.info(f"[codefix] started sandbox {name} ({container.id[:12]}) for job {job_id}")
         return {"job_id": job_id, "container": name}
 
@@ -938,6 +975,8 @@ class ContainerManager:
         """Remove the sandbox container and (optionally) the per-job worktree."""
         job_id = self._safe_job_id(job_id)
         entry = self.codefix_sandboxes.pop(job_id, None)
+        # Phase 7: release the sandbox's ledger reservation (accounted at spawn).
+        self.ledger.release_nowait(self._scan_key("codefix", job_id))
         if entry:
             try:
                 container = self.client.containers.get(entry["container_id"])
@@ -3654,7 +3693,11 @@ exit $RC
         return f"redamon-supply-chain-{safe_id}"
 
     async def start_supply_chain(self, project_id: str, user_id: str,
-                                 webapp_api_url: str, supply_chain_path: str) -> "SupplyChainState":
+                                 webapp_api_url: str, supply_chain_path: str,
+                                 repo_override_url: Optional[str] = None,
+                                 repo_override_ref: Optional[str] = None,
+                                 repo_override_scope: Optional[str] = None,
+                                 repo_override_deep: Optional[bool] = None) -> "SupplyChainState":
         current = await self.get_supply_chain_status(project_id)
         if current.status in (SupplyChainStatus.RUNNING, SupplyChainStatus.PAUSED):
             raise ValueError(f"Supply-chain scan already active for project {project_id}")
@@ -3677,6 +3720,18 @@ exit $RC
             project_id=project_id, status=SupplyChainStatus.STARTING,
             started_at=datetime.now(timezone.utc))
         self.supply_chain_states[project_id] = state
+
+        # Scan Queue Phase 6: per-repo override for an org-batch item. When set, the
+        # scan container forces github input mode and scans THIS repo, overriding
+        # the project's supply-chain config (see supply_chain_scan/project_settings.
+        # _apply_repo_override). Absent for a normal single supply-chain scan.
+        repo_override_env: dict[str, str] = {}
+        if repo_override_url:
+            repo_override_env["SUPPLY_CHAIN_REPO_OVERRIDE_URL"] = str(repo_override_url)
+            repo_override_env["SUPPLY_CHAIN_REPO_OVERRIDE_REF"] = str(repo_override_ref or "")
+            repo_override_env["SUPPLY_CHAIN_REPO_OVERRIDE_SCOPE"] = str(repo_override_scope or "")
+            if repo_override_deep is not None:
+                repo_override_env["SUPPLY_CHAIN_REPO_OVERRIDE_DEEP"] = "1" if repo_override_deep else "0"
 
         try:
             try:
@@ -3717,8 +3772,16 @@ exit $RC
                     **self._scanner_env(),
                     # Operator overrides for the dirty analyzer this scan spawns.
                     **self._analyzer_env(),
+                    # Per-repo override for an org-batch item (Phase 6); empty otherwise.
+                    **repo_override_env,
                 },
                 volumes={
+                    # Shared scratch the analyzer_dispatch job.json is written to,
+                    # then bind-mounted by the dirty analyzer. Recon, partial recon
+                    # and AI attack all mount this; supply chain omitted it, so the
+                    # analyzer read a path the scan container never wrote (L1
+                    # GuardDog deep analysis broken). See Phase 0.1.
+                    "/tmp/redamon": {"bind": "/tmp/redamon", "mode": "rw"},
                     f"{supply_chain_path}/output": {"bind": "/app/supply_chain_scan/output", "mode": "rw"},
                     f"{supply_chain_path}": {"bind": "/app/supply_chain_scan", "mode": "rw"},
                     sibling_host_path(supply_chain_path, "graph_db"): {"bind": "/app/graph_db", "mode": "ro"},

@@ -10,6 +10,7 @@ import { isHardBlockedDomain } from '@/lib/hard-guardrail'
 import { useProject } from '@/providers/ProjectProvider'
 import useReconStatus from '@/hooks/useReconStatus'
 import { useMultiPartialReconStatus } from '@/hooks/useMultiPartialReconStatus'
+import { useScanStartFailure } from '@/hooks/useScanStartFailure'
 import { useMultiPartialReconSSE } from '@/hooks/useMultiPartialReconSSE'
 import { useDirtyState } from '@/hooks/useDirtyState'
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard'
@@ -264,6 +265,9 @@ export function ProjectForm({
   )
   const projectId =
     projectIdFromRoute ?? (initialData as { id?: string } | undefined)?.id ?? (mode === 'create' ? generatedId : undefined)
+  // Scan Queue (Phase 3): a temporary partial-recon start refusal offers Cancel /
+  // Add to queue instead of a dead-end toast.
+  const { handleStartFailure: handlePartialStartFailure } = useScanStartFailure(projectId ?? null)
 
   // Deep-link support: `?tab=<id>` (e.g. from the CodeFix "missing settings" alert
   // linking to `/projects/[id]/settings?tab=cypherfix`) opens that tab directly.
@@ -633,7 +637,13 @@ export function ProjectForm({
       })
       if (!response.ok) {
         const data = await response.json().catch(() => ({}))
-        toast.error(data.error || 'Failed to start partial recon')
+        setPartialReconToolId(null)
+        // Temporary -> Cancel / Add to queue; permanent -> error (Scan Queue Phase 3).
+        await handlePartialStartFailure(
+          'partial_recon',
+          { message: data.error || 'Failed to start partial recon', limit: data.limit, status: response.status },
+          params as unknown as Record<string, unknown>,
+        )
         return
       }
       const data: PartialReconState = await response.json()
@@ -647,7 +657,7 @@ export function ProjectForm({
     } finally {
       setIsPartialReconStarting(false)
     }
-  }, [projectId, toast])
+  }, [projectId, toast, handlePartialStartFailure])
 
   // Determine if form can be submitted
   const canSubmit = !isSubmitting && !isLoadingDefaults

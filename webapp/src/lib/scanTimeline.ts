@@ -193,6 +193,10 @@ export interface CreateScanJobInput {
   initiatedByUserId?: string | null
   scheduleId?: string | null
   ramReason?: string | null
+  /** Defaults to full_recon, which is what every ScanJob used to be. */
+  kind?: string
+  /** Only for kinds that run several times per project at once. */
+  runId?: string
 }
 
 export async function createScanJob(input: CreateScanJobInput): Promise<{ id: string }> {
@@ -201,6 +205,8 @@ export async function createScanJob(input: CreateScanJobInput): Promise<{ id: st
     data: {
       projectId: input.projectId,
       versionId: input.versionId ?? null,
+      kind: input.kind ?? 'full_recon',
+      runId: input.runId ?? '',
       trigger: input.trigger,
       mode: input.mode,
       status,
@@ -214,6 +220,36 @@ export async function createScanJob(input: CreateScanJobInput): Promise<{ id: st
 }
 
 /**
+ * Record a non-full-recon scan that the orchestrator just accepted.
+ *
+ * Deliberately never throws: history is a side effect of starting a scan, and a
+ * failure to write it must not fail the start the operator asked for.
+ */
+export async function recordScanStart(input: {
+  projectId: string
+  kind: string
+  runId?: string
+  initiatedByUserId?: string | null
+  scheduleId?: string | null
+}): Promise<void> {
+  try {
+    await createScanJob({
+      projectId: input.projectId,
+      versionId: null,
+      kind: input.kind,
+      runId: input.runId ?? '',
+      // These kinds do not version the graph, so there is no mode to record.
+      trigger: input.scheduleId ? 'scheduled' : 'manual',
+      mode: null,
+      initiatedByUserId: input.initiatedByUserId ?? null,
+      scheduleId: input.scheduleId ?? null,
+    })
+  } catch (err) {
+    console.error(`[scanTimeline] could not record ${input.kind} start (continuing):`, err)
+  }
+}
+
+/**
  * Close out the project's open ScanJob from an observed orchestrator status.
  *
  * The orchestrator owns scan liveness; we only mirror terminal states onto the
@@ -223,8 +259,10 @@ export async function createScanJob(input: CreateScanJobInput): Promise<{ id: st
  */
 export async function reconcileScanJobStatus(
   projectId: string,
-  reconStatus: string | undefined | null
+  reconStatus: string | undefined | null,
+  opts: { kind?: string; runId?: string } = {}
 ): Promise<void> {
+  const kind = opts.kind ?? 'full_recon'
   const mapped =
     reconStatus === 'completed' ? 'completed'
     : reconStatus === 'error' ? 'failed'
@@ -233,8 +271,21 @@ export async function reconcileScanJobStatus(
   if (!mapped) return
 
   try {
+    // C-1: only ever close out a GENUINELY running job. A 'queued' row has no
+    // container, so the orchestrator reports 'idle', which this function maps to
+    // 'canceled' -- an ordinary browser status poll would then silently cancel a
+    // queued scan just by looking at the page. The JobQueue row is the pending
+    // record; a ScanJob exists only for an attempt that really started.
     const open = await prisma.scanJob.findFirst({
-      where: { projectId, status: { in: ['queued', 'running'] } },
+      // Scoped to the kind (and, where several can run at once, the run): closing
+      // "the project's open job" from a GVM poll would otherwise end the full
+      // recon's history row instead of GVM's.
+      where: {
+        projectId,
+        kind,
+        status: { in: ['running'] },
+        ...(opts.runId ? { runId: opts.runId } : {}),
+      },
       orderBy: { createdAt: 'desc' },
       select: { id: true, versionId: true },
     })
@@ -253,6 +304,53 @@ export async function reconcileScanJobStatus(
     })
   } catch (err) {
     console.error('[scanTimeline] scan-job reconcile failed (continuing):', err)
+  }
+}
+
+/**
+ * Close out the run-keyed kinds (partial_recon, ai_attack) from the one list poll
+ * the UI already makes, instead of a status call per run.
+ *
+ * Only an explicitly TERMINAL live status closes a row. A run that has simply
+ * disappeared from the orchestrator's list is left alone: it also disappears when
+ * the orchestrator restarts, and calling that "completed" would invent an outcome.
+ * Such a row stays `running` until something else reconciles it.
+ */
+export async function reconcileRunScanJobs(
+  projectId: string,
+  kind: string,
+  runs: unknown
+): Promise<void> {
+  if (!Array.isArray(runs) || runs.length === 0) return
+  try {
+    const open = await prisma.scanJob.findMany({
+      where: { projectId, kind, status: 'running' },
+      select: { id: true, runId: true },
+    })
+    if (open.length === 0) return
+
+    const liveStatus = new Map<string, string>()
+    for (const r of runs) {
+      const run = r as { run_id?: unknown; status?: unknown }
+      if (typeof run?.run_id === 'string' && typeof run?.status === 'string') {
+        liveStatus.set(run.run_id, run.status)
+      }
+    }
+
+    await Promise.all(open.map(row => {
+      const status = row.runId ? liveStatus.get(row.runId) : undefined
+      const mapped =
+        status === 'completed' ? 'completed'
+        : status === 'error' ? 'failed'
+        : null
+      if (!mapped) return Promise.resolve()
+      return prisma.scanJob.update({
+        where: { id: row.id },
+        data: { status: mapped, finishedAt: new Date() },
+      })
+    }))
+  } catch (err) {
+    console.error(`[scanTimeline] ${kind} run reconcile failed (continuing):`, err)
   }
 }
 

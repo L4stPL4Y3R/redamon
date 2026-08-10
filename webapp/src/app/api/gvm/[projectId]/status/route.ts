@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { guardProject } from '@/lib/access'
+import { reconcileScanJobStatus } from '@/lib/scanTimeline'
 import { orchestratorFetch } from '@/lib/orchestrator'
 
 const RECON_ORCHESTRATOR_URL = process.env.RECON_ORCHESTRATOR_URL || 'http://localhost:8010'
@@ -31,6 +32,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     }
 
     const data = await response.json()
+    // The orchestrator owns liveness; this only mirrors a TERMINAL state onto the
+    // history row, so the run stops reading as running once it ends.
+    await reconcileScanJobStatus(projectId, data?.status, { kind: 'gvm' })
     return NextResponse.json(data)
 
   } catch (error) {

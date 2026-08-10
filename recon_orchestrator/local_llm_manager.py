@@ -52,6 +52,11 @@ LLM_IMAGE = os.environ.get("LOCAL_LLM_IMAGE", "ollama/ollama:latest")
 LLM_MODEL = os.environ.get("LOCAL_LLM_MODEL", "qwen2.5:7b")
 LLM_CONTAINER_NAME = os.environ.get("LOCAL_LLM_CONTAINER_NAME", "redamon-local-llm")
 LLM_MODELS_VOLUME = os.environ.get("LOCAL_LLM_VOLUME", "redamon_llm_models")
+# Phase 7: the Ollama judge ran with NO mem_limit, so a model load could balloon
+# past what the governor assumed was free and OOM the host. Cap it (Docker mem_limit
+# string, e.g. "8g"). Empty/"0"/"none" disables the cap (GPU or a very large judge
+# model). Must comfortably hold the LOCAL_LLM_MODEL in CPU mode; raise for bigger.
+LLM_MEM_LIMIT = (os.environ.get("LOCAL_LLM_MEM", "8g") or "").strip()
 LLM_PORT = int(os.environ.get("LOCAL_LLM_PORT", "11434"))
 # Ollama is spawned on the shared bridge network and publishes its port to the
 # host. Two consumers reach it two different ways:
@@ -257,6 +262,10 @@ class LocalLlmManager:
             volumes={LLM_MODELS_VOLUME: {"bind": "/root/.ollama", "mode": "rw"}},
             restart_policy={"Name": "no"},
         )
+        # Phase 7: cap the judge's RAM unless explicitly disabled. GPU mode loads
+        # into VRAM, so the RAM cap does not apply there.
+        if LLM_MEM_LIMIT and LLM_MEM_LIMIT.lower() not in ("0", "none", "off") and not LLM_USE_GPU:
+            run_kwargs["mem_limit"] = LLM_MEM_LIMIT
         if LLM_USE_GPU:
             # Request all GPUs (equivalent to `--gpus all`).
             run_kwargs["device_requests"] = [

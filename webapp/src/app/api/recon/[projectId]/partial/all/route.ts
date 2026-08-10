@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { guardProject } from '@/lib/access'
+import { reconcileRunScanJobs } from '@/lib/scanTimeline'
 import { orchestratorFetch } from '@/lib/orchestrator'
 
 const RECON_ORCHESTRATOR_URL = process.env.RECON_ORCHESTRATOR_URL || 'http://localhost:8010'
@@ -28,6 +29,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     }
 
     const data = await response.json()
+    await reconcileRunScanJobs(projectId, 'partial_recon', data?.runs)
     return NextResponse.json(data)
 
   } catch (error) {

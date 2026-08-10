@@ -12,7 +12,7 @@ import { describe, test, expect, beforeEach, vi } from 'vitest'
 
 const prismaMock = vi.hoisted(() => ({
   scanVersion: { update: vi.fn(), create: vi.fn(), findFirst: vi.fn(), findUnique: vi.fn() },
-  scanJob: { create: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
+  scanJob: { create: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), update: vi.fn() },
   $transaction: vi.fn(),
 }))
 const snapshotMock = vi.hoisted(() => ({
@@ -35,6 +35,8 @@ import {
   parseScanMode,
   prepareVersionsForFullScan,
   createScanJob,
+  recordScanStart,
+  reconcileRunScanJobs,
   reconcileScanJobStatus,
   nextVersionSeq,
   rotateToNextVersion,
@@ -222,6 +224,85 @@ describe('createScanJob', () => {
   })
 })
 
+describe('recordScanStart', () => {
+  // Every kind writes a ScanJob now. Before this, a directly-started GVM or
+  // supply-chain scan left no row at all and vanished from history when it ended.
+  test('records the kind and marks the row running', async () => {
+    prismaMock.scanJob.create.mockResolvedValue({ id: 'j9' })
+    await recordScanStart({ projectId: 'p1', kind: 'supply_chain', initiatedByUserId: 'u1' })
+    const data = prismaMock.scanJob.create.mock.calls[0][0].data
+    expect(data).toMatchObject({
+      projectId: 'p1', kind: 'supply_chain', status: 'running',
+      trigger: 'manual', mode: null, versionId: null, initiatedByUserId: 'u1',
+    })
+  })
+
+  test('a run-keyed kind carries its run id', async () => {
+    prismaMock.scanJob.create.mockResolvedValue({ id: 'j9' })
+    await recordScanStart({ projectId: 'p1', kind: 'partial_recon', runId: 'r1' })
+    expect(prismaMock.scanJob.create.mock.calls[0][0].data).toMatchObject({ kind: 'partial_recon', runId: 'r1' })
+  })
+
+  test('a scheduled origin is recorded as such', async () => {
+    prismaMock.scanJob.create.mockResolvedValue({ id: 'j9' })
+    await recordScanStart({ projectId: 'p1', kind: 'gvm', scheduleId: 's1' })
+    expect(prismaMock.scanJob.create.mock.calls[0][0].data).toMatchObject({ trigger: 'scheduled', scheduleId: 's1' })
+  })
+
+  // History is a side effect of starting a scan; it must never fail the start.
+  test('a DB failure never propagates to the caller', async () => {
+    prismaMock.scanJob.create.mockRejectedValue(new Error('db down'))
+    await expect(recordScanStart({ projectId: 'p1', kind: 'gvm' })).resolves.toBeUndefined()
+  })
+})
+
+describe('reconcileRunScanJobs', () => {
+  beforeEach(() => {
+    prismaMock.scanJob.update.mockResolvedValue({})
+  })
+
+  test('closes each open run from its own live status', async () => {
+    prismaMock.scanJob.findMany.mockResolvedValue([
+      { id: 'j1', runId: 'r1' }, { id: 'j2', runId: 'r2' }, { id: 'j3', runId: 'r3' },
+    ])
+    await reconcileRunScanJobs('p1', 'partial_recon', [
+      { run_id: 'r1', status: 'completed' },
+      { run_id: 'r2', status: 'error' },
+      { run_id: 'r3', status: 'running' },
+    ])
+    const byId = Object.fromEntries(
+      prismaMock.scanJob.update.mock.calls.map(c => [c[0].where.id, c[0].data.status]))
+    expect(byId).toEqual({ j1: 'completed', j2: 'failed' })
+  })
+
+  // A run vanishes from the list when the orchestrator restarts too; calling that
+  // 'completed' would invent an outcome the scan never reported.
+  test('a run missing from the list is left running, not invented as completed', async () => {
+    prismaMock.scanJob.findMany.mockResolvedValue([{ id: 'j1', runId: 'gone' }])
+    await reconcileRunScanJobs('p1', 'partial_recon', [{ run_id: 'other', status: 'completed' }])
+    expect(prismaMock.scanJob.update).not.toHaveBeenCalled()
+  })
+
+  test('no open rows → no per-run work', async () => {
+    prismaMock.scanJob.findMany.mockResolvedValue([])
+    await reconcileRunScanJobs('p1', 'ai_attack', [{ run_id: 'r1', status: 'completed' }])
+    expect(prismaMock.scanJob.update).not.toHaveBeenCalled()
+  })
+
+  test('an empty or non-array payload does no DB work at all', async () => {
+    await reconcileRunScanJobs('p1', 'ai_attack', [])
+    await reconcileRunScanJobs('p1', 'ai_attack', undefined)
+    await reconcileRunScanJobs('p1', 'ai_attack', { runs: 'nope' })
+    expect(prismaMock.scanJob.findMany).not.toHaveBeenCalled()
+  })
+
+  test('swallows DB errors so a list poll never breaks', async () => {
+    prismaMock.scanJob.findMany.mockRejectedValue(new Error('db down'))
+    await expect(reconcileRunScanJobs('p1', 'gvm', [{ run_id: 'r', status: 'completed' }]))
+      .resolves.toBeUndefined()
+  })
+})
+
 describe('reconcileScanJobStatus', () => {
   beforeEach(() => {
     prismaMock.scanJob.findFirst.mockResolvedValue({ id: 'j1', versionId: 'v1' })
@@ -243,6 +324,25 @@ describe('reconcileScanJobStatus', () => {
     }
     expect(prismaMock.scanJob.findFirst).not.toHaveBeenCalled()
     expect(prismaMock.scanJob.update).not.toHaveBeenCalled()
+  })
+
+  // A GVM poll closing "the project's open job" would have ended the full recon's
+  // history row instead of GVM's.
+  test('only ever closes the open job of the polled kind', async () => {
+    await reconcileScanJobStatus('p1', 'completed', { kind: 'gvm' })
+    expect(prismaMock.scanJob.findFirst.mock.calls[0][0].where).toMatchObject({
+      projectId: 'p1', kind: 'gvm', status: { in: ['running'] },
+    })
+  })
+
+  test('defaults to full_recon, the only kind that used to exist', async () => {
+    await reconcileScanJobStatus('p1', 'completed')
+    expect(prismaMock.scanJob.findFirst.mock.calls[0][0].where).toMatchObject({ kind: 'full_recon' })
+  })
+
+  test('a run-keyed kind narrows to the run', async () => {
+    await reconcileScanJobStatus('p1', 'completed', { kind: 'partial_recon', runId: 'r7' })
+    expect(prismaMock.scanJob.findFirst.mock.calls[0][0].where).toMatchObject({ runId: 'r7' })
   })
 
   test('no open job → no update', async () => {

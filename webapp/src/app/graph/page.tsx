@@ -52,6 +52,7 @@ import { clusterGraphData } from './utils/clusterNodes'
 import { isOverNodeCap } from './utils/nodeCap'
 import { useTheme, useSession, useReconStatus, useReconSSE, useGvmStatus, useGvmSSE, useGithubHuntStatus, useGithubHuntSSE, useTrufflehogStatus, useTrufflehogSSE, useSupplyChainStatus, useSupplyChainSSE, useActiveSessions, useMultiPartialReconStatus, useMultiPartialReconSSE } from '@/hooks'
 import { useProjectById } from '@/hooks/useProjects'
+import { useScanStartFailure } from '@/hooks/useScanStartFailure'
 import { useGraphTypeFilterPrefs, useGraphViewPrefs } from '@/hooks/useUserPreferences'
 import { useProject } from '@/providers/ProjectProvider'
 import { GVM_PHASES, GITHUB_HUNT_PHASES, TRUFFLEHOG_PHASES, PARTIAL_RECON_PHASE_MAP } from '@/lib/recon-types'
@@ -75,6 +76,8 @@ export default function GraphPage() {
   const { alertError, confirm: confirmModal } = useAlertModal()
   const toast = useToast()
   const { projectId, userId, currentProject, setCurrentProject, isLoading: projectLoading } = useProject()
+  // Scan Queue (Phase 3): on a temporary start failure, offer Cancel / Add to queue.
+  const { handleStartFailure } = useScanStartFailure(projectId)
 
   const [activeView, setActiveView] = useState<ViewMode>('graph')
 
@@ -398,6 +401,7 @@ export default function GraphPage() {
     stopGvm,
     pauseGvm,
     resumeGvm,
+    getLastStartError: getGvmStartError,
   } = useGvmStatus({
     projectId,
     enabled: !!projectId,
@@ -424,6 +428,7 @@ export default function GraphPage() {
     stopGithubHunt,
     pauseGithubHunt,
     resumeGithubHunt,
+    getLastStartError: getGithubStartError,
   } = useGithubHuntStatus({
     projectId,
     enabled: !!projectId,
@@ -449,6 +454,7 @@ export default function GraphPage() {
     stopTrufflehog,
     pauseTrufflehog,
     resumeTrufflehog,
+    getLastStartError: getTrufflehogStartError,
   } = useTrufflehogStatus({
     projectId,
     enabled: !!projectId,
@@ -474,6 +480,7 @@ export default function GraphPage() {
     stopSupplyChain,
     pauseSupplyChain,
     resumeSupplyChain,
+    getLastStartError: getSupplyStartError,
   } = useSupplyChainStatus({ projectId, enabled: !!projectId })
   const {
     logs: supplyChainLogs,
@@ -490,11 +497,11 @@ export default function GraphPage() {
         setActiveLogsDrawer('supplyChain')
         toast.info('Supply-Chain scan started')
       }
-    } catch (err) {
-      console.error('Failed to start Supply-Chain scan:', err)
-      toast.error('Failed to start Supply-Chain scan')
+    } catch {
+      // Temporary -> Cancel / Add to queue; permanent -> error (Scan Queue Phase 3).
+      await handleStartFailure('supply_chain', getSupplyStartError?.())
     }
-  }, [startSupplyChain, clearSupplyChainLogs, toast])
+  }, [startSupplyChain, clearSupplyChainLogs, toast, getSupplyStartError, handleStartFailure])
   const handleToggleSupplyChainLogs = useCallback(() => {
     setActiveLogsDrawer(prev => prev === 'supplyChain' ? null : 'supplyChain')
   }, [])
@@ -1109,21 +1116,15 @@ export default function GraphPage() {
         : 'Recon scan started (previous graph discarded)')
       return
     }
-    // Failed to start - surface a tailored modal (Part 5). Memory-governor
-    // rejections carry a structured limit; distinguish "configured limit" (raise
-    // a setting) from "RAM limit" (retry / free memory).
+    // Failed to start. On a temporary failure (RAM/hard limit, activation, 409)
+    // the shared handler offers Cancel / Add to queue; permanent failures fall
+    // back to a single-button error (Scan Queue Phase 3).
     const startErr = getLastStartError?.()
     if (startErr) {
       setIsReconModalOpen(false)
-      const title =
-        startErr.limit?.limitType === 'hard'
-          ? 'Scan limit reached'
-          : startErr.limit?.limitType === 'ram'
-            ? 'Not enough memory'
-            : 'Could not start scan'
-      alertError(startErr.message, title)
+      await handleStartFailure('full_recon', startErr, { mode })
     }
-  }, [startRecon, clearLogs, toast, getLastStartError, alertError, refreshScanVersions])
+  }, [startRecon, clearLogs, toast, getLastStartError, handleStartFailure, refreshScanVersions])
 
   const handleDownloadJSON = useCallback(async () => {
     if (!projectId) return
@@ -1176,8 +1177,16 @@ export default function GraphPage() {
       setIsGvmModalOpen(false)
       setActiveLogsDrawer('gvm')
       toast.info('GVM scan started')
+      return
     }
-  }, [startGvm, clearGvmLogs, toast, isViewingPastVersion, alertError])
+    // Failed to start: temporary -> Cancel / Add to queue; permanent -> error
+    // (Scan Queue Phase 3). startGvm keeps its return-null contract.
+    const startErr = getGvmStartError?.()
+    if (startErr) {
+      setIsGvmModalOpen(false)
+      await handleStartFailure('gvm', startErr)
+    }
+  }, [startGvm, clearGvmLogs, toast, isViewingPastVersion, alertError, getGvmStartError, handleStartFailure])
 
   const handleDownloadGvmJSON = useCallback(async () => {
     if (!projectId) return
@@ -1200,11 +1209,11 @@ export default function GraphPage() {
         setActiveLogsDrawer('githubHunt')
         toast.info('GitHub Hunt started')
       }
-    } catch (err) {
-      console.error('Failed to start GitHub Hunt:', err)
-      toast.error('Failed to start GitHub Hunt')
+    } catch {
+      // Temporary -> Cancel / Add to queue; permanent -> error (Scan Queue Phase 3).
+      await handleStartFailure('github_hunt', getGithubStartError?.())
     }
-  }, [startGithubHunt, clearGithubHuntLogs, toast, isViewingPastVersion, alertError])
+  }, [startGithubHunt, clearGithubHuntLogs, toast, isViewingPastVersion, getGithubStartError, handleStartFailure])
 
   const handleDownloadGithubHuntJSON = useCallback(async () => {
     if (!projectId) return
@@ -1227,11 +1236,11 @@ export default function GraphPage() {
         setActiveLogsDrawer('trufflehog')
         toast.info('Trufflehog scan started')
       }
-    } catch (err) {
-      console.error('Failed to start Trufflehog:', err)
-      toast.error('Failed to start Trufflehog')
+    } catch {
+      // Temporary -> Cancel / Add to queue; permanent -> error (Scan Queue Phase 3).
+      await handleStartFailure('trufflehog', getTrufflehogStartError?.())
     }
-  }, [startTrufflehog, clearTrufflehogLogs, toast, isViewingPastVersion, alertError])
+  }, [startTrufflehog, clearTrufflehogLogs, toast, isViewingPastVersion, getTrufflehogStartError, handleStartFailure])
 
   const handleDownloadTrufflehogJSON = useCallback(async () => {
     if (!projectId) return

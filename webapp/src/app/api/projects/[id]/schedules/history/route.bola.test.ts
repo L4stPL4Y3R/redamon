@@ -14,6 +14,7 @@ const h = vi.hoisted(() => ({
   requireEff: vi.fn(),
   requireProjectAccess: vi.fn(),
   deleteMany: vi.fn(),
+  queueDeleteMany: vi.fn(),
   audit: vi.fn(),
 }))
 
@@ -22,7 +23,10 @@ vi.mock('@/lib/access', () => ({
   requireProjectAccess: (...a: unknown[]) => h.requireProjectAccess(...a),
 }))
 vi.mock('@/lib/prisma', () => ({
-  default: { scanJob: { deleteMany: (...a: unknown[]) => h.deleteMany(...a) } },
+  default: {
+    scanJob: { deleteMany: (...a: unknown[]) => h.deleteMany(...a) },
+    jobQueue: { deleteMany: (...a: unknown[]) => h.queueDeleteMany(...a) },
+  },
 }))
 vi.mock('@/lib/audit', () => ({ writeAudit: (...a: unknown[]) => h.audit(...a) }))
 
@@ -43,6 +47,7 @@ beforeEach(() => {
   h.requireEff.mockResolvedValue({ userId: 'owner' })
   h.requireProjectAccess.mockResolvedValue({ project: { id: 'p1', userId: 'owner' } })
   h.deleteMany.mockResolvedValue({ count: 3 })
+  h.queueDeleteMany.mockResolvedValue({ count: 0 })
 })
 
 describe('DELETE — BOLA', () => {
@@ -88,5 +93,27 @@ describe('DELETE — scoping', () => {
     expect(h.audit).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'scan-job.history-clear', targetId: 'p1' })
     )
+  })
+
+  // The history table also lists finished queue jobs (the only record a
+  // non-full-recon run leaves), so their ids arrive here too.
+  test('deletes terminal queue rows as well, and counts them', async () => {
+    h.queueDeleteMany.mockResolvedValue({ count: 2 })
+    const res = await DELETE(del({ ids: ['j1', 'q1', 'q2'] }), params('p1'))
+    expect((await res.json()).deleted).toBe(5)
+    expect(h.queueDeleteMany).toHaveBeenCalledWith({
+      where: {
+        projectId: 'p1',
+        id: { in: ['j1', 'q1', 'q2'] },
+        status: { in: ['done', 'failed', 'canceled'] },
+      },
+    })
+  })
+
+  test('never deletes a queued or running job through the history endpoint', async () => {
+    await DELETE(del({}), params('p1'))
+    const where = h.queueDeleteMany.mock.calls[0][0].where
+    expect(where.status).toEqual({ in: ['done', 'failed', 'canceled'] })
+    expect(where.projectId).toBe('p1')
   })
 })

@@ -13,10 +13,19 @@ import styles from './AlertModal.module.css'
 
 type AlertType = 'info' | 'error' | 'warning' | 'confirm' | 'danger-confirm'
 
+/** Optional per-call button labels + a rich message (Scan Queue Phase 3). All
+ * optional, so every existing caller keeps its two-arg (message, title) shape. */
+export interface ConfirmOptions {
+  confirmLabel?: string
+  cancelLabel?: string
+}
+
 interface AlertState {
   type: AlertType
   title?: string
-  message: string
+  message: ReactNode
+  confirmLabel?: string
+  cancelLabel?: string
   resolve: (value: boolean) => void
 }
 
@@ -27,10 +36,11 @@ interface AlertContextValue {
   alertError: (message: string, title?: string) => Promise<void>
   /** Show a warning alert modal. Returns a promise that resolves when dismissed. */
   alertWarning: (message: string, title?: string) => Promise<void>
-  /** Show a confirmation modal. Returns true if confirmed, false if cancelled. */
-  confirm: (message: string, title?: string) => Promise<boolean>
+  /** Show a confirmation modal. Returns true if confirmed, false if cancelled.
+   * `message` may be a ReactNode and the button labels can be overridden. */
+  confirm: (message: ReactNode, title?: string, options?: ConfirmOptions) => Promise<boolean>
   /** Show a destructive confirmation modal (red confirm button). Returns true if confirmed. */
-  dangerConfirm: (message: string, title?: string) => Promise<boolean>
+  dangerConfirm: (message: ReactNode, title?: string, options?: ConfirmOptions) => Promise<boolean>
 }
 
 const AlertContext = createContext<AlertContextValue | null>(null)
@@ -60,9 +70,13 @@ export function AlertProvider({ children }: AlertProviderProps) {
   }, [])
 
   const enqueue = useCallback(
-    (type: AlertType, message: string, title?: string): Promise<boolean> => {
+    (type: AlertType, message: ReactNode, title?: string, options?: ConfirmOptions): Promise<boolean> => {
       return new Promise<boolean>((resolve) => {
-        const state: AlertState = { type, title, message, resolve }
+        const state: AlertState = {
+          type, title, message, resolve,
+          confirmLabel: options?.confirmLabel,
+          cancelLabel: options?.cancelLabel,
+        }
         if (current) {
           queueRef.current.push(state)
         } else {
@@ -92,14 +106,14 @@ export function AlertProvider({ children }: AlertProviderProps) {
   )
 
   const confirmFn = useCallback(
-    (message: string, title?: string) =>
-      enqueue('confirm', message, title ?? 'Confirm'),
+    (message: ReactNode, title?: string, options?: ConfirmOptions) =>
+      enqueue('confirm', message, title ?? 'Confirm', options),
     [enqueue]
   )
 
   const dangerConfirm = useCallback(
-    (message: string, title?: string) =>
-      enqueue('danger-confirm', message, title ?? 'Confirm'),
+    (message: ReactNode, title?: string, options?: ConfirmOptions) =>
+      enqueue('danger-confirm', message, title ?? 'Confirm', options),
     [enqueue]
   )
 
@@ -135,7 +149,7 @@ export function AlertProvider({ children }: AlertProviderProps) {
                     className={styles.btnSecondary}
                     onClick={() => handleResolve(false)}
                   >
-                    Cancel
+                    {current.cancelLabel ?? 'Cancel'}
                   </button>
                   <button
                     type="button"
@@ -146,7 +160,7 @@ export function AlertProvider({ children }: AlertProviderProps) {
                     }
                     onClick={() => handleResolve(true)}
                   >
-                    Confirm
+                    {current.confirmLabel ?? 'Confirm'}
                   </button>
                 </>
               ) : (

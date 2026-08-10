@@ -10,7 +10,7 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest'
 
 const prismaMock = vi.hoisted(() => ({
   scanVersion: { findMany: vi.fn(), deleteMany: vi.fn() },
-  scanJob: { deleteMany: vi.fn() },
+  scanJob: { deleteMany: vi.fn(), findMany: vi.fn() },
 }))
 vi.mock('@/lib/prisma', () => ({ default: prismaMock }))
 
@@ -30,6 +30,7 @@ beforeEach(() => {
   prismaMock.scanVersion.findMany.mockResolvedValue([])
   prismaMock.scanVersion.deleteMany.mockResolvedValue({ count: 0 })
   prismaMock.scanJob.deleteMany.mockResolvedValue({ count: 0 })
+  prismaMock.scanJob.findMany.mockResolvedValue([])
 })
 afterEach(() => {
   delete process.env.SCAN_VERSION_RETENTION_KEEP
@@ -47,6 +48,28 @@ describe('config', () => {
 
   test('failed-job retention defaults to 30 days', () => {
     expect(failedJobRetentionDays()).toBe(30)
+  })
+})
+
+describe('C-3: a version referenced by a non-terminal job is protected', () => {
+  test('retention skips a doomed version a queued/running ScanJob still points to', async () => {
+    process.env.SCAN_VERSION_RETENTION_KEEP = '1'
+    // 3 unpinned versions newest-first; keep=1 dooms v2 and v1.
+    prismaMock.scanVersion.findMany.mockResolvedValue([version(3), version(2), version(1)])
+    // A queued job still references v2, so it must survive.
+    prismaMock.scanJob.findMany.mockResolvedValue([{ versionId: 'v2' }])
+    const res = await applyRetention('p1')
+    expect(res.deletedVersionIds).toEqual(['v1'])
+    expect(prismaMock.scanVersion.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ['v1'] } } })
+  })
+
+  test('nothing is deleted when the only doomed version is referenced', async () => {
+    process.env.SCAN_VERSION_RETENTION_KEEP = '1'
+    prismaMock.scanVersion.findMany.mockResolvedValue([version(2), version(1)])
+    prismaMock.scanJob.findMany.mockResolvedValue([{ versionId: 'v1' }])
+    const res = await applyRetention('p1')
+    expect(res.deletedVersionIds).toEqual([])
+    expect(prismaMock.scanVersion.deleteMany).not.toHaveBeenCalled()
   })
 })
 

@@ -384,6 +384,10 @@ services:
       # D1: fork-bomb ceiling injected into every sibling tool container
       # (katana/nuclei/httpx/...). Was 0 (unlimited); 512 is generous per tool.
       BROKER_TOOL_PIDS: ${BROKER_TOOL_PIDS:-512}
+      # Phase 7: cap the NUMBER of concurrently-running broker-owned containers the
+      # memory governor cannot see. Generous backstop; 0 disables. Raise if legit
+      # parallel scans (each spawns a dozen tools) hit it.
+      BROKER_MAX_CONTAINERS: ${BROKER_MAX_CONTAINERS:-48}
       # T1/T2: extra host prefixes a tool bind may mount READ-WRITE. Empty passes
       # through so broker.py keeps its restrictive default (["/tmp/redamon"] only);
       # every other source-tree bind is forced :ro. Wired here (broker has no
@@ -487,6 +491,14 @@ services:
       # .env would be silently inert here.
       SCAN_SCHEDULER_ENABLED: ${SCAN_SCHEDULER_ENABLED:-true}
       SCAN_SCHEDULER_TICK_SECONDS: ${SCAN_SCHEDULER_TICK_SECONDS:-60}
+      # Scan Queue dispatcher (Phase 2). The orchestrator has no env_file, so these
+      # are inert unless listed here. MAX_CONCURRENT is the REAL ceiling (the
+      # ledger count cap is None when RECON_MAX_CONCURRENT_GLOBAL is unset).
+      JOB_QUEUE_DISPATCHER_ENABLED: ${JOB_QUEUE_DISPATCHER_ENABLED:-true}
+      JOB_QUEUE_TICK_SECONDS: ${JOB_QUEUE_TICK_SECONDS:-20}
+      JOB_QUEUE_MAX_CONCURRENT: ${JOB_QUEUE_MAX_CONCURRENT:-4}
+      JOB_QUEUE_MIN_FREE_DISK: ${JOB_QUEUE_MIN_FREE_DISK:-10737418240}
+      TRAFFIC_MAINTENANCE_INTERVAL: ${TRAFFIC_MAINTENANCE_INTERVAL:-3600}
       # D3: global + per-user concurrent-scan ceilings enforced at admission.
       # SAFE, GENEROUS DEFAULTS so unset resolves to a real limit (never "no cap").
       RECON_MAX_CONCURRENT_GLOBAL: ${RECON_MAX_CONCURRENT_GLOBAL:-30}
@@ -560,6 +572,9 @@ services:
       LOCAL_LLM_MODEL: ${LOCAL_LLM_MODEL:-qwen2.5:7b}
       LOCAL_LLM_PORT: ${LOCAL_LLM_PORT:-11434}
       LOCAL_LLM_GPU: ${LOCAL_LLM_GPU:-}
+      # Phase 7: RAM cap on the Ollama judge (was uncapped). Raise for a larger
+      # judge model; set to 0/none to disable (e.g. GPU or a very large model).
+      LOCAL_LLM_MEM: ${LOCAL_LLM_MEM:-8g}
       # V1 isolation: the on-demand Ollama judge must spawn on the orchestrator's
       # own (worker-isolated) network so the orchestrator reaches it by DNS.
       LOCAL_LLM_NETWORK: redamon-orchestrator-net
@@ -927,8 +942,6 @@ services:
       ACTIVATION_LOCK_TTL_MS: ${ACTIVATION_LOCK_TTL_MS:-}
       SCAN_SCHEDULE_MIN_INTERVAL_MINUTES: ${SCAN_SCHEDULE_MIN_INTERVAL_MINUTES:-}
       SCAN_SCHEDULE_ASSUMED_RUN_MINUTES: ${SCAN_SCHEDULE_ASSUMED_RUN_MINUTES:-}
-      SCAN_SCHEDULE_DEFER_RETRY_MINUTES: ${SCAN_SCHEDULE_DEFER_RETRY_MINUTES:-}
-      SCAN_SCHEDULE_MAX_DEFERRALS: ${SCAN_SCHEDULE_MAX_DEFERRALS:-}
       # Global row cap for every RedZone analytics query (was a per-route LIMIT
       # of 200/500/1000/2000). Passed through EMPTY so unset keeps the 200k code
       # default in webapp/src/app/api/analytics/redzone/rowCap.ts. Lower it on a

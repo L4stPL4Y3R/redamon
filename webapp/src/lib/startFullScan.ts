@@ -12,6 +12,7 @@ import prisma from '@/lib/prisma'
 import { orchestratorFetch } from '@/lib/orchestrator'
 import { isActivationInProgress } from '@/lib/activationLock'
 import { describeScanWriters } from '@/lib/graphWriters'
+import { normalizeOrchestratorStartError } from '@/lib/orchestratorError'
 import {
   prepareVersionsForFullScan,
   createScanJob,
@@ -128,13 +129,10 @@ export async function startFullScan(input: StartFullScanInput): Promise<StartFul
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}))
-    const detail = errorData.detail
-    const isLimit = detail && typeof detail === 'object' && detail.limitType
-    const message = isLimit
-      ? detail.limitType === 'hard'
-        ? `${detail.detail || 'Configured limit reached'}. This is a configured limit, not a memory issue${detail.settingName ? ` - increase ${detail.settingName} and restart` : ''}.`
-        : `${detail.detail || 'Not enough memory to start this scan now'}. This is a RAM limit - please retry once memory frees (finish or stop other running scans, or lower parallelism).`
-      : (typeof detail === 'string' ? detail : null) || 'Failed to start recon'
+    // Single source of truth for turning a structured governor detail into a safe
+    // string + limit object (Scan Queue Phase 0.4). Never render the raw object.
+    const norm = normalizeOrchestratorStartError(errorData, 'Failed to start recon')
+    const isLimit = !!norm.limit?.limitType
 
     // Record the attempt so the timeline shows why it did not run.
     const job = await createScanJob({
@@ -142,10 +140,10 @@ export async function startFullScan(input: StartFullScanInput): Promise<StartFul
       versionId: prepared.currentVersion.id,
       trigger,
       mode,
-      status: isLimit && detail.limitType === 'ram' ? 'deferred_ram' : 'failed',
+      status: norm.limit?.limitType === 'ram' ? 'deferred_ram' : 'failed',
       initiatedByUserId: input.actorUserId ?? null,
       scheduleId: input.scheduleId ?? null,
-      ramReason: isLimit ? String(detail.detail ?? message) : null,
+      ramReason: isLimit ? String(norm.limit?.detail ?? norm.error) : null,
     }).catch(err => {
       console.error('[scanTimeline] could not record failed scan job:', err)
       return null
@@ -154,8 +152,8 @@ export async function startFullScan(input: StartFullScanInput): Promise<StartFul
     return {
       ok: false,
       status: response.status,
-      error: message,
-      ...(isLimit ? { limit: detail } : {}),
+      error: norm.error,
+      ...(isLimit ? { limit: norm.limit as Record<string, unknown> } : {}),
       scanJobId: job?.id ?? null,
     }
   }

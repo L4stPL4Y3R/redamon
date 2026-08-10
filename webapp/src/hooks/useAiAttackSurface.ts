@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { AiAttackRunState, AiFinding, AiTarget } from '@/lib/aiAttackSurface'
+import type { ScanStartError } from '@/lib/scanStartError'
 
 export interface AiAttackLogLine {
   log: string
@@ -52,6 +53,7 @@ export function useAiAttackSurface(projectId: string | null) {
 
   const esRef = useRef<EventSource | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const lastStartErrorRef = useRef<ScanStartError | null>(null)
 
   const stopStream = useCallback(() => {
     esRef.current?.close()
@@ -156,25 +158,32 @@ export function useAiAttackSurface(projectId: string | null) {
     setFindings([])
     setPhase({ name: null, num: null })
     stopStream()
+    lastStartErrorRef.current = null
     try {
       const r = await fetch(`/api/ai-attack-surface/${projectId}/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       })
-      const d = await r.json()
-      if (!r.ok) throw new Error(d.error || 'Failed to launch')
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok) {
+        lastStartErrorRef.current = { message: d.error || 'Failed to launch', limit: d.limit, status: r.status }
+        throw new Error(d.error || 'Failed to launch')
+      }
       setRun(d)
       attachStream(d.run_id)
       return d
     } catch (e) {
       const m = e instanceof Error ? e.message : 'Launch failed'
+      if (!lastStartErrorRef.current) lastStartErrorRef.current = { message: m }
       setError(m)
       return null
     } finally {
       setLaunching(false)
     }
   }, [projectId, attachStream, stopStream])
+
+  const getLastStartError = useCallback(() => lastStartErrorRef.current, [])
 
   const stop = useCallback(async () => {
     if (!projectId || !run?.run_id) return
@@ -203,6 +212,6 @@ export function useAiAttackSurface(projectId: string | null) {
 
   return {
     targets, findings, run, logs, phase, launching, stopping, loadingTargets, error,
-    loadTargets, loadFindings, launch, stop, reconnect,
+    loadTargets, loadFindings, launch, stop, reconnect, getLastStartError,
   }
 }

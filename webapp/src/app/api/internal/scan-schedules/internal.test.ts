@@ -21,6 +21,7 @@ const h = vi.hoisted(() => ({
   countJobs: vi.fn(),
   start: vi.fn(),
   createJob: vi.fn(),
+  enqueue: vi.fn(),
 }))
 
 vi.mock('@/lib/session', () => ({ isInternalRequest: (...a: unknown[]) => h.isInternal(...a) }))
@@ -36,6 +37,7 @@ vi.mock('@/lib/prisma', () => ({
   },
 }))
 vi.mock('@/lib/startFullScan', () => ({ startFullScan: (...a: unknown[]) => h.start(...a) }))
+vi.mock('@/lib/enqueueJob', () => ({ enqueueJob: (...a: unknown[]) => h.enqueue(...a) }))
 vi.mock('@/lib/scanTimeline', async orig => ({
   ...(await orig<typeof import('@/lib/scanTimeline')>()),
   createScanJob: (...a: unknown[]) => h.createJob(...a),
@@ -43,7 +45,6 @@ vi.mock('@/lib/scanTimeline', async orig => ({
 
 import { GET as due } from './due/route'
 import { POST as run } from './[scheduleId]/run/route'
-import { POST as defer } from './[scheduleId]/defer/route'
 
 const req = (url: string, body?: unknown) => new NextRequest(url, {
   method: body === undefined ? 'GET' : 'POST',
@@ -66,13 +67,13 @@ beforeEach(() => {
   h.projectFindMany.mockResolvedValue([])
   h.start.mockResolvedValue({ ok: true, versionId: 'v3', versionSeq: 3, scanJobId: 'job1', frozenVersionId: 'v2' })
   h.createJob.mockResolvedValue({ id: 'job1' })
+  h.enqueue.mockResolvedValue({ ok: true, status: 201, id: 'jq1' })
 })
 
 describe('authentication', () => {
   test.each([
     ['due', () => due(req('http://x/api/internal/scan-schedules/due'))],
     ['run', () => run(req('http://x/api/internal/scan-schedules/s1/run', {}), sp('s1'))],
-    ['defer', () => defer(req('http://x/api/internal/scan-schedules/s1/defer', {}), sp('s1'))],
   ])('%s rejects a non-internal caller with 401 and does no work', async (_name, call) => {
     h.isInternal.mockReturnValue(false)
     const res = await call()
@@ -144,23 +145,24 @@ describe('POST /run', () => {
     expect(data.nextRunAt).toBeNull()
   })
 
-  test('a failed start still advances the schedule (no hot loop) and reports why', async () => {
+  test('a RAM refusal ENQUEUES the occurrence instead of burning it (Phase 4)', async () => {
     h.start.mockResolvedValue({ ok: false, status: 429, error: 'no memory', limit: { limitType: 'ram' }, scanJobId: 'job9' })
     const res = await run(req('http://x/api/internal/scan-schedules/s1/run', {}), sp('s1'))
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body.ok).toBe(false)
-    expect(body.limit).toMatchObject({ limitType: 'ram' })
+    expect(body.queued).toBe(true)
+    expect(body.jobId).toBe('jq1')
+    // The schedule still rolls forward (the occurrence became a queue row).
     expect(h.updateSchedule).toHaveBeenCalled()
-    // startFullScan already recorded its own job for the admission rejection, so
-    // /run must NOT record a duplicate.
+    expect(h.enqueue).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: 'p1', kind: 'full_recon', scheduleId: 's1', priority: 0,
+    }))
+    // No duplicate failed ScanJob for a temporary refusal.
     expect(h.createJob).not.toHaveBeenCalled()
   })
 
-  test('a run skipped because a scan is already running is RECORDED in history', async () => {
-    // startFullScan returns busy BEFORE it can record its own attempt (no
-    // scanJobId), so /run must write the skipped occurrence — otherwise it leaves
-    // no trace in the Scan Schedule run history.
+  test('a busy 409 refusal enqueues rather than recording a failed run', async () => {
     h.start.mockResolvedValue({
       ok: false, status: 409,
       error: 'Cannot start a scan while a full recon scan is running for this project. Stop it first.',
@@ -168,25 +170,27 @@ describe('POST /run', () => {
     })
     const res = await run(req('http://x/api/internal/scan-schedules/s1/run', {}), sp('s1'))
     expect(res.status).toBe(200)
-    expect(h.createJob).toHaveBeenCalledWith(expect.objectContaining({
-      projectId: 'p1',
-      trigger: 'scheduled',
-      status: 'failed',
-      scheduleId: 's1',
-      ramReason: expect.stringMatching(/already .*running|scan is running/i),
-    }))
-    // and the schedule still rolls forward (no hot loop)
+    expect((await res.json()).queued).toBe(true)
+    expect(h.enqueue).toHaveBeenCalled()
+    expect(h.createJob).not.toHaveBeenCalled()
     expect(h.updateSchedule).toHaveBeenCalled()
   })
 
-  test('an activation that begins after the pre-check is also recorded', async () => {
+  test('an activation in progress enqueues (F3 preserved: nothing spawns)', async () => {
     h.start.mockResolvedValue({
       ok: false, status: 409, error: 'A version activation is in progress', activationInProgress: true,
     })
-    await run(req('http://x/api/internal/scan-schedules/s1/run', {}), sp('s1'))
-    expect(h.createJob).toHaveBeenCalledWith(expect.objectContaining({
-      status: 'failed', scheduleId: 's1', ramReason: expect.stringMatching(/activation/i),
-    }))
+    const res = await run(req('http://x/api/internal/scan-schedules/s1/run', {}), sp('s1'))
+    expect((await res.json()).queued).toBe(true)
+    expect(h.enqueue).toHaveBeenCalled()
+  })
+
+  test('a PERMANENT failure records a failed ScanJob and does not enqueue', async () => {
+    h.start.mockResolvedValue({ ok: false, status: 400, error: 'Project has no target domain configured' })
+    const res = await run(req('http://x/api/internal/scan-schedules/s1/run', {}), sp('s1'))
+    expect(res.status).toBe(200)
+    expect(h.enqueue).not.toHaveBeenCalled()
+    expect(h.createJob).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed', scheduleId: 's1' }))
   })
 
   test('a disabled schedule is not run', async () => {
@@ -203,38 +207,3 @@ describe('POST /run', () => {
   })
 })
 
-describe('POST /defer', () => {
-  test('records a deferred job with the reason and retries soon', async () => {
-    const res = await defer(
-      req('http://x/api/internal/scan-schedules/s1/defer', { reason: 'graph busy: activation in progress' }),
-      sp('s1')
-    )
-    expect(res.status).toBe(200)
-    expect(h.createJob).toHaveBeenCalledWith(expect.objectContaining({
-      projectId: 'p1', trigger: 'scheduled', status: 'deferred_ram',
-      scheduleId: 's1', ramReason: 'graph busy: activation in progress',
-    }))
-    const body = await res.json()
-    expect(body.deferred).toBe(true)
-    expect(body.gaveUp).toBe(false)
-    // Pushed out, so the worker does not re-pick it on the very next tick.
-    expect(new Date(body.nextRunAt).getTime()).toBeGreaterThan(Date.now())
-  })
-
-  test('deferrals are bounded: after enough attempts it rolls to the normal occurrence', async () => {
-    h.countJobs.mockResolvedValue(5)   // 6th attempt hits the default cap
-    const body = await (await defer(req('http://x/api/internal/scan-schedules/s1/defer', {}), sp('s1'))).json()
-    expect(body.gaveUp).toBe(true)
-  })
-
-  test('a hostile reason is bounded in length', async () => {
-    await defer(req('http://x/api/internal/scan-schedules/s1/defer', { reason: 'x'.repeat(5000) }), sp('s1'))
-    expect(h.createJob.mock.calls[0][0].ramReason.length).toBe(500)
-  })
-
-  test('an unknown schedule is a 404 and records nothing', async () => {
-    h.findSchedule.mockResolvedValue(null)
-    expect((await defer(req('http://x/api/internal/scan-schedules/nope/defer', {}), sp('nope'))).status).toBe(404)
-    expect(h.createJob).not.toHaveBeenCalled()
-  })
-})

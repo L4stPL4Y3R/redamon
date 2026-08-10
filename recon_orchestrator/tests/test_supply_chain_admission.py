@@ -44,6 +44,9 @@ def _mgr() -> ContainerManager:
     m.github_hunt_states = {}
     m.trufflehog_states = {}
     m.supply_chain_states = {}
+    # _active_scan_keys() walks this too (CodeFix sandboxes were brought under the
+    # ledger in Phase 7); without it every reconcile test dies on AttributeError.
+    m.codefix_sandboxes = {}
     return m
 
 

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { guardProject } from '@/lib/access'
+import { getEffectiveUser } from '@/lib/session'
+import { recordScanStart } from '@/lib/scanTimeline'
 import prisma from '@/lib/prisma'
 import { orchestratorFetch } from '@/lib/orchestrator'
 import { assertGraphNotActivating } from '@/lib/activationLock'
@@ -64,6 +66,17 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     }
 
     const data = await response.json()
+    // Run-keyed: several partial recons can be in flight for one project, so the
+    // history row carries the orchestrator run id that identifies this one.
+    // The scan is already running: recording who started it must never be able
+    // to turn a successful start into an error response.
+    const __eff = await getEffectiveUser().catch(() => null)
+    await recordScanStart({
+      projectId,
+      kind: 'partial_recon',
+      runId: typeof data?.run_id === 'string' ? data.run_id : '',
+      initiatedByUserId: __eff?.userId ?? null,
+    })
     return NextResponse.json(data)
 
   } catch (error) {

@@ -20,6 +20,8 @@ DEFAULT_SUPPLY_CHAIN_SETTINGS: dict[str, Any] = {
     # 'github' input.
     'SUPPLY_CHAIN_REPO_URL': '',
     'SUPPLY_CHAIN_REPO_REF': '',
+    # Optional subpath/scope inside the repo (Scan Queue Phase 6 org batch).
+    'SUPPLY_CHAIN_REPO_SCOPE': '',
     # Comma-separated OSV ecosystem names to report (osv auto-detects from the
     # file; this is an allow-filter for the graph write).
     'SUPPLY_CHAIN_ECOSYSTEMS': 'npm,PyPI,Go,Maven,crates.io,Packagist,RubyGems,NuGet',
@@ -63,7 +65,10 @@ def fetch_supply_chain_settings(project_id: str, webapp_url: str) -> dict[str, A
     # the same one the secret hunter and trufflehog use, so a private repo needs
     # no second credential. Only fetched for the github input mode: an
     # SBOM-upload scan has no business holding a token.
-    if settings['SUPPLY_CHAIN_INPUT_MODE'] == 'github':
+    # A supply_chain_repo batch item forces github mode via env override (below),
+    # so fetch the token when EITHER the project is github-mode OR an override is
+    # active - otherwise a private batch repo would fail to clone anonymously.
+    if settings['SUPPLY_CHAIN_INPUT_MODE'] == 'github' or os.environ.get('SUPPLY_CHAIN_REPO_OVERRIDE_URL', '').strip():
         user_id = os.environ.get('USER_ID', '')
         if user_id:
             try:
@@ -86,6 +91,32 @@ _settings: Optional[dict[str, Any]] = None
 _current_project_id: Optional[str] = None
 
 
+def _apply_repo_override(settings: dict[str, Any]) -> dict[str, Any]:
+    """Scan Queue Phase 6: a supply_chain_repo (org-batch) job targets ONE specific
+    repo, passed by the orchestrator as env (SUPPLY_CHAIN_REPO_OVERRIDE_*). When an
+    override URL is present, force github input mode and override the repo, ref,
+    scope and deep-analysis flag, REGARDLESS of the project's own supply-chain
+    config. Applied on EVERY return of load_project_settings (both DEFAULT fallbacks
+    AND the successful project fetch), so a batch item never scans the project's
+    default target by accident. A no-op when no override env is set."""
+    repo_url = os.environ.get('SUPPLY_CHAIN_REPO_OVERRIDE_URL', '').strip()
+    if not repo_url:
+        return settings
+    settings['SUPPLY_CHAIN_INPUT_MODE'] = 'github'
+    settings['SUPPLY_CHAIN_REPO_URL'] = repo_url
+    settings['SUPPLY_CHAIN_REPO_REF'] = os.environ.get('SUPPLY_CHAIN_REPO_OVERRIDE_REF', '').strip()
+    settings['SUPPLY_CHAIN_REPO_SCOPE'] = os.environ.get('SUPPLY_CHAIN_REPO_OVERRIDE_SCOPE', '').strip()
+    deep = os.environ.get('SUPPLY_CHAIN_REPO_OVERRIDE_DEEP', '').strip().lower()
+    if deep in ('1', 'true', 'yes', 'on'):
+        settings['SUPPLY_CHAIN_DEEP_ANALYSIS_ENABLED'] = True
+    elif deep in ('0', 'false', 'no', 'off'):
+        settings['SUPPLY_CHAIN_DEEP_ANALYSIS_ENABLED'] = False
+    logger.info("[batch] repo override active -> %s (ref=%s, deep=%s)",
+                repo_url, settings['SUPPLY_CHAIN_REPO_REF'] or 'default',
+                settings['SUPPLY_CHAIN_DEEP_ANALYSIS_ENABLED'])
+    return settings
+
+
 def load_project_settings(project_id: str) -> dict[str, Any]:
     global _settings, _current_project_id
     if _current_project_id == project_id and _settings is not None:
@@ -94,19 +125,17 @@ def load_project_settings(project_id: str) -> dict[str, Any]:
     webapp_url = os.environ.get('WEBAPP_API_URL')
     if not webapp_url:
         logger.warning("WEBAPP_API_URL not set, using DEFAULT_SUPPLY_CHAIN_SETTINGS")
-        _settings = DEFAULT_SUPPLY_CHAIN_SETTINGS.copy()
-        _current_project_id = project_id
-        return _settings
+        settings = DEFAULT_SUPPLY_CHAIN_SETTINGS.copy()
+    else:
+        try:
+            settings = fetch_supply_chain_settings(project_id, webapp_url)
+        except Exception as e:
+            logger.error(f"Failed to fetch Supply-Chain settings for {project_id}: {e}")
+            settings = DEFAULT_SUPPLY_CHAIN_SETTINGS.copy()
 
-    try:
-        _settings = fetch_supply_chain_settings(project_id, webapp_url)
-        _current_project_id = project_id
-        return _settings
-    except Exception as e:
-        logger.error(f"Failed to fetch Supply-Chain settings for {project_id}: {e}")
-        _settings = DEFAULT_SUPPLY_CHAIN_SETTINGS.copy()
-        _current_project_id = project_id
-        return _settings
+    _settings = _apply_repo_override(settings)
+    _current_project_id = project_id
+    return _settings
 
 
 def get_settings() -> dict[str, Any]:

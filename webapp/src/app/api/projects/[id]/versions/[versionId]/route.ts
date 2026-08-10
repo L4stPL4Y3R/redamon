@@ -107,6 +107,20 @@ export async function DELETE(_request: NextRequest, { params }: RouteParams) {
     )
   }
 
+  // C-3: a version referenced by a NON-TERMINAL ScanJob must not be deleted - the
+  // ScanJob FK is onDelete: Cascade, so deleting it would take a queued/running
+  // job's history row with it.
+  const liveJob = await prisma.scanJob.findFirst({
+    where: { versionId, status: { in: ['queued', 'running'] } },
+    select: { id: true },
+  })
+  if (liveJob) {
+    return NextResponse.json(
+      { error: 'A queued or running scan still references this version. Wait for it to finish before deleting.', hasLiveJob: true },
+      { status: 409 }
+    )
+  }
+
   try {
     // The row owns its snapshot bytes; its ScanJob history cascades with it.
     await prisma.scanVersion.delete({ where: { id: versionId } })

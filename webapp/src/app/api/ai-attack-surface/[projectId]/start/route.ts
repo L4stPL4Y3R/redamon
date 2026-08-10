@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { guardProject } from '@/lib/access'
+import { getEffectiveUser } from '@/lib/session'
+import { recordScanStart } from '@/lib/scanTimeline'
 import prisma from '@/lib/prisma'
 import { orchestratorFetch } from '@/lib/orchestrator'
 import { normalizeOrchestratorStartError } from '@/lib/orchestratorError'
@@ -62,7 +64,19 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       )
     }
 
-    return NextResponse.json(await response.json())
+    const data = await response.json()
+    // Run-keyed like partial recon: the run id is what tells two concurrent
+    // AI-attack jobs on the same project apart in history.
+    // The scan is already running: recording who started it must never be able
+    // to turn a successful start into an error response.
+    const __eff = await getEffectiveUser().catch(() => null)
+    await recordScanStart({
+      projectId,
+      kind: 'ai_attack',
+      runId: typeof data?.run_id === 'string' ? data.run_id : '',
+      initiatedByUserId: __eff?.userId ?? null,
+    })
+    return NextResponse.json(data)
   } catch (error) {
     console.error('Error starting AI Attack Surface scan:', error)
     return NextResponse.json(

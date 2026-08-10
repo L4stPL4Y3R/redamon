@@ -48,6 +48,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           ...(result.limit ? { limit: result.limit } : {}),
           ...(result.snapshotFailed ? { snapshotFailed: true } : {}),
           ...(result.activationInProgress ? { activationInProgress: true } : {}),
+          ...(result.busy ? { busy: result.busy } : {}),
         },
         { status: result.status }
       )

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { guardProject } from '@/lib/access'
+import { getEffectiveUser } from '@/lib/session'
+import { recordScanStart } from '@/lib/scanTimeline'
 import prisma from '@/lib/prisma'
 import { existsSync } from 'fs'
 import path from 'path'
@@ -87,6 +89,13 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         { status: response.status }
       )
     }
+
+    // The scan is live now: give it a history row. Only full recon used to get
+    // one, so every other kind vanished from Run history the moment it ended.
+    // The scan is already running: recording who started it must never be able
+    // to turn a successful start into an error response.
+    const __eff = await getEffectiveUser().catch(() => null)
+    await recordScanStart({ projectId, kind: 'gvm', initiatedByUserId: __eff?.userId ?? null })
 
     const data = await response.json()
     return NextResponse.json(data)

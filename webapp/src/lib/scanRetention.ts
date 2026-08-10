@@ -41,13 +41,25 @@ export async function applyRetention(projectId: string): Promise<RetentionResult
     })
     const doomed = candidates.slice(keep)
     if (doomed.length > 0) {
-      const ids = doomed.map(d => d.id)
-      await prisma.scanVersion.deleteMany({ where: { id: { in: ids } } })
-      result.deletedVersionIds = ids
-      console.info(
-        `[scanTimeline] retention removed ${ids.length} old unpinned version(s) for project ${projectId} ` +
-        `(keep=${keep})`
-      )
+      let ids = doomed.map(d => d.id)
+      // C-3: never delete a version a NON-TERMINAL ScanJob still points to. That
+      // FK is onDelete: Cascade, so deleting the version would silently take the
+      // job row (a queued/running scan) with it. A queued job waiting through 20
+      // rotations would otherwise vanish.
+      const protectedJobs = await prisma.scanJob.findMany({
+        where: { versionId: { in: ids }, status: { in: ['queued', 'running'] } },
+        select: { versionId: true },
+      })
+      const protectedIds = new Set(protectedJobs.map(j => j.versionId).filter((v): v is string => !!v))
+      if (protectedIds.size > 0) ids = ids.filter(id => !protectedIds.has(id))
+      if (ids.length > 0) {
+        await prisma.scanVersion.deleteMany({ where: { id: { in: ids } } })
+        result.deletedVersionIds = ids
+        console.info(
+          `[scanTimeline] retention removed ${ids.length} old unpinned version(s) for project ${projectId} ` +
+          `(keep=${keep}${protectedIds.size ? `, skipped ${protectedIds.size} referenced by a live job` : ''})`
+        )
+      }
     }
   }
 

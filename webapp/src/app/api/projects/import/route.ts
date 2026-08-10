@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { Prisma } from '@prisma/client'
 import prisma from '@/lib/prisma'
 import { getGraphSession } from '@/app/api/graph/neo4j'
 import { clearProjectGraph, restoreGraph } from '@/lib/graphRestore'
@@ -9,6 +10,7 @@ import { writeFileSync, mkdirSync, existsSync } from 'fs'
 import path from 'path'
 import { safeBasename } from '@/lib/safePath'
 import { orchestratorFetch } from '@/lib/orchestrator'
+import { envelopeForKind } from '@/lib/jobQueue'
 
 export const maxDuration = 300
 
@@ -427,6 +429,33 @@ export async function POST(request: NextRequest) {
         })
         ;(stats as Record<string, number>).scanJobs =
           ((stats as Record<string, number>).scanJobs ?? 0) + 1
+      }
+    }
+
+    // C-8: JobQueue rows are excluded from export, so a normal archive has none.
+    // But if a future/hand-crafted archive carries them, they MUST import as
+    // 'canceled' - an imported archive must never auto-start scans against a
+    // freshly created project, and a non-transactional import must not leave any
+    // dispatchable row behind.
+    const jobQueueFile = zip.file('timeline/job-queue.json')
+    if (jobQueueFile) {
+      const rows: Array<Record<string, unknown>> = JSON.parse(await jobQueueFile.async('text'))
+      for (const r of rows) {
+        const kind = String(r.kind ?? 'full_recon')
+        await prisma.jobQueue.create({
+          data: {
+            projectId: newProject.id,
+            userId,
+            kind,
+            payload: (r.payload && typeof r.payload === 'object' ? r.payload : {}) as Prisma.InputJsonValue,
+            settingsHash: '',
+            envelopeBytes: BigInt(envelopeForKind(kind)),
+            status: 'canceled', // NEVER queued/running on import
+            finishedAt: new Date(),
+          },
+        })
+        ;(stats as Record<string, number>).jobQueue =
+          ((stats as Record<string, number>).jobQueue ?? 0) + 1
       }
     }
 

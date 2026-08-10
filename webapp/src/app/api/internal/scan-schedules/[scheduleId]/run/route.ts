@@ -18,6 +18,8 @@ import { isInternalRequest } from '@/lib/session'
 import { startFullScan } from '@/lib/startFullScan'
 import { computeNextRun } from '@/lib/scanSchedule'
 import { parseScanMode, createScanJob } from '@/lib/scanTimeline'
+import { classifyStartFailure } from '@/lib/scanStartOutcome'
+import { enqueueJob } from '@/lib/enqueueJob'
 
 export const runtime = 'nodejs'
 
@@ -62,12 +64,43 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     })
 
     if (!result.ok) {
+      const cls = classifyStartFailure(result.status, {
+        error: result.error,
+        limit: result.limit as { limitType?: string } | undefined,
+        activationInProgress: result.activationInProgress,
+        busy: result.busy,
+      })
+
+      // Phase 4: a TEMPORARY refusal (RAM/hard limit, activation, or the graph is
+      // busy) must NOT burn the occurrence. Advancing nextRunAt above is correct
+      // precisely because the occurrence becomes a durable queue row here, which
+      // the dispatcher runs when resources free up. This replaces the old
+      // defer-and-retry-every-tick path.
+      if (cls.temporary) {
+        const enq = await enqueueJob({
+          projectId: schedule.projectId,
+          userId: schedule.userId,
+          kind: 'full_recon',
+          payload: { mode },
+          priority: 0, // scheduled
+          scheduleId: schedule.id,
+        }).catch(err => {
+          console.error('[scanScheduler] could not enqueue deferred scheduled run:', err)
+          return { ok: false, status: 500, error: String(err), id: undefined as string | undefined }
+        })
+        console.info(
+          `[scanScheduler] schedule ${scheduleId} refused (${cls.blockedCode || 'temporary'}); ` +
+          `enqueued as ${enq.id ?? 'none'}`
+        )
+        return NextResponse.json(
+          { ok: false, queued: enq.ok, jobId: enq.id ?? null, blockedCode: cls.blockedCode, error: result.error, nextRunAt },
+          { status: 200 },
+        )
+      }
+
+      // PERMANENT: nothing to queue. Record a failed ScanJob so the run history
+      // shows why (an admission-limit rejection already recorded its own).
       console.warn(`[scanScheduler] schedule ${scheduleId} could not start: ${result.error}`)
-      // An admission-limit rejection already recorded its own ScanJob. A rejection
-      // that happened BEFORE that (the graph was busy: a scan already running, or
-      // an activation that began after the worker's pre-check) did not - so record
-      // the skipped occurrence here, otherwise it would leave no trace in the Scan
-      // Schedule run history (only a lastRunAt bump + logs).
       let scanJobId = result.scanJobId ?? null
       if (!scanJobId) {
         const job = await createScanJob({
@@ -88,13 +121,11 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         {
           ok: false,
           error: result.error,
-          ...(result.limit ? { limit: result.limit } : {}),
-          ...(result.activationInProgress ? { activationInProgress: true } : {}),
           ...(result.snapshotFailed ? { snapshotFailed: true } : {}),
           scanJobId,
           nextRunAt,
         },
-        { status: 200 }  // the worker handled it; this is not a transport error
+        { status: 200 },
       )
     }
 

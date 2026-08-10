@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
+import type { ScanStartError } from '@/lib/scanStartError'
 import type { TrufflehogState, TrufflehogStatus } from '@/lib/recon-types'
 
 interface UseTrufflehogStatusOptions {
@@ -21,6 +22,7 @@ interface UseTrufflehogStatusReturn {
   stopTrufflehog: () => Promise<TrufflehogState | null>
   pauseTrufflehog: () => Promise<TrufflehogState | null>
   resumeTrufflehog: () => Promise<TrufflehogState | null>
+  getLastStartError: () => ScanStartError | null
 }
 
 const DEFAULT_POLLING_INTERVAL = 5000
@@ -44,6 +46,7 @@ export function useTrufflehogStatus({
   // so hold the optimistic status ('pausing' / 'stopping') and skip polling until
   // the request resolves -- a poll landing mid-freeze would revert the button.
   const transitionRef = useRef(false)
+  const lastStartErrorRef = useRef<ScanStartError | null>(null)
 
   const onStatusChangeRef = useRef(onStatusChange)
   const onCompleteRef = useRef(onComplete)
@@ -93,6 +96,7 @@ export function useTrufflehogStatus({
 
     setIsLoading(true)
     setError(null)
+    lastStartErrorRef.current = null
 
     try {
       const response = await fetch(`/api/trufflehog/${projectId}/start`, {
@@ -100,7 +104,8 @@ export function useTrufflehogStatus({
       })
 
       if (!response.ok) {
-        const data = await response.json()
+        const data = await response.json().catch(() => ({}))
+        lastStartErrorRef.current = { message: data.error || 'Failed to start TruffleHog scan', limit: data.limit, status: response.status }
         throw new Error(data.error || 'Failed to start TruffleHog scan')
       }
 
@@ -111,14 +116,19 @@ export function useTrufflehogStatus({
 
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+      if (!lastStartErrorRef.current) lastStartErrorRef.current = { message: errorMessage }
       setError(errorMessage)
       onErrorRef.current?.(errorMessage)
-      return null
+      // Re-throw so the caller's catch fires (Scan Queue Phase 0.3): this hook
+      // used to swallow the failure and return null, so the user saw nothing.
+      throw err instanceof Error ? err : new Error(errorMessage)
 
     } finally {
       setIsLoading(false)
     }
   }, [projectId])
+
+  const getLastStartError = useCallback(() => lastStartErrorRef.current, [])
 
   const stopTrufflehog = useCallback(async (): Promise<TrufflehogState | null> => {
     if (!projectId) return null
@@ -254,6 +264,7 @@ export function useTrufflehogStatus({
     stopTrufflehog,
     pauseTrufflehog,
     resumeTrufflehog,
+    getLastStartError,
   }
 }
 

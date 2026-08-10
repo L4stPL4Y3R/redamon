@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { guardProject } from '@/lib/access'
+import { getEffectiveUser } from '@/lib/session'
+import { recordScanStart } from '@/lib/scanTimeline'
 import prisma from '@/lib/prisma'
 import { orchestratorFetch } from '@/lib/orchestrator'
 import { normalizeOrchestratorStartError } from '@/lib/orchestratorError'
@@ -66,6 +68,13 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       const { error, limit } = normalizeOrchestratorStartError(errorData, 'Failed to start Supply-Chain scan')
       return NextResponse.json({ error, ...(limit ? { limit } : {}) }, { status: response.status })
     }
+
+    // The scan is live now: give it a history row. Only full recon used to get
+    // one, so every other kind vanished from Run history the moment it ended.
+    // The scan is already running: recording who started it must never be able
+    // to turn a successful start into an error response.
+    const __eff = await getEffectiveUser().catch(() => null)
+    await recordScanStart({ projectId, kind: 'supply_chain', initiatedByUserId: __eff?.userId ?? null })
 
     return NextResponse.json(await response.json())
   } catch (error) {

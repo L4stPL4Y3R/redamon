@@ -23,6 +23,7 @@
     "github_hunt": 805306368,
     "trufflehog": 805306368,
     "supply_chain": 1879048192,
+    "codefix": 2147483648,
     "_default": 2147483648
   }
 }

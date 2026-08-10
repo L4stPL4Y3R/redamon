@@ -46,6 +46,8 @@ export function SystemMeter() {
       (m.active_scans ? ` (${m.active_scans} scan${m.active_scans === 1 ? '' : 's'} reserving ${toGB(m.committed)} GB)` : ''),
   ].join('\n')
 
+  // Meters only. Queue/scan state lives in the Scans tab on /graph, not
+  // behind a click on the RAM/CPU readout.
   return (
     <div className={styles.wrap}>
       <Meter label="RAM" pct={ramPct} tone="high" value={`${toGB(used)}/${toGB(total, 0)} GB used`} detail={ramTooltip} />

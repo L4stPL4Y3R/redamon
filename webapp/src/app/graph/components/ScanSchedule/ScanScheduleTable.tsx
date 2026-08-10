@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Loader2, Plus, Play, Pause, Trash2, CalendarClock } from 'lucide-react'
 import { useAlertModal, useToast, WikiInfoButton } from '@/components/ui'
+import { ScanQueuePanel, kindLabel } from './ScanQueuePanel'
 import styles from './ScanScheduleTable.module.css'
 
 interface Schedule {
@@ -20,6 +21,8 @@ interface Schedule {
 
 interface Job {
   id: string
+  /** full_recon for a ScanJob row; the queue kind for a finished queued job. */
+  kind: string
   trigger: 'manual' | 'scheduled'
   mode: 'new' | 'overwrite' | null
   status: string
@@ -56,11 +59,12 @@ function describeSchedule(s: Schedule): string {
 }
 
 /**
- * Scan Timeline - Scan Scheduler (Section 7.1).
+ * The Scans tab: a project's whole scan lifecycle, in time order.
  *
- * Upcoming schedules on top, run history below. The history is the honest record
- * of what the scheduler did: a run that could not start shows up as `failed` or
- * `deferred_ram` with the reason, rather than silently not happening.
+ * Scheduled scans (what will run) -> Scan queue (what is running or waiting now)
+ * -> Run history (what already ran). The history is the honest record of what
+ * happened: a run that could not start shows up as `failed` or `deferred_ram`
+ * with the reason, rather than silently not happening.
  */
 export function ScanScheduleTable({ projectId }: ScanScheduleTableProps) {
   const { alertError, dangerConfirm } = useAlertModal()
@@ -225,11 +229,24 @@ export function ScanScheduleTable({ projectId }: ScanScheduleTableProps) {
       <section className={styles.section}>
         <h3 className={styles.heading}>
           <CalendarClock size={14} /> Scheduled scans
-          <WikiInfoButton target="ScanSchedule" title="Open the Scan Scheduler wiki page" />
+          <WikiInfoButton target="ScanSchedule" title="Open the Scans wiki page" />
           {loading && <Loader2 size={12} className={styles.spinner} />}
         </h3>
 
         {loadError && <div className={styles.loadError}>{loadError}</div>}
+
+        {/* Schedules run full recon ONLY: the schedule runner calls startFullScan
+            and enqueues kind 'full_recon'. C-11: queue-origin jobs never appear in
+            this schedule-keyed table; they are in the Scan queue section below. */}
+        <p className={styles.hint}>
+          Schedules run the <strong>full recon pipeline</strong> only. The other scans
+          (GVM, GitHub hunt, TruffleHog, supply chain, AI attack surface) and partial
+          recon are started by hand from their own cards and cannot be scheduled here.
+        </p>
+        <p className={styles.hint}>
+          A scheduled run that cannot start on time is queued and runs automatically
+          when resources free up; watch it in Scan queue, below.
+        </p>
 
         <div className={styles.form}>
           <label className={styles.field}>
@@ -328,6 +345,10 @@ export function ScanScheduleTable({ projectId }: ScanScheduleTableProps) {
         </table>
       </section>
 
+      {/* Between the schedules that produce work and the history of work that
+          finished: what is running or waiting right now. */}
+      <ScanQueuePanel projectId={projectId} />
+
       <section className={styles.section}>
         <div className={styles.historyHead}>
           <h3 className={styles.heading}>Run history</h3>
@@ -351,13 +372,13 @@ export function ScanScheduleTable({ projectId }: ScanScheduleTableProps) {
                   title="Select all"
                 />
               </th>
-              <th>Trigger</th><th>Mode</th><th>Status</th><th>Version</th>
+              <th>Type</th><th>Trigger</th><th>Mode</th><th>Status</th><th>Version</th>
               <th>Started</th><th>Duration</th><th className={styles.num}>Nodes</th><th>Reason</th>
             </tr>
           </thead>
           <tbody>
             {jobs.length === 0 && (
-              <tr><td colSpan={9} className={styles.empty}>No scans recorded yet.</td></tr>
+              <tr><td colSpan={10} className={styles.empty}>No scans recorded yet.</td></tr>
             )}
             {jobs.map(j => (
               <tr key={j.id} className={selected.has(j.id) ? styles.rowSelected : undefined}>
@@ -369,6 +390,7 @@ export function ScanScheduleTable({ projectId }: ScanScheduleTableProps) {
                     aria-label={`Select run ${j.version ? `v${j.version.seq}` : j.id}`}
                   />
                 </td>
+                <td>{kindLabel(j.kind)}</td>
                 <td>{j.trigger}</td>
                 <td>{j.mode ?? '-'}</td>
                 <td>
