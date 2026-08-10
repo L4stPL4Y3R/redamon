@@ -435,7 +435,7 @@ _export_cpu_cap() {
 # up` died before the stack came up. Clamp each cap to the detected core count.
 # `cpus:` is a limit, not a reservation, so clamping loses nothing: the core
 # count was already the real ceiling. Keep these defaults in sync with
-# docker-compose.yml and deploy/single-host/deploy.sh's cap_cpus block.
+# docker-compose.yml and tooling/deploy/single-host/deploy.sh's cap_cpus block.
 export_cpu_caps() {
     [[ -z "${BUILD_NCPU:-}" ]] && detect_build_resources
     _export_cpu_cap POSTGRES_CPUS 4
@@ -805,7 +805,7 @@ _restore_runtime_tracked_files() {
 # exist yet - an existing install keeps the root-owned volume forever. So repair
 # it here, idempotently, on every install/update/up.
 # Every ecosystem the offline OSV DB can hold. MUST stay in step with
-# supply_chain_common/osv_db_sync.py SEED_MANIFESTS and the orchestrator's
+# scanners/supply_chain_common/osv_db_sync.py SEED_MANIFESTS and the orchestrator's
 # _OSV_SYNC_ECOSYSTEMS.
 OSV_ALL_ECOSYSTEMS="npm PyPI Go Maven crates.io Packagist RubyGems NuGet"
 
@@ -2037,9 +2037,9 @@ cmd_update() {
         rebuild_tools+=(supply-chain-analyzer)
     fi
     # capture-proxy / traffic-ingest (HTTP Traffic Capture): both share the
-    # redamon-capture-proxy:latest image, built from capture_proxy/. It is in the
+    # redamon-capture-proxy:latest image, built from scanners/capture_proxy/. It is in the
     # "capture" profile — never started by `up`, but SPAWNED on demand by the
-    # orchestrator, which just runs the image (no on-demand build; capture_proxy/ is
+    # orchestrator, which just runs the image (no on-demand build; scanners/capture_proxy/ is
     # not mounted into the orchestrator). So `update` MUST rebuild it here or the
     # proxy would keep serving stale capture/ingest/redaction/egress code. Handled
     # separately from rebuild_tools because it needs its own profile flag to build.
@@ -2238,7 +2238,7 @@ cmd_supply_chain_sync() {
     # container; the sync is the one privileged writer.
     #
     # supply_chain_common MUST be bind-mounted. It is NOT baked into the
-    # analyzer image (see supply_chain_analyzer/Dockerfile - only the
+    # analyzer image (see scanners/supply_chain_analyzer/Dockerfile - only the
     # entrypoint is COPYed); every other caller mounts it at spawn, and this
     # one did not. Without the mount the sync died with
     #   ModuleNotFoundError: No module named 'supply_chain_common'

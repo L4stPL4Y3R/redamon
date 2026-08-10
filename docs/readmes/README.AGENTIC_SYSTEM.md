@@ -916,9 +916,9 @@ Skills are reusable expert playbooks the agent loads into its prompt. Three fami
 
 | Family | Source | Affects classification? | Affects tool routing? | Lifecycle |
 |---|---|---|---|---|
-| **Built-in attack skills** | Hard-coded prompt blocks under [agentic/prompts/](../agentic/prompts/) (CVE exploit, brute force, SQL injection, XSS, phishing, DoS, post-exploitation) | Yes, the classifier picks one | Yes, drives `get_phase_tools()` and the exploitation prompt block | Always available; togglable per project via `ATTACK_SKILL_CONFIG.builtIn` |
-| **User attack skills** | Markdown files under [agentic/skills/](../agentic/skills/) (categorised: `vulnerabilities/`, `network/`, `cloud/`, `tooling/`, `frameworks/`, `protocols/`, `wireless/`, `social_engineering/`, `mobile/`, `api_security/`, `active_directory/`, `reporting/`, `scan_modes/`, `coordination/`, `technologies/`) | Yes, classified as `user_skill:<id>` | No (uses generic phase tools) | Discovered at startup by [agentic/skill_loader.py](../agentic/skill_loader.py); admin-curated; up to `MAX_SKILLS=5` per session |
-| **Chat skills** | Same markdown format under [agentic/community-skills/](../agentic/community-skills/) (e.g. `xss_exploitation.md`, `sqli_exploitation.md`, `ssrf_exploitation.md`, `api_testing.md`) | No | No | On-demand reference docs, injected via `/skill` or guidance queue mid-session |
+| **Built-in attack skills** | Hard-coded prompt blocks under [agentic/prompts/](../../agentic/prompts/) (CVE exploit, brute force, SQL injection, XSS, phishing, DoS, post-exploitation) | Yes, the classifier picks one | Yes, drives `get_phase_tools()` and the exploitation prompt block | Always available; togglable per project via `ATTACK_SKILL_CONFIG.builtIn` |
+| **User attack skills** | Markdown files under [agentic/skills/](../../agentic/skills/) (categorised: `vulnerabilities/`, `network/`, `cloud/`, `tooling/`, `frameworks/`, `protocols/`, `wireless/`, `social_engineering/`, `mobile/`, `api_security/`, `active_directory/`, `reporting/`, `scan_modes/`, `coordination/`, `technologies/`) | Yes, classified as `user_skill:<id>` | No (uses generic phase tools) | Discovered at startup by [agentic/skill_loader.py](../agentic/skill_loader.py); admin-curated; up to `MAX_SKILLS=5` per session |
+| **Chat skills** | Same markdown format under [agentic/community-skills/](../../agentic/community-skills/) (e.g. `xss_exploitation.md`, `sqli_exploitation.md`, `ssrf_exploitation.md`, `api_testing.md`) | No | No | On-demand reference docs, injected via `/skill` or guidance queue mid-session |
 
 ### Skill File Format
 
@@ -973,7 +973,7 @@ The frontend exposes a skill picker. When the operator changes the active skill 
 1. Pushes the formatted content (`[CHAT SKILL: <name>]\n\n<content>`) into the connection's `guidance_queue`.
 2. The next `think` iteration drains the queue and prepends the skill body as a `## USER GUIDANCE` block.
 3. For attack skills (not just chat skills), `attack_path_type` on parent state is also updated so subsequent fireteam deploys snapshot the new value.
-4. **Behavior-triggered phase auto-transition (`AUTO_TRANSITION_ON_ATTACK_SKILL`).** When the resolved skill is a concrete attack skill (not `<term>-unclassified`) and the agent is still in the `informational` phase, the orchestrator promotes it to `exploitation` in the same step, instead of waiting for the agent to discretionarily request a transition. Classifying "this is an RCE / XSS / SQLi engagement" *is* the decision to exploit, so the phase follows the classification. The auto-promotion is gated: it is skipped when `REQUIRE_APPROVAL_FOR_EXPLOITATION` is set (the operator still gets the approval gate), and it never downgrades a phase. This is what lets LATS - which is exploitation-gated - engage early instead of stalling in recon (see the [`should_auto_transition_on_skill`](../agentic/state.py) predicate).
+4. **Behavior-triggered phase auto-transition (`AUTO_TRANSITION_ON_ATTACK_SKILL`).** When the resolved skill is a concrete attack skill (not `<term>-unclassified`) and the agent is still in the `informational` phase, the orchestrator promotes it to `exploitation` in the same step, instead of waiting for the agent to discretionarily request a transition. Classifying "this is an RCE / XSS / SQLi engagement" *is* the decision to exploit, so the phase follows the classification. The auto-promotion is gated: it is skipped when `REQUIRE_APPROVAL_FOR_EXPLOITATION` is set (the operator still gets the approval gate), and it never downgrades a phase. This is what lets LATS - which is exploitation-gated - engage early instead of stalling in recon (see the [`should_auto_transition_on_skill`](../../agentic/state.py) predicate).
 
 Members of an in-flight fireteam wave keep their deploy-time `attack_path_type` snapshot, skill changes only take effect on the next fan-out.
 
@@ -981,14 +981,14 @@ Members of an in-flight fireteam wave keep their deploy-time `attack_path_type` 
 
 | Skill | Prompt Block | Phase | Notes |
 |---|---|---|---|
-| `cve_exploit` | [cve_exploit_prompts.py](../agentic/prompts/cve_exploit_prompts.py) | exploitation, post_exploitation | Statefull/stateless payload modes; no-module fallback |
-| `brute_force_credential_guess` | [brute_force_credential_guess_prompts.py](../agentic/prompts/brute_force_credential_guess_prompts.py) | exploitation | Hydra workflow + wordlist guidance |
-| `sql_injection` | [sql_injection_prompts.py](../agentic/prompts/sql_injection_prompts.py) | exploitation | 7-step sqlmap workflow + WAF bypass + OOB DNS exfil |
-| `xss` | [xss_prompts.py](../agentic/prompts/xss_prompts.py) | exploitation | Reflected/stored/DOM with dalfox + CSP bypass + blind callbacks |
-| `phishing_social_engineering` | [phishing_social_engineering_prompts.py](../agentic/prompts/phishing_social_engineering_prompts.py) | exploitation | msfvenom + handler + delivery; gated by `ROE_ALLOW_SOCIAL_ENGINEERING` |
-| `denial_of_service` | [denial_of_service_prompts.py](../agentic/prompts/denial_of_service_prompts.py) | exploitation | hping3 / slowhttptest / MSF DoS modules; gated by `ROE_ALLOW_DOS` |
-| `<term>-unclassified` | [unclassified_prompts.py](../agentic/prompts/unclassified_prompts.py) | informational, exploitation | Generic phase guidance |
-| post-exploitation (statefull) | [post_exploitation.py](../agentic/prompts/post_exploitation.py) | post_exploitation | Unified Meterpreter / shell session prompt |
+| `cve_exploit` | [cve_exploit_prompts.py](../../agentic/prompts/cve_exploit_prompts.py) | exploitation, post_exploitation | Statefull/stateless payload modes; no-module fallback |
+| `brute_force_credential_guess` | [brute_force_credential_guess_prompts.py](../../agentic/prompts/brute_force_credential_guess_prompts.py) | exploitation | Hydra workflow + wordlist guidance |
+| `sql_injection` | [sql_injection_prompts.py](../../agentic/prompts/sql_injection_prompts.py) | exploitation | 7-step sqlmap workflow + WAF bypass + OOB DNS exfil |
+| `xss` | [xss_prompts.py](../../agentic/prompts/xss_prompts.py) | exploitation | Reflected/stored/DOM with dalfox + CSP bypass + blind callbacks |
+| `phishing_social_engineering` | [phishing_social_engineering_prompts.py](../../agentic/prompts/phishing_social_engineering_prompts.py) | exploitation | msfvenom + handler + delivery; gated by `ROE_ALLOW_SOCIAL_ENGINEERING` |
+| `denial_of_service` | [denial_of_service_prompts.py](../../agentic/prompts/denial_of_service_prompts.py) | exploitation | hping3 / slowhttptest / MSF DoS modules; gated by `ROE_ALLOW_DOS` |
+| `<term>-unclassified` | [unclassified_prompts.py](../../agentic/prompts/unclassified_prompts.py) | informational, exploitation | Generic phase guidance |
+| post-exploitation (statefull) | [post_exploitation.py](../../agentic/prompts/post_exploitation.py) | post_exploitation | Unified Meterpreter / shell session prompt |
 
 Each block is a Python string template with placeholders that `prompts/__init__.py` fills via `get_phase_tools()`.
 
@@ -1279,7 +1279,7 @@ This chapter describes *how the operator and the agent talk to each other in rea
 
 The protocol has two strict design goals. **Liveness without polling**, the frontend never asks "what's happening?"; the backend pushes events as they occur, so the chat surface feels live token-by-token. **Persistence and replay**, every event is also written to a `ChatMessage` row in PostgreSQL, so a browser refresh, a network blip, or even a different operator opening the session later will see the exact same timeline reconstructed from the database. The `StreamingCallback` interface is the boundary that decouples the agent's internal node logic from the transport: nodes call abstract methods like `on_thinking()` or `on_tool_complete()` and the WebSocket layer handles framing, deduplication, persistence, and the connection-replacement edge cases (e.g. operator reopens the same session in a new tab).
 
-The protocol carries roughly 30 outbound event types and 10 inbound message types, all defined as enums in [`agentic/websocket_api.py`](../agentic/websocket_api.py). The sections below cover the message protocol itself, the streaming event flow with its strict ordering rules (a previous tool's `tool_complete` must fire before the next iteration's `thinking`, which must fire before the next `tool_start`, otherwise the frontend reducer mis-pairs running tools with completion events), the wave execution flow for parallel tool plans, and the three operator-control mechanisms that share this transport: guidance messages for steering a running agent, stop/resume for pausing whole sessions, and per-tool stop for killing individual long-running commands.
+The protocol carries roughly 30 outbound event types and 10 inbound message types, all defined as enums in [`agentic/websocket_api.py`](../../agentic/websocket_api.py). The sections below cover the message protocol itself, the streaming event flow with its strict ordering rules (a previous tool's `tool_complete` must fire before the next iteration's `thinking`, which must fire before the next `tool_start`, otherwise the frontend reducer mis-pairs running tools with completion events), the wave execution flow for parallel tool plans, and the three operator-control mechanisms that share this transport: guidance messages for steering a running agent, stop/resume for pausing whole sessions, and per-tool stop for killing individual long-running commands.
 
 ### Streaming Event Flow
 
@@ -1484,7 +1484,7 @@ In **plan mode**, only the dangerous tools within the wave are surfaced for conf
 
 #### Tool Mutex Groups (Wave & Fireteam Concurrency Safety)
 
-Some tools have **singleton state inside the Kali sandbox** and cannot run concurrently, even from different agents in the same fireteam wave or different steps in the same `plan_tools` wave. These are declared in `TOOL_MUTEX_GROUPS` in [agentic/project_settings.py](../agentic/project_settings.py):
+Some tools have **singleton state inside the Kali sandbox** and cannot run concurrently, even from different agents in the same fireteam wave or different steps in the same `plan_tools` wave. These are declared in `TOOL_MUTEX_GROUPS` in [agentic/project_settings.py](../../agentic/project_settings.py):
 
 ```python
 TOOL_MUTEX_GROUPS = {
@@ -1630,7 +1630,7 @@ It is a deliberate contrast to the regular `think_node` LLM call:
 
 ### When Deep Think Fires
 
-Implemented in [agentic/orchestrator_helpers/nodes/think_node.py](../agentic/orchestrator_helpers/nodes/think_node.py). Conditions are checked in this order, first match wins:
+Implemented in [agentic/orchestrator_helpers/nodes/think_node.py](../../agentic/orchestrator_helpers/nodes/think_node.py). Conditions are checked in this order, first match wins:
 
 1. **First iteration of session**, `iteration == 1`. Trigger reason: `"First iteration, establishing initial strategy"`. Always runs once at session start (when `DEEP_THINK_ENABLED=true`).
 2. **Phase transition just happened**, the previous step bumped `current_phase`. Trigger reason: `"Phase transition to <new_phase>, re-evaluating strategy"`.
@@ -2328,7 +2328,7 @@ This is the second-generation design. The legacy keyword-only "failure loop" det
 
 ### Verdict Schema
 
-The schema lives in [agentic/state.py](../agentic/state.py) as `ProductivityVerdict`, embedded in `OutputAnalysisInline.productivity`:
+The schema lives in [agentic/state.py](../../agentic/state.py) as `ProductivityVerdict`, embedded in `OutputAnalysisInline.productivity`:
 
 ```python
 class ProductivityVerdict(BaseModel):
@@ -2351,7 +2351,7 @@ The closed enum prevents free-form dodging ("partial success", "informative-but-
 
 ### Honesty Audit (State-Delta Cross-Check)
 
-After parsing the LLM's `output_analysis`, the orchestrator runs `audit_productivity_claim()` (in [agentic/orchestrator_helpers/productivity.py](../agentic/orchestrator_helpers/productivity.py)) against the *actual* state delta for the same iteration. The audit checks whether the engagement state grew during the iteration:
+After parsing the LLM's `output_analysis`, the orchestrator runs `audit_productivity_claim()` (in [agentic/orchestrator_helpers/productivity.py](../../agentic/orchestrator_helpers/productivity.py)) against the *actual* state delta for the same iteration. The audit checks whether the engagement state grew during the iteration:
 
 - Did `chain_findings` get a new entry?
 - Did `extracted_info` populate any of `ports` / `services` / `technologies` / `vulnerabilities` / `credentials` / `sessions`?
@@ -2360,7 +2360,7 @@ After parsing the LLM's `output_analysis`, the orchestrator runs `audit_producti
 
 If `claims_new == true` but **no** state actually grew, the audit returns a one-line discrepancy string and the orchestrator calls `downgrade_verdict_to_no_progress()`, which preserves the original verdict in `_original_verdict`, rewrites `verdict` to `no_progress`, sets `new_information_gained=false`, and records the `_downgrade_reason`. The reason is then echoed back to the LLM in the next prompt under a `## Prior Productivity Claim Was Downgraded` block so the model sees its own claim being corrected.
 
-The audit runs in three call sites: the single-tool path in [think_node.py](../agentic/orchestrator_helpers/nodes/think_node.py), the wave path (one verdict per wave, replicated onto every wave step so the loop detector can read it from any single step in isolation), and the fireteam member path in [fireteam_member_think_node.py](../agentic/orchestrator_helpers/nodes/fireteam_member_think_node.py).
+The audit runs in three call sites: the single-tool path in [think_node.py](../../agentic/orchestrator_helpers/nodes/think_node.py), the wave path (one verdict per wave, replicated onto every wave step so the loop detector can read it from any single step in isolation), and the fireteam member path in [fireteam_member_think_node.py](../../agentic/orchestrator_helpers/nodes/fireteam_member_think_node.py).
 
 ### Same-Pattern Fingerprint Audit
 
@@ -2400,7 +2400,7 @@ The most reliable "are we still making progress" signal does not come from the L
 - `actionable_findings` (non-empty list on the step)
 - An `exploit_succeeded` event with details
 
-`detect_state_growth(before_state, after_state)` in [agentic/orchestrator_helpers/productivity.py](../agentic/orchestrator_helpers/productivity.py) is the helper. It runs in both the single-tool analysis path and the wave-analysis path in [think_node.py](../agentic/orchestrator_helpers/nodes/think_node.py), so both modes contribute to the counter.
+`detect_state_growth(before_state, after_state)` in [agentic/orchestrator_helpers/productivity.py](../../agentic/orchestrator_helpers/productivity.py) is the helper. It runs in both the single-tool analysis path and the wave-analysis path in [think_node.py](../../agentic/orchestrator_helpers/nodes/think_node.py), so both modes contribute to the counter.
 
 Why this matters: the LLM can label every call `confirmation` (or, with the honesty audit catching the dishonest `new_info` claim, every call `no_progress` after downgrade), but if the engagement is genuinely producing new findings, the state-growth counter resets and the score stays low. Conversely, if the agent is honestly labeling each call but the engagement has stopped accumulating intelligence, the counter rises monotonically and eventually crosses the score's thresholds. The signal is **observed**, not **declared**.
 
@@ -2415,7 +2415,7 @@ The counter has two configurable thresholds beyond the score's own tier boundari
 
 The same-pattern fingerprint audit (above) catches loops that repeat *within the last 6 steps*. A different and more insidious failure mode is **slow loops**: three brute-force attempts against the same `(target, fixed_username)` axis spread across 15+ iterations of other tool calls - too dispersed in time to land inside any rolling six-step window, and textually distinct enough at the args level (different wordlist filenames, different `N`) that the normalized-args fingerprint did not collapse them either. The fix is a **session-long axis ledger** keyed by a *semantic* axis rather than a textual one - repetition is detected by what the agent is *holding constant*, not by what the args string happens to look like.
 
-For each expensive tool call, an axis extractor reduces the call to a small dict whose stringified form is the dedup key. Per-tool-family definitions (in [productivity.py](../agentic/orchestrator_helpers/productivity.py) `extract_axis`):
+For each expensive tool call, an axis extractor reduces the call to a small dict whose stringified form is the dedup key. Per-tool-family definitions (in [productivity.py](../../agentic/orchestrator_helpers/productivity.py) `extract_axis`):
 
 | Tool family | Detection | Axis |
 |---|---|---|
@@ -2535,7 +2535,7 @@ When the score crosses a tier (or, in fallback mode, when the legacy count cross
 
 ### Diagnostic Annotations (`error_class` + `duration_ms`)
 
-Every executed tool step is tagged with a `duration_ms` measurement (recorded by `execute_plan_node` and `execute_tool_node`) and an `error_class` label produced by the 7-way classifier in [agentic/orchestrator_helpers/error_class.py](../agentic/orchestrator_helpers/error_class.py). The two fields are surfaced inline in the chain context the LLM reads on every iteration via `_format_step_diagnostics()` in [agentic/state.py](../agentic/state.py):
+Every executed tool step is tagged with a `duration_ms` measurement (recorded by `execute_plan_node` and `execute_tool_node`) and an `error_class` label produced by the 7-way classifier in [agentic/orchestrator_helpers/error_class.py](../../agentic/orchestrator_helpers/error_class.py). The two fields are surfaced inline in the chain context the LLM reads on every iteration via `_format_step_diagnostics()` in [agentic/state.py](../../agentic/state.py):
 
 ```
 - execute_curl [3ms, application_5xx_fast]: {'args': '-X POST .../jobs -d ...'}
@@ -2561,7 +2561,7 @@ The classifier helper `is_diagnostic_failure(error_class)` returns `True` for `s
 
 ### Response-Uniformity Anomaly Detector
 
-Complementary to the same-pattern fingerprint audit (which catches *same TOOL/ARGS* loops), `detect_uniform_response_anomaly()` in [agentic/orchestrator_helpers/productivity.py](../agentic/orchestrator_helpers/productivity.py) catches the opposite failure mode: *different* payloads producing *identical* short-duration failures. The detector scans the last `UNIFORM_RESPONSE_WINDOW` (default 8) steps; when `UNIFORM_RESPONSE_MIN_COUNT` (default 5) of them share the same `(error_class, body_size_bucket)` signature AND all complete in under `UNIFORM_RESPONSE_DURATION_MS` (default 50ms), a warning block is injected into the next system prompt:
+Complementary to the same-pattern fingerprint audit (which catches *same TOOL/ARGS* loops), `detect_uniform_response_anomaly()` in [agentic/orchestrator_helpers/productivity.py](../../agentic/orchestrator_helpers/productivity.py) catches the opposite failure mode: *different* payloads producing *identical* short-duration failures. The detector scans the last `UNIFORM_RESPONSE_WINDOW` (default 8) steps; when `UNIFORM_RESPONSE_MIN_COUNT` (default 5) of them share the same `(error_class, body_size_bucket)` signature AND all complete in under `UNIFORM_RESPONSE_DURATION_MS` (default 50ms), a warning block is injected into the next system prompt:
 
 ```
 ## RESPONSE-UNIFORMITY ANOMALY
@@ -2751,7 +2751,7 @@ The frontend renders each wave as a single grouped `PlanWaveCard` in the AgentTi
 
 ### Tool Mutex Groups (Concurrency Safety)
 
-Some tools have **singleton state inside the Kali sandbox** and cannot run concurrently, even from different steps in the same wave (or from different fireteam members in the same fan-out). These are declared in `TOOL_MUTEX_GROUPS` in [`agentic/project_settings.py`](../agentic/project_settings.py):
+Some tools have **singleton state inside the Kali sandbox** and cannot run concurrently, even from different steps in the same wave (or from different fireteam members in the same fan-out). These are declared in `TOOL_MUTEX_GROUPS` in [`agentic/project_settings.py`](../../agentic/project_settings.py):
 
 ```python
 TOOL_MUTEX_GROUPS = {
@@ -3057,7 +3057,7 @@ What members deliberately do NOT inherit from `AgentState`:
 
 Members are not dispatched cold. Each receives a snapshot of the parent's engagement state at deploy time, rendered into the member's system prompt with the same `format_chain_context()` function the root agent uses on itself, so members open every iteration with full visibility into what has already been discovered.
 
-**What flows parent → member at deploy time** (snapshotted in [`fireteam_deploy_node._build_member_state`](../agentic/orchestrator_helpers/nodes/fireteam_deploy_node.py)):
+**What flows parent → member at deploy time** (snapshotted in [`fireteam_deploy_node._build_member_state`](../../agentic/orchestrator_helpers/nodes/fireteam_deploy_node.py)):
 
 | Field on `FireteamMemberState` | Source on `AgentState` | Rendered as |
 |---|---|---|
@@ -3105,29 +3105,29 @@ From the operator's UI: **one fireteam card with three always-visible specialist
 
 | File | Role |
 |---|---|
-| [agentic/orchestrator.py](../agentic/orchestrator.py) | Registers the 3 fireteam nodes, wires edges, compiles graph |
-| [agentic/orchestrator_helpers/fireteam_member_graph.py](../agentic/orchestrator_helpers/fireteam_member_graph.py) | Builds the 5-node member subgraph (compiled once at startup) |
-| [agentic/orchestrator_helpers/fireteam_confirmation_registry.py](../agentic/orchestrator_helpers/fireteam_confirmation_registry.py) | In-process `(session, wave, member) -> Event` registry |
-| [agentic/orchestrator_helpers/nodes/fireteam_deploy_node.py](../agentic/orchestrator_helpers/nodes/fireteam_deploy_node.py) | Fan-out: `asyncio.gather` over N member tasks |
-| [agentic/orchestrator_helpers/nodes/fireteam_collect_node.py](../agentic/orchestrator_helpers/nodes/fireteam_collect_node.py) | Fan-in: merge `target_info` + findings, auto-complete TODOs |
-| [agentic/orchestrator_helpers/nodes/fireteam_member_think_node.py](../agentic/orchestrator_helpers/nodes/fireteam_member_think_node.py) | Member ReAct think, forbidden-action stripping, await_confirmation node |
-| [agentic/websocket_api.py](../agentic/websocket_api.py) | `on_fireteam_member_awaiting_confirmation` emit, `handle_fireteam_member_confirmation` receive |
-| [agentic/state.py](../agentic/state.py) | `FireteamMemberSpec`, `FireteamPlan`, `FireteamMemberState`, `FireteamMemberResult` types |
-| [agentic/project_settings.py](../agentic/project_settings.py) | `FIRETEAM_*` knobs (enabled, max concurrent, timeouts, allowed phases) |
+| [agentic/orchestrator.py](../../agentic/orchestrator.py) | Registers the 3 fireteam nodes, wires edges, compiles graph |
+| [agentic/orchestrator_helpers/fireteam_member_graph.py](../../agentic/orchestrator_helpers/fireteam_member_graph.py) | Builds the 5-node member subgraph (compiled once at startup) |
+| [agentic/orchestrator_helpers/fireteam_confirmation_registry.py](../../agentic/orchestrator_helpers/fireteam_confirmation_registry.py) | In-process `(session, wave, member) -> Event` registry |
+| [agentic/orchestrator_helpers/nodes/fireteam_deploy_node.py](../../agentic/orchestrator_helpers/nodes/fireteam_deploy_node.py) | Fan-out: `asyncio.gather` over N member tasks |
+| [agentic/orchestrator_helpers/nodes/fireteam_collect_node.py](../../agentic/orchestrator_helpers/nodes/fireteam_collect_node.py) | Fan-in: merge `target_info` + findings, auto-complete TODOs |
+| [agentic/orchestrator_helpers/nodes/fireteam_member_think_node.py](../../agentic/orchestrator_helpers/nodes/fireteam_member_think_node.py) | Member ReAct think, forbidden-action stripping, await_confirmation node |
+| [agentic/websocket_api.py](../../agentic/websocket_api.py) | `on_fireteam_member_awaiting_confirmation` emit, `handle_fireteam_member_confirmation` receive |
+| [agentic/state.py](../../agentic/state.py) | `FireteamMemberSpec`, `FireteamPlan`, `FireteamMemberState`, `FireteamMemberResult` types |
+| [agentic/project_settings.py](../../agentic/project_settings.py) | `FIRETEAM_*` knobs (enabled, max concurrent, timeouts, allowed phases) |
 
 **Frontend (webapp):**
 
 | File | Role |
 |---|---|
-| [webapp/src/app/graph/components/AIAssistantDrawer/FireteamCard.tsx](../webapp/src/app/graph/components/AIAssistantDrawer/FireteamCard.tsx) | Wave-level card (header + per-member grid) |
-| [webapp/src/app/graph/components/AIAssistantDrawer/FireteamMemberCard.tsx](../webapp/src/app/graph/components/AIAssistantDrawer/FireteamMemberCard.tsx) | Per-member panel with inline pending-approval card and approve/reject buttons |
-| [webapp/src/app/graph/components/AIAssistantDrawer/hooks/fireteamChatState.ts](../webapp/src/app/graph/components/AIAssistantDrawer/hooks/fireteamChatState.ts) | Pure reducers for the fireteam WS event family |
-| [webapp/src/hooks/useAgentWebSocket.ts](../webapp/src/hooks/useAgentWebSocket.ts) | `sendFireteamMemberConfirmation(wave_id, member_id, decision)` |
-| [webapp/src/lib/websocket-types.ts](../webapp/src/lib/websocket-types.ts) | Event names and payload interfaces |
+| [webapp/src/app/graph/components/AIAssistantDrawer/FireteamCard.tsx](../../webapp/src/app/graph/components/AIAssistantDrawer/FireteamCard.tsx) | Wave-level card (header + per-member grid) |
+| [webapp/src/app/graph/components/AIAssistantDrawer/FireteamMemberCard.tsx](../../webapp/src/app/graph/components/AIAssistantDrawer/FireteamMemberCard.tsx) | Per-member panel with inline pending-approval card and approve/reject buttons |
+| [webapp/src/app/graph/components/AIAssistantDrawer/hooks/fireteamChatState.ts](../../webapp/src/app/graph/components/AIAssistantDrawer/hooks/fireteamChatState.ts) | Pure reducers for the fireteam WS event family |
+| [webapp/src/hooks/useAgentWebSocket.ts](../../webapp/src/hooks/useAgentWebSocket.ts) | `sendFireteamMemberConfirmation(wave_id, member_id, decision)` |
+| [webapp/src/lib/websocket-types.ts](../../webapp/src/lib/websocket-types.ts) | Event names and payload interfaces |
 
 ### Settings
 
-Mapped from Prisma `Project.*` fields into the agent's `FIRETEAM_*` settings on each request. See [agentic/project_settings.py](../agentic/project_settings.py).
+Mapped from Prisma `Project.*` fields into the agent's `FIRETEAM_*` settings on each request. See [agentic/project_settings.py](../../agentic/project_settings.py).
 
 | Setting | Default | Purpose |
 |---|---|---|
@@ -3157,7 +3157,7 @@ After every tool execution, the **next** think iteration produces a structured a
 
 ### Schema
 
-Defined in [agentic/state.py](../agentic/state.py) as `OutputAnalysisInline` (when emitted alongside a `LLMDecision`) and `OutputAnalysis` (the standalone post-step variant). Both share the same fields:
+Defined in [agentic/state.py](../../agentic/state.py) as `OutputAnalysisInline` (when emitted alongside a `LLMDecision`) and `OutputAnalysis` (the standalone post-step variant). Both share the same fields:
 
 | Field | Type | Purpose |
 |---|---|---|
@@ -3220,7 +3220,7 @@ The agent enforces three layered guardrails on every target it might touch. Each
 |---|---|---|---|---|
 | **Hard** | [agentic/hard_guardrail.py](../agentic/hard_guardrail.py) | Pure regex/string match against TLD patterns + ~200-domain exact set | **No**, non-disableable | At `initialize_node`; also re-checked in `think_node` when injecting the scope reminder |
 | **Soft** | [agentic/guardrail.py](../agentic/guardrail.py) | LLM-based "is this safe to scan" classifier with retry | Yes, `AGENT_GUARDRAIL_ENABLED` | At `initialize_node` after hard guardrail passes |
-| **Scope reminder** | [agentic/orchestrator_helpers/nodes/think_node.py](../agentic/orchestrator_helpers/nodes/think_node.py) (lines ~289-305) | Prompt-level injection: "you must only operate against the project's configured target" | Implicit (depends on hard-block status + `AGENT_GUARDRAIL_ENABLED`) | Every think iteration |
+| **Scope reminder** | [agentic/orchestrator_helpers/nodes/think_node.py](../../agentic/orchestrator_helpers/nodes/think_node.py) (lines ~289-305) | Prompt-level injection: "you must only operate against the project's configured target" | Implicit (depends on hard-block status + `AGENT_GUARDRAIL_ENABLED`) | Every think iteration |
 
 ### Hard Guardrail, The Floor
 
@@ -3292,7 +3292,7 @@ This is belt-and-suspenders for prompt-injection scenarios where the operator pa
 
 The **RoE system** lets a project encode a complete pentest engagement contract, client metadata, time windows, scope exclusions, technique gating, rate limits, severity caps, data-handling rules, and have the agent enforce it both via prompt injection and via behavioural gates.
 
-When `ROE_ENABLED=true`, [agentic/prompts/base.py](../agentic/prompts/base.py)'s `build_roe_prompt_section()` renders an `## RULES OF ENGAGEMENT` block that gets appended to the system prompt every iteration (and to the Deep Think prompt). The block is built dynamically from ~35 `ROE_*` settings, so unset fields contribute nothing.
+When `ROE_ENABLED=true`, [agentic/prompts/base.py](../../agentic/prompts/base.py)'s `build_roe_prompt_section()` renders an `## RULES OF ENGAGEMENT` block that gets appended to the system prompt every iteration (and to the Deep Think prompt). The block is built dynamically from ~35 `ROE_*` settings, so unset fields contribute nothing.
 
 ### Categories of RoE Settings
 
@@ -3363,7 +3363,7 @@ The two layers are deliberately redundant. If the LLM reads the RoE block correc
 
 ## Stealth Mode
 
-When `STEALTH_MODE=true`, [agentic/prompts/stealth_rules.py](../agentic/prompts/stealth_rules.py) prepends a `STEALTH_MODE_RULES` block to the system prompt with the **highest priority** (it goes before everything else, including the base ReAct prompt).
+When `STEALTH_MODE=true`, [agentic/prompts/stealth_rules.py](../../agentic/prompts/stealth_rules.py) prepends a `STEALTH_MODE_RULES` block to the system prompt with the **highest priority** (it goes before everything else, including the base ReAct prompt).
 
 The block instructs the agent to:
 
@@ -4368,11 +4368,11 @@ Report generation is post-engagement and asynchronous. The orchestrator's job en
 
 ## Companion Orchestrators (Cypherfix)
 
-Two sibling orchestrators live alongside the main pentest agent under [agentic/cypherfix_codefix/](../agentic/cypherfix_codefix/) and [agentic/cypherfix_triage/](../agentic/cypherfix_triage/). They share infrastructure (logging, project_settings, key_rotation, websocket transport) but are independent ReAct agents with their own state, prompts, and tool sets.
+Two sibling orchestrators live alongside the main pentest agent under [agentic/cypherfix_codefix/](../../agentic/cypherfix_codefix/) and [agentic/cypherfix_triage/](../../agentic/cypherfix_triage/). They share infrastructure (logging, project_settings, key_rotation, websocket transport) but are independent ReAct agents with their own state, prompts, and tool sets.
 
 ### Cypherfix Triage
 
-LLM agent that triages findings produced by the pentest run, clusters duplicates, scores severity, drops false positives, and generates remediation handles consumable by the codefix agent. Lives in [agentic/cypherfix_triage/](../agentic/cypherfix_triage/) with its own `orchestrator.py`, `state.py`, `tools.py`, `websocket_handler.py`, and `prompts/`.
+LLM agent that triages findings produced by the pentest run, clusters duplicates, scores severity, drops false positives, and generates remediation handles consumable by the codefix agent. Lives in [agentic/cypherfix_triage/](../../agentic/cypherfix_triage/) with its own `orchestrator.py`, `state.py`, `tools.py`, `websocket_handler.py`, and `prompts/`.
 
 ### Cypherfix Codefix
 

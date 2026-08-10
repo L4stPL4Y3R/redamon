@@ -3,7 +3,7 @@
 A deterministic, dependency-free HTTP target that fires **every branch** of the
 L2 supply-chain harvest chain exactly once, with a known expected outcome.
 
-L2 is the layer described in [README.SUPPLY_CHAIN.md](../../readmes/README.SUPPLY_CHAIN.md#layer-l2--recon-pipeline-module):
+L2 is the layer described in [README.SUPPLY_CHAIN.md](../../../docs/readmes/README.SUPPLY_CHAIN.md#layer-l2--recon-pipeline-module):
 against a live target with **no manifest**, it reconstructs the served npm
 package set, verdicts it offline against the OSV database, and MERGEs
 `Package` + `MalPackageFinding` nodes anchored to the target's `BaseURL`.
@@ -19,7 +19,7 @@ Unlike [`ai_surface_target`](../ai_surface_target/), this guinea pig sits on
 
 L2's harvest is fed by `js_recon`, which is **Python** and routes every JS URL
 and every source-map URL through `is_url_safe_to_probe()`
-([ip_filter.py:51](../../recon/main_recon_modules/ip_filter.py#L51)). That guard
+([ip_filter.py:51](../../../recon/main_recon_modules/ip_filter.py#L51)). That guard
 fails closed on any non-routable address. A loopback target yields zero
 downloaded JS, zero source maps, and an empty harvest.
 
@@ -220,7 +220,7 @@ These are properties of L2 as it stands, not gaps in the target:
   `run_supply_chain_recon` never passes `js_contents`, so the pipeline never
   calls it. Unit tests only.
 - **Partial recon cannot produce any verdict.**
-  [partial_recon_modules/supply_chain.py](../../recon/partial_recon_modules/supply_chain.py#L93)
+  [partial_recon_modules/supply_chain.py](../../../recon/partial_recon_modules/supply_chain.py#L93)
   seeds an empty `http_probe`, so Path A never runs, so there are no versions
   to match, and packages float with no `DEPENDS_ON` anchor. Running the
   standalone tool against this target is expected to yield source-map inventory

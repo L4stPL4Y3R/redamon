@@ -116,7 +116,7 @@ public, max-age` so nginx stores it (poisonable); negative controls send `no-sto
 Before even running the pipeline, a 2-minute test against this real cache exposed a
 genuine gap in the native confirmer.
 
-The confirmer ([confirm.py](../../recon/cache_scan/confirm.py)) does **baseline first,
+The confirmer ([confirm.py](../../../recon/cache_scan/confirm.py)) does **baseline first,
 then poisons the *same* cache-buster**. Against a real cache the baseline warms the
 slot with a clean response, so the poison request (unkeyed header → same key) gets a
 cache **HIT** and never reaches the origin → **false negative**.

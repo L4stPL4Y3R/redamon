@@ -10,7 +10,7 @@ Before anything else, read the [DISCLAIMER.md](DISCLAIMER.md). This is a securit
 
 ## Table of Contents
 
-- [Developer Guide](readmes/README.DEV.md)
+- [Developer Guide](docs/readmes/README.DEV.md)
 - [Code of Conduct](#code-of-conduct)
 - [Legal and Ethical Responsibilities](#legal-and-ethical-responsibilities)
 - [Your First Contribution](#your-first-contribution)
@@ -268,9 +268,9 @@ Every rank unlocks real rewards. No empty promises.
 
 ## Architecture & Development Workflow
 
-> For a comprehensive deep dive into the codebase — architecture, project layout, subsystem internals, and development checklists — see the **[Developer Guide](readmes/README.DEV.md)**.
+> For a comprehensive deep dive into the codebase — architecture, project layout, subsystem internals, and development checklists — see the **[Developer Guide](docs/readmes/README.DEV.md)**.
 
-> **Agent + contributor ruleset.** Every change follows the rules in **[AGENTS.md](AGENTS.md)** (tech stack, commands, QA checklist, how tests run) and the nearest component `AGENTS.md`. The repository records its hard-won conventions as loadable **agent skills** — see **[readmes/skills_management/SKILLS_MANAGEMENT.md](readmes/skills_management/SKILLS_MANAGEMENT.md)** for how the system works and how to add a skill.
+> **Agent + contributor ruleset.** Every change follows the rules in **[AGENTS.md](AGENTS.md)** (tech stack, commands, QA checklist, how tests run) and the nearest component `AGENTS.md`. The repository records its hard-won conventions as loadable **agent skills** — see **[readmes/skills_management/SKILLS_MANAGEMENT.md](docs/readmes/skills_management/SKILLS_MANAGEMENT.md)** for how the system works and how to add a skill.
 
 RedAmon runs as a Docker Compose stack. Here's what each service does and how changes propagate:
 
@@ -280,9 +280,9 @@ RedAmon runs as a Docker Compose stack. Here's what each service does and how ch
 | recon-orchestrator | Python | `recon_orchestrator/` | Orchestrates the 6-phase recon pipeline |
 | agent | Python | `agentic/` | AI agent for exploitation + triage |
 | kali-sandbox | Kali Linux | `mcp/` | MCP tool servers (Metasploit, Nmap, Nuclei, Hydra) |
-| postgres | PostgreSQL | `postgres_db/` | Project config, user settings |
+| postgres | PostgreSQL | `services/postgres_db/` | Project config, user settings |
 | neo4j | Neo4j | `graph_db/` | Knowledge graph for all findings |
-| gvm-* | OpenVAS / GVM | `gvm_scan/` | Vulnerability scanner (optional profile) |
+| gvm-* | OpenVAS / GVM | `scanners/gvm_scan/` | Vulnerability scanner (optional profile) |
 
 **Hot-reload rules:**
 

@@ -13,7 +13,7 @@ RedAmon is fully Dockerized and runs on **any OS** that supports Docker and Dock
 | Docker socket permission denied | User not in `docker` group | `sudo usermod -aG docker $USER` then log out and back in |
 | `docker compose` not found | Old Docker version uses `docker-compose` (hyphen) | Install [Docker Compose V2 plugin](https://docs.docker.com/compose/install/) or use `docker-compose` |
 | Port already in use (3000, 8010, etc.) | Another service occupies the port | Change ports in `.env` or stop the conflicting service |
-| Containers killed (OOM) | Insufficient RAM | Increase swap or free memory — see [minimum requirements](../README.md#prerequisites) |
+| Containers killed (OOM) | Insufficient RAM | Increase swap or free memory — see [minimum requirements](../../README.md#prerequisites) |
 | Volume mount denied (SELinux) | Fedora / RHEL / CentOS enforce SELinux | Add `:z` suffix to volume mounts in `docker-compose.yml`, or run `sudo setsebool -P container_manage_cgroup on` |
 | Firewall blocks container traffic | `firewalld` or `ufw` blocking Docker bridge | `sudo ufw allow in on docker0` or allow the Docker subnet in firewalld |
 | DNS fails inside containers | `systemd-resolved` conflicts (Ubuntu 22.04+) | Add `{"dns": ["8.8.8.8", "8.8.4.4"]}` to `/etc/docker/daemon.json` and restart Docker |

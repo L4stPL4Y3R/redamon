@@ -233,7 +233,7 @@ Compare with Katana on the same target — it will find only `/about`, `/api/aut
 
 ### Port 9104 — JS Recon AI SDK showroom (Lap-3 / Phase 6)
 
-Serves an HTML index at `/` whose `<head>` carries `<script src='/static/...'>` tags for **23 fixture JS files**. Katana follows the script tags; js_recon downloads each file; `match_ai_sdk()` in [recon/helpers/ai_signal_catalog.py](../../recon/helpers/ai_signal_catalog.py) scans the content and emits `JsReconFinding` nodes with `finding_type` ∈ `{ai-sdk-client, ai-sdk-key-literal, ai-sdk-browser-allowed, ai-frontend-detected, ai-provider-url}`. The Phase 6 mixin then enriches matching `Secret` nodes (from the legacy `JS_SECRET_PATTERNS` pass) with the `ai_provider` property.
+Serves an HTML index at `/` whose `<head>` carries `<script src='/static/...'>` tags for **23 fixture JS files**. Katana follows the script tags; js_recon downloads each file; `match_ai_sdk()` in [recon/helpers/ai_signal_catalog.py](../../../recon/helpers/ai_signal_catalog.py) scans the content and emits `JsReconFinding` nodes with `finding_type` ∈ `{ai-sdk-client, ai-sdk-key-literal, ai-sdk-browser-allowed, ai-frontend-detected, ai-provider-url}`. The Phase 6 mixin then enriches matching `Secret` nodes (from the legacy `JS_SECRET_PATTERNS` pass) with the `ai_provider` property.
 
 Every fixture is engineered to exercise one specific detection branch. Together they cover every code path in `match_ai_sdk()`:
 
@@ -316,7 +316,7 @@ The container holds no state — restart anytime.
 
 ## Conflict with the Phase 6 lab fixture
 
-[`agentic/labs/ai-surface/`](../../agentic/labs/ai-surface/) (the realism-smoke lab with real Ollama + Open WebUI + Chroma) binds to several of the same ports as this guinea pig (11434, 8080, 8000). **Bring up one at a time.** The two fixtures serve different purposes:
+[`agentic/labs/ai-surface/`](../../../agentic/labs/ai-surface/) (the realism-smoke lab with real Ollama + Open WebUI + Chroma) binds to several of the same ports as this guinea pig (11434, 8080, 8000). **Bring up one at a time.** The two fixtures serve different purposes:
 
 | Fixture | Purpose | Pull size | Bring-up |
 |---|---|---|---|
@@ -346,7 +346,7 @@ The Phase 6 lab fixture keeps a real Ollama around for the times we need to veri
 
 ## Next step
 
-Build the e2e driver (separate artifact at `recon/tests/test_ai_e2e_against_guinea_pig.py` or `guinea_pigs/ai_surface_target/scripts/e2e_driver.py`) that:
+Build the e2e driver (separate artifact at `recon/tests/test_ai_e2e_against_guinea_pig.py` or `testing/guinea_pigs/ai_surface_target/scripts/e2e_driver.py`) that:
 
 1. Brings up the target via `docker compose up -d`.
 2. Creates a RedAmon project with `ipMode=true`, `targetIps=['127.0.0.1']`, the 18 ports in `naabuCustomPorts`, and the 38 paths in `httpxPaths`.

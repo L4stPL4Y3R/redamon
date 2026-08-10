@@ -4,7 +4,7 @@
 
 This guide is the single entry point for developers. It covers the technology stack, system architecture, project layout, how each subsystem works, and the exact commands you need to apply your changes. For deep dives into specific components, follow the links to the dedicated documentation pages listed in the [Documentation Index](#9-documentation-index) at the end.
 
-> **Legal**: This tool is for authorized security testing only. See [DISCLAIMER.md](../DISCLAIMER.md).
+> **Legal**: This tool is for authorized security testing only. See [DISCLAIMER.md](../../DISCLAIMER.md).
 
 ---
 
@@ -636,7 +636,7 @@ Once the override file exists, all `docker compose` commands automatically use d
 - Configure your LLM provider API key and other settings in the webapp at `/settings` (Global Settings page). No `.env` file is needed -- all API keys, tunnel credentials, and tool settings are configured from the UI.
 - Create a project, set a target domain, and you're ready to go.
 
-> **Not a developer?** Use `./redamon.sh install` for a single-command production setup. See the [README Quick Start](../README.md#quick-start).
+> **Not a developer?** Use `./redamon.sh install` for a single-command production setup. See the [README Quick Start](../../README.md#quick-start).
 
 **Verify everything is running:**
 
@@ -981,7 +981,7 @@ All deep-dive documentation lives in the `readmes/` folder alongside this file.
 
 | Document | Location | What it covers |
 |----------|----------|----------------|
-| [CONTRIBUTING.md](../CONTRIBUTING.md) | repo root | Contribution guidelines, PR process, contributor ranks |
-| [CHANGELOG.md](../CHANGELOG.md) | repo root | Release history and version notes |
-| [DISCLAIMER.md](../DISCLAIMER.md) | repo root | Legal disclaimer — authorized testing only |
-| [SECURITY.md](../SECURITY.md) | repo root | Security vulnerability reporting |
+| [CONTRIBUTING.md](../../CONTRIBUTING.md) | repo root | Contribution guidelines, PR process, contributor ranks |
+| [CHANGELOG.md](../../CHANGELOG.md) | repo root | Release history and version notes |
+| [DISCLAIMER.md](../../DISCLAIMER.md) | repo root | Legal disclaimer — authorized testing only |
+| [SECURITY.md](../../SECURITY.md) | repo root | Security vulnerability reporting |

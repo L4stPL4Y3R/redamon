@@ -372,7 +372,7 @@ flowchart LR
    ignore an override the broker side honoured. The two implementations cannot import
    each other (`recon_orchestrator` does not mount `supply_chain_common`), so their
    agreement is pinned by a source-level parity contract in
-   [tests/test_supply_chain_governor_integration.py](../tests/test_supply_chain_governor_integration.py).
+   [tests/test_supply_chain_governor_integration.py](../../tests/test_supply_chain_governor_integration.py).
 
 **CPU and PID caps (STRIDE D1).** As of the 2026-07 hardening wave, memory is no longer the
 only capped resource. Each of the 6 scan spawns also gets a **CPU cap**
@@ -514,7 +514,7 @@ uses safe built-in fallbacks when it is absent.
 ## 12. Complete environment variable reference
 
 All are optional; defaults live in code (empty/unset → default). Documented in
-[.env.example](../.env.example). Sizes accept `2g` / `512m` / plain-bytes.
+[.env.example](../../.env.example). Sizes accept `2g` / `512m` / plain-bytes.
 
 ### Master switch
 
@@ -638,17 +638,17 @@ blocking legitimate work:
 
 | Suite | Covers |
 |---|---|
-| [tests/test_resource_governor.py](../tests/test_resource_governor.py) | scale/scaled/scaled_cap math, clamps, fail-open, `/proc` parsing, size parsing, profile loading, cap logging. |
-| [tests/test_admission_ledger.py](../tests/test_admission_ledger.py) | admit/reject/reconcile accounting, typed rejections, first-scan exemption, count cap, fail-open. |
-| [tests/test_broker_inject.py](../tests/test_broker_inject.py) | `inject_limits` add/cap/respect-lower, size parsing, body re-serialisation. |
-| [tests/test_recon_mem_governor.py](../tests/test_recon_mem_governor.py) | recon `apply_memory_governor` ratio + byte-budget scaling, `[RESOURCE-CAP]` emission, guards. |
-| [tests/test_agent_mem_governor.py](../tests/test_agent_mem_governor.py) | agent byte-budget scaling of fireteam/plan keys, small-host throttle, guards. |
-| [tests/test_supply_chain_mem_governor.py](../tests/test_supply_chain_mem_governor.py) | UNIT: analyzer `--memory` resolved from the governor on the broker path, override precedence (including one arriving after import), fail-open on ImportError, docker-acceptable value format, L2 import-mining budgets. |
-| [tests/test_supply_chain_governor_integration.py](../tests/test_supply_chain_governor_integration.py) | INTEGRATION: governor → settings → the miner that consumes them; governor → `run_analyzer_job` → the real spawn argv; profile layering; reservation-vs-ceiling invariants; the source-level parity contract between the two analyzer spawn implementations; calibration can measure the analyzer. |
-| [recon_orchestrator/tests/test_supply_chain_admission.py](../recon_orchestrator/tests/test_supply_chain_admission.py) | L3 GuardDog admit/release/leak-on-raise/leak-on-cancel, tool-qualified partial keys, admission↔reconcile key symmetry, mixed-workload reconcile, saturation and typed refusals, override precedence on the SDK path. |
-| [agentic/tests/test_guarddog_native_tool.py](../agentic/tests/test_guarddog_native_tool.py) | The agent end of the lane: a 409 refusal must read as retryable and never as a clean package; `ram` vs `hard` are reported as different problems. |
-| [tests/test_guarddog_contract.py](../tests/test_guarddog_contract.py) | Cross-service field names for BOTH response shapes (result quadruple and the typed limit payload), including that the webapp passes the 409 status through. |
-| [tests/supply_chain_governor_smoke.sh](../tests/supply_chain_governor_smoke.sh) | SMOKE, needs a running stack: Docker accepts the governed value verbatim, the analyzer really gets it applied (`docker inspect`), no stack container is uncapped, live `/system/stats`, and a real L3 HTTP round trip that reserves and releases. |
+| [tests/test_resource_governor.py](../../tests/test_resource_governor.py) | scale/scaled/scaled_cap math, clamps, fail-open, `/proc` parsing, size parsing, profile loading, cap logging. |
+| [tests/test_admission_ledger.py](../../tests/test_admission_ledger.py) | admit/reject/reconcile accounting, typed rejections, first-scan exemption, count cap, fail-open. |
+| [tests/test_broker_inject.py](../../tests/test_broker_inject.py) | `inject_limits` add/cap/respect-lower, size parsing, body re-serialisation. |
+| [tests/test_recon_mem_governor.py](../../tests/test_recon_mem_governor.py) | recon `apply_memory_governor` ratio + byte-budget scaling, `[RESOURCE-CAP]` emission, guards. |
+| [tests/test_agent_mem_governor.py](../../tests/test_agent_mem_governor.py) | agent byte-budget scaling of fireteam/plan keys, small-host throttle, guards. |
+| [tests/test_supply_chain_mem_governor.py](../../tests/test_supply_chain_mem_governor.py) | UNIT: analyzer `--memory` resolved from the governor on the broker path, override precedence (including one arriving after import), fail-open on ImportError, docker-acceptable value format, L2 import-mining budgets. |
+| [tests/test_supply_chain_governor_integration.py](../../tests/test_supply_chain_governor_integration.py) | INTEGRATION: governor → settings → the miner that consumes them; governor → `run_analyzer_job` → the real spawn argv; profile layering; reservation-vs-ceiling invariants; the source-level parity contract between the two analyzer spawn implementations; calibration can measure the analyzer. |
+| [recon_orchestrator/tests/test_supply_chain_admission.py](../../recon_orchestrator/tests/test_supply_chain_admission.py) | L3 GuardDog admit/release/leak-on-raise/leak-on-cancel, tool-qualified partial keys, admission↔reconcile key symmetry, mixed-workload reconcile, saturation and typed refusals, override precedence on the SDK path. |
+| [agentic/tests/test_guarddog_native_tool.py](../../agentic/tests/test_guarddog_native_tool.py) | The agent end of the lane: a 409 refusal must read as retryable and never as a clean package; `ram` vs `hard` are reported as different problems. |
+| [tests/test_guarddog_contract.py](../../tests/test_guarddog_contract.py) | Cross-service field names for BOTH response shapes (result quadruple and the typed limit payload), including that the webapp passes the 409 status through. |
+| [tests/supply_chain_governor_smoke.sh](../../tests/supply_chain_governor_smoke.sh) | SMOKE, needs a running stack: Docker accepts the governed value verbatim, the analyzer really gets it applied (`docker inspect`), no stack container is uncapped, live `/system/stats`, and a real L3 HTTP round trip that reserves and releases. |
 
 > **Test-isolation gotcha, now fixed.** Several suites put a *different* directory on
 > `sys.path` and then `import resource_governor`, so whichever ran first owned the bare
@@ -657,7 +657,7 @@ blocking legitimate work:
 > host RAM**, passing alone and failing in a combined run. The governor suites now fan
 > `set_mem_override` out to every loaded copy (`_all_governors()`) and load each
 > `project_settings.py` by explicit path under a unique name.
-| [tests/redamon_governor_test.sh](../tests/redamon_governor_test.sh) | bash: `_size_to_mb`, `preflight_ram_gate`, `export_resource_caps` (incl. neo4j heap coherence), `setup_zram` guards. |
+| [tests/redamon_governor_test.sh](../../tests/redamon_governor_test.sh) | bash: `_size_to_mb`, `preflight_ram_gate`, `export_resource_caps` (incl. neo4j heap coherence), `setup_zram` guards. |
 
 Run the Python suites with `python3 -m unittest tests.test_resource_governor …` and the bash
 suite with `bash tests/redamon_governor_test.sh`. The governor and ledger modules are pure

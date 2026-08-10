@@ -688,7 +688,7 @@ the matching file:
 
 A skill declares `scope` and `auto_invoke` in its frontmatter; nothing else decides where its rows
 land. **The declaration is the source; the table is a build artifact.** You change when a skill
-applies by editing the skill and re-running [sync.sh](../../skills/skill-sync/assets/sync.sh), never
+applies by editing the skill and re-running [sync.sh](../../../skills/skill-sync/assets/sync.sh), never
 by editing the table.
 
 ### The Third Tier: Rules That Cannot Wait to Be Selected
@@ -735,7 +735,7 @@ description never loads, which is the most common failure of all.
 * **Edit `skills/{name}/SKILL.md`.** That is the only copy.
 * `.claude/skills` is a **symlink** to `skills/`. Never edit through it.
 * The auto-invoke tables in every `AGENTS.md` are **generated output**. Never hand-edit them; they
-  are regenerated from skill metadata by [sync.sh](../../skills/skill-sync/assets/sync.sh), which reads
+  are regenerated from skill metadata by [sync.sh](../../../skills/skill-sync/assets/sync.sh), which reads
   `$REPO_ROOT/skills` only.
 
 ### Why Both `AGENTS.md` and `CLAUDE.md` Exist
@@ -927,7 +927,7 @@ which is cheaper and more accurate than injecting all ten at once.
 
 | Where | Loaded | Use it for |
 | --- | --- | --- |
-| Root [AGENTS.md](../../AGENTS.md) CRITICAL RULES | always | Only rules true for **every** variant. Never a per-client rule |
+| Root [AGENTS.md](../../../AGENTS.md) CRITICAL RULES | always | Only rules true for **every** variant. Never a per-client rule |
 | `client_variants/<name>/AGENTS.md` CRITICAL RULES | when a file in that variant is opened | Rules an agent breaks while doing something else **inside that variant** |
 | A skill with `metadata.scope: [<name>]` | when its trigger matches | Everything else about that variant |
 
@@ -960,7 +960,7 @@ ln -s AGENTS.md client_variants/<name>/CLAUDE.md
 ./skills/skill-sync/assets/sync.sh
 ```
 
-[drift-audit.sh](../../skills/skill-sync/assets/drift-audit.sh) picks up a variant `AGENTS.md`
+[drift-audit.sh](../../../skills/skill-sync/assets/drift-audit.sh) picks up a variant `AGENTS.md`
 with no configuration: its `find -maxdepth 3` already reaches `client_variants/<name>/AGENTS.md`, and
 `ROOTS=(.)` resolves the paths it cites. Step 2 is the only edit to shared machinery in the whole
 arrangement.
@@ -1221,7 +1221,7 @@ branch with judgment.
 Every skill cites real paths and symbols. The check is simply: does this commit touch anything a
 skill mentions? Deterministic, no model, and advisory only. It never blocks a commit.
 
-The script is [skills/skill-sync/assets/citation-check.sh](../../skills/skill-sync/assets/citation-check.sh).
+The script is [skills/skill-sync/assets/citation-check.sh](../../../skills/skill-sync/assets/citation-check.sh).
 It takes a changed-file list, skips `skills/` and documentation, greps every `SKILL.md` for each
 path and basename, prints what matched, and always exits 0.
 
@@ -1237,8 +1237,8 @@ outside a commit prints nothing - that is correct behaviour, not a broken script
 you want it at review time.
 
 **In this repository** there is no hook manager. It is registered inside the tracked
-[hooks/pre-commit](../../hooks/pre-commit) as an `EXIT` trap, and propagated to `.git/hooks/`
-by [hooks/install-hooks.sh](../../hooks/install-hooks.sh):
+[hooks/pre-commit](../../../tooling/hooks/pre-commit) as an `EXIT` trap, and propagated to `.git/hooks/`
+by [hooks/install-hooks.sh](../../../tooling/hooks/install-hooks.sh):
 
 ```bash
 _skill_citation_check() {
@@ -1272,7 +1272,7 @@ hook in `.claude/settings.json` matching `Bash` calls containing `git commit`. U
 The citation hook catches changes as they happen. The drift audit catches everything that slipped
 through, including changes made outside a commit you were watching.
 
-The script is [skills/skill-sync/assets/drift-audit.sh](../../skills/skill-sync/assets/drift-audit.sh).
+The script is [skills/skill-sync/assets/drift-audit.sh](../../../skills/skill-sync/assets/drift-audit.sh).
 It extracts every markdown link target and backticked repository path from every `SKILL.md` and
 checks that each one still resolves. `--skill <name>` limits it to one skill.
 
@@ -1471,8 +1471,8 @@ git log -1 --format='%ad  %s' -- skills/<skill-name>/SKILL.md
 grep -L "auto_invoke" skills/*/SKILL.md
 ```
 
-**Related**: [AGENTS.md](../../AGENTS.md) for the repository-wide rules, the generated
-auto-invoke table and the full skill catalogue; [skills/skill-sync/assets/](../../skills/skill-sync/assets/)
+**Related**: [AGENTS.md](../../../AGENTS.md) for the repository-wide rules, the generated
+auto-invoke table and the full skill catalogue; [skills/skill-sync/assets/](../../../skills/skill-sync/assets/)
 for the three scripts themselves. This installation has no `skill-creator` or `skill-sync`
 skill: the authoring conventions live in this document and in
 [templates/SKILL.template.md](templates/SKILL.template.md).

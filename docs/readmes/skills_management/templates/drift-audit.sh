@@ -1,1 +1,1 @@
-../../../skills/skill-sync/assets/drift-audit.sh
+../../../../skills/skill-sync/assets/drift-audit.sh

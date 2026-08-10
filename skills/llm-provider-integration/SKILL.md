@@ -59,5 +59,5 @@ docker compose exec webapp npx prisma db push              # provider schema cha
 
 ## Resources
 
-- [readmes/coding_agent_prompts/PROVIDER_INTEGRATION_GUIDELINES.md](../../readmes/coding_agent_prompts/PROVIDER_INTEGRATION_GUIDELINES.md) - the 11 integration points, decision tree, and model-id prefix table
+- [readmes/coding_agent_prompts/PROVIDER_INTEGRATION_GUIDELINES.md](../../docs/readmes/coding_agent_prompts/PROVIDER_INTEGRATION_GUIDELINES.md) - the 11 integration points, decision tree, and model-id prefix table
 - Related skill: `agentic-tool-integration`

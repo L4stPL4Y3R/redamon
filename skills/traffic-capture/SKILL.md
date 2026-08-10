@@ -21,7 +21,7 @@ metadata:
 - Changing how the proxy forwards, captures, ingests, or replays traffic.
 
 The one-line "route every egress through the guard" rule is in the capture_proxy
-[AGENTS.md](../../capture_proxy/AGENTS.md) CRITICAL RULES; this skill is the mechanism.
+[AGENTS.md](../../scanners/capture_proxy/AGENTS.md) CRITICAL RULES; this skill is the mechanism.
 
 ---
 
@@ -30,7 +30,7 @@ The one-line "route every egress through the guard" rule is in the capture_proxy
 - **NEVER match the internal denylist on the hostname alone.** The guard denies
   on the **resolved IP** (RFC1918 and friends), because a hostname that resolves
   to an internal address (or re-resolves after a check) is the SSRF/DNS-rebinding
-  case. See [capture_proxy/egress.py](../../capture_proxy/egress.py) (the block
+  case. See [capture_proxy/egress.py](../../scanners/capture_proxy/egress.py) (the block
   conditions operate on the resolved IP).
 - **NEVER build a replay/fuzz target from unvalidated LLM output and send it
   straight out.** The replay path is a new egress path; it must pass the same
@@ -41,7 +41,7 @@ The one-line "route every egress through the guard" rule is in the capture_proxy
   there, per-condition, not by deleting the check.
 - **ALWAYS keep capture and ingest off the scan's critical path.** Capture writes
   an append-only spool; a separate worker tails it into Postgres
-  ([capture_proxy/ingest_worker.py](../../capture_proxy/ingest_worker.py)). That
+  ([capture_proxy/ingest_worker.py](../../scanners/capture_proxy/ingest_worker.py)). That
   decoupling is deliberate - capture must never block or slow the scan it observes.
 
 ---
@@ -50,9 +50,9 @@ The one-line "route every egress through the guard" rule is in the capture_proxy
 
 | Stage | File | Note |
 | --- | --- | --- |
-| intercept | [capture_addon.py](../../capture_proxy/capture_addon.py) | mitmproxy addon; request/response hooks |
-| egress guard | [egress.py](../../capture_proxy/egress.py) | resolved-IP denylist + `EgressPolicy` toggles; the SSRF backstop |
-| ingest | [ingest_worker.py](../../capture_proxy/ingest_worker.py) | tails the spool -> Postgres; off the scan path |
+| intercept | [capture_addon.py](../../scanners/capture_proxy/capture_addon.py) | mitmproxy addon; request/response hooks |
+| egress guard | [egress.py](../../scanners/capture_proxy/egress.py) | resolved-IP denylist + `EgressPolicy` toggles; the SSRF backstop |
+| ingest | [ingest_worker.py](../../scanners/capture_proxy/ingest_worker.py) | tails the spool -> Postgres; off the scan path |
 
 ## Commands
 
@@ -63,5 +63,5 @@ docker compose --profile tools build capture-proxy    # image rebuild (Dockerfil
 
 ## Resources
 
-- [readmes/README.TRAFFIC.md](../../readmes/README.TRAFFIC.md) - capture/replay/fuzz architecture and settings
-- Related: capture_proxy [AGENTS.md](../../capture_proxy/AGENTS.md) CRITICAL RULES (route egress through the guard)
+- [readmes/README.TRAFFIC.md](../../docs/readmes/README.TRAFFIC.md) - capture/replay/fuzz architecture and settings
+- Related: capture_proxy [AGENTS.md](../../scanners/capture_proxy/AGENTS.md) CRITICAL RULES (route egress through the guard)

@@ -2,7 +2,7 @@
 
 > **What this document is.** RedAmon is offensive software, so we hold it to the standard it tests others by. This is the **defense-in-depth control catalog**: every security layer implemented in the product, grounded in repository evidence (source, `docker-compose.yml`, nginx templates, deploy scripts). It is the companion to the **[Threat Model](README.TM.SYSTEM_OVERVIEW.md)**, which describes the assets, trust boundaries, entry points, and network surface the analysis is built on. Read the threat model for "what exists and what it is worth"; read this for "how each of those things is defended."
 >
-> **Methodology.** The platform was assessed with a systematic, adversarial threat-modeling pass (a STRIDE-style analysis across every trust boundary: spoofing, tampering, repudiation, information disclosure, denial of service, and elevation of privilege). Findings were remediated in sequenced, independently verified waves, each fix carrying a test and, where applicable, a before-and-after exploit reproduction. This document catalogs the resulting controls; the per-release history lives in the **[Changelog](../CHANGELOG.md)** security entries.
+> **Methodology.** The platform was assessed with a systematic, adversarial threat-modeling pass (a STRIDE-style analysis across every trust boundary: spoofing, tampering, repudiation, information disclosure, denial of service, and elevation of privilege). Findings were remediated in sequenced, independently verified waves, each fix carrying a test and, where applicable, a before-and-after exploit reproduction. This document catalogs the resulting controls; the per-release history lives in the **[Changelog](../../CHANGELOG.md)** security entries.
 
 ---
 
@@ -379,10 +379,10 @@ Maturity means naming what is not yet closed. The following are accepted and tra
 - **Scanner spawns are not fully hardened.** Spawned scan containers get `NET_RAW`-only and the scoped scanner key but are not `cap_drop`ped or `no-new-privileges`; they are constrained by the broker, the segment, and holding no secret.
 - **No CI-side security automation.** There is no CodeQL / Dependabot / secret-scanning / image-scanning workflow; the security remediation suite is a manual release gate and build sources are pinned by hand.
 
-The authoritative, current status lives in the **[Changelog](../CHANGELOG.md)** security entries and the **[Threat Model](README.TM.SYSTEM_OVERVIEW.md)**.
+The authoritative, current status lives in the **[Changelog](../../CHANGELOG.md)** security entries and the **[Threat Model](README.TM.SYSTEM_OVERVIEW.md)**.
 
 ---
 
 ## 21. Reporting a vulnerability
 
-Please do not open a public issue for a security report. Use GitHub Private Vulnerability Reporting or the contact in **[SECURITY.md](../SECURITY.md)**, which also states the supported versions and disclosure timeline.
+Please do not open a public issue for a security report. Use GitHub Private Vulnerability Reporting or the contact in **[SECURITY.md](../../SECURITY.md)**, which also states the supported versions and disclosure timeline.

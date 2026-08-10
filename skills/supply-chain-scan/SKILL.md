@@ -23,7 +23,7 @@ metadata:
   or the offline database plumbing.
 
 The `supply_chain_common`-must-be-bind-mounted rule is in the
-[AGENTS.md](../../supply_chain_scan/AGENTS.md) CRITICAL RULES; this skill is the
+[AGENTS.md](../../scanners/supply_chain_scan/AGENTS.md) CRITICAL RULES; this skill is the
 scanning behaviour.
 
 ---
@@ -33,7 +33,7 @@ scanning behaviour.
 - **NEVER assume the offline OSV database is populated.** It is filled lazily,
   per-ecosystem, only on the explicit `--download-offline-databases` step - NOT on
   every scan and NOT at install time
-  ([supply_chain_common/osv_db_sync.py](../../supply_chain_common/osv_db_sync.py)).
+  ([supply_chain_common/osv_db_sync.py](../../scanners/supply_chain_common/osv_db_sync.py)).
   A scan against an unsynced ecosystem must report it as missing, not crash.
 - **NEVER `chmod` the OSV DB tighter than world-readable.** The scanner runs
   hardened and non-root; `osv_db_sync.py` makes the whole tree
@@ -41,7 +41,7 @@ scanning behaviour.
   breaks offline scans silently.
 - **NEVER erase an existing soft-error marker on a failed/invalid analysis.** A
   package the analyzer never actually inspected is recorded as a `soft_error`
-  ([supply_chain_common/deep_recovery.py](../../supply_chain_common/deep_recovery.py));
+  ([supply_chain_common/deep_recovery.py](../../scanners/supply_chain_common/deep_recovery.py));
   invalid GuardDog output must be dropped, not allowed to overwrite those markers
   (regression fixed in commit `c5cd6a16`).
 - **NEVER run the OSV binary without the `--offline` pairing.** Offline mode uses
@@ -54,9 +54,9 @@ scanning behaviour.
 
 | Layer | Runner | Note |
 | --- | --- | --- |
-| known vulns | [osv_runner.py](../../supply_chain_common/osv_runner.py) + [osv_db_sync.py](../../supply_chain_common/osv_db_sync.py) | offline OSV DB (named volume, lazily synced) |
-| malicious behaviour | [guarddog_runner.py](../../supply_chain_common/guarddog_runner.py) | GuardDog heuristics; soft-errors via [deep_recovery.py](../../supply_chain_common/deep_recovery.py) |
-| dispatch | [analyzer_dispatch.py](../../supply_chain_common/analyzer_dispatch.py) | routes a package to the right analyzer |
+| known vulns | [osv_runner.py](../../scanners/supply_chain_common/osv_runner.py) + [osv_db_sync.py](../../scanners/supply_chain_common/osv_db_sync.py) | offline OSV DB (named volume, lazily synced) |
+| malicious behaviour | [guarddog_runner.py](../../scanners/supply_chain_common/guarddog_runner.py) | GuardDog heuristics; soft-errors via [deep_recovery.py](../../scanners/supply_chain_common/deep_recovery.py) |
+| dispatch | [analyzer_dispatch.py](../../scanners/supply_chain_common/analyzer_dispatch.py) | routes a package to the right analyzer |
 
 ## Commands
 
@@ -67,5 +67,5 @@ scanning behaviour.
 
 ## Resources
 
-- [readmes/README.SUPPLY_CHAIN.md](../../readmes/README.SUPPLY_CHAIN.md) - the 3-layer architecture and offline DB volume
-- Related: supply_chain [AGENTS.md](../../supply_chain_scan/AGENTS.md) CRITICAL RULES (bind-mount `supply_chain_common`)
+- [readmes/README.SUPPLY_CHAIN.md](../../docs/readmes/README.SUPPLY_CHAIN.md) - the 3-layer architecture and offline DB volume
+- Related: supply_chain [AGENTS.md](../../scanners/supply_chain_scan/AGENTS.md) CRITICAL RULES (bind-mount `supply_chain_common`)

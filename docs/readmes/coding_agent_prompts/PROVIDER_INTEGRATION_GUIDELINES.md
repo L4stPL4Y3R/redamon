@@ -92,7 +92,7 @@ Three invariants you must respect:
 
 1. **API keys live only in two places**: Postgres `user_llm_providers` rows (plaintext) and, in transit, on the wire between webapp and agent. Recon / scan / MCP containers must never see them.
 2. **Model identifiers are prefix-routed strings**. Anything other than `claude-*` and bare OpenAI ids must carry a `provider/` prefix (see [§9](#9-appendix---model-id-conventions-and-prefix-table)).
-3. **There is exactly one LangChain factory**: [agentic/orchestrator_helpers/llm_setup.py](../../agentic/orchestrator_helpers/llm_setup.py) - `setup_llm()`. No other place in the agent should call `ChatOpenAI(...)` / `ChatAnthropic(...)` directly.
+3. **There is exactly one LangChain factory**: [agentic/orchestrator_helpers/llm_setup.py](../../../agentic/orchestrator_helpers/llm_setup.py) - `setup_llm()`. No other place in the agent should call `ChatOpenAI(...)` / `ChatAnthropic(...)` directly.
 
 ---
 
@@ -151,7 +151,7 @@ If **yes**, your work is mostly templated: copy the DeepSeek/xAI/Mistral pattern
 
 - **Yes, public** (e.g., OpenRouter): no API key required to list.
 - **Yes, keyed** (e.g., OpenAI, Anthropic, DeepSeek): list with the user's key.
-- **No** (rare): provide a hardcoded fallback list, e.g., `_DEEPSEEK_FALLBACK_MODELS` at [agentic/orchestrator_helpers/model_providers.py:160-285](../../agentic/orchestrator_helpers/model_providers.py).
+- **No** (rare): provide a hardcoded fallback list, e.g., `_DEEPSEEK_FALLBACK_MODELS` at [agentic/orchestrator_helpers/model_providers.py:160-285](../../../agentic/orchestrator_helpers/model_providers.py).
 
 ---
 
@@ -161,7 +161,7 @@ For each point, **read the referenced lines first**, then apply the change. The 
 
 ### 4.1 Webapp - provider type registry
 
-**File:** [webapp/src/lib/llmProviderPresets.ts](../../webapp/src/lib/llmProviderPresets.ts) (canonical list at lines 66-79)
+**File:** [webapp/src/lib/llmProviderPresets.ts](../../../webapp/src/lib/llmProviderPresets.ts) (canonical list at lines 66-79)
 
 Add one entry to `PROVIDER_TYPES`:
 
@@ -182,7 +182,7 @@ Rules:
 
 ### 4.2 Webapp - SVG brand icon
 
-**File:** [webapp/src/components/icons/ProviderBrandIcons.tsx](../../webapp/src/components/icons/ProviderBrandIcons.tsx)
+**File:** [webapp/src/components/icons/ProviderBrandIcons.tsx](../../../webapp/src/components/icons/ProviderBrandIcons.tsx)
 
 Preferred order:
 
@@ -205,11 +205,11 @@ Then import the new icon at the top of `llmProviderPresets.ts`:
 import { SiDeepseek, SiOpenrouter, SiMoonshot, SiQwen, SiXai, SiMistral, SiMyProvider } from '@/components/icons/ProviderBrandIcons'
 ```
 
-The icon is rendered at 40x40 inside the provider-type grid ([LlmProviderForm.tsx:169](../../webapp/src/components/settings/LlmProviderForm.tsx#L169)) and at 16-20px inside settings list rows. Make sure the path renders cleanly at both sizes.
+The icon is rendered at 40x40 inside the provider-type grid ([LlmProviderForm.tsx:169](../../../webapp/src/components/settings/LlmProviderForm.tsx#L169)) and at 16-20px inside settings list rows. Make sure the path renders cleanly at both sizes.
 
 ### 4.3 Webapp - `LlmProviderForm` config UI
 
-**File:** [webapp/src/components/settings/LlmProviderForm.tsx](../../webapp/src/components/settings/LlmProviderForm.tsx)
+**File:** [webapp/src/components/settings/LlmProviderForm.tsx](../../../webapp/src/components/settings/LlmProviderForm.tsx)
 
 The form already auto-renders the provider card from `PROVIDER_TYPES` ([§4.1](#41-webapp---provider-type-registry)). What you must update is the **branch logic** at line 189 that decides which credential fields to show:
 
@@ -222,33 +222,33 @@ const isCompat  = ptype === 'openai_compatible'
 
 Choose one of:
 
-- **Single API key**: add `'myprovider'` to the `isKeyBased` array. No further UI change needed - the password input at [LlmProviderForm.tsx:227-247](../../webapp/src/components/settings/LlmProviderForm.tsx#L227) handles it.
+- **Single API key**: add `'myprovider'` to the `isKeyBased` array. No further UI change needed - the password input at [LlmProviderForm.tsx:227-247](../../../webapp/src/components/settings/LlmProviderForm.tsx#L227) handles it.
 - **AWS-style credential triple**: reuse `isBedrock` branch if region + access key + secret is the right shape, otherwise add a new branch (`isMyProvider`) at line 250-280 and render your own field group.
-- **OpenAI-compatible (user supplies baseUrl)**: nothing to do; users add it under the existing "OpenAI-Compatible" provider with one of the [OPENAI_COMPAT_PRESETS](../../webapp/src/lib/llmProviderPresets.ts#L18) (Ollama, vLLM, LM Studio, Groq, Together AI, Fireworks, Mistral, Deepinfra, Custom). Only add a dedicated `PROVIDER_TYPES` entry if you can supply a default base URL **and** want first-class branding.
+- **OpenAI-compatible (user supplies baseUrl)**: nothing to do; users add it under the existing "OpenAI-Compatible" provider with one of the [OPENAI_COMPAT_PRESETS](../../../webapp/src/lib/llmProviderPresets.ts#L18) (Ollama, vLLM, LM Studio, Groq, Together AI, Fireworks, Mistral, Deepinfra, Custom). Only add a dedicated `PROVIDER_TYPES` entry if you can supply a default base URL **and** want first-class branding.
 
 Also extend the "already added" guard if your provider should be singleton per user (default behavior: `existingProviderTypes.includes(pt.id)` at line 158 blocks duplicates; the only exception today is `openai_compatible`).
 
 ### 4.4 Webapp - `presets/generate` direct LLM call
 
-**File:** [webapp/src/app/api/presets/generate/route.ts](../../webapp/src/app/api/presets/generate/route.ts)
+**File:** [webapp/src/app/api/presets/generate/route.ts](../../../webapp/src/app/api/presets/generate/route.ts)
 
 This route bypasses the agent and calls the provider directly from the Next.js server. **It must mirror `setup_llm()`'s routing**. Update three places:
 
-1. **`resolveProviderType()`** at [route.ts:34-57](../../webapp/src/app/api/presets/generate/route.ts#L34): add the prefix mapping.
+1. **`resolveProviderType()`** at [route.ts:34-57](../../../webapp/src/app/api/presets/generate/route.ts#L34): add the prefix mapping.
    ```ts
    'myprovider/': 'myprovider',
    ```
-2. **`defaultBaseUrlFor()`** at [route.ts:63-76](../../webapp/src/app/api/presets/generate/route.ts#L63): add the base URL if OpenAI-compatible.
+2. **`defaultBaseUrlFor()`** at [route.ts:63-76](../../../webapp/src/app/api/presets/generate/route.ts#L63): add the base URL if OpenAI-compatible.
    ```ts
    case 'myprovider': return 'https://api.myprovider.com/v1'
    ```
-3. **`friendlyNames`** at [route.ts:208-220](../../webapp/src/app/api/presets/generate/route.ts#L208): so the "configure provider X in Global Settings" error message is user-friendly.
+3. **`friendlyNames`** at [route.ts:208-220](../../../webapp/src/app/api/presets/generate/route.ts#L208): so the "configure provider X in Global Settings" error message is user-friendly.
 
 If your provider is **not** OpenAI-compatible (rare - only Anthropic and Bedrock today), add a third `call<Myprovider>()` function and branch at line 232 alongside `callAnthropic`. Bedrock is currently rejected with HTTP 400 at line 193-198 because Node-side SigV4 is painful - match that pattern if your provider has the same problem.
 
 ### 4.5 Prisma schema (only if your provider needs new columns)
 
-**File:** [webapp/prisma/schema.prisma](../../webapp/prisma/schema.prisma) (`UserLlmProvider` model at lines 31-62)
+**File:** [webapp/prisma/schema.prisma](../../../webapp/prisma/schema.prisma) (`UserLlmProvider` model at lines 31-62)
 
 The schema already has all common fields:
 
@@ -269,11 +269,11 @@ If you genuinely need new columns:
    ```
 3. Update the masking logic in [webapp/src/app/api/users/[id]/llm-providers/route.ts](../../webapp/src/app/api/users/%5Bid%5D/llm-providers/route.ts) `maskSecret()` to also mask the new secret-bearing column on GET responses.
 4. Update the PUT `route.ts` to detect masked placeholders and preserve the prior value when the user submits the masked form unchanged.
-5. Extend the `ProviderData` interface at [LlmProviderForm.tsx:18-33](../../webapp/src/components/settings/LlmProviderForm.tsx#L18) and `EMPTY_PROVIDER` at [LlmProviderForm.tsx:35-49](../../webapp/src/components/settings/LlmProviderForm.tsx#L35).
+5. Extend the `ProviderData` interface at [LlmProviderForm.tsx:18-33](../../../webapp/src/components/settings/LlmProviderForm.tsx#L18) and `EMPTY_PROVIDER` at [LlmProviderForm.tsx:35-49](../../../webapp/src/components/settings/LlmProviderForm.tsx#L35).
 
 ### 4.6 Agentic - `parse_model_provider` (prefix routing)
 
-**File:** [agentic/orchestrator_helpers/llm_setup.py](../../agentic/orchestrator_helpers/llm_setup.py) (`parse_model_provider` at lines 27-73)
+**File:** [agentic/orchestrator_helpers/llm_setup.py](../../../agentic/orchestrator_helpers/llm_setup.py) (`parse_model_provider` at lines 27-73)
 
 Add your prefix branch in the existing `elif` chain:
 
@@ -285,11 +285,11 @@ elif model_name.startswith("myprovider/"):
 Rules:
 - The string before the slash **must equal** the `id` you used in [§4.1](#41-webapp---provider-type-registry) and the `providerType` value stored in Postgres.
 - Do not reuse a bare prefix that already maps elsewhere. The only "bare" mappings are `claude-*` to anthropic and everything-else to openai.
-- This routing table is mirrored in TypeScript at [presets/generate/route.ts:34](../../webapp/src/app/api/presets/generate/route.ts#L34). **Both must stay in sync** - drift between them was the cause of past bugs.
+- This routing table is mirrored in TypeScript at [presets/generate/route.ts:34](../../../webapp/src/app/api/presets/generate/route.ts#L34). **Both must stay in sync** - drift between them was the cause of past bugs.
 
 ### 4.7 Agentic - `setup_llm` (LangChain client factory)
 
-**File:** [agentic/orchestrator_helpers/llm_setup.py](../../agentic/orchestrator_helpers/llm_setup.py) (`setup_llm` at lines 76-327)
+**File:** [agentic/orchestrator_helpers/llm_setup.py](../../../agentic/orchestrator_helpers/llm_setup.py) (`setup_llm` at lines 76-327)
 
 Three sub-changes:
 
@@ -336,7 +336,7 @@ Lines 105-166 handle the `custom/` prefix, which is what users hit when they con
 
 ### 4.8 Agentic - `model_providers.py` (model discovery + `/models` aggregator)
 
-**File:** [agentic/orchestrator_helpers/model_providers.py](../../agentic/orchestrator_helpers/model_providers.py)
+**File:** [agentic/orchestrator_helpers/model_providers.py](../../../agentic/orchestrator_helpers/model_providers.py)
 
 Two sub-changes:
 
@@ -382,7 +382,7 @@ For non-OpenAI-compatible providers, study `fetch_anthropic_models` (lines 78-10
 
 #### 4.8.b Wire it into the `fetch_all_models()` switch
 
-[model_providers.py:484-514](../../agentic/orchestrator_helpers/model_providers.py#L484):
+[model_providers.py:484-514](../../../agentic/orchestrator_helpers/model_providers.py#L484):
 
 ```python
 elif ptype == "myprovider":
@@ -405,13 +405,13 @@ myprovider_api_key=(myprovider_p or {}).get("apiKey"),
 
 | # | File | Function | Lines | Used by |
 |---|---|---|---|---|
-| 1 | [agentic/orchestrator_helpers/llm_setup.py](../../agentic/orchestrator_helpers/llm_setup.py) | `apply_project_settings` | 341-405 | Main agent orchestrator (think loop, tool calls, generate response, fireteam, guardrail) |
-| 2 | [agentic/api.py](../../agentic/api.py) | `_build_llm_with_model_for_user` | 467-516 | All five `/llm/*` recon endpoints (FFuf, Nuclei tags, Nuclei FP, WAF, Takeover) |
-| 3 | [agentic/api.py](../../agentic/api.py) | `_setup_llm_for_endpoint` | 1094-1134 | `/roe/parse`, `/api/report/summarize`, (any endpoint that reads from cached orchestrator settings) |
-| 4 | [agentic/api.py](../../agentic/api.py) | `_build_llm_for_user` | 1148+ | `/tradecraft/verify`, plus other non-project endpoints |
-| 5 | [agentic/api.py](../../agentic/api.py) | `text_to_cypher` handler | ~2380-2462 | `/text-to-cypher` (graph view "ask the graph", redagraph MCP tool, Cypher generation inside agent tools) |
-| 6 | [agentic/cypherfix_triage/orchestrator.py](../../agentic/cypherfix_triage/orchestrator.py) | `__init__` | ~15-80 | `/ws/cypherfix-triage` WebSocket orchestrator |
-| 7 | [agentic/cypherfix_codefix/orchestrator.py](../../agentic/cypherfix_codefix/orchestrator.py) | `__init__` | ~15-80 | `/ws/cypherfix-codefix` WebSocket orchestrator |
+| 1 | [agentic/orchestrator_helpers/llm_setup.py](../../../agentic/orchestrator_helpers/llm_setup.py) | `apply_project_settings` | 341-405 | Main agent orchestrator (think loop, tool calls, generate response, fireteam, guardrail) |
+| 2 | [agentic/api.py](../../../agentic/api.py) | `_build_llm_with_model_for_user` | 467-516 | All five `/llm/*` recon endpoints (FFuf, Nuclei tags, Nuclei FP, WAF, Takeover) |
+| 3 | [agentic/api.py](../../../agentic/api.py) | `_setup_llm_for_endpoint` | 1094-1134 | `/roe/parse`, `/api/report/summarize`, (any endpoint that reads from cached orchestrator settings) |
+| 4 | [agentic/api.py](../../../agentic/api.py) | `_build_llm_for_user` | 1148+ | `/tradecraft/verify`, plus other non-project endpoints |
+| 5 | [agentic/api.py](../../../agentic/api.py) | `text_to_cypher` handler | ~2380-2462 | `/text-to-cypher` (graph view "ask the graph", redagraph MCP tool, Cypher generation inside agent tools) |
+| 6 | [agentic/cypherfix_triage/orchestrator.py](../../../agentic/cypherfix_triage/orchestrator.py) | `__init__` | ~15-80 | `/ws/cypherfix-triage` WebSocket orchestrator |
+| 7 | [agentic/cypherfix_codefix/orchestrator.py](../../../agentic/cypherfix_codefix/orchestrator.py) | `__init__` | ~15-80 | `/ws/cypherfix-codefix` WebSocket orchestrator |
 
 **Grep to verify you got them all** before opening the PR:
 
@@ -428,7 +428,7 @@ You can also grep for `_resolve_provider_key(.*,\s*"openrouter"` and ensure your
 
 ### 4.10 Recon pipeline (no code, but verify routing through agent)
 
-**Files:** [recon/helpers/ai_planner/](../../recon/helpers/ai_planner/) (5 files: `ffuf_extensions.py`, `nuclei_tags.py`, `nuclei_response_filter.py`, `waf_classifier.py`, `takeover_classifier.py`)
+**Files:** [recon/helpers/ai_planner/](../../../recon/helpers/ai_planner/) (5 files: `ffuf_extensions.py`, `nuclei_tags.py`, `nuclei_response_filter.py`, `waf_classifier.py`, `takeover_classifier.py`)
 
 These files **contain no LLM SDK imports and no provider-specific branches**. They forward to `AGENT_API_URL/llm/*` with a JSON payload `{model, user_id, project_id, ...features}`. The agent does all provider resolution.
 
@@ -441,7 +441,7 @@ A common failure mode: `ModelPicker` shows your model under group "My Provider",
 
 ### 4.11 Redagraph / Kali sandbox / MCP servers (no code, verify text-to-cypher)
 
-**Files:** [mcp/servers/](../../mcp/servers/) - `terminal_server.py`, `network_recon_server.py`, `metasploit_server.py`, `playwright_server.py`, `redagraph.py`
+**Files:** [mcp/servers/](../../../mcp/servers/) - `terminal_server.py`, `network_recon_server.py`, `metasploit_server.py`, `playwright_server.py`, `redagraph.py`
 
 **None of these contain LLM calls.** Redagraph is the only one that triggers LLM behavior, and it does so by HTTP-calling agent's `/text-to-cypher` - which you already updated in [§4.9](#49-agentic---propagate-the-new-api-key-kwarg-into-every-call-site) row 5.
 
@@ -455,23 +455,23 @@ Follow this order exactly. Each step is small enough to verify in isolation.
 
 ### Phase A - Webapp UI (visible, no backend dependency)
 
-1. Add icon to [`ProviderBrandIcons.tsx`](../../webapp/src/components/icons/ProviderBrandIcons.tsx) (or skip if using a `react-icons/si` entry).
-2. Add `PROVIDER_TYPES` entry in [`llmProviderPresets.ts`](../../webapp/src/lib/llmProviderPresets.ts).
-3. Add `id` to the `isKeyBased` array in [`LlmProviderForm.tsx`](../../webapp/src/components/settings/LlmProviderForm.tsx) (or add a new credential branch if not key-based).
+1. Add icon to [`ProviderBrandIcons.tsx`](../../../webapp/src/components/icons/ProviderBrandIcons.tsx) (or skip if using a `react-icons/si` entry).
+2. Add `PROVIDER_TYPES` entry in [`llmProviderPresets.ts`](../../../webapp/src/lib/llmProviderPresets.ts).
+3. Add `id` to the `isKeyBased` array in [`LlmProviderForm.tsx`](../../../webapp/src/components/settings/LlmProviderForm.tsx) (or add a new credential branch if not key-based).
 4. **Smoke test**: `/settings` shows the new card with the right icon, name, description. Wizard step 2 shows the right credential fields. Save creates a row in `user_llm_providers` (verify with `docker compose exec postgres psql -U postgres -d redamon -c 'select id, provider_type, name from user_llm_providers;'`).
 
 ### Phase B - Agent provider plumbing
 
-5. Add prefix branch to [`parse_model_provider()`](../../agentic/orchestrator_helpers/llm_setup.py#L27).
-6. Add provider branch to [`setup_llm()`](../../agentic/orchestrator_helpers/llm_setup.py#L76) with the new `myprovider_api_key` kwarg.
-7. Add `fetch_myprovider_models()` in [`model_providers.py`](../../agentic/orchestrator_helpers/model_providers.py) and wire it into [`fetch_all_models()`](../../agentic/orchestrator_helpers/model_providers.py#L459).
+5. Add prefix branch to [`parse_model_provider()`](../../../agentic/orchestrator_helpers/llm_setup.py#L27).
+6. Add provider branch to [`setup_llm()`](../../../agentic/orchestrator_helpers/llm_setup.py#L76) with the new `myprovider_api_key` kwarg.
+7. Add `fetch_myprovider_models()` in [`model_providers.py`](../../../agentic/orchestrator_helpers/model_providers.py) and wire it into [`fetch_all_models()`](../../../agentic/orchestrator_helpers/model_providers.py#L459).
 8. Propagate the new kwarg to all five `agentic/api.py` call sites and the two CypherFix orchestrator `__init__` methods. See [§4.9](#49-agentic---propagate-the-new-api-key-kwarg-into-every-call-site) for the exact list.
 9. Rebuild the agent: `docker compose build agent && docker compose up -d agent`.
 10. **Smoke test**: `curl -X POST http://localhost:8090/models -H 'Content-Type: application/json' -d '{"providers":[{"id":"x","providerType":"myprovider","name":"test","apiKey":"<real>"}]}'` returns a non-empty list under `"My Provider (test)"`.
 
 ### Phase C - Webapp direct-call paths (preset generation)
 
-11. Update [`presets/generate/route.ts`](../../webapp/src/app/api/presets/generate/route.ts): `resolveProviderType`, `defaultBaseUrlFor`, `friendlyNames`. For non-OpenAI-compatible providers, add a dedicated `call<Myprovider>()` function and branch.
+11. Update [`presets/generate/route.ts`](../../../webapp/src/app/api/presets/generate/route.ts): `resolveProviderType`, `defaultBaseUrlFor`, `friendlyNames`. For non-OpenAI-compatible providers, add a dedicated `call<Myprovider>()` function and branch.
 12. In dev mode the webapp hot-reloads. In prod: `docker compose build webapp && docker compose up -d webapp`.
 
 ### Phase D - End-to-end verification
@@ -483,7 +483,7 @@ Follow this order exactly. Each step is small enough to verify in isolation.
 14. Add the model id naming convention to your PR description so reviewers can verify.
 15. **Do not commit real API keys** to fixtures or examples. Use placeholder strings like `"sk-FAKE-..."` in tests.
 16. If you added a Prisma migration ([§4.5](#45-prisma-schema-only-if-your-provider-needs-new-columns)), call it out explicitly in the PR description - deployers must run `prisma db push` after pulling.
-17. Update [CHANGELOG.md](../../CHANGELOG.md) under the next version's `feat(provider)` entry.
+17. Update [CHANGELOG.md](../../../CHANGELOG.md) under the next version's `feat(provider)` entry.
 
 ---
 
@@ -536,7 +536,7 @@ After your PR is wired up, run **all** of these. Do not mark the PR ready for re
 
 - [ ] Delete the provider row mid-conversation, next agent invocation surfaces a clean `ValueError`, not a 500.
 - [ ] Provide a wrong API key, the agent returns a 502 with a useful error message (not a `Traceback`).
-- [ ] If your provider returns a transient 429 / 503, the agent retries (it relies on [`llm_retry.py`](../../agentic/orchestrator_helpers/llm_retry.py) which classifies by exception class name and HTTP status, confirm your SDK raises types that match the `_TRANSIENT_EXC_NAMES` set or trip the `_TRANSIENT_STATUS_RE`).
+- [ ] If your provider returns a transient 429 / 503, the agent retries (it relies on [`llm_retry.py`](../../../agentic/orchestrator_helpers/llm_retry.py) which classifies by exception class name and HTTP status, confirm your SDK raises types that match the `_TRANSIENT_EXC_NAMES` set or trip the `_TRANSIENT_STATUS_RE`).
 
 ---
 
@@ -544,7 +544,7 @@ After your PR is wired up, run **all** of these. Do not mark the PR ready for re
 
 1. **Forgetting one of the seven call sites in [§4.9](#49-agentic---propagate-the-new-api-key-kwarg-into-every-call-site).** Symptom: the agent main chat works, but RoE parse / preset / cypher-fix / one of the recon hooks "silently" complains about a missing key for an unrelated provider, because `_resolve_provider_key(providers, "myprovider")` returned `None` and the code defaulted to the OpenAI branch with no key.
 
-2. **Drift between `parse_model_provider` (Python) and `resolveProviderType` (TypeScript).** Both must list the same prefixes. The TypeScript copy at [presets/generate/route.ts:34](../../webapp/src/app/api/presets/generate/route.ts#L34) has a comment pointing back at the Python source, keep it accurate.
+2. **Drift between `parse_model_provider` (Python) and `resolveProviderType` (TypeScript).** Both must list the same prefixes. The TypeScript copy at [presets/generate/route.ts:34](../../../webapp/src/app/api/presets/generate/route.ts#L34) has a comment pointing back at the Python source, keep it accurate.
 
 3. **Picking an `id` that conflicts with a model substring.** `parse_model_provider` matches by `startswith("myprovider/")`. If you name your provider `"openai_legacy"`, the bare-OpenAI fallback at the bottom of `parse_model_provider` will catch it first. Choose an id that does not begin with `claude-` or collide with the legacy `openai_compat/` prefix.
 
@@ -556,9 +556,9 @@ After your PR is wired up, run **all** of these. Do not mark the PR ready for re
 
 7. **Forgetting the model prefix in `fetch_<myprovider>_models()`.** Models returned without the `myprovider/` prefix will be parsed by `parse_model_provider()` as bare OpenAI, route to the OpenAI branch, and fail with "OpenAI API key is required". This is the single most common bug. Always prefix.
 
-8. **Anthropic's `temperature` quirk.** Newer Claude models reject the `temperature` kwarg. The existing code guards via `ANTHROPIC_NO_TEMPERATURE_MODELS` at [llm_setup.py:16-20](../../agentic/orchestrator_helpers/llm_setup.py#L16). If your provider has analogous per-model param quirks, add a similar set-and-guard pattern, do not hard-fail the whole provider.
+8. **Anthropic's `temperature` quirk.** Newer Claude models reject the `temperature` kwarg. The existing code guards via `ANTHROPIC_NO_TEMPERATURE_MODELS` at [llm_setup.py:16-20](../../../agentic/orchestrator_helpers/llm_setup.py#L16). If your provider has analogous per-model param quirks, add a similar set-and-guard pattern, do not hard-fail the whole provider.
 
-9. **Stale model cache.** [model_providers.py:459](../../agentic/orchestrator_helpers/model_providers.py#L459) has a `_cache` for the env-var fallback path but the DB-driven path is uncached. New models added by your provider appear immediately. No invalidation step needed.
+9. **Stale model cache.** [model_providers.py:459](../../../agentic/orchestrator_helpers/model_providers.py#L459) has a `_cache` for the env-var fallback path but the DB-driven path is uncached. New models added by your provider appear immediately. No invalidation step needed.
 
 10. **Using em dashes in user-facing strings.** Per project convention, never use em dashes in UI strings; they read as AI-generated. Use `:` or `-` instead. This applies to the `description` field in `PROVIDER_TYPES` and any prompt or error message you add.
 
@@ -589,25 +589,25 @@ A model identifier as stored in `Project.agentOpenaiModel`, `Project.aiPipelineM
 | `openai_compat/` (legacy) | env-var-driven OpenAI-compat | `openai_compat/llama3` |
 | **your new prefix** | **your provider** | **`myprovider/myprovider-large`** |
 
-When in doubt, the **single source of truth** is `parse_model_provider()` at [agentic/orchestrator_helpers/llm_setup.py:27](../../agentic/orchestrator_helpers/llm_setup.py#L27). Any disagreement between this table and that function is a bug, fix the table, not the function.
+When in doubt, the **single source of truth** is `parse_model_provider()` at [agentic/orchestrator_helpers/llm_setup.py:27](../../../agentic/orchestrator_helpers/llm_setup.py#L27). Any disagreement between this table and that function is a bug, fix the table, not the function.
 
 ---
 
 ## Quick file reference (everything you will touch)
 
 **Webapp:**
-- [webapp/src/lib/llmProviderPresets.ts](../../webapp/src/lib/llmProviderPresets.ts) - provider registry
-- [webapp/src/components/icons/ProviderBrandIcons.tsx](../../webapp/src/components/icons/ProviderBrandIcons.tsx) - SVG brand icons
-- [webapp/src/components/settings/LlmProviderForm.tsx](../../webapp/src/components/settings/LlmProviderForm.tsx) - credential UI
-- [webapp/src/app/api/presets/generate/route.ts](../../webapp/src/app/api/presets/generate/route.ts) - direct LLM call (preset generation)
-- [webapp/prisma/schema.prisma](../../webapp/prisma/schema.prisma) - only if new columns
+- [webapp/src/lib/llmProviderPresets.ts](../../../webapp/src/lib/llmProviderPresets.ts) - provider registry
+- [webapp/src/components/icons/ProviderBrandIcons.tsx](../../../webapp/src/components/icons/ProviderBrandIcons.tsx) - SVG brand icons
+- [webapp/src/components/settings/LlmProviderForm.tsx](../../../webapp/src/components/settings/LlmProviderForm.tsx) - credential UI
+- [webapp/src/app/api/presets/generate/route.ts](../../../webapp/src/app/api/presets/generate/route.ts) - direct LLM call (preset generation)
+- [webapp/prisma/schema.prisma](../../../webapp/prisma/schema.prisma) - only if new columns
 
 **Agent:**
-- [agentic/orchestrator_helpers/llm_setup.py](../../agentic/orchestrator_helpers/llm_setup.py) - `parse_model_provider`, `setup_llm`, `apply_project_settings`
-- [agentic/orchestrator_helpers/model_providers.py](../../agentic/orchestrator_helpers/model_providers.py) - model discovery, `/models` aggregator
-- [agentic/api.py](../../agentic/api.py) - call sites: `_build_llm_with_model_for_user`, `_setup_llm_for_endpoint`, `_build_llm_for_user`, text-to-cypher handler
-- [agentic/cypherfix_triage/orchestrator.py](../../agentic/cypherfix_triage/orchestrator.py) - CypherFix Triage `__init__`
-- [agentic/cypherfix_codefix/orchestrator.py](../../agentic/cypherfix_codefix/orchestrator.py) - CypherFix CodeFix `__init__`
+- [agentic/orchestrator_helpers/llm_setup.py](../../../agentic/orchestrator_helpers/llm_setup.py) - `parse_model_provider`, `setup_llm`, `apply_project_settings`
+- [agentic/orchestrator_helpers/model_providers.py](../../../agentic/orchestrator_helpers/model_providers.py) - model discovery, `/models` aggregator
+- [agentic/api.py](../../../agentic/api.py) - call sites: `_build_llm_with_model_for_user`, `_setup_llm_for_endpoint`, `_build_llm_for_user`, text-to-cypher handler
+- [agentic/cypherfix_triage/orchestrator.py](../../../agentic/cypherfix_triage/orchestrator.py) - CypherFix Triage `__init__`
+- [agentic/cypherfix_codefix/orchestrator.py](../../../agentic/cypherfix_codefix/orchestrator.py) - CypherFix CodeFix `__init__`
 
 **Never touched (verify only):**
 - `recon/helpers/ai_planner/*.py` - HTTP delegation only

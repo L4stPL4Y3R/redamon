@@ -347,7 +347,7 @@ that survive `update`.**
 The prod compose overlay (`compose/docker-compose.prod.yml`) is SCP'd to the host and installed
 at `$HOME/.redamon-deploy` (outside the checkout, so it never blocks `git pull --ff-only`). It
 sets `NEXT_PUBLIC_AGENT_WS_URL=wss://<host>/ws/agent` as the webapp build-arg. The deploy works
-even if `deploy/single-host/` is not committed to the cloned branch (committing it is still fine
+even if `tooling/deploy/single-host/` is not committed to the cloned branch (committing it is still fine
 and makes the overlay part of the repo history).
 
 Rollback is manual: `git reset --hard <prev>` on the host checkout, then `./deploy.sh update`.

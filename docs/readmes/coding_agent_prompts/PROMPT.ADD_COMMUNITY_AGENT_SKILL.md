@@ -39,51 +39,51 @@ agentic/community-skills/<skill_name>.md
 
 | Layer | File | Touch? |
 |---|---|---|
-| 1. The workflow file | [agentic/community-skills/<skill_name>.md](../../agentic/community-skills/) | YES |
-| 2. The community README | [agentic/community-skills/README.md](../../agentic/community-skills/README.md) | OPTIONAL (if an index exists) |
-| 3. Wiki community table | [redamon.wiki/Agent-Skills.md](../../redamon.wiki/Agent-Skills.md) "Community Skills" | YES if shipping publicly |
+| 1. The workflow file | [agentic/community-skills/<skill_name>.md](../../../agentic/community-skills/) | YES |
+| 2. The community README | [agentic/community-skills/README.md](../../../agentic/community-skills/README.md) | OPTIONAL (if an index exists) |
+| 3. Wiki community table | [redamon.wiki/Agent-Skills.md](../../../redamon.wiki/Agent-Skills.md) "Community Skills" | YES if shipping publicly |
 | 4. Everything else | N/A | NO CODE CHANGES |
 
-The agentic `GET /community-skills` endpoint auto-discovers files by globbing the directory. There is nothing to register, and **no container rebuild is needed**: `./agentic/community-skills` is volume-mounted read-only into the agent container at `/app/community-skills` (see [docker-compose.yml:419](../../docker-compose.yml#L419)). Drop the file and it is picked up on the next `GET /community-skills` call.
+The agentic `GET /community-skills` endpoint auto-discovers files by globbing the directory. There is nothing to register, and **no container rebuild is needed**: `./agentic/community-skills` is volume-mounted read-only into the agent container at `/app/community-skills` (see [docker-compose.yml:419](../../../docker-compose.yml#L419)). Drop the file and it is picked up on the next `GET /community-skills` call.
 
 ---
 
 ## Critical rules (READ BEFORE EDITING)
 
-- **No container rebuild needed.** `./agentic/community-skills` is volume-mounted read-only into the agent container at [docker-compose.yml:419](../../docker-compose.yml#L419). Dropping a `.md` file there is instantly visible to the `/community-skills` endpoint. (This is an exception to the general rule that `agentic/` changes require rebuilding `agent`: that rule applies to Python code baked into the image, not to these two mounted directories.)
+- **No container rebuild needed.** `./agentic/community-skills` is volume-mounted read-only into the agent container at [docker-compose.yml:419](../../../docker-compose.yml#L419). Dropping a `.md` file there is instantly visible to the `/community-skills` endpoint. (This is an exception to the general rule that `agentic/` changes require rebuilding `agent`: that rule applies to Python code baked into the image, not to these two mounted directories.)
 - **No Prisma migration needed.** Community skills are not a Prisma model on their own, they become `UserAttackSkill` rows on import. The schema already supports this.
 - **Skills are per-user, not global.** Each user who wants this skill must click "Import from Community" in their Global Settings. Already-imported users will NOT auto-pick up new community skills, they need to re-import (duplicates are skipped by name).
 - **Skill content is capped at 50 KB.** The validation is at [webapp/src/app/api/users/[id]/attack-skills/route.ts](../../webapp/src/app/api/users/[id]/attack-skills/route.ts) POST handler (~line 67). Keep your file well under 50,000 characters.
 - **Max 20 user skills per user.** If you ship many community skills, be mindful: every imported one counts.
-- **The first non-heading paragraph becomes the description.** [agentic/api.py:572-578](../../agentic/api.py) extracts the first 200-char stripped non-`#` line as the description shown in the import dialog. Write that line well.
+- **The first non-heading paragraph becomes the description.** [agentic/api.py:572-578](../../../agentic/api.py) extracts the first 200-char stripped non-`#` line as the description shown in the import dialog. Write that line well.
 - **No em dashes anywhere.** Use hyphens or rephrase. Enforced project-wide.
 
 ---
 
 ## Phase 0: Pre-flight
 
-1. Check [agentic/community-skills/](../../agentic/community-skills/) for an existing file with the same or similar name. If found, STOP and decide whether to extend it instead.
-2. Search for related built-in skills in [agentic/prompts/](../../agentic/prompts/): if the topic is `sql_injection`, `xss`, `cve_exploit`, `brute_force_credential_guess`, `phishing_social_engineering`, or `denial_of_service`, users already have a built-in. Justify why the community version adds value (e.g. the SQLi community skill covers advanced bypasses beyond the sqlmap-focused built-in).
+1. Check [agentic/community-skills/](../../../agentic/community-skills/) for an existing file with the same or similar name. If found, STOP and decide whether to extend it instead.
+2. Search for related built-in skills in [agentic/prompts/](../../../agentic/prompts/): if the topic is `sql_injection`, `xss`, `cve_exploit`, `brute_force_credential_guess`, `phishing_social_engineering`, or `denial_of_service`, users already have a built-in. Justify why the community version adds value (e.g. the SQLi community skill covers advanced bypasses beyond the sqlmap-focused built-in).
 3. Decide: is this really an Agent Skill (phase-structured attack workflow) or a Chat Skill (reference doc for on-demand injection)? If it is flags, tables, syntax cheat sheets: use [PROMPT.ADD_COMMUNITY_CHAT_SKILL.md](PROMPT.ADD_COMMUNITY_CHAT_SKILL.md) instead. If it is "first run X, then pivot to Y, then report Z": this is the right prompt.
 
 ---
 
 ## Phase 1: Write the skill file
 
-Create [agentic/community-skills/<skill_name>.md](../../agentic/community-skills/). `<skill_name>` becomes the skill ID visible to the import endpoint (file stem, lowercase_snake, no extension).
+Create [agentic/community-skills/<skill_name>.md](../../../agentic/community-skills/). `<skill_name>` becomes the skill ID visible to the import endpoint (file stem, lowercase_snake, no extension).
 
-The file stem also becomes the default `name` when rendered in the import UI (`md_file.stem.replace("_", " ").title()` at [agentic/api.py:572](../../agentic/api.py)). Pick a name that reads well in Title Case: `ssrf_exploitation` -> "Ssrf Exploitation".
+The file stem also becomes the default `name` when rendered in the import UI (`md_file.stem.replace("_", " ").title()` at [agentic/api.py:572](../../../agentic/api.py)). Pick a name that reads well in Title Case: `ssrf_exploitation` -> "Ssrf Exploitation".
 
 ### Required structure
 
 Study the existing community skills to match the tone and level of detail:
 
-- [agentic/community-skills/sqli_exploitation.md](../../agentic/community-skills/sqli_exploitation.md) - advanced SQLi beyond sqlmap basics
-- [agentic/community-skills/xss_exploitation.md](../../agentic/community-skills/xss_exploitation.md) - reflected / stored / DOM XSS with WAF bypass
+- [agentic/community-skills/sqli_exploitation.md](../../../agentic/community-skills/sqli_exploitation.md) - advanced SQLi beyond sqlmap basics
+- [agentic/community-skills/xss_exploitation.md](../../../agentic/community-skills/xss_exploitation.md) - reflected / stored / DOM XSS with WAF bypass
 - [agentic/community-skills/ssrf_exploitation.md](../../agentic/community-skills/ssrf_exploitation.md) - SSRF, cloud metadata, DNS rebinding
-- [agentic/community-skills/api_testing.md](../../agentic/community-skills/api_testing.md) - JWT, GraphQL, REST, 403 bypass
+- [agentic/community-skills/api_testing.md](../../../agentic/community-skills/api_testing.md) - JWT, GraphQL, REST, 403 bypass
 
-Canonical template (follow this shape, the wiki at [redamon.wiki/Agent-Skills.md](../../redamon.wiki/Agent-Skills.md) documents it and the Intent Router expects it):
+Canonical template (follow this shape, the wiki at [redamon.wiki/Agent-Skills.md](../../../redamon.wiki/Agent-Skills.md) documents it and the Intent Router expects it):
 
 ```markdown
 # <Skill Name> Attack Skill
@@ -149,7 +149,7 @@ Once <criterion> is met, **request transition to exploitation phase**.
 1. **Every step names the tool it uses.** `query_graph`, `kali_shell`, `execute_curl`, `execute_code`, `execute_playwright`, `execute_nuclei`, `execute_hydra`, `metasploit_console`. These are the tools the agent has. Do NOT invent tool names.
 2. **Commands must be copy-pasteable.** Use fenced code blocks. No pseudo-code.
 3. **Include the phase transition cue** at the end of Phase 1. The agent reads this literally and decides when to call `action="request_phase_transition"`.
-4. **Keep the "When to Classify Here" section tight.** The classifier uses either the user-provided description from the import dialog or the first 500 characters of the file (see [classification.py:177-183](../../agentic/prompts/classification.py)). Making the opening paragraph a clean one-liner that describes the skill is the single highest-ROI edit you can make for classification accuracy.
+4. **Keep the "When to Classify Here" section tight.** The classifier uses either the user-provided description from the import dialog or the first 500 characters of the file (see [classification.py:177-183](../../../agentic/prompts/classification.py)). Making the opening paragraph a clean one-liner that describes the skill is the single highest-ROI edit you can make for classification accuracy.
 5. **No em dashes.**
 6. **Target 200-800 lines.** Much shorter feels underbaked; much longer eats tokens every request.
 
@@ -157,13 +157,13 @@ Once <criterion> is met, **request transition to exploitation phase**.
 
 ## Phase 2: Update the community index (optional)
 
-If [agentic/community-skills/README.md](../../agentic/community-skills/README.md) has a table of skills, add a row for the new one. Check the file first; do not invent structure.
+If [agentic/community-skills/README.md](../../../agentic/community-skills/README.md) has a table of skills, add a row for the new one. Check the file first; do not invent structure.
 
 ---
 
 ## Phase 3: Update the wiki
 
-Edit the "Community Skills" table in [redamon.wiki/Agent-Skills.md](../../redamon.wiki/Agent-Skills.md) (the table around lines 164-169 in the current version).
+Edit the "Community Skills" table in [redamon.wiki/Agent-Skills.md](../../../redamon.wiki/Agent-Skills.md) (the table around lines 164-169 in the current version).
 
 Add a row matching the existing format:
 
@@ -208,7 +208,7 @@ No rebuild. The file is live as soon as you save it (directory is volume-mounted
 
 | Symptom | Likely cause |
 |---|---|
-| Skill not in `/community-skills` catalog | File not in `./agentic/community-skills/` (that exact path), or filename is `README.md` (excluded at [api.py:569](../../agentic/api.py)), or missing `.md` extension. The directory is volume-mounted so there is no rebuild to miss |
+| Skill not in `/community-skills` catalog | File not in `./agentic/community-skills/` (that exact path), or filename is `README.md` (excluded at [api.py:569](../../../agentic/api.py)), or missing `.md` extension. The directory is volume-mounted so there is no rebuild to miss |
 | "Import from Community" shows `total: 0` | webapp cannot reach `AGENT_API_URL`. Check `docker compose logs webapp` and the `AGENT_API_URL` env var in the webapp service |
 | Import works but classifier never picks the skill | Description is generic or overlaps with a built-in. Edit the description via Global Settings > Agent Skills > pencil icon. Or rewrite the opening paragraph of the .md |
 | Badge shows `SKILL` but workflow not in system prompt | Unlikely; `_resolve_user_skill()` is non-conditional. Check agent logs for errors parsing the `attack_path_type` |
@@ -219,14 +219,14 @@ No rebuild. The file is live as soon as you save it (directory is volume-mounted
 
 ## Quick checklist
 
-- [ ] [agentic/community-skills/<skill_name>.md](../../agentic/community-skills/) created with the canonical structure
+- [ ] [agentic/community-skills/<skill_name>.md](../../../agentic/community-skills/) created with the canonical structure
 - [ ] First non-heading paragraph is a crisp one-line summary (auto-description)
 - [ ] "When to Classify Here" section lists concrete triggers + keywords
 - [ ] Workflow steps reference real agent tools (`query_graph`, `kali_shell`, `execute_curl`, etc.)
 - [ ] Phase 1 ends with "request transition to exploitation phase" cue
 - [ ] File is under 50 KB
 - [ ] No em dashes anywhere
-- [ ] (Optional) [agentic/community-skills/README.md](../../agentic/community-skills/README.md) updated
-- [ ] (Optional, if shipping publicly) [redamon.wiki/Agent-Skills.md](../../redamon.wiki/Agent-Skills.md) Community Skills table updated
+- [ ] (Optional) [agentic/community-skills/README.md](../../../agentic/community-skills/README.md) updated
+- [ ] (Optional, if shipping publicly) [redamon.wiki/Agent-Skills.md](../../../redamon.wiki/Agent-Skills.md) Community Skills table updated
 - [ ] `GET /community-skills` returns the new entry (no rebuild, directory is volume-mounted)
 - [ ] End-to-end: imported via UI, appears in project settings, classifier picks it on matching message, full content shows in agent system prompt

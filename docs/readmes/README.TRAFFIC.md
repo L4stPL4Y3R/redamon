@@ -65,17 +65,17 @@ become authoritative. Nothing a target ever touched is trusted to name a tenant.
 
 | Component | Container | Network | Holds secret? | Source |
 |---|---|---|---|---|
-| Capture proxy | `redamon-capture-proxy` | `pentest-net` only | No | [`capture_proxy/capture_addon.py`](../capture_proxy/capture_addon.py) |
-| Ingest worker | `redamon-traffic-ingest` | `redamon` only | Yes (scoped DB role) | [`capture_proxy/ingest_worker.py`](../capture_proxy/ingest_worker.py) |
-| Tag primitive | (library, 3 copies) | n/a | key held by minters only | [`capture_proxy/redamon_ctx.py`](../capture_proxy/redamon_ctx.py) |
-| Egress guard | (library, in proxy) | n/a | No | [`capture_proxy/egress.py`](../capture_proxy/egress.py) |
-| Record shaping | (library, in proxy) | n/a | No | [`capture_proxy/capture_lib.py`](../capture_proxy/capture_lib.py) |
-| Orchestrator control | `recon-orchestrator` | `redamon` + `pentest-net` | Yes | [`recon_orchestrator/container_manager.py:968`](../recon_orchestrator/container_manager.py#L968) |
-| UI + API | `webapp` | `redamon` | Yes (full DSN) | [`webapp/src/app/traffic/`](../webapp/src/app/traffic/) |
-| Agent tools | `agent` | `redamon` | Yes (full DSN) | [`agentic/traffic_tools.py`](../agentic/traffic_tools.py) |
+| Capture proxy | `redamon-capture-proxy` | `pentest-net` only | No | [`capture_proxy/capture_addon.py`](../../scanners/capture_proxy/capture_addon.py) |
+| Ingest worker | `redamon-traffic-ingest` | `redamon` only | Yes (scoped DB role) | [`capture_proxy/ingest_worker.py`](../../scanners/capture_proxy/ingest_worker.py) |
+| Tag primitive | (library, 3 copies) | n/a | key held by minters only | [`capture_proxy/redamon_ctx.py`](../../scanners/capture_proxy/redamon_ctx.py) |
+| Egress guard | (library, in proxy) | n/a | No | [`capture_proxy/egress.py`](../../scanners/capture_proxy/egress.py) |
+| Record shaping | (library, in proxy) | n/a | No | [`capture_proxy/capture_lib.py`](../../scanners/capture_proxy/capture_lib.py) |
+| Orchestrator control | `recon-orchestrator` | `redamon` + `pentest-net` | Yes | [`recon_orchestrator/container_manager.py:968`](../../recon_orchestrator/container_manager.py#L968) |
+| UI + API | `webapp` | `redamon` | Yes (full DSN) | [`webapp/src/app/traffic/`](../../webapp/src/app/traffic/) |
+| Agent tools | `agent` | `redamon` | Yes (full DSN) | [`agentic/traffic_tools.py`](../../agentic/traffic_tools.py) |
 
 **One image, two roles.** The proxy and the ingest worker are the *same*
-`redamon-capture-proxy:latest` image ([`capture_proxy/Dockerfile`](../capture_proxy/Dockerfile)).
+`redamon-capture-proxy:latest` image ([`capture_proxy/Dockerfile`](../../scanners/capture_proxy/Dockerfile)).
 The role is chosen at runtime by `command` + `network` + `env`, not by the image.
 Isolation therefore comes entirely from *placement*: the proxy is put on the
 target-facing network with no credentials; the ingest worker is put on the
@@ -139,7 +139,7 @@ carrying the tenant claim in a signed but as-yet-unverified form.
 ## 4. Stage 1: Producers and the signed context tag
 
 Capture is **off by default** and controlled by a **two-level gate**
-([`schema.prisma:129-142`](../webapp/prisma/schema.prisma#L129-L142)):
+([`schema.prisma:129-142`](../../webapp/prisma/schema.prisma#L129-L142)):
 
 1. **Global capability switch** `UserSettings.captureProxyEnabled` (operator-level).
    Flipping this is what actually spawns or stops the proxy + ingest containers
@@ -160,7 +160,7 @@ When capture is active, two independent minters attach the tag, each holding a
 ### The tag
 
 `X-Redamon-Ctx` is a compact, URL-safe, HMAC-SHA256 signed token
-([`redamon_ctx.py:60`](../capture_proxy/redamon_ctx.py#L60)). Format:
+([`redamon_ctx.py:60`](../../scanners/capture_proxy/redamon_ctx.py#L60)). Format:
 `<b64url(canonical-json)>.<b64url(hmac)>`. The JSON is canonical (sorted keys,
 compact separators) so signer and verifier agree byte-for-byte, and only a
 whitelist of fields is carried so a caller cannot smuggle extra fields past the
@@ -203,12 +203,12 @@ by that claimed source, an attacker who holds neither key cannot forge a tag for
 either source. The proxy holds no key at all, so it can neither read nor forge the
 tag; it only carries it.
 
-**Recon minter** ([`recon/helpers/proxy_routing.py:104`](../recon/helpers/proxy_routing.py#L104)):
+**Recon minter** ([`recon/helpers/proxy_routing.py:104`](../../recon/helpers/proxy_routing.py#L104)):
 `get_capture_routing(tool, phase)` signs with `SCANNER_API_KEY`, `source="recon"`,
 carrying project/user/run IDs, tool, phase. Initialized once per run via
 `proxy_routing.configure(settings)`.
 
-**Agent minter** ([`agentic/tools.py:1780`](../agentic/tools.py#L1780)):
+**Agent minter** ([`agentic/tools.py:1780`](../../agentic/tools.py#L1780)):
 `_build_redamon_ctx(tool_name)` signs with `INTERNAL_API_KEY`, `source="agent"`,
 pulling project / user / session from ContextVars (never from LLM arguments). The
 tag is injected as a stripped `_redamon_ctx` kwarg the model never sees.
@@ -239,7 +239,7 @@ on the direct (non-proxy) path, so internal identifiers cannot leak to a target.
 Eight agent tools are routed: `execute_curl`, `execute_httpx`,
 `execute_playwright`, plus the HTTP recon/exploit tools `execute_nuclei`,
 `execute_katana`, `execute_ffuf`, `execute_arjun`, `execute_wpscan`
-(`_CAPTURE_ROUTED_TOOLS`, [`agentic/tools.py:63`](../agentic/tools.py#L63)). These
+(`_CAPTURE_ROUTED_TOOLS`, [`agentic/tools.py:63`](../../agentic/tools.py#L63)). These
 mirror the recon pipeline so the agent's own crawl/fuzz/scan traffic is captured,
 searchable, and replayable. For the `-H`-repeatable tools (nuclei/katana/ffuf) the
 flag + header are appended like curl/httpx; `wpscan`/`arjun` merge the tag into a
@@ -258,7 +258,7 @@ default-identity tag, tracked as future hardening. Recon-side Python probes
 ### The Phase-0 side door
 
 One producer bypasses the proxy entirely: the recon Python `httpx` probe
-([`recon/helpers/traffic_capture.py`](../recon/helpers/traffic_capture.py)). It
+([`recon/helpers/traffic_capture.py`](../../recon/helpers/traffic_capture.py)). It
 POSTs full transactions straight to the webapp ingest endpoint
 `POST /api/traffic/{project_id}/ingest` with an `X-Internal-Key` header, and the
 webapp stamps the tenant. This is the original Phase-0 path that retained httpx
@@ -295,8 +295,8 @@ flowchart TD
 
 1. **Strip the tag.** `headers.pop("X-Redamon-Ctx")` lifts the tag onto flow
    metadata and deletes the header so it never reaches the target
-   ([`capture_addon.py:92`](../capture_proxy/capture_addon.py#L92)).
-2. **Egress guard** ([`egress.py`](../capture_proxy/egress.py)). A new proxy is a
+   ([`capture_addon.py:92`](../../scanners/capture_proxy/capture_addon.py#L92)).
+2. **Egress guard** ([`egress.py`](../../scanners/capture_proxy/egress.py)). A new proxy is a
    new egress path, so it must not become an SSRF pivot into RedAmon's internal
    network. The guard resolves the hostname and refuses if *any* resolved A/AAAA
    address is internal: RFC1918, loopback, link-local, CGNAT `100.64.0.0/10`,
@@ -306,7 +306,7 @@ flowchart TD
    label all block).
 
    **Configurable per condition.** Each block condition is an independent toggle
-   in an [`EgressPolicy`](../capture_proxy/egress.py), surfaced in *Global
+   in an [`EgressPolicy`](../../scanners/capture_proxy/egress.py), surfaced in *Global
    Settings > TrafficMind > Egress guard* and injected at proxy spawn as
    `CAPTURE_EGRESS_*` env (`policy_from_env`). **Every check defaults to block**,
    so `EgressPolicy()` reproduces the always-on guard and every existing caller /
@@ -337,7 +337,7 @@ Assemble the record, decide inline vs offload per body, compute passive signals,
 enqueue. Wrapped in a blanket exception handler that logs but never breaks the
 proxy path.
 
-**Body policy** ([`capture_lib.py:101`](../capture_proxy/capture_lib.py#L101)). Each
+**Body policy** ([`capture_lib.py:101`](../../scanners/capture_proxy/capture_lib.py#L101)). Each
 body is routed to exactly one destination: **inline** (Postgres column, agent +
 human readable), **disk** (offload to `/bodies/<sha256>`, human/UI readable only),
 or **meta** (drop bytes, keep only size + sha256). The routing is a per
@@ -366,7 +366,7 @@ kept). Offload is content-addressed, so identical bodies dedup by sha256. The
 size limit — the only knob that *drops* by size is `CAPTURE_MAX_STORE_MB`.
 
 **Passive signals**, computed for free on every response
-([`capture_lib.py:85`](../capture_proxy/capture_lib.py#L85)): `hadAuth`,
+([`capture_lib.py:85`](../../scanners/capture_proxy/capture_lib.py#L85)): `hadAuth`,
 `hasSetCookie`, missing security headers, cookie-flag issues (missing
 HttpOnly / Secure / SameSite), and `reflectedParams` (any query or body param value
 of at least 4 characters appearing verbatim in the response body, a lead for XSS /
@@ -383,7 +383,7 @@ than blocking the data path. Capture is best-effort: it must never slow a scan.
 Non-root user (uid 10001), `read_only` root filesystem, `cap_drop: [ALL]`,
 `mem_limit` 384m, `pids_limit` 256. Privilege escalation is blocked by stripping
 setuid / setgid bits from every binary in the image
-([`Dockerfile:19`](../capture_proxy/Dockerfile#L19)) rather than the
+([`Dockerfile:19`](../../scanners/capture_proxy/Dockerfile#L19)) rather than the
 `no-new-privileges` flag, which breaks `execve` for non-root users on this
 project's snap-Docker / AppArmor hosts. The mitmproxy CA lives on its own volume
 via `--set confdir=/ca` and its private key never leaves that volume.
@@ -405,7 +405,7 @@ flowchart LR
     I -->|"4b. bad tag / bad row"| REJ[("/spool/.rejected/")]
 ```
 
-The write ([`capture_addon.py:226`](../capture_proxy/capture_addon.py#L226))
+The write ([`capture_addon.py:226`](../../scanners/capture_proxy/capture_addon.py#L226))
 writes to `/spool/.tmp/` then `os.replace()` into `/spool/`. The rename is atomic
 within the filesystem, so the ingest worker never sees a half-written record. The
 filename is `time_ns()`-prefixed so a plain `sorted(os.listdir())` yields roughly
@@ -416,7 +416,7 @@ with the same tmp-then-`os.replace` pattern and an existence check for dedup.
 
 ## 7. Stage 4: The ingest worker
 
-[`ingest_worker.py`](../capture_proxy/ingest_worker.py), on `redamon` only (no
+[`ingest_worker.py`](../../scanners/capture_proxy/ingest_worker.py), on `redamon` only (no
 target egress at all). It is the *only* capture component that holds a database
 credential, and that credential is a role which can do exactly one thing: INSERT
 into one table.
@@ -437,16 +437,16 @@ flowchart TD
 
 Key properties:
 
-- **Verification** ([`redamon_ctx.py:74`](../capture_proxy/redamon_ctx.py#L74)):
+- **Verification** ([`redamon_ctx.py:74`](../../scanners/capture_proxy/redamon_ctx.py#L74)):
   read `source` from the unverified body only to *select* the key, then
   `hmac.compare_digest` over the whole body (constant-time), then re-canonicalize
   and compare to reject any smuggled extra fields.
-- **Tenant stamping** ([`ingest_worker.py:83`](../capture_proxy/ingest_worker.py#L83)):
+- **Tenant stamping** ([`ingest_worker.py:83`](../../scanners/capture_proxy/ingest_worker.py#L83)):
   `project_id`, `user_id`, `source` and attribution come from the *verified*
   payload. Everything else (method, host, bodies, signals) comes from the
   untrusted proxy record. The primary key `id` is generated here because Prisma's
   cuid default is client-side.
-- **Redaction** ([`ingest_worker.py:53`](../capture_proxy/ingest_worker.py#L53)):
+- **Redaction** ([`ingest_worker.py:53`](../../scanners/capture_proxy/ingest_worker.py#L53)):
   when `CAPTURE_PROXY_REDACT_SECRETS` is on, sensitive headers (authorization,
   cookie, set-cookie, x-api-key, x-auth-token, proxy-authorization) are replaced
   with `[redacted:<salted-hash-prefix>]`, so identical secrets still correlate
@@ -457,7 +457,7 @@ Key properties:
 
 ### The scoped role
 
-[`capture_proxy/sql/001_traffic_ingest_role.sql`](../capture_proxy/sql/001_traffic_ingest_role.sql)
+[`capture_proxy/sql/001_traffic_ingest_role.sql`](../../scanners/capture_proxy/sql/001_traffic_ingest_role.sql)
 creates the `traffic_ingest` login role and grants it exactly:
 
 ```sql
@@ -486,7 +486,7 @@ need a content digest plus a short expiry in the tag (a future hardening).
 ## 8. Stage 5: Storage
 
 Table `captured_http_transactions`, Prisma-owned
-([`schema.prisma:1052`](../webapp/prisma/schema.prisma#L1052)) so both the ingest
+([`schema.prisma:1052`](../../webapp/prisma/schema.prisma#L1052)) so both the ingest
 worker and the webapp agree on the shape. The ingest worker references the
 snake_case column names directly.
 
@@ -526,7 +526,7 @@ search currently run as `ILIKE` / `contains` with no supporting index.
 Bodies are stored inline when small, otherwise offloaded to the content-addressed
 blob store at `CAPTURE_BODIES_DIR` and referenced by sha256. Blob filenames are
 validated against `^[0-9a-f]{64}$` to block path traversal
-([`captureBodies.ts`](../webapp/src/lib/captureBodies.ts)).
+([`captureBodies.ts`](../../webapp/src/lib/captureBodies.ts)).
 
 ---
 
@@ -534,7 +534,7 @@ validated against `^[0-9a-f]{64}$` to block path traversal
 
 ### Human: the `/traffic` UI
 
-[`webapp/src/app/traffic/page.tsx`](../webapp/src/app/traffic/page.tsx). A
+[`webapp/src/app/traffic/page.tsx`](../../webapp/src/app/traffic/page.tsx). A
 server-paginated, Burp-style table. Columns: Time, Source (recon/agent badge),
 Tool, Method, Host, Path, Status (colored by class, "BLK" if blocked), Length,
 response Time, Flags (cookie / reflect / replay / out-of-scope). Filters: date
@@ -546,7 +546,7 @@ never HTML**, because they are attacker-controlled.
 
 ### API routes
 
-All routes under [`webapp/src/app/api/traffic/`](../webapp/src/app/api/traffic/)
+All routes under [`webapp/src/app/api/traffic/`](../../webapp/src/app/api/traffic/)
 enforce `requireEffectiveUser` + `requireProjectAccess`. Tenant fields always come
 from the session / route, never the client.
 
@@ -575,7 +575,7 @@ from the session / route, never the client.
   do not run and the corpus grows unbounded.
 - **`POST [projectId]/ingest`** : the Phase-0 producer side (writer, see 4.4).
 
-Body GC ([`captureBodies.ts`](../webapp/src/lib/captureBodies.ts)) is ref-counted
+Body GC ([`captureBodies.ts`](../../webapp/src/lib/captureBodies.ts)) is ref-counted
 across all tenants with a 5-minute grace window to avoid a TOCTOU against in-flight
 ingest. Blobs are served only via an owned row, never by raw sha path.
 
@@ -659,8 +659,8 @@ sequenceDiagram
 ```
 
 The orchestrator endpoints are `/capture-proxy/{start,stop,status}`
-([`api.py:400`](../recon_orchestrator/api.py#L400)); the spawn logic is
-[`container_manager.py:968`](../recon_orchestrator/container_manager.py#L968). It
+([`api.py:400`](../../recon_orchestrator/api.py#L400)); the spawn logic is
+[`container_manager.py:968`](../../recon_orchestrator/container_manager.py#L968). It
 spawns the pair idempotently. The image is taken from trusted orchestrator env
 only and is never overridable from the UI, so the operator toggle can never spawn
 an arbitrary image. The proxy is published on `127.0.0.1:<port>` so host-net recon
@@ -671,10 +671,10 @@ try/catch) so a save never fails just because the orchestrator is down.
 Exact networks: the proxy joins `redamon_pentest-net` only
 (`_CAPTURE_PROXY_NETWORK`), the ingest worker joins `redamon-network` only
 (`_CAPTURE_INGEST_NETWORK`,
-[`container_manager.py:942-943`](../recon_orchestrator/container_manager.py#L942-L943)).
+[`container_manager.py:942-943`](../../recon_orchestrator/container_manager.py#L942-L943)).
 
 There is also a static `capture` compose profile
-([`docker-compose.yml:889`](../docker-compose.yml#L889)) that defines the same two
+([`docker-compose.yml:889`](../../docker-compose.yml#L889)) that defines the same two
 services for a manual `docker compose --profile capture up`.
 
 ### Settings (database fields)
@@ -783,11 +783,11 @@ retention and scope are the database fields above.
 ## 13. Agent tools leveraging Traffic
 
 The agent works the capture corpus through **ten** tools in
-[`agentic/traffic_tools.py`](../agentic/traffic_tools.py), modeled on
+[`agentic/traffic_tools.py`](../../agentic/traffic_tools.py), modeled on
 `query_graph`: **eight read-only** analysis tools
-(`build_traffic_read_tools()`, [`traffic_tools.py:573`](../agentic/traffic_tools.py#L573))
+(`build_traffic_read_tools()`, [`traffic_tools.py:573`](../../agentic/traffic_tools.py#L573))
 and **two active, DANGEROUS** tools that emit live traffic
-(`build_traffic_active_tools()`, [`traffic_tools.py:568`](../agentic/traffic_tools.py#L568)).
+(`build_traffic_active_tools()`, [`traffic_tools.py:568`](../../agentic/traffic_tools.py#L568)).
 Together they turn the captured history into an interactive attack loop: the agent
 reviews what its own tools sent, hunts for leads across the corpus, and then
 replays or fuzzes a captured request to confirm a vulnerability, all without
@@ -814,7 +814,7 @@ Because captured bodies are attacker-controlled, a body could try to steer the L
 into a cross-tenant query. Three properties stop that:
 
 1. **Tenant comes from ContextVars, never from tool arguments**
-   ([`traffic_tools.py:40`](../agentic/traffic_tools.py#L40)). The LLM cannot
+   ([`traffic_tools.py:40`](../../agentic/traffic_tools.py#L40)). The LLM cannot
    supply or override `project_id` / `user_id`.
 2. **Every SQL WHERE hard-injects `project_id = %(p)s AND user_id = %(u)s`** as
    bound parameters, across all ten tools (the active tools' `fetch_transaction`
@@ -854,8 +854,8 @@ cookie and compare," inside the same captured, scope-checked pipeline.
 
 The `@tool` functions for `proxy_replay` / `proxy_fuzz` are stubs that just return
 a placeholder; the LLM never truly calls them. The executor intercepts them by
-name ([`tools.py:2089`](../agentic/tools.py#L2089)) and dispatches
-`_run_active_proxy` ([`tools.py:1841`](../agentic/tools.py#L1841)):
+name ([`tools.py:2089`](../../agentic/tools.py#L2089)) and dispatches
+`_run_active_proxy` ([`tools.py:1841`](../../agentic/tools.py#L1841)):
 
 ```mermaid
 flowchart TD
@@ -874,7 +874,7 @@ Two safety properties matter here:
 1. **Host is pinned to the origin (scope safety).** `mutate` can change the
    method, path, query, params, headers, cookie and body, but the host / scheme /
    port always come from the origin transaction
-   ([`traffic_tools.py:504`](../agentic/traffic_tools.py#L504)), and the `Host`
+   ([`traffic_tools.py:504`](../../agentic/traffic_tools.py#L504)), and the `Host`
    header is explicitly non-mutable. The agent cannot point a replay at a
    different host, so replay cannot become a scope-bypass or an SSRF primitive.
 2. **Replays go back through the capture proxy.** They are sent via the same
@@ -885,13 +885,13 @@ Two safety properties matter here:
 ### Phase, danger, and stealth gating
 
 - **Danger:** `proxy_replay` and `proxy_fuzz` are in `DANGEROUS_TOOLS`
-  ([`project_settings.py:28`](../agentic/project_settings.py#L28)) and flagged with
+  ([`project_settings.py:28`](../../agentic/project_settings.py#L28)) and flagged with
   a warning glyph in the ToolMatrix UI.
-- **Phase map** ([`project_settings.py:198`](../agentic/project_settings.py#L198)):
+- **Phase map** ([`project_settings.py:198`](../../agentic/project_settings.py#L198)):
   the eight read tools are enabled in all three phases (informational,
   exploitation, post_exploitation); the two active tools are enabled only in
   exploitation and post_exploitation.
-- **Stealth mode** ([`stealth_rules.py:50`](../agentic/prompts/stealth_rules.py#L50)):
+- **Stealth mode** ([`stealth_rules.py:50`](../../agentic/prompts/stealth_rules.py#L50)):
   `proxy_fuzz` is forbidden (too noisy), `proxy_replay` is restricted, and the
   read tools are unrestricted.
 
@@ -932,6 +932,6 @@ caps its unified-diff hunks, and offloaded bodies return an explicit
 ## See also
 
 - Full design rationale and phase plan: [`internal/mitmproxy_integration_plan.md`](../internal/mitmproxy_integration_plan.md)
-- Threat model context: [`internal/stride/README.TM.STRIDE.md`](../internal/stride/README.TM.STRIDE.md)
-- Proxy image and addon: [`capture_proxy/`](../capture_proxy/)
-- Agent tools: [`agentic/traffic_tools.py`](../agentic/traffic_tools.py)
+- Threat model context: [`internal/stride/README.TM.STRIDE.md`](../../_local/internal/stride/README.TM.STRIDE.md)
+- Proxy image and addon: [`capture_proxy/`](../../scanners/capture_proxy/)
+- Agent tools: [`agentic/traffic_tools.py`](../../agentic/traffic_tools.py)

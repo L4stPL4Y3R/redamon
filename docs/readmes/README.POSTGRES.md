@@ -120,7 +120,7 @@ The projects table contains 169+ configuration parameters grouped by category:
 | security_check_tls_expiry_days | 30 | TLS expiry warning threshold |
 | security_check_spf_missing | true | Check for SPF records |
 
-For the complete schema, see [webapp/prisma/schema.prisma](../webapp/prisma/schema.prisma).
+For the complete schema, see [webapp/prisma/schema.prisma](../../webapp/prisma/schema.prisma).
 
 ## Docker Configuration
 

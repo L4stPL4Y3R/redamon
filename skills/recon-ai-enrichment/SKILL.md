@@ -87,5 +87,5 @@ docker compose build agent && docker compose up -d agent   # the /llm endpoint l
 
 ## Resources
 
-- [readmes/coding_agent_prompts/PROMPT.ADD_AI_IN_RECON.md](../../readmes/coding_agent_prompts/PROMPT.ADD_AI_IN_RECON.md) - full walkthrough, per-target vs per-scan, verify steps
+- [readmes/coding_agent_prompts/PROMPT.ADD_AI_IN_RECON.md](../../docs/readmes/coding_agent_prompts/PROMPT.ADD_AI_IN_RECON.md) - full walkthrough, per-target vs per-scan, verify steps
 - Related skills: `recon-tool-integration`, `project-settings-cascade`

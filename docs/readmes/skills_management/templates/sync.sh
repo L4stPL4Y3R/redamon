@@ -1,1 +1,1 @@
-../../../skills/skill-sync/assets/sync.sh
+../../../../skills/skill-sync/assets/sync.sh

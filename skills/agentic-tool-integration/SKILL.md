@@ -93,5 +93,5 @@ docker compose exec webapp npx prisma db push              # if you added a Pris
 
 ## Resources
 
-- [readmes/coding_agent_prompts/PROMPT.ADD_AGENTIC_TOOL.md](../../readmes/coding_agent_prompts/PROMPT.ADD_AGENTIC_TOOL.md) - the full per-type file checklist and worked references
+- [readmes/coding_agent_prompts/PROMPT.ADD_AGENTIC_TOOL.md](../../docs/readmes/coding_agent_prompts/PROMPT.ADD_AGENTIC_TOOL.md) - the full per-type file checklist and worked references
 - Related skills: `project-settings-cascade`, `builtin-agent-skill`, `recon-tool-integration`
