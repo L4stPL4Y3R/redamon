@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Loader2, Plus, Play, Pause, Trash2, CalendarClock } from 'lucide-react'
 import { useAlertModal, useToast, WikiInfoButton } from '@/components/ui'
 import { ScanQueuePanel, kindLabel } from './ScanQueuePanel'
+import { usePaged, Pager } from './pagination'
 import styles from './ScanScheduleTable.module.css'
 
 interface Schedule {
@@ -195,6 +196,10 @@ export function ScanScheduleTable({ projectId }: ScanScheduleTableProps) {
   const toggleAll = () =>
     setSelected(allSelected ? new Set() : new Set(jobs.map(j => j.id)))
 
+  // Each table shows at most 30 rows (fixed) and pages through the rest.
+  const schedPage = usePaged(schedules)
+  const historyPage = usePaged(jobs)
+
   const deleteSelected = async () => {
     if (!projectId || selected.size === 0) return
     const n = selected.size
@@ -242,8 +247,7 @@ export function ScanScheduleTable({ projectId }: ScanScheduleTableProps) {
           Schedules run the <strong>full recon pipeline</strong> only. The other scans
           (GVM, GitHub hunt, TruffleHog, supply chain, AI attack surface) and partial
           recon are started by hand from their own cards and cannot be scheduled here.
-        </p>
-        <p className={styles.hint}>
+          <br />
           A scheduled run that cannot start on time is queued and runs automatically
           when resources free up; watch it in Scan queue, below.
         </p>
@@ -309,7 +313,7 @@ export function ScanScheduleTable({ projectId }: ScanScheduleTableProps) {
             {schedules.length === 0 && (
               <tr><td colSpan={7} className={styles.empty}>No scheduled scans.</td></tr>
             )}
-            {schedules.map(s => (
+            {schedPage.slice.map(s => (
               <tr key={s.id}>
                 <td>{s.label || '-'}</td>
                 <td>{describeSchedule(s)}</td>
@@ -343,6 +347,7 @@ export function ScanScheduleTable({ projectId }: ScanScheduleTableProps) {
             ))}
           </tbody>
         </table>
+        <Pager page={schedPage.page} pageCount={schedPage.pageCount} total={schedPage.total} onPage={schedPage.setPage} />
       </section>
 
       {/* Between the schedules that produce work and the history of work that
@@ -380,7 +385,7 @@ export function ScanScheduleTable({ projectId }: ScanScheduleTableProps) {
             {jobs.length === 0 && (
               <tr><td colSpan={10} className={styles.empty}>No scans recorded yet.</td></tr>
             )}
-            {jobs.map(j => (
+            {historyPage.slice.map(j => (
               <tr key={j.id} className={selected.has(j.id) ? styles.rowSelected : undefined}>
                 <td className={styles.checkCol}>
                   <input
@@ -412,6 +417,7 @@ export function ScanScheduleTable({ projectId }: ScanScheduleTableProps) {
             ))}
           </tbody>
         </table>
+        <Pager page={historyPage.page} pageCount={historyPage.pageCount} total={historyPage.total} onPage={historyPage.setPage} />
       </section>
     </div>
   )

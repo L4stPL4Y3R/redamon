@@ -19,7 +19,10 @@ interface RouteParams {
   params: Promise<{ id: string }>
 }
 
-const JOB_HISTORY_LIMIT = 50
+// The UI caps each table at 1000 rows (paginated 30/page). Match it here so the
+// client has the full, bounded history to page through. Each source (ScanJobs,
+// finished queue jobs) is capped, then merged and re-capped newest-first.
+const JOB_HISTORY_LIMIT = 1000
 
 export async function GET(_request: NextRequest, { params }: RouteParams) {
   const { id } = await params
@@ -32,7 +35,9 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     const [schedules, jobs, queueHistory] = await Promise.all([
       prisma.scanSchedule.findMany({
         where: { projectId: id },
-        orderBy: [{ enabled: 'desc' }, { nextRunAt: 'asc' }],
+        // Newest created on top.
+        orderBy: { createdAt: 'desc' },
+        take: 1000,
       }),
       prisma.scanJob.findMany({
         where: { projectId: id },

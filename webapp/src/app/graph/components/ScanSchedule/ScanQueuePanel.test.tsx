@@ -140,6 +140,36 @@ describe('ScanQueuePanel', () => {
     expect(screen.getByText(/1 running, 0 queued/)).toBeTruthy()
   })
 
+  // Fixed 30 rows/page: a large org batch pages instead of rendering hundreds.
+  test('caps the table at 30 rows and shows a pager for the rest', async () => {
+    const many = Array.from({ length: 35 }, (_, i) =>
+      job({ id: `q${i}`, kind: 'supply_chain_repo', enqueuedAt: `2026-08-09T21:${String(i).padStart(2, '0')}:00.000Z` }))
+    fetchMock.mockResolvedValue({ ok: true, json: async () => payload({ queued: many }) })
+    render(<ScanQueuePanel projectId="p1" />)
+    await waitFor(() => expect(screen.getByText(/Page 1 of 2/)).toBeTruthy())
+    // Only one table on the panel; its body holds 30 rows.
+    const body = document.querySelector('tbody')!
+    expect(body.querySelectorAll('tr').length).toBe(30)
+    expect(screen.getByText(/35 total/)).toBeTruthy()
+  })
+
+  // Newest created on top: the row with the latest enqueuedAt renders first.
+  test('orders rows newest-first by creation time', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => payload({
+        queued: [
+          job({ id: 'old', enqueuedAt: '2026-08-09T21:00:00.000Z', blockedReason: 'OLDEST' }),
+          job({ id: 'new', enqueuedAt: '2026-08-09T21:30:00.000Z', blockedReason: 'NEWEST' }),
+        ],
+      }),
+    })
+    render(<ScanQueuePanel projectId="p1" />)
+    await waitFor(() => expect(screen.getByText('NEWEST')).toBeTruthy())
+    const firstRow = document.querySelector('tbody tr')!
+    expect(firstRow.textContent).toContain('NEWEST')
+  })
+
   test('a failing load says so instead of rendering an empty queue silently', async () => {
     fetchMock.mockResolvedValue({ ok: false, status: 500, json: async () => ({ error: 'boom' }) })
     render(<ScanQueuePanel projectId="p1" />)

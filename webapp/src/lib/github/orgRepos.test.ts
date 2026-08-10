@@ -138,4 +138,54 @@ describe('listOwnerRepos', () => {
     const opts = fetchImpl.mock.calls[0][1] as RequestInit
     expect(opts.signal).toBeDefined()
   })
+
+  // A personal account's own private repos are only visible via the authenticated
+  // /user/repos endpoint; /users/{owner}/repos returns public repos only regardless
+  // of token. When the token IS the owner, use /user/repos so private repos scan.
+  test("a token for the owner's own account enumerates via /user/repos (private-capable)", async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(ghResponse({ login: 'samugit83' }))                       // resolveTokenLogin
+      .mockResolvedValueOnce(ghResponse([repo('samugit83/pub'), repo('samugit83/secret')]))
+    const repos = await listOwnerRepos('samugit83', { fetchImpl, token: 'ghp_x' })
+    expect(String(fetchImpl.mock.calls[0][0])).toBe('https://api.github.com/user')
+    const reposUrl = String(fetchImpl.mock.calls[1][0])
+    expect(reposUrl).toContain('/user/repos')
+    expect(reposUrl).toContain('visibility=all')
+    expect(reposUrl).toContain('affiliation=owner')
+    expect(reposUrl).not.toContain('/users/samugit83')  // NOT the public-only endpoint
+    expect(repos.map(r => r.fullName)).toEqual(['samugit83/pub', 'samugit83/secret'])
+  })
+
+  test('the own-account match is case-insensitive', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(ghResponse({ login: 'SamuGit83' }))
+      .mockResolvedValueOnce(ghResponse([repo('samugit83/a')]))
+    await listOwnerRepos('samugit83', { fetchImpl, token: 't' })
+    expect(String(fetchImpl.mock.calls[1][0])).toContain('/user/repos')
+  })
+
+  test('a token for a DIFFERENT account keeps the public org->user path', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(ghResponse({ login: 'someoneelse' }))  // resolveTokenLogin
+      .mockResolvedValueOnce(ghResponse([repo('acme/a')]))          // /orgs/acme/repos
+    const repos = await listOwnerRepos('acme', { fetchImpl, token: 't' })
+    expect(String(fetchImpl.mock.calls[1][0])).toContain('/orgs/acme/repos')
+    expect(String(fetchImpl.mock.calls[1][0])).not.toContain('/user/repos')
+    expect(repos.map(r => r.fullName)).toEqual(['acme/a'])
+  })
+
+  test('an unreadable token login falls back to the public path (no worse than tokenless)', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(ghResponse('unauthorized', { status: 401 }))  // resolveTokenLogin fails
+      .mockResolvedValueOnce(ghResponse([repo('acme/a')]))                 // /orgs/acme/repos
+    const repos = await listOwnerRepos('acme', { fetchImpl, token: 't' })
+    expect(String(fetchImpl.mock.calls[1][0])).toContain('/orgs/acme/repos')
+    expect(repos.map(r => r.fullName)).toEqual(['acme/a'])
+  })
+
+  test('without a token there is no /user probe (public path, unchanged)', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(ghResponse([repo('acme/a')]))
+    await listOwnerRepos('acme', { fetchImpl })
+    expect(String(fetchImpl.mock.calls[0][0])).toContain('/orgs/acme/repos')
+  })
 })

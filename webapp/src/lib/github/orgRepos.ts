@@ -5,6 +5,11 @@
  * Guarantees:
  *  - injectable `fetchImpl` so the whole thing is unit-testable offline;
  *  - Link-header pagination with a hard `maxPages` cap;
+ *  - when the token's OWN account is the owner, enumerates via the authenticated
+ *    /user/repos endpoint so PRIVATE repos are included. GitHub's
+ *    /users/{owner}/repos returns public repos only for a personal account, no
+ *    matter how much access the token has, so scanning your own private repos
+ *    requires this endpoint;
  *  - org-404 falls back to the /users/{owner}/repos endpoint (a user, not an org);
  *  - a 403 is SURFACED AS AN ERROR, never a fallback (rate limit / forbidden must
  *    not be silently treated as "no repos");
@@ -78,6 +83,27 @@ export class GithubEnumError extends Error {
   }
 }
 
+/**
+ * The login of the account a token authenticates as, or null if it cannot be read.
+ * Best-effort: any failure returns null so enumeration falls back to the public
+ * path (no worse than a tokenless run). Used to decide whether `owner` is the
+ * token's OWN account, which unlocks the private-repo-capable /user/repos endpoint.
+ */
+async function resolveTokenLogin(
+  fetchImpl: typeof fetch,
+  headers: Record<string, string>,
+  timeoutMs: number,
+): Promise<string | null> {
+  try {
+    const res = await fetchImpl('https://api.github.com/user', { headers, signal: AbortSignal.timeout(timeoutMs) })
+    if (!res.ok) return null
+    const body = await res.json().catch(() => null)
+    return body && typeof body.login === 'string' ? body.login : null
+  } catch {
+    return null
+  }
+}
+
 export async function listOwnerRepos(owner: string, opts: ListOwnerReposOptions = {}): Promise<OrgRepo[]> {
   if (!isValidOwner(owner)) {
     throw new GithubEnumError(`Invalid GitHub owner: ${owner}`)
@@ -97,16 +123,31 @@ export async function listOwnerRepos(owner: string, opts: ListOwnerReposOptions 
 
   const collected: OrgRepo[] = []
 
+  // When the token authenticates AS the owner being enumerated, use the
+  // authenticated /user/repos endpoint: it returns the caller's OWN private repos,
+  // which /users/{owner}/repos never does for a personal account. Real orgs and
+  // other users keep the public org->user path below (you cannot see another
+  // account's private repos anyway). Best-effort: an unreadable login falls back
+  // to the public path.
+  let ownEndpoint = false
+  if (token) {
+    const login = await resolveTokenLogin(fetchImpl, headers, timeoutMs)
+    if (login && login.toLowerCase() === owner.toLowerCase()) ownEndpoint = true
+  }
+
   // Try the org endpoint first; a 404 means it's a user account, not an org.
   // The `type` enum DIFFERS per endpoint: /orgs accepts `sources` (non-forks),
   // /users does NOT (valid: all|owner|member) and 422s on `sources`. Forks are
   // filtered client-side anyway, so `owner` is the right user-endpoint value.
-  let base = `https://api.github.com/orgs/${owner}/repos`
+  // The /user/repos endpoint takes visibility+affiliation instead of `type`.
+  let base = ownEndpoint ? 'https://api.github.com/user/repos' : `https://api.github.com/orgs/${owner}/repos`
   let repoType = 'sources'
-  let triedUserFallback = false
+  let triedUserFallback = ownEndpoint  // never fall back off the authenticated endpoint
 
   for (let page = 1; page <= maxPages; page++) {
-    const url = `${base}?per_page=${perPage}&page=${page}&type=${repoType}&sort=updated`
+    const url = ownEndpoint
+      ? `${base}?per_page=${perPage}&page=${page}&visibility=all&affiliation=owner&sort=updated`
+      : `${base}?per_page=${perPage}&page=${page}&type=${repoType}&sort=updated`
     let res: Response
     try {
       // Bound each page so a stalled GitHub cannot hang the batch (Finding 3).

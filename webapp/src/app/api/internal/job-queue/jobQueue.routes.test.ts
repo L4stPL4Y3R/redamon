@@ -21,10 +21,13 @@ const h = vi.hoisted(() => ({
   jqUpdate: vi.fn(),
   jqFindMany: vi.fn(),
   jqCount: vi.fn(),
+  sjFindMany: vi.fn(),
+  sjUpdateMany: vi.fn(),
   projectFindUnique: vi.fn(),
   conversationFindFirst: vi.fn(),
   dispatchStart: vi.fn(),
   stopScan: vi.fn(),
+  orchFetch: vi.fn(),
 }))
 
 vi.mock('@/lib/session', () => ({ isInternalRequest: (...a: unknown[]) => h.isInternal(...a) }))
@@ -38,6 +41,10 @@ vi.mock('@/lib/prisma', () => ({
       findMany: (...a: unknown[]) => h.jqFindMany(...a),
       count: (...a: unknown[]) => h.jqCount(...a),
     },
+    scanJob: {
+      findMany: (...a: unknown[]) => h.sjFindMany(...a),
+      updateMany: (...a: unknown[]) => h.sjUpdateMany(...a),
+    },
     project: { findUnique: (...a: unknown[]) => h.projectFindUnique(...a) },
     conversation: { findFirst: (...a: unknown[]) => h.conversationFindFirst(...a) },
   },
@@ -46,6 +53,7 @@ vi.mock('@/lib/startScan', () => ({
   dispatchStart: (...a: unknown[]) => h.dispatchStart(...a),
   stopScan: (...a: unknown[]) => h.stopScan(...a),
 }))
+vi.mock('@/lib/orchestrator', () => ({ orchestratorFetch: (...a: unknown[]) => h.orchFetch(...a) }))
 
 import { POST as dispatch } from './[id]/dispatch/route'
 import { GET as candidates } from './candidates/route'
@@ -79,6 +87,9 @@ beforeEach(() => {
   h.jqUpdate.mockResolvedValue({})
   h.jqFindMany.mockResolvedValue([])
   h.jqCount.mockResolvedValue(0)
+  h.sjFindMany.mockResolvedValue([])
+  h.sjUpdateMany.mockResolvedValue({ count: 1 })
+  h.orchFetch.mockResolvedValue({ ok: true, json: async () => ({ status: 'idle' }) })
   h.projectFindUnique.mockResolvedValue(PROJECT)
   h.conversationFindFirst.mockResolvedValue(null)
   h.dispatchStart.mockResolvedValue({ ok: true, runId: 'r1', scanJobId: 'sj1' })
@@ -309,5 +320,97 @@ describe('reconcile route (C-6)', () => {
     h.jqUpdateMany.mockResolvedValue({ count: 1 })
     const res = await reconcile(post('http://x/api/internal/job-queue/reconcile', { activeProjects: 'oops' }))
     expect((await res.json()).closed).toBe(1) // nothing active -> the stale row closes
+  })
+})
+
+describe('reconcile route - stuck ScanJob rows (phantom "running")', () => {
+  const old = () => new Date(Date.now() - 5 * 60_000)
+
+  // The core symptom: a scheduled scan that finished with nobody viewing its project
+  // leaves a 'running' ScanJob forever, and a 15-min schedule piles them up. The
+  // reaper's reconcile now closes them server-side, using the orchestrator's real
+  // outcome for the row (completed here).
+  test('closes a stuck ScanJob using the orchestrator outcome (completed)', async () => {
+    h.sjFindMany.mockResolvedValue([{ id: 's1', projectId: 'p1', kind: 'full_recon' }])
+    h.orchFetch.mockResolvedValue({ ok: true, json: async () => ({ status: 'completed' }) })
+    const res = await reconcile(post('http://x/api/internal/job-queue/reconcile', { activeProjects: [] }))
+    expect((await res.json()).scansClosed).toBe(1)
+    expect(h.sjUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 's1', status: 'running' }),
+      data: expect.objectContaining({ status: 'completed' }),
+    }))
+    // Queried the recon status path for this kind.
+    expect(String(h.orchFetch.mock.calls[0][0])).toMatch(/\/recon\/p1\/status$/)
+  })
+
+  test('an orchestrator error maps to failed', async () => {
+    h.sjFindMany.mockResolvedValue([{ id: 's1', projectId: 'p1', kind: 'gvm' }])
+    h.orchFetch.mockResolvedValue({ ok: true, json: async () => ({ status: 'error' }) })
+    await reconcile(post('http://x/api/internal/job-queue/reconcile', { activeProjects: [] }))
+    expect(h.sjUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: 'failed' }),
+    }))
+  })
+
+  // A scan the orchestrator has forgotten (restart, or reaped) -> we cannot confirm
+  // how it ended, so 'canceled' rather than a stuck 'running'.
+  test('a scan the orchestrator no longer knows about is canceled', async () => {
+    h.sjFindMany.mockResolvedValue([{ id: 's1', projectId: 'p1', kind: 'full_recon' }])
+    h.orchFetch.mockResolvedValue({ ok: true, json: async () => ({ status: 'idle' }) })
+    await reconcile(post('http://x/api/internal/job-queue/reconcile', { activeProjects: [] }))
+    expect(h.sjUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: 'canceled' }),
+    }))
+  })
+
+  // The pile: several stuck rows for the same project+kind. The newest takes the
+  // real outcome; the older, superseded runs are canceled. One status fetch per group.
+  test('a pile of stuck rows: newest takes the outcome, older are canceled', async () => {
+    // Route orders newest-first within a group; mirror that here.
+    h.sjFindMany.mockResolvedValue([
+      { id: 'newest', projectId: 'p1', kind: 'full_recon' },
+      { id: 'older1', projectId: 'p1', kind: 'full_recon' },
+      { id: 'older2', projectId: 'p1', kind: 'full_recon' },
+    ])
+    h.orchFetch.mockResolvedValue({ ok: true, json: async () => ({ status: 'completed' }) })
+    const res = await reconcile(post('http://x/api/internal/job-queue/reconcile', { activeProjects: [] }))
+    expect((await res.json()).scansClosed).toBe(3)
+    expect(h.orchFetch).toHaveBeenCalledTimes(1) // one fetch for the group
+    const byId = Object.fromEntries(h.sjUpdateMany.mock.calls.map(c => [c[0].where.id, c[0].data.status]))
+    expect(byId).toEqual({ newest: 'completed', older1: 'canceled', older2: 'canceled' })
+  })
+
+  test('a ScanJob whose project IS active is left running', async () => {
+    h.sjFindMany.mockResolvedValue([{ id: 's1', projectId: 'p1', kind: 'full_recon' }])
+    const res = await reconcile(post('http://x/api/internal/job-queue/reconcile', { activeProjects: ['p1'] }))
+    expect((await res.json()).scansClosed).toBe(0)
+    expect(h.sjUpdateMany).not.toHaveBeenCalled()
+  })
+
+  // Only kinds that WRITE a ScanJob per project are swept. partial_recon / ai_attack
+  // are run-keyed (own reconcile); supply_chain_repo is queue-dispatched and writes
+  // no ScanJob (its history is the JobQueue row, closed by the queue reconcile).
+  test('sweeps only the one-ScanJob-per-project kinds', async () => {
+    await reconcile(post('http://x/api/internal/job-queue/reconcile', { activeProjects: [] }))
+    const where = h.sjFindMany.mock.calls[0][0].where
+    for (const k of ['full_recon', 'supply_chain', 'gvm', 'github_hunt', 'trufflehog']) {
+      expect(where.kind.in).toContain(k)
+    }
+    for (const k of ['partial_recon', 'ai_attack', 'supply_chain_repo']) {
+      expect(where.kind.in).not.toContain(k)
+    }
+  })
+
+  // Active projects are excluded at the DB level, so a genuinely-running scan never
+  // consumes the per-tick budget and starves the stale rows behind it.
+  test('active projects are excluded in the ScanJob query, not just after', async () => {
+    await reconcile(post('http://x/api/internal/job-queue/reconcile', { activeProjects: ['pa', 'pb'] }))
+    const where = h.sjFindMany.mock.calls[0][0].where
+    expect(where.projectId).toEqual({ notIn: ['pa', 'pb'] })
+  })
+
+  test('with no active projects the ScanJob query carries no project filter', async () => {
+    await reconcile(post('http://x/api/internal/job-queue/reconcile', { activeProjects: [] }))
+    expect(h.sjFindMany.mock.calls[0][0].where.projectId).toBeUndefined()
   })
 })

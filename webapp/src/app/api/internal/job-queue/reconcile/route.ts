@@ -4,6 +4,15 @@
  * live scan container, so a job that finished with every browser tab closed is
  * still marked terminal (job completion must never depend on a browser being open).
  *
+ * Two things are reconciled from the same authoritative signal:
+ *   1. `JobQueue` 'running' rows (the queue's own bookkeeping).
+ *   2. `ScanJob` 'running' history rows for the one-per-project scan kinds. These
+ *      are otherwise closed ONLY by a per-project status poll (a browser viewing
+ *      that project), so a scheduled scan that finishes with nobody watching leaves
+ *      its row stuck at 'running' - and a 15-minute schedule then piles up a stack
+ *      of stuck rows that LOOKS like many parallel scans. Closing them here, every
+ *      reaper tick, makes run history tell the truth without a browser open.
+ *
  * Fail-safe: a row is only closed when its project is NOT in the active set AND it
  * has been running past a short grace window, so a container that has not yet
  * appeared in the live set right after dispatch is never closed prematurely.
@@ -11,12 +20,59 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { isInternalRequest } from '@/lib/session'
+import { orchestratorFetch } from '@/lib/orchestrator'
 
 export const runtime = 'nodejs'
+
+const RECON_ORCHESTRATOR_URL = process.env.RECON_ORCHESTRATOR_URL || 'http://localhost:8010'
 
 // A just-dispatched container may take a beat to appear in the orchestrator's live
 // run set; do not close a running row younger than this.
 const RECONCILE_GRACE_MS = 90_000
+
+// Never touch more than this many stale ScanJobs per tick, so an initial backlog
+// (many historically-stuck rows) drains over a few ticks instead of one burst of
+// orchestrator status fetches. Steady state is ~0-1 per tick.
+const MAX_SCANJOBS_PER_TICK = 25
+
+// Kinds that write ONE ScanJob per project (so a project-granular "is anything live
+// here?" signal is enough to call a row stale) AND can end with no browser open.
+// Deliberately excluded:
+//   - partial_recon / ai_attack: run-keyed (several concurrent runs per project);
+//     kept on their own run-granular reconcile (/partial/all, /ai-attack/all).
+//   - supply_chain_repo: only ever queue-dispatched, and dispatchStart calls the
+//     orchestrator directly without recordScanStart, so it writes NO ScanJob - its
+//     history lives in the JobQueue, closed by the queue reconcile above.
+const ONE_PER_PROJECT_KINDS = ['full_recon', 'supply_chain', 'gvm', 'github_hunt', 'trufflehog']
+
+// The orchestrator status path for each swept kind.
+const STATUS_PATH: Record<string, string> = {
+  full_recon: 'recon',
+  supply_chain: 'supply-chain',
+  gvm: 'gvm',
+  github_hunt: 'github-hunt',
+  trufflehog: 'trufflehog',
+}
+
+/**
+ * The orchestrator's current status for a project's scan of `kind`, or undefined if
+ * it cannot be read. The caller treats undefined as "over but unconfirmed" and
+ * records the row as canceled rather than leaving it stuck at 'running': the
+ * project is already known idle (not in the reaper's active set, past the grace),
+ * so the scan is over regardless - only its outcome label is uncertain.
+ */
+async function fetchScanStatus(kind: string, projectId: string): Promise<string | undefined> {
+  const seg = STATUS_PATH[kind]
+  if (!seg) return undefined
+  try {
+    const res = await orchestratorFetch(`${RECON_ORCHESTRATOR_URL}/${seg}/${projectId}/status`, { method: 'GET' })
+    if (!res.ok) return undefined
+    const body = await res.json().catch(() => null)
+    return typeof body?.status === 'string' ? body.status : undefined
+  } catch {
+    return undefined
+  }
+}
 
 export async function POST(request: NextRequest) {
   if (!isInternalRequest(request)) {
@@ -53,7 +109,48 @@ export async function POST(request: NextRequest) {
         .catch(() => {})
     }
 
-    return NextResponse.json({ ok: true, closed, running: running.length })
+    // Close stuck one-per-project ScanJob rows. Ordered newest-first within each
+    // (project, kind) group so that, per group, the newest row takes the
+    // orchestrator's real outcome (completed / failed / canceled-if-forgotten) and
+    // any older rows - superseded runs that start_recon force-replaced - are
+    // recorded as canceled rather than left stuck at 'running'.
+    // Exclude active projects IN the query (not just after), so genuinely-running
+    // scans never consume the per-tick budget and starve the stale rows behind them.
+    // The post-filter is a cheap defense-in-depth backstop for the same invariant.
+    const staleScans = (await prisma.scanJob.findMany({
+      where: {
+        status: 'running',
+        kind: { in: ONE_PER_PROJECT_KINDS },
+        OR: [{ startedAt: null }, { startedAt: { lte: cutoff } }],
+        ...(activeProjects.length ? { projectId: { notIn: activeProjects } } : {}),
+      },
+      orderBy: [{ projectId: 'asc' }, { kind: 'asc' }, { startedAt: 'desc' }],
+      take: MAX_SCANJOBS_PER_TICK,
+      select: { id: true, projectId: true, kind: true },
+    })).filter(s => !activeSet.has(s.projectId))
+
+    let scansClosed = 0
+    const groupSeen = new Set<string>()
+    for (const s of staleScans) {
+      const gk = `${s.projectId}|${s.kind}`
+      let outcome: string
+      if (!groupSeen.has(gk)) {
+        groupSeen.add(gk)
+        const status = await fetchScanStatus(s.kind, s.projectId)
+        outcome = status === 'completed' ? 'completed' : status === 'error' ? 'failed' : 'canceled'
+      } else {
+        outcome = 'canceled' // an older, superseded run for the same project+kind
+      }
+      await prisma.scanJob
+        .updateMany({
+          where: { id: s.id, status: 'running' },
+          data: { status: outcome, finishedAt: new Date() },
+        })
+        .then(res => { scansClosed += res.count })
+        .catch(() => {})
+    }
+
+    return NextResponse.json({ ok: true, closed, running: running.length, scansClosed })
   } catch (error) {
     console.error('[jobQueue] reconcile failed:', error)
     return NextResponse.json(

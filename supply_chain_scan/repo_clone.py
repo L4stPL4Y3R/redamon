@@ -51,7 +51,7 @@ _OWNER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}$")
 _REPO_RE = re.compile(r"^[A-Za-z0-9._-]{1,100}$")
 _REF_RE = re.compile(r"^[A-Za-z0-9._/-]{1,255}$")
 
-MAX_REPO_BYTES = int(os.environ.get("SUPPLY_CHAIN_MAX_REPO_BYTES", str(512 * 1024 * 1024)))
+MAX_REPO_BYTES = int(os.environ.get("SUPPLY_CHAIN_MAX_REPO_BYTES", str(2 * 1024 * 1024 * 1024)))
 _CLONE_TIMEOUT = int(os.environ.get("SUPPLY_CHAIN_CLONE_TIMEOUT", "300"))
 
 

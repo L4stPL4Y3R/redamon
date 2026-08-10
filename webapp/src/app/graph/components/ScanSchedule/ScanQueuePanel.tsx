@@ -13,6 +13,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Loader2, Activity } from 'lucide-react'
+import { usePaged, Pager } from './pagination'
 import styles from './ScanScheduleTable.module.css'
 
 export interface QueueJob {
@@ -115,8 +116,11 @@ export function ScanQueuePanel({ projectId }: { projectId: string | null }) {
   const { here, elsewhere } = useMemo(() => {
     const mine = data?.mine
     const all = [...(mine?.running ?? []), ...(mine?.needsReview ?? []), ...(mine?.queued ?? [])]
+    // Newest created on top: sort by enqueue/start time descending.
+    const byNewest = (a: QueueJob, b: QueueJob) =>
+      new Date(b.enqueuedAt).getTime() - new Date(a.enqueuedAt).getTime()
     return {
-      here: all.filter(j => j.projectId === projectId),
+      here: all.filter(j => j.projectId === projectId).sort(byNewest),
       elsewhere: all.filter(j => j.projectId !== projectId),
     }
   }, [data, projectId])
@@ -124,6 +128,9 @@ export function ScanQueuePanel({ projectId }: { projectId: string | null }) {
   const elsewhereRunning = elsewhere.filter(j => isRunning(j.status)).length
   const elsewhereQueued = elsewhere.length - elsewhereRunning
   const others = data?.others
+
+  // At most 30 rows (fixed); a big org batch pages through the rest.
+  const herePage = usePaged(here)
 
   return (
     <section className={styles.section}>
@@ -144,7 +151,7 @@ export function ScanQueuePanel({ projectId }: { projectId: string | null }) {
           {here.length === 0 && (
             <tr><td colSpan={5} className={styles.empty}>Nothing running or queued for this project.</td></tr>
           )}
-          {here.map(j => (
+          {herePage.slice.map(j => (
             <tr key={`${j.source}:${j.id}`}>
               <td>{kindLabel(j.kind)}</td>
               <td><span className={statusClass(j.status)}>{j.status.replace('_', ' ')}</span></td>
@@ -178,6 +185,7 @@ export function ScanQueuePanel({ projectId }: { projectId: string | null }) {
           ))}
         </tbody>
       </table>
+      <Pager page={herePage.page} pageCount={herePage.pageCount} total={herePage.total} onPage={herePage.setPage} />
 
       {(elsewhere.length > 0 || (others && others.running + others.queued + others.needsReview > 0)) && (
         <p className={styles.hint}>
