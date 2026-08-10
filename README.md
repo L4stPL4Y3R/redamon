@@ -272,6 +272,12 @@ The script pulls the latest code from GitHub, detects which Dockerfiles and sour
 >
 > `up` is idempotent -- it starts only what is missing and leaves running containers untouched. After this one-time step, plain `./redamon.sh update` handles everything on its own.
 
+> **Upgrading across 6.9 (repository reorganization).** 6.9 grouped the top-level directories under `scanners/`, `services/`, `testing/`, `tooling/` and `docs/`. `git pull` moves only tracked files, so data that git does not track -- the knowledge-base index, past scan outputs, and the single-host deploy `.env` and TLS material -- would otherwise be left behind at the old paths. `update` (and `up`/`status`) migrate it for you automatically and print what moved. If any file was written by a container as root and could not be moved, finish it with:
+>
+> ```bash
+> sudo ./redamon.sh migrate-layout
+> ```
+
 The webapp also checks for updates automatically and shows a notification in the UI when a new version is available.
 
 ### Deploy to a Server (Production)

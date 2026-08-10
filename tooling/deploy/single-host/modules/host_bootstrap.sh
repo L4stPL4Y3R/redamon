@@ -14,7 +14,7 @@ bootstrap_base_packages() {
   step "Host bootstrap: base packages"
   # git-lfs intentionally NOT installed (.gitattributes only sets eol=lf, no LFS objects).
   # `expect` drives redamon.sh's interactive admin prompt non-interactively during init.
-  # `make` is required by redamon.sh's KB bootstrap (make -C knowledge_base ...) when
+  # `make` is required by redamon.sh's KB bootstrap (make -C services/knowledge_base ...) when
   # ENABLE_KB=true; without it the initial ingestion fails and the agent starts empty.
   install_if_missing git make openssl curl jq ca-certificates gnupg lsb-release expect
   success "Base packages present"

@@ -723,6 +723,104 @@ is_kbase_enabled() {
     [[ -f "$KBASE_FLAG_FILE" ]]
 }
 
+# ---------------------------------------------------------------------------
+# One-time layout migration (pre-6.9 flat root -> grouped root)
+# ---------------------------------------------------------------------------
+# The 6.9 reorganization moved whole directories under scanners/ services/
+# tooling/ testing/ docs/ _local/. `git pull` moves only TRACKED files, so every
+# git-IGNORED artefact the user owns stays behind at its old path while the new
+# code reads the new one. Without this migration an upgrade silently loses:
+#   - services/knowledge_base/data  : the FAISS index (KB reports empty and
+#     _migrate_legacy_kbase_flag below then marks the KB disabled)
+#   - scanners/*/output             : every past scan result shown in the UI
+#   - tooling/deploy/single-host    : the operator's .env and TLS cert material,
+#     without which deploy.sh cannot run
+# Idempotent: a no-op once the old directories are gone. Never clobbers a file
+# that already exists at the destination.
+_reorg_move_leftovers() {                       # $1 = old dir, $2 = new dir
+    local old="$SCRIPT_DIR/$1" new="$SCRIPT_DIR/$2" rel dest src
+    [[ -d "$old" ]] || return 0
+    # Fast path: destination absent -> one atomic rename (preserves ownership of
+    # root-owned trees such as knowledge_base/data written by a container).
+    if [[ ! -e "$new" ]]; then
+        mkdir -p "$(dirname "$new")" 2>/dev/null || true
+        if mv "$old" "$new" 2>/dev/null; then
+            _REORG_MOVED=$((_REORG_MOVED + 1)); return 0
+        fi
+    fi
+    while IFS= read -r -d '' src; do
+        rel="${src#"$old"/}"
+        dest="$new/$rel"
+        [[ -e "$dest" ]] && continue
+        mkdir -p "$(dirname "$dest")" 2>/dev/null || { _REORG_FAILED+=("$1/$rel"); continue; }
+        if mv "$src" "$dest" 2>/dev/null; then
+            _REORG_MOVED=$((_REORG_MOVED + 1))
+        else
+            _REORG_FAILED+=("$1/$rel")
+        fi
+    done < <(find "$old" -mindepth 1 \( -type f -o -type l \) -print0 2>/dev/null)
+    find "$old" -mindepth 1 -type d -empty -delete 2>/dev/null || true
+    rmdir "$old" 2>/dev/null || true
+}
+
+_migrate_reorg_layout() {
+    # Cheap guard: nothing to do unless a pre-reorg directory is still present.
+    local probe found=0
+    for probe in knowledge_base gvm_scan github_secret_hunt trufflehog_scan \
+                 supply_chain_scan supply_chain_common supply_chain_analyzer \
+                 ai_attack_surface_scan capture_proxy baddns_scan codefix_sandbox \
+                 wcvs docker_broker postgres_db deploy scripts hooks e2e \
+                 guinea_pigs readmes assets internal validation-benchmarks; do
+        [[ -d "$SCRIPT_DIR/$probe" ]] && { found=1; break; }
+    done
+    [[ "$found" -eq 1 ]] || return 0
+
+    _REORG_MOVED=0
+    _REORG_FAILED=()
+    info "Migrating pre-6.9 directory layout (moving your data to the new paths)..."
+
+    local pair
+    for pair in \
+        "knowledge_base:services/knowledge_base" \
+        "docker_broker:services/docker_broker" \
+        "postgres_db:services/postgres_db" \
+        "ai_attack_surface_scan:scanners/ai_attack_surface_scan" \
+        "baddns_scan:scanners/baddns_scan" \
+        "capture_proxy:scanners/capture_proxy" \
+        "codefix_sandbox:scanners/codefix_sandbox" \
+        "github_secret_hunt:scanners/github_secret_hunt" \
+        "gvm_scan:scanners/gvm_scan" \
+        "trufflehog_scan:scanners/trufflehog_scan" \
+        "wcvs:scanners/wcvs" \
+        "supply_chain_analyzer:scanners/supply_chain_analyzer" \
+        "supply_chain_common:scanners/supply_chain_common" \
+        "supply_chain_scan:scanners/supply_chain_scan" \
+        "e2e:testing/e2e" \
+        "guinea_pigs:testing/guinea_pigs" \
+        "scripts:tooling/scripts" \
+        "hooks:tooling/hooks" \
+        "deploy:tooling/deploy" \
+        "readmes:docs/readmes" \
+        "assets:docs/assets" \
+        "internal:_local/internal" \
+        "validation-benchmarks:_local/validation-benchmarks" \
+    ; do
+        _reorg_move_leftovers "${pair%%:*}" "${pair##*:}"
+    done
+
+    if [[ "${#_REORG_FAILED[@]}" -gt 0 ]]; then
+        warn "Could not move ${#_REORG_FAILED[@]} file(s) (permission denied):"
+        printf '    %s\n' "${_REORG_FAILED[@]:0:5}"
+        [[ "${#_REORG_FAILED[@]}" -gt 5 ]] && echo "    ... and $(( ${#_REORG_FAILED[@]} - 5 )) more"
+        echo ""
+        echo "  They are container-written (root-owned). Finish the move with:"
+        echo "    sudo ./redamon.sh migrate-layout"
+        echo ""
+    elif [[ "$_REORG_MOVED" -gt 0 ]]; then
+        success "Layout migration complete ($_REORG_MOVED item(s) moved to the new paths)."
+    fi
+}
+
 # One-time migration from the legacy `.skipkbase` flag (RedAmon <=4.9.3) to the
 # new explicit flag pair (`.kbase-enabled` / `.kbase-disabled`). cmd_install
 # always writes one of the two markers so the user's explicit choice is sticky
@@ -1858,6 +1956,7 @@ cmd_install() {
 }
 
 cmd_update() {
+    _migrate_reorg_layout
     _migrate_legacy_kbase_flag
     _kb_export_env
 
@@ -2357,6 +2456,7 @@ verify_core_running() {
 }
 
 cmd_up_dev() {
+    _migrate_reorg_layout
     _migrate_legacy_kbase_flag
     _kb_export_env
 
@@ -2426,6 +2526,7 @@ cmd_up_dev() {
 }
 
 cmd_up() {
+    _migrate_reorg_layout
     _migrate_legacy_kbase_flag
     _kb_export_env
 
@@ -2658,6 +2759,7 @@ cmd_purge() {
 }
 
 cmd_status() {
+    _migrate_reorg_layout
     _migrate_legacy_kbase_flag
 
     local version
@@ -2869,6 +2971,7 @@ cmd_help() {
     echo -e "  ${GREEN}clean${NC}            Remove containers and images (keeps data)"
     echo -e "  ${GREEN}purge${NC}            Remove everything including all data"
     echo -e "  ${GREEN}status${NC}           Show running services, version, GVM, and KB state"
+    echo -e "  ${GREEN}migrate-layout${NC}   Move data left at pre-6.9 paths (runs automatically on update/up)"
     echo -e "  ${GREEN}create-admin${NC}     Create the admin login (or reset it); use if no prompt appeared at install"
     echo -e "  ${GREEN}reset-password${NC}   Reset an existing user's password"
     echo -e "  ${GREEN}kb <command>${NC}     Knowledge Base management (build/update/rebuild/stats)"
@@ -3042,6 +3145,14 @@ case "${1:-help}" in
         fi
         ;;
     down)    cmd_down ;;
+    migrate-layout)
+        # Re-run the pre-6.9 layout migration on its own. Normally it runs
+        # automatically from update/up/status; run it explicitly (optionally
+        # under sudo) when container-written, root-owned files were left behind.
+        _REORG_MOVED=0
+        _migrate_reorg_layout
+        [[ "${_REORG_MOVED:-0}" -eq 0 ]] && success "Layout is already up to date; nothing to migrate."
+        ;;
     clean)   cmd_clean ;;
     purge)   cmd_purge ;;
     status)  cmd_status ;;

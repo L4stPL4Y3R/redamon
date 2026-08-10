@@ -10,7 +10,7 @@
 #  Public surface reduced to ONE thing: the webapp UI over HTTPS (443). The agent
 #  API, MCP servers, DBs, orchestrator and reverse-shell catcher stay on loopback.
 #
-#  Config lives in deploy/single-host/.env (see .env.example). A run is just:
+#  Config lives in tooling/deploy/single-host/.env (see .env.example). A run is just:
 #      ./deploy.sh init
 #  CLI positionals override the .env connection fields.
 #
@@ -39,7 +39,7 @@ Usage: ./deploy.sh <MODE> [HOST_IP] [AUTH] [REMOTE_USER] [--env ENV_NAME]
   HOST_IP      Public IP or DNS of the target      (default: $HOST_IP from .env)
   AUTH         path/to/key.pem | pass | pass:<pw>   (default: $SSH_KEY_PATH / $SSH_PASSWORD)
   REMOTE_USER  ssh sudoer (ubuntu, admin, ...)      (default: $REMOTE_USER from .env)
-  --env NAME   config selector -> deploy/single-host/.env.<NAME>  (default: .env)
+  --env NAME   config selector -> tooling/deploy/single-host/.env.<NAME>  (default: .env)
 
 Examples:
   ./deploy.sh init
@@ -80,6 +80,22 @@ fi
 # ------------------------------------------------------------------ load .env
 ENV_FILE="${SCRIPT_DIR}/.env"
 [[ -n "${ENV_NAME}" ]] && ENV_FILE="${SCRIPT_DIR}/.env.${ENV_NAME}"
+
+# Pre-6.9 layout rescue: this directory used to live at <repo>/deploy/single-host.
+# `git pull` moves only tracked files, so an operator upgrading across the
+# reorganization keeps their (git-ignored) .env and TLS material at the old path
+# while this script now runs from tooling/deploy/single-host. Adopt the legacy
+# config instead of failing with a confusing "HOST_IP is empty".
+LEGACY_DIR="$(cd "${SCRIPT_DIR}/../../.." && pwd)/deploy/single-host"
+if [[ ! -f "${ENV_FILE}" && -f "${LEGACY_DIR}/$(basename "${ENV_FILE}")" ]]; then
+  warn "Found pre-6.9 deploy config at ${LEGACY_DIR}"
+  warn "Run './redamon.sh migrate-layout' from the repo root to move it permanently."
+  ENV_FILE="${LEGACY_DIR}/$(basename "${ENV_FILE}")"
+  # TLS material is resolved relative to SCRIPT_DIR further down; point the
+  # relative cert paths at the legacy directory for this run.
+  [[ -d "${LEGACY_DIR}/cert" && ! -e "${SCRIPT_DIR}/cert/fullchain.pem" ]] && LEGACY_CERT_DIR="${LEGACY_DIR}"
+fi
+
 if [[ -f "${ENV_FILE}" ]]; then
   set -a; # shellcheck disable=SC1090
   source "${ENV_FILE}"; set +a
@@ -98,6 +114,8 @@ fi
 : "${ACCESS_MODE:=https-domain}"; : "${DOMAIN:=}"; : "${HTTP_PORT:=80}"; : "${HTTPS_PORT:=443}"
 : "${TLS_MODE:=letsencrypt}"; : "${LETSENCRYPT_EMAIL:=}"; : "${LETSENCRYPT_STAGING:=false}"
 : "${SSL_CERT_LOCAL:=cert/fullchain.pem}"; : "${SSL_KEY_LOCAL:=cert/privkey.pem}"; : "${SSL_KEY_PASSWORD:=}"
+# Base dir for the relative SSL_*_LOCAL paths (see the pre-6.9 layout rescue above).
+CERT_BASE="${LEGACY_CERT_DIR:-$SCRIPT_DIR}"
 : "${HSTS_ENABLE:=true}"
 : "${OPERATOR_ALLOW_CIDRS:=}"; : "${SSH_ALLOW_CIDRS:=}"; : "${GATE_MODE:=ip_allowlist}"
 : "${BASIC_AUTH_USER:=}"; : "${BASIC_AUTH_PASS:=}"
@@ -155,8 +173,8 @@ preflight_validate() {
     esac
     [[ "${ACCESS_MODE}" == "https-domain" && "${TLS_MODE}" == "self-signed" ]] && die "self-signed is for https-ip; use letsencrypt/provided for a domain"
     if [[ "${TLS_MODE}" == "provided" ]]; then
-      [[ -f "${SCRIPT_DIR}/${SSL_CERT_LOCAL}" ]] || die "TLS_MODE=provided: cert not found at ${SCRIPT_DIR}/${SSL_CERT_LOCAL}"
-      [[ -f "${SCRIPT_DIR}/${SSL_KEY_LOCAL}"  ]] || die "TLS_MODE=provided: key not found at ${SCRIPT_DIR}/${SSL_KEY_LOCAL}"
+      [[ -f "${CERT_BASE}/${SSL_CERT_LOCAL}" ]] || die "TLS_MODE=provided: cert not found at ${CERT_BASE}/${SSL_CERT_LOCAL}"
+      [[ -f "${CERT_BASE}/${SSL_KEY_LOCAL}"  ]] || die "TLS_MODE=provided: key not found at ${CERT_BASE}/${SSL_KEY_LOCAL}"
     fi
   fi
 
@@ -281,8 +299,8 @@ ship_assets() {
   # provided-TLS material
   if [[ "${TLS_MODE}" == "provided" ]]; then
     $SSH "mkdir -p ${REMOTE_TMP}/cert"
-    $SCP "${SCRIPT_DIR}/${SSL_CERT_LOCAL}" "${REMOTE_USER}@${HOST_IP}:${REMOTE_TMP}/cert/fullchain.pem"
-    $SCP "${SCRIPT_DIR}/${SSL_KEY_LOCAL}"  "${REMOTE_USER}@${HOST_IP}:${REMOTE_TMP}/cert/privkey.pem"
+    $SCP "${CERT_BASE}/${SSL_CERT_LOCAL}" "${REMOTE_USER}@${HOST_IP}:${REMOTE_TMP}/cert/fullchain.pem"
+    $SCP "${CERT_BASE}/${SSL_KEY_LOCAL}"  "${REMOTE_USER}@${HOST_IP}:${REMOTE_TMP}/cert/privkey.pem"
     $SSH "chmod 600 ${REMOTE_TMP}/cert/*"
   fi
   local envf; envf="$(build_deploy_env)"
