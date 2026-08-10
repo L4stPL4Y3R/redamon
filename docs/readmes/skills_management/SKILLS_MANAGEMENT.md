@@ -169,7 +169,7 @@ Then, for what you accept:
 
 ```
 Apply items {N}. Follow "The Skill Writing Contract" (end of the Practice
-section in readmes/skills_management/SKILLS_MANAGEMENT.md) before writing
+section in docs/readmes/skills_management/SKILLS_MANAGEMENT.md) before writing
 anything into a skill.
 
 - rules going in a skill: edit skills/{name}/SKILL.md, keep the edit under
@@ -195,7 +195,7 @@ Commit on this branch as docs(skills): <summary>. No Co-Authored-By trailer.
 Run ./skills/skill-sync/assets/drift-audit.sh.
 
 Follow "The Skill Writing Contract" (end of the Practice section in
-readmes/skills_management/SKILLS_MANAGEMENT.md) before writing anything
+docs/readmes/skills_management/SKILLS_MANAGEMENT.md) before writing anything
 into a skill.
 
 The audit covers skills/ AND every AGENTS.md, including the ones under
@@ -261,7 +261,7 @@ STEP 2 - decide where it goes, in two sentences:
 
 STEP 3 - propose the exact wording and WAIT for my approval before editing.
 Follow "The Skill Writing Contract" (end of the Practice section in
-readmes/skills_management/SKILLS_MANAGEMENT.md). In particular: checkable by
+docs/readmes/skills_management/SKILLS_MANAGEMENT.md). In particular: checkable by
 reading a diff, anchored to a real file, verified against the code before
 writing, prohibition first.
 
@@ -318,7 +318,7 @@ Then, once you approve the shape:
 Write skills/{name}/SKILL.md from the approved rule list.
 
 Follow "The Skill Writing Contract" (end of the Practice section in
-readmes/skills_management/SKILLS_MANAGEMENT.md) in full. It governs what goes
+docs/readmes/skills_management/SKILLS_MANAGEMENT.md) in full. It governs what goes
 in, what stays out, and how rules are worded.
 
 Additional rules that apply only when creating a NEW skill:
@@ -490,7 +490,7 @@ bad edit is easy to find and undo.
 Apply the {CATEGORY} findings for scope {SCOPE}. Only that category.
 
 Follow "The Skill Writing Contract" (end of the Practice section in
-readmes/skills_management/SKILLS_MANAGEMENT.md) before writing anything
+docs/readmes/skills_management/SKILLS_MANAGEMENT.md) before writing anything
 into a skill.
 
 - edit skills/{name}/SKILL.md only; never .claude/skills, never the
@@ -945,7 +945,7 @@ vocabulary, and an agent has already gotten one of them wrong. Until then, nothi
 
 ```bash
 # 1. Create the rule file and the symlink. CRITICAL RULES starts EMPTY.
-cp readmes/skills_management/templates/AGENTS.template.md client_variants/<name>/AGENTS.md
+cp docs/readmes/skills_management/templates/AGENTS.template.md client_variants/<name>/AGENTS.md
 ln -s AGENTS.md client_variants/<name>/CLAUDE.md
 
 # 2. Route the scope. One line per variant that has an AGENTS.md, in SCOPE_DIRS
@@ -1047,7 +1047,7 @@ slightly harder to select correctly.
 | It is a one-off, however painful | Write it in the commit message or a readme |
 | It is trivial or self-explanatory | Nothing |
 | It is under roughly 20 lines of rules | Add them to an existing skill **with the same trigger** |
-| It is process for work in flight | A readme under [readmes/](../) |
+| It is process for work in flight | A readme under [docs/readmes/](../) |
 | It restates framework or language defaults | Nothing; the model already knows |
 | You cannot name a failure it prevents | Nothing yet. Wait until it goes wrong a second time |
 | It would break silently in unrelated work | One line in the right `AGENTS.md`, not a skill |
@@ -1097,7 +1097,7 @@ skills/{skill-name}/
 └── references/       Optional. Pointers to LOCAL docs the agent should read. Never web URLs.
 ```
 
-If you are tempted to paste a 200-line config into `SKILL.md`, it belongs in `assets/`. If you are
+If you are tempted to paste a 200-line config into `SKILL.md`, it belongs in `docs/assets/`. If you are
 tempted to summarise an existing document, link it from `references/` instead.
 
 ---
@@ -1131,7 +1131,7 @@ thing that catches it. Use Action 5, widened to the whole area the programme tou
 
 In-flight process: branch names, "we are currently on phase 2.5", container policies for one
 programme, reporting formats for one series of pull requests. That belongs in a readme under
-[readmes/](../), and it expires.
+[docs/readmes/](../), and it expires.
 
 ### Delete or Merge When
 

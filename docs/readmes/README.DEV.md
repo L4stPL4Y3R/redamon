@@ -373,15 +373,15 @@ redamon/
 │   └── docker-compose.yml          #   MCP-specific compose overrides
 │
 ├── graph_db/                       # Neo4j graph utilities and schema helpers
-├── gvm_scan/                       # OpenVAS/GVM vulnerability scanner Python wrapper
-├── github_secret_hunt/             # GitHub credential scanner (40+ regex patterns + Shannon entropy)
-├── trufflehog_scan/                # TruffleHog secret scanner (detector-based credential verification + deep git history)
-├── guinea_pigs/                    # Intentionally vulnerable test applications
+├── scanners/gvm_scan/                       # OpenVAS/GVM vulnerability scanner Python wrapper
+├── scanners/github_secret_hunt/             # GitHub credential scanner (40+ regex patterns + Shannon entropy)
+├── scanners/trufflehog_scan/                # TruffleHog secret scanner (detector-based credential verification + deep git history)
+├── testing/guinea_pigs/                    # Intentionally vulnerable test applications
 │   ├── apache_2.4.49/              #   Apache CVE-2021-41773 (path traversal + RCE)
 │   ├── apache_2.4.25/              #   Apache CVE-2017-3167 (auth bypass)
 │   └── node_serialize_1.0.0/       #   Node.js deserialization RCE
 │
-├── readmes/                        # All documentation (you are here)
+├── docs/readmes/                        # All documentation (you are here)
 ├── .github/                        # GitHub Actions CI/CD workflows
 ├── docker-compose.yml              # Full stack orchestration — all containers, networks, volumes
 ├── CONTRIBUTING.md                 # Contribution guidelines and contributor ranks
@@ -664,7 +664,7 @@ This is the most important table for day-to-day development. It tells you exactl
 | `recon/requirements.txt` | `docker compose build recon && docker compose up -d recon-orchestrator` | Recon image rebuild; orchestrator spawns new containers from it |
 | `mcp/requirements.txt` | `docker compose build kali-sandbox && docker compose up -d kali-sandbox` | Same |
 | Any `Dockerfile` | `docker compose build <service> && docker compose up -d <service>` | Dockerfile changes always need rebuild |
-| Bump a pinned tool/model (T15/T17) | rebuild the affected image | `recon/Dockerfile`+`requirements.txt` and `knowledge_base/curation/pins.py` pin third-party pulls to commits/tags; a moved/removed pin **fails the build loudly**. Edit the pin, then rebuild. |
+| Bump a pinned tool/model (T15/T17) | rebuild the affected image | `recon/Dockerfile`+`requirements.txt` and `services/knowledge_base/curation/pins.py` pin third-party pulls to commits/tags; a moved/removed pin **fails the build loudly**. Edit the pin, then rebuild. |
 | `docker-compose.yml` | `docker compose up -d` | Compose detects config changes and recreates affected containers |
 | `webapp/prisma/schema.prisma` | `docker compose exec webapp npx prisma db push` | Push schema changes to PostgreSQL |
 | New default value | Update ALL 4 layers + rebuild agent & webapp | See [checklist](#61-adding-a-new-project-setting) |
@@ -864,13 +864,13 @@ MATCH ()-[r]-() RETURN count(r) AS relationships;
 
 ### Testing with Guinea Pigs
 
-The `guinea_pigs/` folder contains intentionally vulnerable applications you can use to test the full pipeline locally:
+The `testing/guinea_pigs/` folder contains intentionally vulnerable applications you can use to test the full pipeline locally:
 
 | Guinea Pig | Vulnerability | How to use |
 |-----------|---------------|------------|
-| `apache_2.4.49` | CVE-2021-41773 (path traversal + RCE) | `docker compose -f guinea_pigs/apache_2.4.49/docker-compose.yml up -d` |
-| `apache_2.4.25` | CVE-2017-3167 (auth bypass) | `docker compose -f guinea_pigs/apache_2.4.25/docker-compose.yml up -d` |
-| `node_serialize_1.0.0` | Node.js deserialization RCE | `docker compose -f guinea_pigs/node_serialize_1.0.0/docker-compose.yml up -d` |
+| `apache_2.4.49` | CVE-2021-41773 (path traversal + RCE) | `docker compose -f testing/guinea_pigs/apache_2.4.49/docker-compose.yml up -d` |
+| `apache_2.4.25` | CVE-2017-3167 (auth bypass) | `docker compose -f testing/guinea_pigs/apache_2.4.25/docker-compose.yml up -d` |
+| `node_serialize_1.0.0` | Node.js deserialization RCE | `docker compose -f testing/guinea_pigs/node_serialize_1.0.0/docker-compose.yml up -d` |
 
 These containers join the `pentest-net` network, so the agent and MCP tools can reach them. Point your project target at the guinea pig's IP to test reconnaissance, exploitation, and post-exploitation flows end-to-end.
 
@@ -933,7 +933,7 @@ These use Docker Compose's `${VAR:-default}` syntax. Override them in `.env` if 
 
 ## 9. Documentation Index
 
-All deep-dive documentation lives in the `readmes/` folder alongside this file.
+All deep-dive documentation lives in the `docs/readmes/` folder alongside this file.
 
 > The project also maintains a **[GitHub Wiki](https://github.com/samugit83/redamon/wiki)** with additional guides and walkthroughs.
 

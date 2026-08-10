@@ -347,14 +347,14 @@ flowchart LR
    (a large fraction of host RAM) so one container can never take the whole host and starve
    the DB. Returns `None` (no limit) when the governor is disabled. Each spawn additionally
    receives a CPU cap (`_container_cpu_limit()`) and a PID cap (`_container_pids_limit()`, D1).
-3. **Sibling tool containers** (`docker_broker/broker.py`): the recon container spawns
+3. **Sibling tool containers** (`services/docker_broker/broker.py`): the recon container spawns
    naabu/httpx/katana/… as *separate top-level containers* through the docker-broker's
    filtered socket, so the recon container's own `mem_limit` cannot reach them. The broker
    is the only choke point every sibling-create request passes through. After its security
    `validate_create` passes, it injects `HostConfig.Memory` (`BROKER_TOOL_MEM_BYTES`, default
    2 GB) into the create body, re-serialises it, and rewrites `Content-Length` before
    forwarding. The injection is strictly additive, it never relaxes a deny rule.
-4. **The dirty supply-chain analyzer** (`supply_chain_common/analyzer_dispatch.py`): the odd
+4. **The dirty supply-chain analyzer** (`scanners/supply_chain_common/analyzer_dispatch.py`): the odd
    one out, because it is spawned from **three** processes, the orchestrator (Docker SDK),
    the recon container and the L1 scan container (both shelling out through the broker
    socket). Only the orchestrator can import `container_manager`, so when the cap clamp

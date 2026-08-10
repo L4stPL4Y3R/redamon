@@ -15,7 +15,7 @@ This replaces the need for `params.py` configuration files, allowing project-spe
 
 ```bash
 # 1. Start PostgreSQL
-cd postgres_db
+cd services/postgres_db
 docker-compose up -d
 
 # 2. Verify connection

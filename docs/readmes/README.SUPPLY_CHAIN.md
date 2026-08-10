@@ -113,7 +113,7 @@ Kali holds **no Docker socket**: it is the least-trusted, target-facing worker, 
 the one L3 tool that spawns a container (`execute_guarddog`) goes through the
 orchestrator instead. See [Layer L3](#layer-l3--agent-tools).
 
-The **shared engine** (`supply_chain_common/`) is a pure-Python package of runners
+The **shared engine** (`scanners/supply_chain_common/`) is a pure-Python package of runners
 and parsers mounted read-only into every CLEAN/DIRTY container the same way
 `graph_db` is mounted. The **offline OSV database** is a named Docker volume
 mounted read-only everywhere except the one-time sync step.
@@ -130,7 +130,7 @@ The verdict path makes **zero network calls**. A shared Docker volume
 ./redamon.sh supply-chain-sync npm PyPI Go    # add more ecosystems
 ```
 
-**How the sync works** (`supply_chain_common/osv_db_sync.py`):
+**How the sync works** (`scanners/supply_chain_common/osv_db_sync.py`):
 
 1. For each requested ecosystem, a minimal **seed manifest** is written to a temp
    dir (a one-line `package-lock.json`, `requirements.txt`, `go.mod`, etc.).
@@ -143,7 +143,7 @@ The verdict path makes **zero network calls**. A shared Docker volume
    `0750` as root but the scan containers run **non-root + read-only** and would
    otherwise silently see an empty DB.
 
-**How offline scanning works** (`supply_chain_common/osv_runner.py`):
+**How offline scanning works** (`scanners/supply_chain_common/osv_runner.py`):
 
 - The flag is `--offline` (verified against v2.4.0). `--offline-vulnerabilities`
   does **not** load the local DB in this build and returns empty results - do not
@@ -294,7 +294,7 @@ flowchart LR
 | **DIRTY->CLEAN boundary** (S5) - schema-validate the artifact | `validate_artifact` |
 | **SSRF guard** (S4) - L2 makes no new fetches; it parses data JS-recon already downloaded | `harvest.py` (no `requests.get`) |
 | **Tenant isolation** (S10) - every MERGE key includes `user_id` + `project_id` | `supply_chain_mixin.py` |
-| **Broker allowlist** - `redamon-supply-chain-analyzer` + `redamon-supply-chain` images + `redamon-osv-db` volume | `docker_broker/broker.py` |
+| **Broker allowlist** - `redamon-supply-chain-analyzer` + `redamon-supply-chain` images + `redamon-osv-db` volume | `services/docker_broker/broker.py` |
 
 The `redamon-supply-chain-analyzer` and `redamon-supply-chain` images and the
 `redamon-osv-db` volume are on the docker-broker allowlist; a non-allowlisted
@@ -400,7 +400,7 @@ sequenceDiagram
   and registration in `_active_scan_keys` so the governor accounts for it. REST
   endpoints live at `recon_orchestrator/api.py` (`/supply-chain/PID/*`); the
   webapp proxies them at `webapp/src/app/api/supply-chain/[projectId]/*`.
-- **The CLEAN writer** (`supply_chain_scan/`): fetches settings from the webapp
+- **The CLEAN writer** (`scanners/supply_chain_scan/`): fetches settings from the webapp
   API using the scoped `SCANNER_API_KEY`, validates the uploaded filename
   (basename-only, extension allowlist, no traversal), runs osv-scanner offline via
   `supply_chain_common`, assembles + validates the artifact, and writes the graph
@@ -688,7 +688,7 @@ Three things are worth knowing:
 - **All three spawn paths resolve the same number.** The orchestrator uses the Docker
   SDK; the recon and L1 containers shell out through the broker socket. Only the first
   could reach `container_manager`, so the other two hardcoded `1500m` and never shrank
-  under memory pressure. `supply_chain_common/analyzer_dispatch.py` now resolves
+  under memory pressure. `scanners/supply_chain_common/analyzer_dispatch.py` now resolves
   `--memory` from the governor for every caller, falling back to the literal when the
   governor is unreachable (the analyzer image has no `graph_db`). Precedence is
   `SUPPLY_CHAIN_ANALYZER_MEM` > governor > literal, **read at call time**, identical on
@@ -718,7 +718,7 @@ budgeted: GuardDog runs the packages sequentially, so that knob bounds wall-cloc
 | **Neo4j / graph_db** | `SupplyChainMixin` is added to `Neo4jClient`; two `CREATE CONSTRAINT`s in `graph_db/schema.py`. The agent's `query_graph` sees `Package` / `MalPackageFinding` like any other node. |
 | **Webapp** | Prisma fields (`supplyChain*`, `supplyChainRecon*`); `/api/supply-chain/[projectId]/*` proxy routes + SBOM upload; `useSupplyChainStatus` / `useSupplyChainSSE` hooks; a Supply Chain card in the Other Scans modal (with a logs drawer) and a Supply Chain settings section. |
 | **Graph tables** | The **Supply-Chain SCA** table (`/api/analytics/redzone/supplyChainSca`) reads this model directly: three sheets (Verdicts / Packages / Advisories) over `Package`, `MalPackageFinding` and `Vulnerability {source:'osv'}`. Not to be confused with **JS Dep Signals** (formerly labelled "Supply-Chain"), which reads `JsReconFinding` nodes. See [the table section](#the-supply-chain-sca-table). |
-| **Settings (5 layers)** | Prisma default -> `recon/project_settings.py` (L2) / `supply_chain_scan/project_settings.py` (L1) -> `/defaults` -> webapp section, using the `x_enabled` / `xEnabled` / `X_ENABLED` naming. |
+| **Settings (5 layers)** | Prisma default -> `recon/project_settings.py` (L2) / `scanners/supply_chain_scan/project_settings.py` (L1) -> `/defaults` -> webapp section, using the `x_enabled` / `xEnabled` / `X_ENABLED` naming. |
 | **redamon.sh** | `supply-chain-sync` populates the DB; `TOOL_IMAGES` + `cmd_update` build/rebuild the two images; `cmd_install`/`up` build them via `--profile tools`. |
 | **SCANNER_API_KEY (S3/E6)** | The L1 scan container fetches settings with the scoped `SCANNER_API_KEY` (falling back to `INTERNAL_API_KEY` on pre-secret installs); the analyzer holds no key at all. |
 
@@ -762,9 +762,9 @@ only an OSV `MAL-` id is.
 
 **Also shipped since the list below was written:**
 
-- **L1 GitHub-repo input** (`SUPPLY_CHAIN_REPO_URL` + `supply_chain_scan/repo_clone.py`,
+- **L1 GitHub-repo input** (`SUPPLY_CHAIN_REPO_URL` + `scanners/supply_chain_scan/repo_clone.py`,
   anchored to `GithubRepository`).
-- **GuardDog in L1** (`supply_chain_scan/deep_analysis.py`): the scan container now does
+- **GuardDog in L1** (`scanners/supply_chain_scan/deep_analysis.py`): the scan container now does
   get the **broker** socket and `DOCKER_HOST`, the same narrow privilege recon already
   had, so it can dispatch to the dirty analyzer without a raw Docker socket.
 - **GuardDog from L3 in practice**: it no longer runs from `kali-sandbox` at all. The
@@ -781,10 +781,10 @@ only an OSV `MAL-` id is.
 ## Key files
 
 ```
-supply_chain_common/        # shared engine: runners, parsers, security, artifact, db sync
-supply_chain_common/analyzer_dispatch.py         # ONE hardened argv for all 3 analyzer spawners
-supply_chain_analyzer/      # DIRTY image + entrypoint (sc-analyze)
-supply_chain_scan/          # L1 CLEAN writer (main, runner, project_settings, Dockerfile)
+scanners/supply_chain_common/            # shared engine: runners, parsers, security, artifact, db sync
+scanners/supply_chain_common/analyzer_dispatch.py  # ONE hardened argv for all 3 analyzer spawners
+scanners/supply_chain_analyzer/          # DIRTY image + entrypoint (sc-analyze)
+scanners/supply_chain_scan/              # L1 CLEAN writer (main, runner, project_settings, Dockerfile)
 recon/helpers/supply_chain/harvest.py            # L2 black-box harvest (pure, no network)
 recon/main_recon_modules/supply_chain_recon.py   # L2 pipeline module (GROUP 5.5)
 recon/partial_recon_modules/supply_chain.py      # L2 partial recon
@@ -798,5 +798,5 @@ webapp/src/app/api/supply-chain/                 # proxy routes + SBOM upload
 webapp/src/components/projects/ProjectForm/sections/SupplyChainSection.tsx
 webapp/src/app/api/analytics/redzone/supplyChainSca/route.ts    # SCA table API (3 sheets)
 webapp/src/app/graph/components/RedZoneTables/SupplyChainScaTable.tsx  # the table
-readmes/GRAPH.SCHEMA.md                           # node documentation
+docs/readmes/GRAPH.SCHEMA.md                           # node documentation
 ```

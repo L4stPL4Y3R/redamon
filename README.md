@@ -285,13 +285,13 @@ The webapp also checks for updates automatically and shows a notification in the
 The Quick Start above runs RedAmon locally on `localhost`. To run a shared, internet-reachable instance on a Linux server (EC2, DigitalOcean, Hetzner, or bare metal), use the **single-host deploy** in [`tooling/deploy/single-host/`](tooling/deploy/single-host/). It drives `redamon.sh` over SSH from your laptop and wraps the stack in the internet-facing security layer RedAmon omits by default: nginx + TLS (Let's Encrypt), a host firewall, SSH hardening, and fail2ban, with a single public HTTPS origin so only the login page is reachable and everything else stays bound to loopback.
 
 ```bash
-cd deploy/single-host
+cd tooling/deploy/single-host
 cp .env.example .env      # set HOST_IP, DOMAIN, SSH_KEY_PATH, OPERATOR_ALLOW_CIDRS,
                           # LETSENCRYPT_EMAIL, ADMIN_* ...
 ./deploy.sh init          # first build takes 30-60 min, then log in at https://<domain>/
 ```
 
-Full walkthrough: [Wiki: Deploying to a Server](https://github.com/samugit83/redamon/wiki/Deploying-to-a-Server). Complete reference: [deploy/single-host/README.md](tooling/deploy/single-host/README.md).
+Full walkthrough: [Wiki: Deploying to a Server](https://github.com/samugit83/redamon/wiki/Deploying-to-a-Server). Complete reference: [tooling/deploy/single-host/README.md](tooling/deploy/single-host/README.md).
 
 ### Development Mode
 
@@ -454,7 +454,7 @@ RedAmon is engineered to drop into a real security organization, not just a rese
 **Deploy to a server in one command.** Beyond local `localhost`, RedAmon ships a hardened [single-host deploy](tooling/deploy/single-host/) that stands up a shared, internet-reachable instance and wraps the stack in nginx + TLS (Let's Encrypt), a host firewall, SSH hardening, and fail2ban, exposing a single public HTTPS origin:
 
 ```bash
-cd deploy/single-host
+cd tooling/deploy/single-host
 cp .env.example .env      # set DOMAIN, HOST_IP, SSH_KEY_PATH, ADMIN_* ...
 ./deploy.sh init          # builds the full stack and brings it up over SSH
 ```
@@ -943,16 +943,16 @@ flowchart TB
 | Resource | Link |
 |----------|------|
 | **Full Wiki** (user guide) | **[github.com/samugit83/redamon/wiki](https://github.com/samugit83/redamon/wiki)** |
-| Server Deployment (single-host) | **[Wiki: Deploying to a Server](https://github.com/samugit83/redamon/wiki/Deploying-to-a-Server)** · [deploy/single-host/README.md](tooling/deploy/single-host/README.md) |
-| **Security Posture** (defense-in-depth catalog) | **[readmes/README.SECURITY_POSTURE.md](docs/readmes/README.SECURITY_POSTURE.md)** |
-| Supply-Chain / Malicious-Package Detection | [readmes/README.SUPPLY_CHAIN.md](docs/readmes/README.SUPPLY_CHAIN.md) |
-| Threat Model (STRIDE) | [readmes/README.TM.SYSTEM_OVERVIEW.md](docs/readmes/README.TM.SYSTEM_OVERVIEW.md) |
+| Server Deployment (single-host) | **[Wiki: Deploying to a Server](https://github.com/samugit83/redamon/wiki/Deploying-to-a-Server)** · [tooling/deploy/single-host/README.md](tooling/deploy/single-host/README.md) |
+| **Security Posture** (defense-in-depth catalog) | **[docs/readmes/README.SECURITY_POSTURE.md](docs/readmes/README.SECURITY_POSTURE.md)** |
+| Supply-Chain / Malicious-Package Detection | [docs/readmes/README.SUPPLY_CHAIN.md](docs/readmes/README.SUPPLY_CHAIN.md) |
+| Threat Model (STRIDE) | [docs/readmes/README.TM.SYSTEM_OVERVIEW.md](docs/readmes/README.TM.SYSTEM_OVERVIEW.md) |
 | Security Policy | [SECURITY.md](SECURITY.md) |
 | AI-Assisted Development | **[Wiki: Ship Perfect PRs with AI](https://github.com/samugit83/redamon/wiki/AI-Assisted-Development)** |
-| Developer Guide | [readmes/README.DEV.md](docs/readmes/README.DEV.md) |
-| Architecture Diagrams | [readmes/ARCHITECTURE.md](docs/readmes/ARCHITECTURE.md) |
-| Technology Stack | [readmes/TECH_STACK.md](docs/readmes/TECH_STACK.md) |
-| Troubleshooting | [readmes/TROUBLESHOOTING.md](docs/readmes/TROUBLESHOOTING.md) |
+| Developer Guide | [docs/readmes/README.DEV.md](docs/readmes/README.DEV.md) |
+| Architecture Diagrams | [docs/readmes/ARCHITECTURE.md](docs/readmes/ARCHITECTURE.md) |
+| Technology Stack | [docs/readmes/TECH_STACK.md](docs/readmes/TECH_STACK.md) |
+| Troubleshooting | [docs/readmes/TROUBLESHOOTING.md](docs/readmes/TROUBLESHOOTING.md) |
 | Changelog | [CHANGELOG.md](CHANGELOG.md) |
 | Full Disclaimer | [DISCLAIMER.md](DISCLAIMER.md) |
 | Third-Party Licenses | [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md) |

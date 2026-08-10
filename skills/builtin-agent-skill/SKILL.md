@@ -81,5 +81,5 @@ grep -rn "<skill_id>" webapp/src agentic
 
 ## Resources
 
-- [readmes/coding_agent_prompts/PROMPT.ADD_BUILTIN_AGENT_SKILL.md](../../docs/readmes/coding_agent_prompts/PROMPT.ADD_BUILTIN_AGENT_SKILL.md) - full per-layer walkthrough, tunable-design patterns, failure triage
+- [docs/readmes/coding_agent_prompts/PROMPT.ADD_BUILTIN_AGENT_SKILL.md](../../docs/readmes/coding_agent_prompts/PROMPT.ADD_BUILTIN_AGENT_SKILL.md) - full per-layer walkthrough, tunable-design patterns, failure triage
 - Related skills: `agentic-tool-integration`, `project-settings-cascade`, `add-community-skill`

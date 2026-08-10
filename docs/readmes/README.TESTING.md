@@ -37,7 +37,7 @@ alias for `unit`).
   cross-layer tests and `git HEAD` resolve.
 - Config lives at each in-container test root: a small `pytest.ini` +
   `conftest.py` at `agentic/`, `recon/`, `recon_orchestrator/`,
-  `ai_attack_surface_scan/`, `capture_proxy/`, `docker_broker/`, and the repo root.
+  `scanners/ai_attack_surface_scan/`, `scanners/capture_proxy/`, `services/docker_broker/`, and the repo root.
   Keep the `conftest.py` copies in sync — they are intentionally near-identical.
 - Test deps are `requirements-test.txt` (`pytest`, `pytest-cov`, `pytest-xdist`,
   `pytest-asyncio`). They are **baked** into the daily-driver images
@@ -52,9 +52,9 @@ alias for `unit`).
 | root group | `redamon-agent` | `tests/`, `supply_chain_*`, `graph_db`, `knowledge_base`, `mcp` |
 | recon | `redamon-recon` | `recon/tests` |
 | recon_orchestrator | `redamon-recon-orchestrator` | `recon_orchestrator/` + `recon_orchestrator/tests` |
-| ai_attack_surface | `redamon-ai-attack-surface` | `ai_attack_surface_scan/tests` + `adapters/*/tests` |
-| capture_proxy | `redamon-capture-proxy` | `capture_proxy/tests` |
-| docker_broker | `redamon-docker-broker` | `docker_broker/` |
+| ai_attack_surface | `redamon-ai-attack-surface` | `scanners/ai_attack_surface_scan/tests` + `adapters/*/tests` |
+| capture_proxy | `redamon-capture-proxy` | `scanners/capture_proxy/tests` |
+| docker_broker | `redamon-docker-broker` | `services/docker_broker/` |
 | webapp | (node) | `webapp/src/**/*.test.ts(x)` via vitest |
 
 A section whose image is not built is **skipped cleanly**, never failed.
@@ -72,7 +72,7 @@ files, each `conftest.py` auto-marks by **filename**:
 
 Override with an explicit `@pytest.mark.{unit,integration,live}` in the file.
 
-The gate engine (`scripts/pytest_isolated.py`) infers the same tiers from the
+The gate engine (`tooling/scripts/pytest_isolated.py`) infers the same tiers from the
 filename to pick which files to run, so the two must stay consistent.
 
 ---
@@ -93,7 +93,7 @@ a `MagicMock` and its tests fail with *"a coroutine was expected, got
 author "fixing" code that was never broken.
 
 The fix is structural: the gate runs **each test FILE in its own pytest
-subprocess**, parallelized, via `scripts/pytest_isolated.py`. That reproduces the
+subprocess**, parallelized, via `tooling/scripts/pytest_isolated.py`. That reproduces the
 isolation the tests were designed for and makes the gate deterministic.
 
 Consequences you must know:
@@ -206,4 +206,4 @@ missing skip-guard *is* the bug.
 - **Mutation testing** on the security-critical modules (supply-chain, auth /
   access control) as the *real* quality gate — coverage alone is not one.
 - **HTTP record/replay** (`respx` / VCR) so the `live` tier shrinks.
-- **Playwright e2e** wired into the gate (see `e2e/`).
+- **Playwright e2e** wired into the gate (see `testing/e2e/`).

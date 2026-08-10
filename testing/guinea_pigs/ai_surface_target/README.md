@@ -290,7 +290,7 @@ for f in ['openai-leaked', 'gemini-with-context', 'negative-jquery']:
 ## How to bring up
 
 ```bash
-cd guinea_pigs/ai_surface_target
+cd testing/guinea_pigs/ai_surface_target
 docker compose up -d --build
 # Wait ~3 seconds; healthcheck probes :11434
 docker compose ps
@@ -390,7 +390,7 @@ docker run --rm --entrypoint sh \
   -v "$PWD/recon:/app/recon:ro" -v "$PWD/graph_db:/app/graph_db:ro" \
   -v "$PWD/guinea_pigs:/app/guinea_pigs:ro" -w /app redamon-recon:latest -c '
   pip install -q pyyaml yara-python jq prance "openapi-spec-validator>=0.7.1,<0.8" "mcp>=1.27" uvicorn &&
-  python3 guinea_pigs/ai_surface_target/validate_ai_surface_recon.py'
+  python3 testing/guinea_pigs/ai_surface_target/validate_ai_surface_recon.py'
 ```
 
 (The `pip install` is only needed until the recon image is rebuilt with the new

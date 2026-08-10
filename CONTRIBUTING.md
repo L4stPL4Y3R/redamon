@@ -270,7 +270,7 @@ Every rank unlocks real rewards. No empty promises.
 
 > For a comprehensive deep dive into the codebase — architecture, project layout, subsystem internals, and development checklists — see the **[Developer Guide](docs/readmes/README.DEV.md)**.
 
-> **Agent + contributor ruleset.** Every change follows the rules in **[AGENTS.md](AGENTS.md)** (tech stack, commands, QA checklist, how tests run) and the nearest component `AGENTS.md`. The repository records its hard-won conventions as loadable **agent skills** — see **[readmes/skills_management/SKILLS_MANAGEMENT.md](docs/readmes/skills_management/SKILLS_MANAGEMENT.md)** for how the system works and how to add a skill.
+> **Agent + contributor ruleset.** Every change follows the rules in **[AGENTS.md](AGENTS.md)** (tech stack, commands, QA checklist, how tests run) and the nearest component `AGENTS.md`. The repository records its hard-won conventions as loadable **agent skills** — see **[docs/readmes/skills_management/SKILLS_MANAGEMENT.md](docs/readmes/skills_management/SKILLS_MANAGEMENT.md)** for how the system works and how to add a skill.
 
 RedAmon runs as a Docker Compose stack. Here's what each service does and how changes propagate:
 

@@ -6,7 +6,7 @@ description: >
   green run a lie.
   Trigger: editing any test_*.py, *.test.ts(x) or tests/*.sh; a test that is
   red, skipped or xfailed; a request to "run the tests", "make it green" or
-  check coverage; editing redamon.sh cmd_test, scripts/pytest_isolated.py, any
+  check coverage; editing redamon.sh cmd_test, tooling/scripts/pytest_isolated.py, any
   conftest.py or any pytest.ini.
 license: MIT
 metadata:
@@ -39,7 +39,7 @@ in the root [AGENTS.md](../../AGENTS.md) CRITICAL RULES; this skill is everythin
   `@tool` at import time, so whichever file collects first decides for all of
   them. You get **phantom failures in files you never touched** (classically
   `a coroutine was expected, got <MagicMock>`). Run `./redamon.sh test`, or one
-  file / node id. The gate exists for this: [scripts/pytest_isolated.py](../../tooling/scripts/pytest_isolated.py)
+  file / node id. The gate exists for this: [tooling/scripts/pytest_isolated.py](../../tooling/scripts/pytest_isolated.py)
   runs each FILE in its own subprocess.
 - **NEVER "fix" source because a test went red in a multi-file run.** Re-run that
   one file in isolation first; if it passes alone the failure was pollution, not a bug.
@@ -117,7 +117,7 @@ trusting "all green".
 
 ## Resources
 
-- [readmes/README.TESTING.md](../../docs/readmes/README.TESTING.md) - full testing guide + coverage ratchet
-- [scripts/pytest_isolated.py](../../tooling/scripts/pytest_isolated.py) - the per-file isolation gate
+- [docs/readmes/README.TESTING.md](../../docs/readmes/README.TESTING.md) - full testing guide + coverage ratchet
+- [tooling/scripts/pytest_isolated.py](../../tooling/scripts/pytest_isolated.py) - the per-file isolation gate
 - [redamon.sh:2902](../../redamon.sh#L2902) - `_TEST_SECTIONS`, section/image map, webapp hook
 - Related: root [AGENTS.md](../../AGENTS.md) for the host-pytest / Docker-gate rule

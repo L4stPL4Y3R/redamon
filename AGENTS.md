@@ -62,13 +62,13 @@ tests/                repo-root Python tests + shell integration tests
 
 scanners/             the 11 scan tools, each its own container image
   supply_chain_*/       malicious/vulnerable package detection (OSV offline)
-  capture_proxy/        mitmproxy HTTP capture
-  ai_attack_surface_scan/  LLM/AI attack-surface scanning
-  gvm_scan/  github_secret_hunt/  trufflehog_scan/  baddns_scan/  wcvs/  codefix_sandbox/
+  scanners/capture_proxy/        mitmproxy HTTP capture
+  scanners/ai_attack_surface_scan/  LLM/AI attack-surface scanning
+  scanners/gvm_scan/  scanners/github_secret_hunt/  scanners/trufflehog_scan/  scanners/baddns_scan/  scanners/wcvs/  scanners/codefix_sandbox/
 services/             supporting services (docker_broker, knowledge_base, postgres_db)
-testing/              e2e/ (Playwright) + guinea_pigs/ (vulnerable targets)
-tooling/              scripts/ (e.g. pytest_isolated.py), hooks/, deploy/
-docs/                 readmes/ (prose docs) + assets/ (media)
+testing/              testing/e2e/ (Playwright) + testing/guinea_pigs/ (vulnerable targets)
+tooling/              tooling/scripts/ (e.g. pytest_isolated.py), hooks/, tooling/deploy/
+docs/                 docs/readmes/ (prose docs) + assets/ (media)
 ```
 
 A scanner's container-side paths stay `/app/<scanner>`; only host-side paths

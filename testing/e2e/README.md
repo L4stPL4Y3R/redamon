@@ -3,7 +3,7 @@
 Drives the real RedAmon web app in Chromium against the running stack.
 
 ```bash
-cd e2e
+cd testing/e2e
 npm install
 npx playwright install chromium
 npx playwright test                 # everything

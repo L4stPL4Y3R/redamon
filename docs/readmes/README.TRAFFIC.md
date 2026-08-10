@@ -65,17 +65,17 @@ become authoritative. Nothing a target ever touched is trusted to name a tenant.
 
 | Component | Container | Network | Holds secret? | Source |
 |---|---|---|---|---|
-| Capture proxy | `redamon-capture-proxy` | `pentest-net` only | No | [`capture_proxy/capture_addon.py`](../../scanners/capture_proxy/capture_addon.py) |
-| Ingest worker | `redamon-traffic-ingest` | `redamon` only | Yes (scoped DB role) | [`capture_proxy/ingest_worker.py`](../../scanners/capture_proxy/ingest_worker.py) |
-| Tag primitive | (library, 3 copies) | n/a | key held by minters only | [`capture_proxy/redamon_ctx.py`](../../scanners/capture_proxy/redamon_ctx.py) |
-| Egress guard | (library, in proxy) | n/a | No | [`capture_proxy/egress.py`](../../scanners/capture_proxy/egress.py) |
-| Record shaping | (library, in proxy) | n/a | No | [`capture_proxy/capture_lib.py`](../../scanners/capture_proxy/capture_lib.py) |
+| Capture proxy | `redamon-capture-proxy` | `pentest-net` only | No | [`scanners/capture_proxy/capture_addon.py`](../../scanners/capture_proxy/capture_addon.py) |
+| Ingest worker | `redamon-traffic-ingest` | `redamon` only | Yes (scoped DB role) | [`scanners/capture_proxy/ingest_worker.py`](../../scanners/capture_proxy/ingest_worker.py) |
+| Tag primitive | (library, 3 copies) | n/a | key held by minters only | [`scanners/capture_proxy/redamon_ctx.py`](../../scanners/capture_proxy/redamon_ctx.py) |
+| Egress guard | (library, in proxy) | n/a | No | [`scanners/capture_proxy/egress.py`](../../scanners/capture_proxy/egress.py) |
+| Record shaping | (library, in proxy) | n/a | No | [`scanners/capture_proxy/capture_lib.py`](../../scanners/capture_proxy/capture_lib.py) |
 | Orchestrator control | `recon-orchestrator` | `redamon` + `pentest-net` | Yes | [`recon_orchestrator/container_manager.py:968`](../../recon_orchestrator/container_manager.py#L968) |
 | UI + API | `webapp` | `redamon` | Yes (full DSN) | [`webapp/src/app/traffic/`](../../webapp/src/app/traffic/) |
 | Agent tools | `agent` | `redamon` | Yes (full DSN) | [`agentic/traffic_tools.py`](../../agentic/traffic_tools.py) |
 
 **One image, two roles.** The proxy and the ingest worker are the *same*
-`redamon-capture-proxy:latest` image ([`capture_proxy/Dockerfile`](../../scanners/capture_proxy/Dockerfile)).
+`redamon-capture-proxy:latest` image ([`scanners/capture_proxy/Dockerfile`](../../scanners/capture_proxy/Dockerfile)).
 The role is chosen at runtime by `command` + `network` + `env`, not by the image.
 Isolation therefore comes entirely from *placement*: the proxy is put on the
 target-facing network with no credentials; the ingest worker is put on the
@@ -457,7 +457,7 @@ Key properties:
 
 ### The scoped role
 
-[`capture_proxy/sql/001_traffic_ingest_role.sql`](../../scanners/capture_proxy/sql/001_traffic_ingest_role.sql)
+[`scanners/capture_proxy/sql/001_traffic_ingest_role.sql`](../../scanners/capture_proxy/sql/001_traffic_ingest_role.sql)
 creates the `traffic_ingest` login role and grants it exactly:
 
 ```sql
@@ -754,7 +754,7 @@ retention and scope are the database fields above.
 
 1. `docker compose exec webapp npx prisma db push` to create the table.
 2. Apply the scoped role once:
-   `docker compose exec -T postgres psql -U redamon -d redamon -v role_password="'<secret>'" -f - < capture_proxy/sql/001_traffic_ingest_role.sql`
+   `docker compose exec -T postgres psql -U redamon -d redamon -v role_password="'<secret>'" -f - < scanners/capture_proxy/sql/001_traffic_ingest_role.sql`
 3. Set `TRAFFIC_INGEST_DATABASE_URL=postgresql://traffic_ingest:<secret>@postgres:5432/redamon`.
 4. Build the image: `docker compose --profile capture build capture-proxy`.
 5. Enable the per-project toggle.
@@ -933,5 +933,5 @@ caps its unified-diff hunks, and offloaded bodies return an explicit
 
 - Full design rationale and phase plan: [`internal/mitmproxy_integration_plan.md`](../internal/mitmproxy_integration_plan.md)
 - Threat model context: [`internal/stride/README.TM.STRIDE.md`](../../_local/internal/stride/README.TM.STRIDE.md)
-- Proxy image and addon: [`capture_proxy/`](../../scanners/capture_proxy/)
+- Proxy image and addon: [`scanners/capture_proxy/`](../../scanners/capture_proxy/)
 - Agent tools: [`agentic/traffic_tools.py`](../../agentic/traffic_tools.py)

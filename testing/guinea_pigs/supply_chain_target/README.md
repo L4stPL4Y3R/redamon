@@ -159,7 +159,7 @@ Expected: `packages=111 malicious=1 vulnerable=31 suspicious=8` and
 
 ```bash
 # 1. Bring the target up
-cd guinea_pigs/supply_chain_target
+cd testing/guinea_pigs/supply_chain_target
 docker compose up -d --build
 curl -s http://192.88.99.10/robots.txt
 
@@ -229,7 +229,7 @@ These are properties of L2 as it stands, not gaps in the target:
 ## Cleanup
 
 ```bash
-cd guinea_pigs/supply_chain_target
+cd testing/guinea_pigs/supply_chain_target
 docker compose down
 rm -rf .dryrun
 ```

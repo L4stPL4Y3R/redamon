@@ -43,7 +43,7 @@ The `/profile` endpoint:
 
 ```bash
 #from folder /redamon
-ssh -i ~/.ssh/guinea_pigs.pem ubuntu@15.160.68.117 "mkdir -p ~/apache" && scp -i ~/.ssh/guinea_pigs.pem -r guinea_pigs/node_serialize_1.0.0/* ubuntu@15.160.68.117:~/apache/ && ssh -i ~/.ssh/guinea_pigs.pem ubuntu@15.160.68.117 "bash ~/apache/setup.sh"
+ssh -i ~/.ssh/guinea_pigs.pem ubuntu@15.160.68.117 "mkdir -p ~/apache" && scp -i ~/.ssh/guinea_pigs.pem -r testing/guinea_pigs/node_serialize_1.0.0/* ubuntu@15.160.68.117:~/apache/ && ssh -i ~/.ssh/guinea_pigs.pem ubuntu@15.160.68.117 "bash ~/apache/setup.sh"
 ```
 
 ### 3. Wipe & Clean (remove everything)

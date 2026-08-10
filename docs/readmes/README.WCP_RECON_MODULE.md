@@ -152,7 +152,7 @@ changes require `docker compose --profile tools build recon`.
 | `normalizers.py` | shape findings into the `cache_scan` output structure |
 
 Supporting code outside the package:
-- `wcvs/Dockerfile` - builds `redamon-wcvs:latest` from WCVS source.
+- `scanners/wcvs/Dockerfile` - builds `redamon-wcvs:latest` from WCVS source.
 - `graph_db/mixins/cache_mixin.py` - `update_graph_from_cache_scan` (graph write).
 - `recon/partial_recon_modules/cache_scanning.py` - partial-recon entry point.
 
@@ -523,7 +523,7 @@ Persisted properties: `source`, `vulnerability_type="web_cache_poisoning"`, `nam
 `cross_vantage`, `evidence` (JSON), and hoisted `poc_link` / `curl_verify`. A
 `_check_unknown_keys` contract guard logs if the scanner ever emits a field the mixin
 doesn't map (data-loss tripwire). The NL-to-Cypher prompt (`agentic/prompts/base.py`)
-and `readmes/GRAPH.SCHEMA.md` document the `cache_poisoning` source.
+and `docs/readmes/GRAPH.SCHEMA.md` document the `cache_poisoning` source.
 
 Example Cypher (what the AI agent can run):
 ```cypher
@@ -715,7 +715,7 @@ native *or* CacheX confirms) - not to replace WCVS.
 | Change | Action |
 |---|---|
 | `recon/cache_scan/**`, `recon/partial_recon*` | `docker compose --profile tools build recon` (code is baked, not mounted) |
-| `wcvs/Dockerfile` | `docker compose --profile tools build wcvs` |
+| `scanners/wcvs/Dockerfile` | `docker compose --profile tools build wcvs` |
 | `graph_db/mixins/cache_mixin.py` | volume-mounted into scan containers (no rebuild for scans); rebuild `agent` for the chat agent |
 | `webapp/src/**` | `docker compose restart webapp` + hard refresh |
 | `prisma/schema.prisma` | `docker compose exec webapp npx prisma db push` |

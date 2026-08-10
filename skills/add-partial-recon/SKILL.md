@@ -66,5 +66,5 @@ graph-sourced inputs, the modal, and the single-phase re-run.
 
 ## Resources
 
-- [readmes/coding_agent_prompts/PROMPT.ADD_PARTIAL_RECON.md](../../docs/readmes/coding_agent_prompts/PROMPT.ADD_PARTIAL_RECON.md) - full walkthrough, modal UI, input validation, reference impls
+- [docs/readmes/coding_agent_prompts/PROMPT.ADD_PARTIAL_RECON.md](../../docs/readmes/coding_agent_prompts/PROMPT.ADD_PARTIAL_RECON.md) - full walkthrough, modal UI, input validation, reference impls
 - Related skills: `recon-tool-integration`, `graph-db-writes`, `recon-ai-enrichment`

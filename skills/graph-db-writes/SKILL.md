@@ -48,9 +48,9 @@ graph-write rules it depends on.
   in the tool's output dict must land on a node property or relationship, or it is
   silent data loss. If it fits no node, map it to the closest property or say why it is dropped.
 - **ALWAYS reuse an existing node label before inventing one.** Discovered
-  hostnames are `Subdomain`, not a new label. Check [readmes/GRAPH.SCHEMA.md](../../docs/readmes/GRAPH.SCHEMA.md) first.
+  hostnames are `Subdomain`, not a new label. Check [docs/readmes/GRAPH.SCHEMA.md](../../docs/readmes/GRAPH.SCHEMA.md) first.
 - **ALWAYS sync the schema when you add a label / relationship / property.** Update
-  [readmes/GRAPH.SCHEMA.md](../../docs/readmes/GRAPH.SCHEMA.md), the `TEXT_TO_CYPHER_SYSTEM`
+  [docs/readmes/GRAPH.SCHEMA.md](../../docs/readmes/GRAPH.SCHEMA.md), the `TEXT_TO_CYPHER_SYSTEM`
   prompt at [agentic/prompts/base.py:1451](../../agentic/prompts/base.py#L1451)
   (or the agent generates wrong Cypher and cannot see the new data), and
   `NODE_COLORS` in [webapp/src/app/graph/config/colors.ts](../../webapp/src/app/graph/config/colors.ts).
@@ -87,6 +87,6 @@ Copied from [graph_db/mixins/graphql_mixin.py](../../graph_db/mixins/graphql_mix
 
 ## Resources
 
-- [readmes/GRAPH.SCHEMA.md](../../docs/readmes/GRAPH.SCHEMA.md) - canonical node/relationship schema and MERGE keys
+- [docs/readmes/GRAPH.SCHEMA.md](../../docs/readmes/GRAPH.SCHEMA.md) - canonical node/relationship schema and MERGE keys
 - [graph_db/neo4j_client.py](../../graph_db/neo4j_client.py) - the mixin MRO (do not edit; edit a mixin)
 - Related skill: `recon-tool-integration`

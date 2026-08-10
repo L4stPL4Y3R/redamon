@@ -3058,7 +3058,7 @@ labels). `source` ∈ {`garak`, `pyrit`, `giskard`, `promptfoo`}. Properties:
 | `ai_oracle_kind` | how success was scored: `classifier` / `judge_llm` / `contains` / `regex` / `length` / `latency` |
 | `ai_payload_class` | e.g. `garak-dan`, `pyrit-crescendo`, `giskard-LLMPromptInjectionDetector`, `promptfoo-beavertails` |
 | `ai_probe_pack_version` | tool+version for reproducibility, e.g. `garak/0.15.1`, `pyrit/0.14.0`, `giskard/2.19.1`, `promptfoo/0.121.17` |
-| `ai_transcript_ref` | path to the saved native report on disk (`ai_attack_surface_scan/output/{run_id}/{tool}/…`) |
+| `ai_transcript_ref` | path to the saved native report on disk (`scanners/ai_attack_surface_scan/output/{run_id}/{tool}/…`) |
 | `ai_target_url` | the attacked URL (so a custom off-graph target still displays a target) |
 | `ai_attack_synthetic` | `true` on a `BaseURL`/`Endpoint`/`Subdomain`/`Domain`/`IP` node the normalizer *created* for a custom off-graph target (so it never overwrites or is confused with a recon-discovered node). Such nodes also carry `source='ai_attack_target'`. |
 
@@ -3176,7 +3176,7 @@ scan, whichever version is active.
 ## 📦 Supply-Chain Nodes (Malicious-Package Detection)
 
 Shared by L1 (standalone SBOM/repo scan) and L2 (live-target recon harvest), so
-both sources dedup into the same nodes. See `readmes/README.SUPPLY_CHAIN.md`.
+both sources dedup into the same nodes. See `docs/readmes/README.SUPPLY_CHAIN.md`.
 
 ### Package (a discovered dependency)
 

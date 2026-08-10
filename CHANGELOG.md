@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.9.0] - 2026-08-10
+
+### Changed
+
+- **The repository root is reorganized: 33 top-level directories down to 16.** Related directories are grouped under five new parents - `scanners/` (the 11 scan tools: `ai_attack_surface_scan`, `baddns_scan`, `capture_proxy`, `codefix_sandbox`, `github_secret_hunt`, `gvm_scan`, `trufflehog_scan`, `wcvs`, `supply_chain_{analyzer,common,scan}`), `services/` (`docker_broker`, `knowledge_base`, `postgres_db`), `testing/` (`e2e`, `guinea_pigs`), `tooling/` (`scripts`, `hooks`, `deploy`) and `docs/` (`readmes`, `assets`); the git-ignored `internal` and `validation-benchmarks` move under `_local/`. The import roots stay at the root (`agentic`, `recon`, `recon_orchestrator`, `graph_db`, `mcp`, `webapp`, `skills`, `tests`), as do `redamon.wiki` and `DevergoLabs` ([3f4457f5], [d034609d], [e50fec8b], [5e25f71f], [7b43a16f]).
+- **Container-side paths are unchanged.** A scanner is still `/app/<scanner>` inside its container and the knowledge base is still imported as `knowledge_base`, so only host-side sources carry the new prefix. This is why the orchestrator's `/app/<name>`-keyed host-path auto-detection keeps working untouched ([7b43a16f]).
+- **All documentation path references were repointed** - relative links, images, structure trees and inline paths across the README, the `docs/readmes/` set, every `AGENTS.md`, the `skills/*/SKILL.md` files and the wiki. Historical `CHANGELOG.md` entries are deliberately left pointing at the paths that were correct at the time ([0fdba77a]).
+
+### Fixed
+
+- **Upgrading across the reorganization no longer strands your data.** `git pull` moves only tracked files, so every git-ignored artefact would have been left at its old path while the new code read the new one: the knowledge-base FAISS index (which additionally made the KB flag itself flip to disabled), every past scan output shown in the UI, and the single-host deploy `.env` plus TLS material. `update`, `up` and `status` now run a one-shot, idempotent layout migration that moves them, never clobbering an existing destination and reporting anything it could not move (root-owned, container-written files) with a `sudo ./redamon.sh migrate-layout` fix-up - also available as a standalone command. `deploy.sh` additionally falls back to a pre-6.9 config directory so an operator who only ran `git pull` can still deploy ([d04945b8]).
+- **Three shell suites were asserting against files that no longer existed** (`deploy_patch_integrity`, `deploy_env_cleanup`, `redamon_secrets` still read `deploy/single-host/` and `knowledge_base/Makefile`), so 13 assertions passed or failed on empty reads ([d04945b8]).
+- **Two flaky tests are now deterministic.** `test_virustotal_enrich` keyed its stub on call order while the enrichment runs IPs concurrently, so which IP received the 404 was a race; and the vhost-SNI wall-clock speedup assertion is moved to the integration tier, where a timing check belongs, keeping the unit gate hermetic. The AI-attack-surface page test mocked the `@/components/ui` barrel while `useScanStartFailure` imports `useAlertModal` from the deep path, so all 15 of its cases threw.
+
 ## [6.8.0] - 2026-08-10
 
 ### Added

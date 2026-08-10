@@ -8,7 +8,7 @@
 > RedAmon's recon already discovered, and writes the results back into the same
 > Neo4j graph as `Vulnerability` nodes.
 
-This document describes how the `ai_attack_surface_scan/` subsystem is built, how
+This document describes how the `scanners/ai_attack_surface_scan/` subsystem is built, how
 it is wired into the rest of the repository, how its containers are spawned, how
 the four attack tools (garak, PyRIT, Giskard, promptfoo) work in depth, exactly
 what is controllable from the operator UI, and how output is persisted to Neo4j
@@ -101,7 +101,7 @@ Design constraints that shape everything below:
 ## 2. Repository layout
 
 ```
-ai_attack_surface_scan/
+scanners/ai_attack_surface_scan/
 ├── Dockerfile              One image, per-tool venvs (conflicting deps)
 ├── main.py                 Container entrypoint — the 4-phase "spine"
 ├── config.py               RunConfig + Bounds, loaded from JSON/env
@@ -264,7 +264,7 @@ promptfoo is Node.js). So:
 
 Egress controls baked into the image: promptfoo telemetry/update/remote-generation
 disabled via `PROMPTFOO_DISABLE_*` env. `PYTHONUNBUFFERED=1` so logs stream live.
-`CMD` runs `python ai_attack_surface_scan/main.py`.
+`CMD` runs `python ai_attack_surface_scan/main.py` (in-image path).
 
 ```mermaid
 graph TD
@@ -765,7 +765,7 @@ Spawn specifics (`container_manager.py`):
   `NEO4J_URI/USER/PASSWORD`, `INTERNAL_API_KEY`, `PYTHONUNBUFFERED=1`.
 - **Config file:** `/tmp/redamon/ai_attack_<safe_pid>_<run_id>.json` (project_id
   sanitized), bind-mounted in.
-- **Volumes:** `/tmp/redamon` (config) + the `ai_attack_surface_scan/` source bind
+- **Volumes:** `/tmp/redamon` (config) + the `scanners/ai_attack_surface_scan/` source bind
   (so output artifacts land back on the host, and code edits need no rebuild).
 - **One container per tool per launch.** On a failed spawn the judge lease is
   released and the config file unlinked, so nothing leaks.
@@ -1005,7 +1005,7 @@ for off-graph), ASR (%), Trials, Severity (colored dot), Evidence, and Report (a
 
 ## 12. Output artifacts on disk
 
-Each run writes under `ai_attack_surface_scan/output/<run_id>/<tool>/<slug>/`, where
+Each run writes under `scanners/ai_attack_surface_scan/output/<run_id>/<tool>/<slug>/`, where
 `<slug>` is the slugified `baseurl+path`:
 
 | Tool | Files |

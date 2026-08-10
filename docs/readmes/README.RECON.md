@@ -35,7 +35,7 @@ The easiest way to run recon is through the webapp UI, which provides:
 
 ```bash
 # 1. Start all services
-cd postgres_db && docker-compose up -d
+cd services/postgres_db && docker-compose up -d
 cd ../graph_db && docker-compose up -d
 cd ../recon_orchestrator && docker-compose up -d
 cd ../webapp && npm run dev
@@ -793,7 +793,7 @@ NAABU_RATE_LIMIT = 1000         # Packets per second
 NAABU_SCAN_TYPE = "s"           # SYN scan
 ```
 
-📖 **Detailed documentation:** [readmes/README.PORT_SCAN.md](README.PORT_SCAN.md)
+📖 **Detailed documentation:** [docs/readmes/README.PORT_SCAN.md](README.PORT_SCAN.md)
 
 ---
 
@@ -849,7 +849,7 @@ flowchart LR
 | **CMS Plugins** | Yoast SEO, WooCommerce (via Wappalyzer) |
 | **TLS certificates** | Issuer, expiry, SANs |
 
-📖 **Detailed documentation:** [readmes/README.HTTP_PROBE.md](README.HTTP_PROBE.md)
+📖 **Detailed documentation:** [docs/readmes/README.HTTP_PROBE.md](README.HTTP_PROBE.md)
 
 ---
 
@@ -923,7 +923,7 @@ flowchart TB
 | **Kiterunner** | API bruteforce | Hidden API routes |
 | **jsluice** | JS analysis (active download) | URLs, endpoints, and secrets from JS files |
 
-📖 **Detailed documentation:** [readmes/README.RESOURCE_ENUM.md](README.RESOURCE_ENUM.md)
+📖 **Detailed documentation:** [docs/readmes/README.RESOURCE_ENUM.md](README.RESOURCE_ENUM.md)
 
 ---
 
@@ -955,7 +955,7 @@ Seven workloads run per host (hosts in parallel, workloads sequential within a h
 `Technology`, adds `Vulnerability` nodes). Heavy deps (`mcp`, `yara`, `prance`,
 `jq`, `PyYAML`) are lazy-imported, so a missing dep degrades one workload, not the job.
 
-📖 **Detailed documentation:** [readmes/AI_SURFACE_RECON_MODULE.md](AI_SURFACE_RECON_MODULE.md)
+📖 **Detailed documentation:** [docs/readmes/AI_SURFACE_RECON_MODULE.md](AI_SURFACE_RECON_MODULE.md)
 
 ---
 
@@ -1026,7 +1026,7 @@ flowchart TB
 | **CWE Weaknesses** | Weakness hierarchy |
 | **CAPEC Attacks** | Attack techniques |
 
-📖 **Detailed documentation:** [readmes/README.VULN_SCAN.md](README.VULN_SCAN.md) | [readmes/README.MITRE.md](README.MITRE.md)
+📖 **Detailed documentation:** [docs/readmes/README.VULN_SCAN.md](README.VULN_SCAN.md) | [docs/readmes/README.MITRE.md](README.MITRE.md)
 
 ---
 
@@ -1142,7 +1142,7 @@ recon/graphql_scan/
 └── auth.py               # 5 auth modes (bearer/cookie/header/basic/apikey) with masked logs
 ```
 
-📖 **Detailed documentation:** [readmes/GRAPH.SCHEMA.md — GraphQL-specific Endpoint & Vulnerability properties](GRAPH.SCHEMA.md) | **[Wiki: GraphQL Security Testing](https://github.com/samugit83/redamon/wiki/GraphQL-Security-Testing)**
+📖 **Detailed documentation:** [docs/readmes/GRAPH.SCHEMA.md — GraphQL-specific Endpoint & Vulnerability properties](GRAPH.SCHEMA.md) | **[Wiki: GraphQL Security Testing](https://github.com/samugit83/redamon/wiki/GraphQL-Security-Testing)**
 
 ---
 
@@ -1255,7 +1255,7 @@ recon/wordlists/vhost-common.txt             # 2,471-entry default wordlist (shi
 graph_db/mixins/recon/vhost_sni_mixin.py     # Neo4jClient.update_graph_from_vhost_sni()
 ```
 
-📖 **Detailed documentation:** [readmes/GRAPH.SCHEMA.md -- VHost/SNI Vulnerability properties + Subdomain/IP enrichment](GRAPH.SCHEMA.md) | **[Wiki: VHost & SNI Enumeration](https://github.com/samugit83/redamon/wiki/VHost-and-SNI-Enumeration)**
+📖 **Detailed documentation:** [docs/readmes/GRAPH.SCHEMA.md -- VHost/SNI Vulnerability properties + Subdomain/IP enrichment](GRAPH.SCHEMA.md) | **[Wiki: VHost & SNI Enumeration](https://github.com/samugit83/redamon/wiki/VHost-and-SNI-Enumeration)**
 
 ---
 
@@ -1349,7 +1349,7 @@ TruffleHog provides deep credential detection by scanning the full git history o
 | Git history depth | Commit + code search API | Full local clone history |
 | Output | Secrets + Sensitive files | Verified + Unverified findings |
 
-The `trufflehog_scan/` directory contains the scanner wrapper and its docker-compose service definition.
+The `scanners/trufflehog_scan/` directory contains the scanner wrapper and its docker-compose service definition.
 
 ---
 
@@ -1554,13 +1554,13 @@ recon/
 ├── vuln_scan.py            # Vulnerability scanning
 ├── add_mitre.py            # MITRE enrichment
 ├── github_secret_hunt.py   # GitHub secrets
-├── trufflehog_scan/        # TruffleHog secret scanner (separate service)
+├── scanners/trufflehog_scan/        # TruffleHog secret scanner (separate service)
 ├── output/                 # 📄 Scan results (JSON)
 ├── data/                   # 📦 Cached databases
 │   ├── mitre_db/           # CVE2CAPEC database
 │   └── wappalyzer/         # Technology rules
 ├── helpers/                # Tool helpers
-└── readmes/                # 📖 Module docs
+└── docs/readmes/                # 📖 Module docs
 ```
 
 ---
@@ -1633,8 +1633,8 @@ Unauthorized scanning is illegal. RedAmon is intended for:
 
 | Module | Documentation |
 |--------|---------------|
-| Port Scan | [readmes/README.PORT_SCAN.md](README.PORT_SCAN.md) |
-| HTTP Probe | [readmes/README.HTTP_PROBE.md](README.HTTP_PROBE.md) |
-| Vuln Scan | [readmes/README.VULN_SCAN.md](README.VULN_SCAN.md) |
-| MITRE CWE/CAPEC | [readmes/README.MITRE.md](README.MITRE.md) |
+| Port Scan | [docs/readmes/README.PORT_SCAN.md](README.PORT_SCAN.md) |
+| HTTP Probe | [docs/readmes/README.HTTP_PROBE.md](README.HTTP_PROBE.md) |
+| Vuln Scan | [docs/readmes/README.VULN_SCAN.md](README.VULN_SCAN.md) |
+| MITRE CWE/CAPEC | [docs/readmes/README.MITRE.md](README.MITRE.md) |
 | GVM/OpenVAS | [README.GVM.md](README.GVM.md) |

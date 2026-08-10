@@ -40,7 +40,7 @@ RedAmon uses GVM in **headless API mode** (no web GUI) to:
 
 **Architecture:** The scan flow mirrors the recon pipeline: Webapp API → Recon Orchestrator → Docker container (`redamon-vuln-scanner`) → SSE log streaming → graph update.
 
-> **Note:** The GVM infrastructure (`docker-compose.yml` for gvmd, ospd-openvas, redis, pg-gvm, etc.) is located in the `gvm_scan/` directory and runs separately. The Python scanner container is built and managed by the main `docker-compose.yml` at the project root.
+> **Note:** The GVM infrastructure (`docker-compose.yml` for gvmd, ospd-openvas, redis, pg-gvm, etc.) is located in the `scanners/gvm_scan/` directory and runs separately. The Python scanner container is built and managed by the main `docker-compose.yml` at the project root.
 
 ---
 
@@ -475,7 +475,7 @@ These containers download vulnerability data and exit immediately. They populate
            ▼
 10. OUTPUT
    ┌────────────────┐
-   │ gvm_scan/      │
+   │ scanners/gvm_scan/      │
    │ output/        │
    │ gvm_*.json    │
    └────────────────┘
@@ -524,7 +524,7 @@ GVM scan settings are configurable per-project via the webapp Project Settings U
 The settings flow mirrors the recon and agentic modules:
 
 ```
-Webapp UI → PostgreSQL (Prisma) → /api/projects/{id} → gvm_scan/project_settings.py → scanner
+Webapp UI → PostgreSQL (Prisma) → /api/projects/{id} → scanners/gvm_scan/project_settings.py → scanner
 ```
 
 | Setting | DB Column | Type | Default | Description |
@@ -535,7 +535,7 @@ Webapp UI → PostgreSQL (Prisma) → /api/projects/{id} → gvm_scan/project_se
 | Poll Interval | `gvm_poll_interval` | Int | `30` | Seconds between scan status checks |
 | Cleanup After Scan | `gvm_cleanup_after_scan` | Boolean | `true` | Delete GVM targets/tasks after scan completion |
 
-Default values are defined in `gvm_scan/project_settings.py` (`DEFAULT_GVM_SETTINGS`) and served to the frontend via the orchestrator `/defaults` endpoint.
+Default values are defined in `scanners/gvm_scan/project_settings.py` (`DEFAULT_GVM_SETTINGS`) and served to the frontend via the orchestrator `/defaults` endpoint.
 
 ### Environment Variables (Connection & Runtime)
 
@@ -1003,7 +1003,7 @@ redamon/
 ├── .env                              # Secrets (GVM_PASSWORD, NEO4J_PASSWORD, etc.)
 ├── docker-compose.yml                # Main stack (includes vuln-scanner build target)
 │
-├── gvm_scan/
+├── scanners/gvm_scan/
 │   ├── docker-compose.yml            # GVM infrastructure (gvmd, ospd-openvas, redis, pg-gvm)
 │   ├── Dockerfile                    # Python scanner image (redamon-vuln-scanner)
 │   ├── project_settings.py           # Per-project settings (fetched from webapp API)
@@ -1044,7 +1044,7 @@ redamon/
 
 ### Start GVM Infrastructure
 ```bash
-cd gvm_scan
+cd scanners/gvm_scan
 docker compose up -d
 docker compose logs -f gvmd  # Wait for VT sync ("Updating VTs in database ... done")
 ```
@@ -1055,7 +1055,7 @@ docker compose --profile tools build vuln-scanner
 ```
 
 ### Run Scan via Webapp (Recommended)
-1. Ensure GVM infrastructure is running (`cd gvm_scan && docker compose up -d`)
+1. Ensure GVM infrastructure is running (`cd scanners/gvm_scan && docker compose up -d`)
 2. Ensure the main stack is running (`docker compose up -d`)
 3. Open http://localhost:3000, navigate to Graph page
 4. Run recon first (GVM requires recon data)
@@ -1064,7 +1064,7 @@ docker compose --profile tools build vuln-scanner
 ### Run Scan via CLI (Development)
 ```bash
 PROJECT_ID=your_project_id TARGET_DOMAIN=example.com \
-  python gvm_scan/main.py
+  python scanners/gvm_scan/main.py
 ```
 
 ### Check Results
@@ -1074,6 +1074,6 @@ cat gvm_scan/output/gvm_{projectId}.json | jq '.summary'
 
 ### Stop GVM Infrastructure
 ```bash
-cd gvm_scan
+cd scanners/gvm_scan
 docker compose down
 ```

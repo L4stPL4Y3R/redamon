@@ -525,13 +525,13 @@ class TestRunVirustotalEnrichment(unittest.TestCase):
     @patch("virustotal_enrich.time.sleep")
     @patch("virustotal_enrich.requests.get")
     def test_partial_ip_404_continues(self, mock_get, _sleep):
-        call_count = {"n": 0}
-
+        # Key the stub on the IP, NOT on call order: IPs are enriched
+        # concurrently (ThreadPoolExecutor in run_virustotal_enrichment), so
+        # "the first call" is a race and an order-keyed stub fails randomly.
         def side(url, **_kw):
             if "/domains/" in url:
                 return _mock_response(200, _vt_domain_body())
-            call_count["n"] += 1
-            if call_count["n"] == 1:
+            if "1.1.1.1" in url:
                 return _mock_response(404)
             return _mock_response(200, _vt_ip_body())
 

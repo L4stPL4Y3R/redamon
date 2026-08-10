@@ -5,7 +5,7 @@
 > **Deployment postures:** RedAmon supports two deployment postures, and the trust model differs between them:
 >
 > - **Local (default).** Single host, Docker Compose, driven by `redamon.sh`. Host-published ports are reachable on the operator's machine/LAN, not the internet. The base `docker-compose.yml` binds `webapp:3000`, `agent:8090`, and the reverse-shell catcher `4444` on `0.0.0.0` (LAN-reachable); the datastores, MCP servers, and orchestrator are bound to `127.0.0.1`. There is no anonymous-internet-attacker actor in this posture, and several app-layer weaknesses (unauthenticated agent endpoints that trust body-supplied identity, no login lockout, secrets that fail *open* when unset) are only reachable from the LAN.
-> - **Public-internet (hardened).** Provisioned by `deploy/single-host/deploy.sh`, which wraps the same stack in an internet-facing security layer that `redamon.sh` deliberately does not provide (see `deploy/single-host/README.md`). It re-binds `webapp:3000` and `agent:8090` to `127.0.0.1`, keeps `4444` on loopback (opened via `ufw` to engagement-target CIDRs only, per-engagement), and puts **nginx as the single public origin on `443`** (TLS-terminated) reverse-proxying the webapp and **only the four agent `/ws/*` paths** under one origin. The agent's REST surface is never proxied. An operator-IP allowlist (nginx `allow`/`deny` + `ufw`), login rate-limiting, HSTS, fail2ban, SSH hardening, and a secrets-strength gate compensate for the local-only assumptions above. **This posture adds an anonymous internet attacker as a first-class actor**, and the deploy layer's role is to ensure only the TLS webapp origin (plus the allowlisted agent WS paths) is reachable, with every other port/endpoint closed or funneled.
+> - **Public-internet (hardened).** Provisioned by `tooling/deploy/single-host/deploy.sh`, which wraps the same stack in an internet-facing security layer that `redamon.sh` deliberately does not provide (see `tooling/deploy/single-host/README.md`). It re-binds `webapp:3000` and `agent:8090` to `127.0.0.1`, keeps `4444` on loopback (opened via `ufw` to engagement-target CIDRs only, per-engagement), and puts **nginx as the single public origin on `443`** (TLS-terminated) reverse-proxying the webapp and **only the four agent `/ws/*` paths** under one origin. The agent's REST surface is never proxied. An operator-IP allowlist (nginx `allow`/`deny` + `ufw`), login rate-limiting, HSTS, fail2ban, SSH hardening, and a secrets-strength gate compensate for the local-only assumptions above. **This posture adds an anonymous internet attacker as a first-class actor**, and the deploy layer's role is to ensure only the TLS webapp origin (plus the allowlisted agent WS paths) is reachable, with every other port/endpoint closed or funneled.
 >
 > The structure below describes the **local** posture; each network entry point notes how the public-internet layer changes its exposure.
 
@@ -46,18 +46,18 @@
 | LLM providers | OpenAI, Anthropic, Google Gemini, AWS Bedrock, OpenRouter, DeepSeek, Mistral, XAI, Qwen, GLM, Kimi, plus OpenAI-compatible / Ollama-local custom (`agentic/orchestrator_helpers/model_providers.py`) |
 | Recon orchestration | **Python / FastAPI**, **Docker SDK** (`recon_orchestrator/`) — spawns scan containers |
 | Offensive tooling (MCP) | **Kali sandbox** exposing **MCP servers over SSE**: network-recon, nmap, nuclei, metasploit, playwright; plus interactive terminal + tunnel manager (`mcp/servers/`) |
-| Privilege separation | **docker-broker** — filtering reverse proxy for the Docker socket (`docker_broker/`) |
+| Privilege separation | **docker-broker** — filtering reverse proxy for the Docker socket (`services/docker_broker/`) |
 | Vuln scanning | **GVM / OpenVAS** (Greenbone community feed stack, `gvmd`/`ospd-openvas`) |
 | Secret scanning | **TruffleHog**, **GitHub secret hunt** containers |
-| AI surface testing | Local **Ollama** judge/attacker (qwen2.5:7b default), garak/PyRIT/giskard/promptfoo (`ai_attack_surface_scan/`) |
-| Knowledge Base | Optional NVD / ExploitDB / Nuclei / GTFOBins / LOLBAS ingestion + embeddings (`knowledge_base/`) |
-| Code fixing (CodeFix) | LLM CodeFix/Triage agents cloning GitHub repos and opening PRs (`agentic/cypherfix_*`); **CodeFix build/test commands run in an ephemeral, secret-free, network-isolated sandbox container** (`codefix_sandbox/`, spawned per job) — not in the agent |
+| AI surface testing | Local **Ollama** judge/attacker (qwen2.5:7b default), garak/PyRIT/giskard/promptfoo (`scanners/ai_attack_surface_scan/`) |
+| Knowledge Base | Optional NVD / ExploitDB / Nuclei / GTFOBins / LOLBAS ingestion + embeddings (`services/knowledge_base/`) |
+| Code fixing (CodeFix) | LLM CodeFix/Triage agents cloning GitHub repos and opening PRs (`agentic/cypherfix_*`); **CodeFix build/test commands run in an ephemeral, secret-free, network-isolated sandbox container** (`scanners/codefix_sandbox/`, spawned per job) — not in the agent |
 
 ### Deployment Architecture
 
 All services run as containers on a single Docker host across **three bridge networks** (`redamon-network`, `redamon-orchestrator-net`, `pentest-net`) plus selected containers on the **host network**. The privileged orchestrator API is bound to **host loopback only** (`127.0.0.1:8010`).
 
-**Public-internet topology (via `deploy/single-host/`).** When deployed publicly, an **nginx reverse proxy terminates TLS on `443`** and is the only listener reachable from the internet. It proxies `/` and `/api/*` to the loopback-bound webapp (`127.0.0.1:3000`) and the four agent WebSocket paths (`/ws/agent`, `/ws/kali-terminal`, `/ws/cypherfix-triage`, `/ws/cypherfix-codefix`) to the loopback-bound agent (`127.0.0.1:8090`); the agent's REST endpoints are never proxied. Port `80` serves only the ACME challenge and a redirect to `443`. `ufw` default-denies inbound except `443` (and `22`/`443` from the operator CIDR); the Docker loopback re-binds are the primary control for `3000`/`8090` (ufw is belt-and-braces, since Docker's own iptables chains can bypass it). The bridge networks and the orchestrator loopback bind are unchanged from the local posture. Because `NEXT_PUBLIC_AGENT_WS_URL` is baked at build time, the webapp is rebuilt with a same-origin `wss://<domain>/ws/…` so the browser never targets `:8090` directly.
+**Public-internet topology (via `tooling/deploy/single-host/`).** When deployed publicly, an **nginx reverse proxy terminates TLS on `443`** and is the only listener reachable from the internet. It proxies `/` and `/api/*` to the loopback-bound webapp (`127.0.0.1:3000`) and the four agent WebSocket paths (`/ws/agent`, `/ws/kali-terminal`, `/ws/cypherfix-triage`, `/ws/cypherfix-codefix`) to the loopback-bound agent (`127.0.0.1:8090`); the agent's REST endpoints are never proxied. Port `80` serves only the ACME challenge and a redirect to `443`. `ufw` default-denies inbound except `443` (and `22`/`443` from the operator CIDR); the Docker loopback re-binds are the primary control for `3000`/`8090` (ufw is belt-and-braces, since Docker's own iptables chains can bypass it). The bridge networks and the orchestrator loopback bind are unchanged from the local posture. Because `NEXT_PUBLIC_AGENT_WS_URL` is baked at build time, the webapp is rebuilt with a same-origin `wss://<domain>/ws/…` so the browser never targets `:8090` directly.
 
 ```mermaid
 graph TD
@@ -155,7 +155,7 @@ graph TD
 | Uploaded JS recon files (`js_recon_uploads/custom`, ≤10 MB) | User input | Analyzed by JS recon |
 | RoE documents (`Project.roeDocumentData` bytes; PDF/DOCX/TXT) | User input | Parsed via pdfjs/mammoth → LLM |
 | Agent/community Chat Skills & Attack Skills (`agentic/skills`, `community-skills`, DB) | Behavior definitions | Steer agent tradecraft |
-| Knowledge Base data (`knowledge_base/data`, `kb_data` volume) | Reference corpus | NVD/ExploitDB/Nuclei/GTFOBins embeddings |
+| Knowledge Base data (`services/knowledge_base/data`, `kb_data` volume) | Reference corpus | NVD/ExploitDB/Nuclei/GTFOBins embeddings |
 
 ---
 
@@ -307,7 +307,7 @@ graph TB
 
 ### 1. Network Entry Points
 
-Host-published listeners (from `docker-compose.yml`), shown for the **local** posture; bindings without an explicit `127.0.0.1` default to `0.0.0.0` and are reachable on the host LAN. In the **public-internet** posture (`deploy/single-host/`) the `0.0.0.0` rows below are re-bound to `127.0.0.1` and fronted by nginx on `443`; the *Exposure* column notes the delta.
+Host-published listeners (from `docker-compose.yml`), shown for the **local** posture; bindings without an explicit `127.0.0.1` default to `0.0.0.0` and are reachable on the host LAN. In the **public-internet** posture (`tooling/deploy/single-host/`) the `0.0.0.0` rows below are re-bound to `127.0.0.1` and fronted by nginx on `443`; the *Exposure* column notes the delta.
 
 | Entry Point | Service | Protocol | Host Port | Access Control | Exposure |
 |-------------|---------|----------|-----------|----------------|----------|
@@ -367,7 +367,7 @@ Webapp server-side routes under `webapp/src/app/api/` (all behind `middleware.ts
 | KB-refresh sidecar | `--profile kb-refresh`, opt-in | Sleep-loop scheduler: daily NVD, weekly ExploitDB/Nuclei, monthly GTFOBins/LOLBAS (`docker-compose.yml`) |
 | MSF / Nuclei auto-update | `MSF_AUTO_UPDATE` / `NUCLEI_AUTO_UPDATE` env on kali boot | Pulls external content into the worker |
 | Tunnel-config sync | Worker boot → webapp push to `:8015` | Worker calls unauthenticated `/api/global/tunnel-config/sync`; webapp pushes config |
-| CodeFix / Triage agents | Operator-initiated code fix | Clone GitHub repo (token via `GIT_ASKPASS`); **build/test (`github_bash`) runs in an isolated per-job sandbox** via `docker exec` (agent → webapp → orchestrator), not in the agent; commit stages **only approved files** (no `git add -A`); push refused to default/`main`/`master` (`cypherfix_codefix/`, `codefix_sandbox/`) |
+| CodeFix / Triage agents | Operator-initiated code fix | Clone GitHub repo (token via `GIT_ASKPASS`); **build/test (`github_bash`) runs in an isolated per-job sandbox** via `docker exec` (agent → webapp → orchestrator), not in the agent; commit stages **only approved files** (no `git add -A`); push refused to default/`main`/`master` (`cypherfix_codefix/`, `scanners/codefix_sandbox/`) |
 | LangGraph checkpointer | Every agent/fireteam step | Persists agent state to PostgreSQL (`PERSISTENT_CHECKPOINTER=true`) |
 
 ---
@@ -379,13 +379,13 @@ Consolidated view of the full network surface and how traffic is mediated in eac
 ### 6.1 Posture summary
 
 - **Local (default `redamon.sh` / `docker compose`).** No nginx, no TLS, no gate. The host publishes `webapp:3000`, `agent:8090`, and `kali:4444` on `0.0.0.0` (LAN-reachable); every other listener binds `127.0.0.1` (loopback). The browser talks to the webapp on `:3000` and opens agent WebSockets directly on `:8090`.
-- **Public-internet (`deploy/single-host/`).** nginx on the host terminates TLS on `443` and is the single public origin. The prod overlay re-binds `webapp:3000` and `agent:8090` to `127.0.0.1`; the browser reaches everything through `443`. `NEXT_PUBLIC_AGENT_WS_URL` is baked at build time to `wss://<domain>/ws/agent`, so the browser never targets `:8090` directly.
+- **Public-internet (`tooling/deploy/single-host/`).** nginx on the host terminates TLS on `443` and is the single public origin. The prod overlay re-binds `webapp:3000` and `agent:8090` to `127.0.0.1`; the browser reaches everything through `443`. `NEXT_PUBLIC_AGENT_WS_URL` is baked at build time to `wss://<domain>/ws/agent`, so the browser never targets `:8090` directly.
 
 > **nginx is a host service, not a container.** It runs on the host (installed by `deploy.sh` via apt), sits **only at the edge** (80/443), and reverse-proxies to two loopback backends — the webapp (`127.0.0.1:3000`) and the agent (`127.0.0.1:8090`). It is **not** a middlebox between containers: all internal service-to-service traffic (webapp ↔ agent ↔ orchestrator ↔ DBs ↔ Kali) flows directly over the Docker bridge networks and never passes through nginx.
 
 ### 6.2 nginx routing map (public-internet posture)
 
-Rendered from `deploy/single-host/nginx/redamon.conf.tmpl`. These are the only `location` blocks; anything not listed has no route to a backend and is unreachable from the public origin.
+Rendered from `tooling/deploy/single-host/nginx/redamon.conf.tmpl`. These are the only `location` blocks; anything not listed has no route to a backend and is unreachable from the public origin.
 
 | Listener | Location | → Backend | In-nginx control |
 |----------|----------|-----------|------------------|
@@ -424,7 +424,7 @@ The four `/ws/*` paths, the feature each serves, the access control implemented 
 
 Per-listener reachability in each posture (host publish → who can connect):
 
-| Port | Service | Local (`docker compose`) | Public (`deploy/single-host/`) |
+| Port | Service | Local (`docker compose`) | Public (`tooling/deploy/single-host/`) |
 |------|---------|--------------------------|--------------------------------|
 | `3000` | webapp | `0.0.0.0` — LAN | `127.0.0.1` — via nginx `443` only |
 | `8090` | agent | `0.0.0.0` — LAN | `127.0.0.1` — nginx proxies only `/ws/*` |

@@ -23,7 +23,7 @@ cache — not a mock.
 ## 1. Run it
 
 ```bash
-cd guinea_pigs/web-cache-poisoning
+cd testing/guinea_pigs/web-cache-poisoning
 docker compose up -d --build
 open http://localhost:9090/          # landing page links every test endpoint
 ```
@@ -151,7 +151,7 @@ target to verify that fix against.
 Tail the recon job logs and the guinea-pig logs side by side:
 
 ```bash
-docker compose -f guinea_pigs/web-cache-poisoning/docker-compose.yml logs -f backend
+docker compose -f testing/guinea_pigs/web-cache-poisoning/docker-compose.yml logs -f backend
 #   [backend] GET /poison/xfh-redirect?rdmncb=...  XFH=...  -> 302
 #   A log line == the request reached the ORIGIN (a cache MISS). No line == served from
 #   cache (a HIT). This tells you exactly when a poison landed vs was warmed away.

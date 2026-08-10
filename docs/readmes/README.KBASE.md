@@ -372,7 +372,7 @@ graph TD
 ### Agent Container
 
 - **Image**: `redamon-agent` (built from `agentic/Dockerfile`)
-- **Build context**: project root (so `knowledge_base/` is included)
+- **Build context**: project root (so `services/knowledge_base/` is included)
 - **Pre-cached models**: `intfloat/e5-large-v2` (~1.3 GB) and `BAAI/bge-reranker-base` (~568 MB) downloaded at build time
 - **KB volumes**:
   - `./knowledge_base/kb_config.yaml:/app/knowledge_base/kb_config.yaml:ro` -- config
@@ -414,7 +414,7 @@ flowchart BT
 
 ### Configuration File: `kb_config.yaml`
 
-Located at `knowledge_base/kb_config.yaml`. Mounted read-only into the agent container.
+Located at `services/knowledge_base/kb_config.yaml`. Mounted read-only into the agent container.
 
 ```yaml
 KB_ENABLED: true
@@ -608,12 +608,12 @@ The ingestion pipeline handles untrusted external data. Multiple defense layers 
 
 ### Supply-chain integrity (STRIDE T15)
 
-- **Pinned feeds**: each curation feed (exploitdb/nuclei/gtfobins/lolbas/owasp) is fetched from an **immutable upstream commit** (manifest in `knowledge_base/curation/pins.py`), not a mutable `refs/heads/<branch>`, so a silently-mutated upstream cannot enter the corpus.
+- **Pinned feeds**: each curation feed (exploitdb/nuclei/gtfobins/lolbas/owasp) is fetched from an **immutable upstream commit** (manifest in `services/knowledge_base/curation/pins.py`), not a mutable `refs/heads/<branch>`, so a silently-mutated upstream cannot enter the corpus.
 - **Per-feed sha256**: an optional recorded hash is verified before extraction; a mismatch **fail-closes that one feed's ingest** (`PinMismatchError`) and leaves the prior corpus intact.
 - **NVD schema validation**: NVD (a live API, no commit-pin) responses are validated against a strict envelope schema; a non-conforming body (HTML/proxy payload) is rejected.
 - **Pinned models**: the embedder (`intfloat/e5-large-v2`) and reranker (`BAAI/bge-reranker-base`) load a **pinned HuggingFace revision**, not floating `main`.
 - **Hardened sidecar**: the `kb-refresh` container runs with `cap_drop: ALL` + pids/memory caps.
-- **Bump a pin**: edit the SHA/revision in `knowledge_base/curation/pins.py` and rebuild the agent + kb-refresh images (curation code is image-baked).
+- **Bump a pin**: edit the SHA/revision in `services/knowledge_base/curation/pins.py` and rebuild the agent + kb-refresh images (curation code is image-baked).
 
 ### Query Safety
 
@@ -680,7 +680,7 @@ graph TD
 ## On-Disk Layout
 
 ```
-knowledge_base/
+services/knowledge_base/
   __init__.py                      # re-exports PentestKnowledgeBase
   kb_config.py                     # configuration system
   kb_config.yaml                   # default config (mounted :ro)
@@ -793,7 +793,7 @@ Ingestion and query **must use the same embedding model**. Different models prod
 If you switch models, rebuild the index:
 
 ```bash
-make -C knowledge_base kb-rebuild-lite MODE=docker
+make -C services/knowledge_base kb-rebuild-lite MODE=docker
 ```
 
 The ingestion pipeline detects dimension mismatches and will error with a clear message if you forget to rebuild.
@@ -1050,7 +1050,7 @@ The LLM can specify `include_sources` to target specific KB sources (e.g., `["gt
 docker exec redamon-agent env | grep KB_ENABLED
 
 # Check if index files exist
-ls -la knowledge_base/data/index.faiss knowledge_base/data/chunk_ids.json
+ls -la services/knowledge_base/data/index.faiss services/knowledge_base/data/chunk_ids.json
 
 # Check agent logs for KB init
 docker logs redamon-agent 2>&1 | grep -i "knowledge\|kb\|faiss"
@@ -1074,7 +1074,7 @@ make kb-update-nvd
 
 ### A feed's ingest aborted with a pin/hash mismatch (T15)
 
-If a build/refresh logs `... sha256 ... does not match pinned ...` and skips a feed, the fetched artifact no longer matches its recorded hash in `knowledge_base/curation/pins.py`. This is **fail-closed per-feed**: only that feed is aborted, the other feeds and the prior corpus are left intact. Usually the upstream source changed and the pin has not been bumped - update the commit SHA/sha256 in `pins.py` and rebuild (or investigate a possibly-tampered upstream before bumping). A wrong model revision instead surfaces as a `docker compose build agent` failure fetching the pinned embedder/reranker.
+If a build/refresh logs `... sha256 ... does not match pinned ...` and skips a feed, the fetched artifact no longer matches its recorded hash in `services/knowledge_base/curation/pins.py`. This is **fail-closed per-feed**: only that feed is aborted, the other feeds and the prior corpus are left intact. Usually the upstream source changed and the pin has not been bumped - update the commit SHA/sha256 in `pins.py` and rebuild (or investigate a possibly-tampered upstream before bumping). A wrong model revision instead surfaces as a `docker compose build agent` failure fetching the pinned embedder/reranker.
 
 ### Check index statistics
 
@@ -1119,5 +1119,5 @@ for r in results:
 ```bash
 make kb-test
 # or
-pytest knowledge_base/tests -v
+pytest services/knowledge_base/tests -v
 ```

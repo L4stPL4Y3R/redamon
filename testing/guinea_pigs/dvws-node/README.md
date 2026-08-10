@@ -198,7 +198,7 @@ curl -X POST http://localhost:8010/recon/<projectId>/partial \
 
 ```bash
 # from folder /redamon
-scp -i ~/.ssh/guinea_pigs.pem -r guinea_pigs/dvws-node/setup.sh guinea_pigs/dvws-node/xss-lab ubuntu@15.160.68.117:~/ && ssh -i ~/.ssh/guinea_pigs.pem ubuntu@15.160.68.117 "bash ~/setup.sh"
+scp -i ~/.ssh/guinea_pigs.pem -r testing/guinea_pigs/dvws-node/setup.sh testing/guinea_pigs/dvws-node/xss-lab ubuntu@15.160.68.117:~/ && ssh -i ~/.ssh/guinea_pigs.pem ubuntu@15.160.68.117 "bash ~/setup.sh"
 ```
 
 ### 3. Wipe & Clean (remove everything)

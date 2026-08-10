@@ -50,7 +50,7 @@ RedAmon supports two postures with different trust models. The controls that app
 
 | | **Local (default)** | **Public-internet (hardened)** |
 |---|---|---|
-| Provisioned by | `redamon.sh` / `docker compose` | `deploy/single-host/deploy.sh` |
+| Provisioned by | `redamon.sh` / `docker compose` | `tooling/deploy/single-host/deploy.sh` |
 | Attacker model | No anonymous internet attacker; operator LAN only | **Anonymous internet attacker is a first-class actor** |
 | `webapp:3000`, `agent:8090`, `revshell:4444` | Published on `0.0.0.0` (LAN-reachable) | Re-bound to `127.0.0.1`; only nginx `443` faces the internet |
 | TLS | None | TLS 1.2/1.3, HSTS, single public origin |
@@ -58,7 +58,7 @@ RedAmon supports two postures with different trust models. The controls that app
 | Host controls | None | ufw, fail2ban, SSH hardening, unattended upgrades |
 | Secrets | Auto-generated; weak values warn only | Secrets gate **refuses to boot** on any weak/unset secret |
 
-The base platform is designed local-only and deliberately does not ship the internet-facing layer; the `deploy/single-host/` tool adds it. A plaintext `http-*` lab mode exists but is gated behind an explicit `ALLOW_INSECURE=1` opt-in and drops TLS/HSTS; it is for throwaway labs only. Sections 3-5 below are the hardened-posture layers; Sections 6-17 apply to both postures (they are in the application and infrastructure themselves).
+The base platform is designed local-only and deliberately does not ship the internet-facing layer; the `tooling/deploy/single-host/` tool adds it. A plaintext `http-*` lab mode exists but is gated behind an explicit `ALLOW_INSECURE=1` opt-in and drops TLS/HSTS; it is for throwaway labs only. Sections 3-5 below are the hardened-posture layers; Sections 6-17 apply to both postures (they are in the application and infrastructure themselves).
 
 ---
 
@@ -66,7 +66,7 @@ The base platform is designed local-only and deliberately does not ship the inte
 
 **Goal: from the internet, exactly one thing is reachable, the webapp login over HTTPS.** Everything else is bound to host loopback and reached only internally.
 
-Host-published port bindings (`docker-compose.yml`, and the `deploy/single-host/compose/docker-compose.prod.yml` overlay that re-binds the last LAN-facing ports to loopback in the hardened posture):
+Host-published port bindings (`docker-compose.yml`, and the `tooling/deploy/single-host/compose/docker-compose.prod.yml` overlay that re-binds the last LAN-facing ports to loopback in the hardened posture):
 
 | Port | Service | Local bind | Hardened bind |
 |---|---|---|---|
@@ -85,7 +85,7 @@ Host-published port bindings (`docker-compose.yml`, and the `deploy/single-host/
 
 Containers still bind `0.0.0.0` **inside their own network namespace** so cross-container bridge traffic works; only the *host publish* is loopback-scoped. The datastores and the MCP tool surface were moved to loopback and the reverse-shell catcher is intentionally routable in the local posture (a compromised target must be able to connect back); in the hardened posture it is closed at the firewall and opened only per engagement (see [Section 13](#13-agent-safety-controls)).
 
-**Post-deploy verification.** `deploy.sh` asserts the network model after every deploy (`deploy/single-host/deploy.sh`): it reads `ss -tlnH` and fails if `3000`/`8090` are missing or bound off-loopback, and fails if any of `5432`/`7474`/`7687`/`8010` is bound off-loopback. It then confirms container health, that an admin user exists, and that `https://<host>/api/health` returns 200.
+**Post-deploy verification.** `deploy.sh` asserts the network model after every deploy (`tooling/deploy/single-host/deploy.sh`): it reads `ss -tlnH` and fails if `3000`/`8090` are missing or bound off-loopback, and fails if any of `5432`/`7474`/`7687`/`8010` is bound off-loopback. It then confirms container health, that an admin user exists, and that `https://<host>/api/health` returns 200.
 
 **Cloud firewall.** Because Docker's iptables chains can bypass a host firewall, the provider firewall (AWS Security Group / GCP firewall / Azure NSG) is the reliable outer boundary. The deploy opens only **443** (app), **80** (ACME challenge + HTTPS redirect), and **22** (SSH, operator IP only).
 
@@ -93,7 +93,7 @@ Containers still bind `0.0.0.0` **inside their own network namespace** so cross-
 
 ## 4. Edge hardening (nginx)
 
-nginx runs as a **host service** (not a container), sits **only at the edge** on 80/443, and reverse-proxies to two loopback backends: the webapp (`127.0.0.1:3000` for `/` and `/api/*`) and the agent (`127.0.0.1:8090` for only the four `/ws/*` paths). It is not a middlebox between containers. Templates: `deploy/single-host/nginx/redamon.conf.tmpl` and the `snippets/`.
+nginx runs as a **host service** (not a container), sits **only at the edge** on 80/443, and reverse-proxies to two loopback backends: the webapp (`127.0.0.1:3000` for `/` and `/api/*`) and the agent (`127.0.0.1:8090` for only the four `/ws/*` paths). It is not a middlebox between containers. Templates: `tooling/deploy/single-host/nginx/redamon.conf.tmpl` and the `snippets/`.
 
 **Single-origin proxy model.** The only agent routes proxied are `~ ^/ws/(agent|kali-terminal|cypherfix-triage|cypherfix-codefix)$`. The agent's entire REST surface (`/graph/exec`, `/emergency-stop-all`, `/mcp/*`, `/llm/*`, `/workspace/*`, `/sessions/*`) has no nginx route and stays loopback-only. Port 80 serves only the ACME challenge and a `301` redirect to the canonical HTTPS host (not `$host` in domain mode, to prevent open-redirect / cache poisoning).
 
@@ -122,7 +122,7 @@ nginx runs as a **host service** (not a container), sits **only at the edge** on
 
 ## 5. Host hardening
 
-Applied idempotently by `deploy/single-host/deploy.sh` and `modules/`.
+Applied idempotently by `tooling/deploy/single-host/deploy.sh` and `modules/`.
 
 **Firewall (ufw, `modules/firewall.sh`).** `default deny incoming`, `default allow outgoing`. SSH scoped to `SSH_ALLOW_CIDRS` (falling back to `OPERATOR_ALLOW_CIDRS`); HTTPS/443 scoped to `OPERATOR_ALLOW_CIDRS`; HTTP/80 left world-open (Let's Encrypt validates from arbitrary IPs). If a CIDR list is empty the corresponding port opens to the world with an explicit warning. Port 4444 stays closed; it is opened per engagement only, scoped to RoE target CIDRs.
 
@@ -210,9 +210,9 @@ The four agent WebSockets are the most powerful surface (they include `/ws/kali-
 
 ## 10. Privilege separation and container-escape prevention
 
-The target-facing worker is the least-trusted component and holds no secrets; a compromise there must not reach the host or the control plane. Evidence: `docker_broker/broker.py`, `docker-compose.yml`, `recon_orchestrator/container_manager.py`.
+The target-facing worker is the least-trusted component and holds no secrets; a compromise there must not reach the host or the control plane. Evidence: `services/docker_broker/broker.py`, `docker-compose.yml`, `recon_orchestrator/container_manager.py`.
 
-**Docker-socket broker.** Recon containers need to spawn tool containers, but mounting the raw `/var/run/docker.sock` would let a compromised container run `docker run -v /:/host --privileged` and own the host. They instead mount a **filtering broker** socket. The broker (`docker_broker/broker.py`, stdlib-only) holds the real socket and validates every `create`, denying:
+**Docker-socket broker.** Recon containers need to spawn tool containers, but mounting the raw `/var/run/docker.sock` would let a compromised container run `docker run -v /:/host --privileged` and own the host. They instead mount a **filtering broker** socket. The broker (`services/docker_broker/broker.py`, stdlib-only) holds the real socket and validates every `create`, denying:
 
 - `Privileged=true`; any capability outside `{NET_RAW, NET_ADMIN}`; device passthrough.
 - Host or `container:` for `PidMode`/`IpcMode`/`UsernsMode`/`CgroupnsMode`, and `container:` network mode (host network is allowed, since raw/loopback scanning needs it); `VolumesFrom`; masked/readonly-path overrides; any `SecurityOpt` containing `unconfined`.
@@ -366,7 +366,7 @@ The threat-modeling pass mapped each category of threat to concrete controls:
 
 Maturity means naming what is not yet closed. The following are accepted and tracked, not hidden:
 
-- **Local-posture weaknesses are LAN-reachable.** In the default local posture `webapp:3000`, `agent:8090`, and `4444` publish on `0.0.0.0`; several app-layer conveniences (some agent REST routes that derive identity from the request body or are unauthenticated, the dev fail-open of certain service keys, no login lockout at the network edge) are only reachable from the LAN. The hardened deploy compensates with loopback binds, the session gate, the operator gate, and the secrets gate. Do not expose the raw stack on a public IP; use `deploy/single-host/`.
+- **Local-posture weaknesses are LAN-reachable.** In the default local posture `webapp:3000`, `agent:8090`, and `4444` publish on `0.0.0.0`; several app-layer conveniences (some agent REST routes that derive identity from the request body or are unauthenticated, the dev fail-open of certain service keys, no login lockout at the network edge) are only reachable from the LAN. The hardened deploy compensates with loopback binds, the session gate, the operator gate, and the secrets gate. Do not expose the raw stack on a public IP; use `tooling/deploy/single-host/`.
 - **Plaintext secrets at rest.** Per-user LLM/OSINT keys are stored in the database without application-layer encryption, accepted for a single-operator, loopback-database host.
 - **Body-derived tenant on the graph read proxy.** The `/graph/exec` endpoint is authenticated and the query is tenant-filtered, but the tenant identity in the request body is currently logged rather than cryptographically bound; the enforcing flip is a tracked follow-up.
 - **Exfiltration to a public custom LLM endpoint.** A bring-your-own provider pointed at an attacker-controlled public endpoint is indistinguishable from a legitimate one; an opt-in operator allowlist is the planned closure.

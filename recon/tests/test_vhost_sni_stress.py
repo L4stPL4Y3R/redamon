@@ -22,6 +22,8 @@ import sys
 import threading
 import time
 import unittest
+
+import pytest
 from collections import Counter
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -213,7 +215,13 @@ class TestVhostSniStress(unittest.TestCase):
     # 4. Wall-time scaling: 100 candidates with concurrency 50 must be
     #    significantly faster than concurrency 1
     # --------------------------------------------------------------
+    @pytest.mark.integration
     def test_concurrency_actually_speeds_up_scan(self):
+        # Wall-clock assertion (fast < slow * 0.95): NOT hermetic. On a loaded
+        # host the serial pass wins CPU while the concurrent pass contends, so
+        # this fails spuriously in the unit gate. The explicit marker overrides
+        # the filename auto-tier (see the repo-root conftest.py) so the timing
+        # check still runs — in the integration tier, where it belongs.
         wordlist = "\n".join(f"sub{i:03d}" for i in range(40))
 
         # Low concurrency

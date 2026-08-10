@@ -169,7 +169,7 @@ These tools power RedAmon's **Supply-Chain Discovery** module (malicious / vulne
 
 **OSV database (data, not code).** The offline OSV vulnerability database is **downloaded at runtime** by `osv-scanner --download-offline-databases` into the `redamon-osv-db` Docker volume (`scanners/supply_chain_common/osv_db_sync.py`); it is **not** bundled in any RedAmon image and is not redistributed by RedAmon. The aggregated OSV.dev data is published under **CC-BY-4.0** (individual records carry their upstream advisory sources). See https://osv.dev.
 
-**CycloneDX SBOM format.** RedAmon synthesizes CycloneDX-format SBOMs itself (`supply_chain_common/artifact.py::to_cyclonedx`) to feed osv-scanner; it does **not** bundle or depend on any CycloneDX library. The CycloneDX specification is an OWASP project under Apache-2.0 (https://github.com/CycloneDX). Only the open format is used.
+**CycloneDX SBOM format.** RedAmon synthesizes CycloneDX-format SBOMs itself (`scanners/supply_chain_common/artifact.py::to_cyclonedx`) to feed osv-scanner; it does **not** bundle or depend on any CycloneDX library. The CycloneDX specification is an OWASP project under Apache-2.0 (https://github.com/CycloneDX). Only the open format is used.
 
 ---
 
@@ -373,13 +373,13 @@ These are intentionally vulnerable applications included for testing purposes on
 
 | Application | Purpose | License | Source Repository | How Used |
 |-------------|---------|---------|-------------------|----------|
-| **DVWS-Node** | Damn Vulnerable Web Services (Node.js) | MIT | https://github.com/snoopysecurity/dvws-node | Cloned in `guinea_pigs/dvws-node/setup.sh` |
+| **DVWS-Node** | Damn Vulnerable Web Services (Node.js) | MIT | https://github.com/snoopysecurity/dvws-node | Cloned in `testing/guinea_pigs/dvws-node/setup.sh` |
 | **Log4Shell Vulnerable App** | Log4j RCE demonstration (CVE-2021-44228) | Apache-2.0 | https://github.com/christophetd/log4shell-vulnerable-app | Docker image: `ghcr.io/christophetd/log4shell-vulnerable-app:latest` |
 | **vsftpd 2.3.4** | Backdoored FTP server (CVE-2011-2523) | GPL-2.0 | N/A (pre-built image) | Docker image: `clintmint/vsftpd-2.3.4:1.0` |
 | **Apache Tomcat 8.5.19** | JSP upload RCE (CVE-2017-12617) | Apache-2.0 | https://github.com/vulhub/vulhub | Docker image: `vulhub/tomcat:8.5.19` |
-| **Apache httpd 2.4.49** | Path traversal RCE (CVE-2021-41773) | Apache-2.0 | https://github.com/apache/httpd | Built from source in `guinea_pigs/apache_2.4.49/Dockerfile` |
-| **Apache httpd 2.4.25** | Auth bypass (CVE-2017-3167) | Apache-2.0 | https://github.com/apache/httpd | Built from source in `guinea_pigs/apache_2.4.25/Dockerfile` |
-| **node-serialize 0.0.4** | Deserialization RCE demo | MIT | https://github.com/luin/serialize | Built from `guinea_pigs/node_serialize_1.0.0/Dockerfile` |
+| **Apache httpd 2.4.49** | Path traversal RCE (CVE-2021-41773) | Apache-2.0 | https://github.com/apache/httpd | Built from source in `testing/guinea_pigs/apache_2.4.49/Dockerfile` |
+| **Apache httpd 2.4.25** | Auth bypass (CVE-2017-3167) | Apache-2.0 | https://github.com/apache/httpd | Built from source in `testing/guinea_pigs/apache_2.4.25/Dockerfile` |
+| **node-serialize 0.0.4** | Deserialization RCE demo | MIT | https://github.com/luin/serialize | Built from `testing/guinea_pigs/node_serialize_1.0.0/Dockerfile` |
 
 ---
 

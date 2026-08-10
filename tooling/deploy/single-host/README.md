@@ -29,7 +29,7 @@ cp .env.example .env
 First build takes **30-60 minutes** (Kali + agent images). When it finishes, log in at
 `https://<your-domain>/` with the admin you set in `.env`.
 
-> **Upgrading from before 6.9?** This directory moved from `deploy/single-host` to
+> **Upgrading from before 6.9?** This directory moved from `tooling/deploy/single-host` to
 > `tooling/deploy/single-host`. `git pull` moves only tracked files, so your `.env` and
 > any provided TLS material stay at the old path. Run `./redamon.sh migrate-layout` from
 > the repo root once to move them (`./redamon.sh update` and `up` do it automatically).
