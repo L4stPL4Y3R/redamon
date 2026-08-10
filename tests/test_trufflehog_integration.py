@@ -732,8 +732,8 @@ class TestDockerComposeConsistency(unittest.TestCase):
         self.assertIn("redamon-trufflehog:latest", self.content)
 
     def test_orchestrator_volume_mounts(self):
-        self.assertIn("./trufflehog_scan:/app/trufflehog_scan:ro", self.content)
-        self.assertIn("./trufflehog_scan/output:/app/trufflehog_scan/output:rw", self.content)
+        self.assertIn("./scanners/trufflehog_scan:/app/trufflehog_scan:ro", self.content)
+        self.assertIn("./scanners/trufflehog_scan/output:/app/trufflehog_scan/output:rw", self.content)
 
     def test_orchestrator_env_var(self):
         self.assertIn("TRUFFLEHOG_IMAGE: redamon-trufflehog:latest", self.content)
@@ -742,7 +742,7 @@ class TestDockerComposeConsistency(unittest.TestCase):
         self.assertIn("TRUFFLEHOG_OUTPUT_PATH: /data/trufflehog-output", self.content)
 
     def test_webapp_volume_mount(self):
-        self.assertIn("./trufflehog_scan/output:/data/trufflehog-output:ro", self.content)
+        self.assertIn("./scanners/trufflehog_scan/output:/data/trufflehog-output:ro", self.content)
 
 
 # =============================================================================
