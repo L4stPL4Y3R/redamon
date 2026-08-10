@@ -258,6 +258,71 @@ describe('GET /api/system/jobs', () => {
     expect(body.mine.running[0]).toMatchObject({ source: 'scan' })
   })
 
+  // Phantom filter: a scan that stopped with nobody viewing its project leaves a
+  // 'running' ScanJob that only a per-project poll would close. The live set is
+  // authoritative here (it has another scan), and this old ScanJob is not in it.
+  test('a stale ScanJob absent from a non-empty live set is not shown as running', async () => {
+    const old = new Date(Date.now() - 10 * 60_000)
+    h.jqFindMany.mockResolvedValue([])
+    h.jqGroupBy.mockResolvedValue([])
+    h.jqCount.mockResolvedValue(0)
+    h.sjFindMany.mockResolvedValue([
+      sjRow({ id: 'live1', projectId: 'p1', startedAt: old }),   // really running (in live)
+      sjRow({ id: 'stale1', projectId: 'p9', startedAt: old, project: { name: 'Gone' } }), // stopped, phantom
+    ])
+    liveScans = [live({ kind: 'full_recon', project_id: 'p1', started_at: old.toISOString() })]
+
+    const body = await (await systemJobs(req())).json()
+    expect(body.mine.running.map((r: { projectName: string }) => r.projectName)).toEqual(['Proj One'])
+  })
+
+  // Restart-safe: when the live set is EMPTY (orchestrator just restarted, or truly
+  // nothing running) we cannot tell a phantom from a real orphaned scan, so we keep
+  // the ScanJob rather than hide a scan that is actually running.
+  test('an empty live set never hides a running ScanJob (restart-safe)', async () => {
+    const old = new Date(Date.now() - 10 * 60_000)
+    h.jqFindMany.mockResolvedValue([])
+    h.jqGroupBy.mockResolvedValue([])
+    h.jqCount.mockResolvedValue(0)
+    h.sjFindMany.mockResolvedValue([sjRow({ id: 's1', projectId: 'p1', startedAt: old })])
+    liveScans = []   // fetch failed OR nothing tracked
+
+    const body = await (await systemJobs(req())).json()
+    expect(body.mine.running).toHaveLength(1)
+    expect(body.mine.running[0]).toMatchObject({ source: 'scan' })
+  })
+
+  // A scan that JUST started may not be in the orchestrator's live set yet; the
+  // start grace keeps it visible so it never flickers out right after launch.
+  test('a freshly-started ScanJob not yet in the live set is still shown (start grace)', async () => {
+    h.jqFindMany.mockResolvedValue([])
+    h.jqGroupBy.mockResolvedValue([])
+    h.jqCount.mockResolvedValue(0)
+    h.sjFindMany.mockResolvedValue([sjRow({ id: 'fresh', projectId: 'p1', startedAt: new Date() })])
+    liveScans = [live({ kind: 'gvm', project_id: 'p2' })]   // authoritative, but not our fresh scan
+
+    const body = await (await systemJobs(req())).json()
+    expect(body.mine.running.some((r: { id: string }) => r.id === 'fresh')).toBe(true)
+  })
+
+  // A per-repo org-batch scan runs in the same container the orchestrator reports
+  // as kind 'supply_chain', so without kind-normalization the one running scan
+  // would show twice: its 'supply_chain_repo' queue row AND a 'supply_chain' live
+  // entry. The queue row (cancellable) must win; the live duplicate is suppressed.
+  test('a supply_chain_repo queue row dedups against the supply_chain live entry', async () => {
+    h.jqFindMany.mockImplementation((args: { where: { status: { in: string[] } } }) =>
+      Promise.resolve(args.where.status.in.includes('running')
+        ? [qRow({ id: 'r1', kind: 'supply_chain_repo', status: 'running', projectId: 'p1' })]
+        : []))
+    h.jqGroupBy.mockResolvedValue([])
+    h.jqCount.mockResolvedValue(0)
+    liveScans = [live({ kind: 'supply_chain', project_id: 'p1' })]
+
+    const body = await (await systemJobs(req())).json()
+    expect(body.mine.running).toHaveLength(1)
+    expect(body.mine.running[0]).toMatchObject({ kind: 'supply_chain_repo', source: 'queue' })
+  })
+
   // Others are counted from the DB, never from the live list: without per-project
   // rows there is no key to de-duplicate a live entry against, and every scan now
   // writes either a ScanJob or a queue row anyway.

@@ -137,9 +137,20 @@ function serializeLive(s: LiveScan, projectName: string) {
 
 /** Identity of an in-flight scan across the three sources. partial_recon and
  *  ai_attack can have several concurrent runs in one project, so the run id is
- *  part of the key when there is one. */
+ *  part of the key when there is one.
+ *
+ *  A per-repo batch item (`supply_chain_repo`) runs in the SAME container/state as
+ *  a single supply-chain scan, so the orchestrator's live source reports it as
+ *  `supply_chain`. Collapse the two to one family here or the same running scan is
+ *  listed twice: once from its `supply_chain_repo` queue row and once from the
+ *  `supply_chain` live entry. Safe: per-project serialization (C-12) means a
+ *  project never has a single and a repo supply-chain scan running at once. */
+function dedupKind(kind: string): string {
+  return kind === 'supply_chain_repo' ? 'supply_chain' : kind
+}
 function runKey(kind: string, projectId: string, runId = ''): string {
-  return runId ? `${kind}|${projectId}|${runId}` : `${kind}|${projectId}`
+  const k = dedupKind(kind)
+  return runId ? `${k}|${projectId}|${runId}` : `${k}|${projectId}`
 }
 
 const SELECT = {
@@ -239,10 +250,33 @@ export async function GET(_request: NextRequest) {
     const queueRunning = mine.filter(r => r.status === 'running' || r.status === 'dispatching')
     for (const r of queueRunning) claim(r.kind, r.projectId, r.runId)
 
+    // A ScanJob row is closed to a terminal state only by a per-project status poll
+    // (a browser viewing that project) or the reaper's queue reconcile. A scan that
+    // STOPPED or finished with nobody viewing leaves a phantom 'running' ScanJob, so
+    // the queue would show a scan that is not actually running. Drop such phantoms
+    // using the orchestrator's live set as the source of truth — but ONLY when it is
+    // authoritative and only past a start grace, so neither an orchestrator restart
+    // (live momentarily empty) nor a scan that just started (not yet in the live
+    // set) is ever wrongly hidden.
+    const LIVE_FILTER_GRACE_MS = 90_000
+    const liveKeys = new Set<string>()
+    for (const s of liveScans) {
+      liveKeys.add(runKey(s.kind, s.project_id, s.run_id))
+      liveKeys.add(runKey(s.kind, s.project_id))
+    }
+    const liveAuthoritative = liveScans.length > 0
+    const nowMs = Date.now()
+    const isLiveScanJob = (s: ScanRow): boolean => {
+      if (!liveAuthoritative) return true                       // can't tell -> keep (restart-safe)
+      if (s.startedAt && nowMs - s.startedAt.getTime() < LIVE_FILTER_GRACE_MS) return true  // may not be in live yet
+      const key = s.runId ? runKey(s.kind, s.projectId, s.runId) : runKey(s.kind, s.projectId)
+      return liveKeys.has(key)
+    }
+
     // A queue row that reached dispatch carries the ScanJob it started, so the two
     // sources would otherwise list the same scan twice.
     const claimedScanJobs = new Set(queueRunning.map(r => r.scanJobId).filter((v): v is string => !!v))
-    const freeScans = runningScans.filter(s => !claimedScanJobs.has(s.id))
+    const freeScans = runningScans.filter(s => !claimedScanJobs.has(s.id) && isLiveScanJob(s))
     for (const s of freeScans) claim(s.kind, s.projectId, s.runId)
 
     const freeLive = liveScans.filter(s => {

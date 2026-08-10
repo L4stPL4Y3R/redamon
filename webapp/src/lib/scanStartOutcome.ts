@@ -45,6 +45,21 @@ export interface StartFailureClassification {
   reason: string
 }
 
+/**
+ * Blocked codes that mean "the job is fine, it just cannot run YET" — waiting for
+ * memory, a concurrency slot, the project's turn, or a version activation to
+ * finish. These are NOT defects: they must requeue on a short fixed recheck
+ * WITHOUT consuming the attempt budget and must never fail the job, or a job that
+ * only waited its turn gets killed (and, worse, an escalating backoff delays its
+ * promotion the moment a slot frees). Contrast with a genuine start error, which
+ * classifyStartFailure returns as permanent (fails immediately).
+ */
+export const CAPACITY_WAIT_CODES: StartBlockedCode[] = ['ram', 'hard', 'activating', 'busy']
+
+export function isCapacityWait(code: string): boolean {
+  return (CAPACITY_WAIT_CODES as string[]).includes(code)
+}
+
 export function classifyStartFailure(
   status: number | undefined,
   body: StartFailureBody | null | undefined,

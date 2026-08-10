@@ -176,17 +176,43 @@ describe('dispatch route happy + failure paths', () => {
     expect(h.stopScan).toHaveBeenCalledWith('full_recon', 'p1', 'r1')
   })
 
-  test('a temporary RAM refusal requeues with backoff (guarded on dispatching, Finding 1b)', async () => {
+  test('a RAM capacity wait requeues WITHOUT spending an attempt (guarded on dispatching)', async () => {
     h.dispatchStart.mockResolvedValue({ ok: false, status: 429, error: 'no mem', limit: { limitType: 'ram' } })
     const res = await dispatch(post('http://x/api/internal/job-queue/j1/dispatch'), sp('j1'))
     const body = await res.json()
     expect(body.temporary).toBe(true)
-    // The requeue is conditional on status='dispatching', so a cancel that raced a
-    // dispatch which then FAILED is not resurrected to 'queued'.
-    expect(h.jqUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ id: 'j1', status: 'dispatching' }),
-      data: expect.objectContaining({ status: 'queued', blockedCode: 'ram', attempts: 1 }),
-    }))
+    const call = h.jqUpdateMany.mock.calls.find(c => c[0]?.data?.status === 'queued')
+    expect(call[0].where).toMatchObject({ id: 'j1', status: 'dispatching' })
+    expect(call[0].data).toMatchObject({ status: 'queued', blockedCode: 'ram' })
+    // A capacity wait must NOT consume the attempt budget (that would delay the
+    // eventual promotion and eventually fail a job that only waited its turn).
+    expect(call[0].data.attempts).toBeUndefined()
+    expect(call[0].data.notBefore).toBeInstanceOf(Date)
+  })
+
+  test('a hard concurrency-cap refusal also requeues without spending an attempt', async () => {
+    h.dispatchStart.mockResolvedValue({
+      ok: false, status: 409, error: '2 of 2 concurrent scans allowed per user',
+      limit: { limitType: 'hard' },
+    })
+    const res = await dispatch(post('http://x/api/internal/job-queue/j1/dispatch'), sp('j1'))
+    expect((await res.json()).blocked).toBe('hard')
+    const call = h.jqUpdateMany.mock.calls.find(c => c[0]?.data?.status === 'queued')
+    expect(call[0].data).toMatchObject({ status: 'queued', blockedCode: 'hard' })
+    expect(call[0].data.attempts).toBeUndefined()
+  })
+
+  // The regression that this stress test surfaced: a job waiting behind long-running
+  // scans must NOT be failed just because it was bounced many times on capacity.
+  test('a capacity wait NEVER fails, even at a high attempt count', async () => {
+    h.jqFindUnique.mockResolvedValue(baseRow({ attempts: 19, maxAttempts: 20 }))
+    h.dispatchStart.mockResolvedValue({ ok: false, status: 429, error: 'no mem', limit: { limitType: 'ram' } })
+    const res = await dispatch(post('http://x/api/internal/job-queue/j1/dispatch'), sp('j1'))
+    const body = await res.json()
+    expect(body.failed).toBeUndefined()
+    expect(body.temporary).toBe(true)
+    const call = h.jqUpdateMany.mock.calls.find(c => c[0]?.data?.status === 'queued')
+    expect(call[0].data.status).toBe('queued')
   })
 
   test('a permanent refusal fails the job', async () => {
@@ -197,14 +223,6 @@ describe('dispatch route happy + failure paths', () => {
     expect(h.jqUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ status: 'failed' }),
     }))
-  })
-
-  test('final temporary attempt gives up as failed', async () => {
-    h.jqFindUnique.mockResolvedValue(baseRow({ attempts: 19, maxAttempts: 20 }))
-    h.dispatchStart.mockResolvedValue({ ok: false, status: 429, error: 'no mem', limit: { limitType: 'ram' } })
-    const res = await dispatch(post('http://x/api/internal/job-queue/j1/dispatch'), sp('j1'))
-    const body = await res.json()
-    expect(body.failed).toBe(true)
   })
 })
 

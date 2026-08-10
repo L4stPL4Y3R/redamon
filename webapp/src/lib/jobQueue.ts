@@ -134,3 +134,13 @@ export function nextBackoff(attempts: number): number {
   const raw = BACKOFF_BASE_MS * Math.pow(2, n)
   return Math.min(raw, BACKOFF_MAX_MS)
 }
+
+/**
+ * Short, FIXED re-check delay for a job that is only WAITING FOR CAPACITY (a slot,
+ * memory, or the project's turn) rather than failing. Aligned to roughly one
+ * dispatcher tick (~20s) so a freed slot is picked up promptly instead of after
+ * an escalating exponential backoff. Capacity waits must NOT use nextBackoff():
+ * that couples the wait to an attempt counter, which both delays a legitimate
+ * promotion once a slot frees and eventually fails a job that did nothing wrong.
+ */
+export const CAPACITY_RECHECK_MS = 20_000

@@ -19,8 +19,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { isInternalRequest } from '@/lib/session'
-import { settingsFingerprint, nextBackoff } from '@/lib/jobQueue'
-import { classifyStartFailure } from '@/lib/scanStartOutcome'
+import { settingsFingerprint, nextBackoff, CAPACITY_RECHECK_MS } from '@/lib/jobQueue'
+import { classifyStartFailure, isCapacityWait } from '@/lib/scanStartOutcome'
 import { dispatchStart, stopScan } from '@/lib/startScan'
 
 export const runtime = 'nodejs'
@@ -72,7 +72,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           status: 'queued',
           blockedCode: 'busy',
           blockedReason: 'another job for this project is already dispatching or running',
-          notBefore: new Date(Date.now() + nextBackoff(row.attempts)),
+          // Capacity wait: short fixed recheck, no attempt spent (see CAPACITY_RECHECK_MS).
+          notBefore: new Date(Date.now() + CAPACITY_RECHECK_MS),
         },
       })
       return NextResponse.json({ ok: false, blocked: 'busy' })
@@ -123,7 +124,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
             status: 'queued',
             blockedCode: 'agent_running',
             blockedReason: 'an agent session is running for this project; a full recon would wipe its graph',
-            notBefore: new Date(Date.now() + nextBackoff(row.attempts)),
+            // Capacity/contention wait: short fixed recheck, no attempt spent.
+            notBefore: new Date(Date.now() + CAPACITY_RECHECK_MS),
           },
         })
         return NextResponse.json({ ok: false, blocked: 'agent_running' })
@@ -160,18 +162,38 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ ok: true, runId: result.runId ?? '', scanJobId: result.scanJobId ?? null })
     }
 
-    // Failed to start. Temporary -> requeue with backoff; permanent -> fail.
+    // Failed to start. Temporary -> requeue; permanent -> fail.
     const cls = classifyStartFailure(result.status, {
       error: result.error,
       limit: result.limit as { limitType?: string } | undefined,
       activationInProgress: result.activationInProgress,
       busy: result.busy,
     })
-    const attempts = row.attempts + 1
 
+    // A capacity wait (no memory / concurrency slot / project busy / activation in
+    // flight) is not a defect: the job is simply waiting its turn. Requeue on a
+    // short FIXED recheck and DO NOT consume an attempt, so a freed slot is picked
+    // up within a tick and a validly-waiting job is never failed. This matches the
+    // per-project 'busy' and 'agent_running' branches above. Guarded on
+    // 'dispatching' (Finding 1): if a cancel raced, leave it canceled.
+    if (cls.temporary && isCapacityWait(cls.blockedCode)) {
+      await prisma.jobQueue.updateMany({
+        where: { id, status: 'dispatching' },
+        data: {
+          status: 'queued',
+          blockedCode: cls.blockedCode,
+          blockedReason: cls.reason,
+          notBefore: new Date(Date.now() + CAPACITY_RECHECK_MS),
+        },
+      })
+      return NextResponse.json({ ok: false, blocked: cls.blockedCode, temporary: true })
+    }
+
+    // A non-capacity temporary (an unexpected transient error) DOES spend the
+    // attempt budget and eventually fails, so a job that keeps erroring for a real
+    // reason cannot retry forever.
+    const attempts = row.attempts + 1
     if (cls.temporary && attempts < row.maxAttempts) {
-      // Guarded on 'dispatching' (Finding 1): the start FAILED, so no scan runs; if
-      // a cancel raced, do not resurrect the row to 'queued' - leave it canceled.
       await prisma.jobQueue.updateMany({
         where: { id, status: 'dispatching' },
         data: {

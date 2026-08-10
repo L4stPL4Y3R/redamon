@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.8.0] - 2026-08-10
+
+### Added
+
+- **Scan Queue: a scan that cannot start now waits its turn instead of failing.** When a scan is refused for capacity (not enough memory, a concurrency ceiling, the project already busy, or a version activation in flight), the refusal dialog offers **Add to queue**. A background dispatcher then starts each queued job as capacity frees up, re-running **every** safety check at dispatch time (rules of engagement, guardrails, target validation, object-level authz, memory admission, and a settings fingerprint) rather than trusting the checks made when it was queued. Producers are the refusal modal, the scan scheduler, and the supply-chain org batch; the dispatcher enforces one job per project, a per-user ceiling, and a global ceiling. Built across Phases 1-7 ([f4dd1ed1], [8898a6a5], [fc9cd242], [c1f8abfa], [dc23835c], [eb380f81], [707919a1]).
+- **The "Scans" tab: a project's whole scan lifecycle in one place.** Three sections top to bottom - **Scheduled scans** (what will run), **Scan queue** (what is running or waiting right now), and **Run history** (what already ran) - now cover **every** scan kind: full recon, partial recon, GVM, GitHub hunt, TruffleHog, supply chain (single and per-repo), and AI attack surface. The live view unions three sources (queue rows, `ScanJob` rows, and the orchestrator's in-memory state) and deduplicates them, so a scan started from any surface is visible with the right status, and Run history gains a **Type** column ([cf94dc16], [dc23835c]).
+- **`ScanJob` records every scan kind.** Historically only full recon left a history row, so a directly-started GVM / supply-chain / AI-attack run was invisible once the orchestrator forgot it and absent from history forever. Every kind now writes a `ScanJob` at start and closes it at its terminal state, gaining `kind` and `run_id` columns ([cf94dc16]).
+- **Supply-chain organization batch.** From the **Supply Chain Scanner** card, enter a GitHub organization or user to enumerate its repositories and queue one supply-chain scan per repo (priority -10), which the dispatcher runs one-per-project as capacity frees. Enforced no-manual-input for input types that must come from the graph ([eb380f81]).
+
+### Changed
+
+- **The "Scan Scheduler" tab is now "Scans"** and its sections are ordered by time: Scheduled scans, then the live Scan queue, then Run history. The UI states that schedules run the **full recon pipeline only**; the other scans and partial recon are started by hand from their own cards. Wiki updated ([cf94dc16]).
+- **The supply-chain org batch moved** out of the JS Recon settings tab (where it sat next to the unrelated L2 recon phase) into the **Supply Chain Scanner** card in Other Scans, as a third input mode beside Upload and GitHub repository ([cf94dc16]).
+- **The bottom-bar RAM/CPU/DISK readout is meters again** - live queue state moved from a drawer behind the meters into the Scans tab ([cf94dc16]).
+
+### Fixed
+
+- **A queued job waiting for capacity could promote sluggishly or be failed outright.** A capacity refusal (RAM / concurrency cap / project busy / activation) escalated a retry counter and its exponential backoff, so once a slot freed the job sat through a multi-minute backoff, and after 20 such refusals it was marked **failed** with "gave up after 20 attempts" though nothing was wrong with it. Capacity waits now recheck on a short fixed interval and never consume the attempt budget; only a genuine transient error does.
+- **The Scan queue could list a scan that had already stopped.** A `ScanJob` is closed to a terminal state only by a per-project status poll (a browser viewing that project), so a scan that finished with nobody watching left a phantom "running" row. Stale rows are now filtered against the orchestrator's live set, guarded so neither an orchestrator restart (live set momentarily empty) nor a just-started scan is ever wrongly hidden.
+- **A per-repo org-batch scan was listed twice** - once from its `supply_chain_repo` queue row and once from a `supply_chain` live entry, because the orchestrator reports per-repo scans under the single-scan kind. The two are now collapsed to one family in the dedup key.
+- **`./redamon.sh update` could ship stale volume-mounted service code.** The `restart_only` path used a plain `up -d` that a `.py`-only change leaves as a no-op, so a new orchestrator/MCP endpoint could sit on disk unserved on installs that pin resource caps in `.env`. It now forces the recreate, so a mounted-code change is picked up deterministically.
+
+---
+
 ## [6.7.0] - 2026-08-09
 
 ### Added
