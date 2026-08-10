@@ -97,8 +97,8 @@ class TestKaliShellExcludesAmass(unittest.TestCase):
         """kali_shell exclusion list must include amass."""
         # Find the "Do NOT use for:" line
         self.assertIn('amass', self.kali_desc)
-        do_not_use_match = re.search(r'Do NOT use for:.*', self.kali_desc)
-        self.assertIsNotNone(do_not_use_match, "Missing 'Do NOT use for:' line")
+        do_not_use_match = re.search(r'Do NOT use kali_shell for:.*', self.kali_desc)
+        self.assertIsNotNone(do_not_use_match, "Missing 'Do NOT use kali_shell for:' line")
         self.assertIn('amass', do_not_use_match.group(0))
 
 
@@ -115,10 +115,10 @@ class TestProjectSettings(unittest.TestCase):
         self.assertIn('execute_amass', self.phase_map)
 
     def test_amass_phases_correct(self):
-        """execute_amass must be available in all three phases."""
+        """execute_amass runs in informational + exploitation (not post-exploitation)."""
         self.assertEqual(
             self.phase_map['execute_amass'],
-            ['informational', 'exploitation', 'post_exploitation']
+            ['informational', 'exploitation']
         )
 
     def test_amass_in_dangerous_tools(self):
@@ -147,7 +147,7 @@ class TestPrismaSchema(unittest.TestCase):
         """execute_amass phases must match in schema."""
         self.assertEqual(
             self.data['execute_amass'],
-            ['informational', 'exploitation', 'post_exploitation']
+            ['informational', 'exploitation']
         )
 
     def test_json_still_valid(self):
@@ -535,12 +535,12 @@ class TestMCPToolFunction(unittest.TestCase):
         self.assertIn('Permission denied', result)
 
     @patch('network_recon_server.subprocess.run')
-    def test_timeout_value_is_660(self, mock_run):
-        """Tool must use 660s timeout (11 min)."""
+    def test_timeout_value_is_1800(self, mock_run):
+        """Tool must use 1800s timeout (30 min)."""
         mock_run.return_value = MagicMock(stdout='', stderr='', returncode=0)
         self.execute_amass('enum -d example.com')
         _, kwargs = mock_run.call_args
-        self.assertEqual(kwargs.get('timeout'), 660)
+        self.assertEqual(kwargs.get('timeout'), 1800)
 
     @patch('network_recon_server.subprocess.run')
     def test_capture_output_enabled(self, mock_run):

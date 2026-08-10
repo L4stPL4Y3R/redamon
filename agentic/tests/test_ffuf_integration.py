@@ -114,7 +114,7 @@ class TestExecuteFfufMCPTool(unittest.TestCase):
         self.assertEqual(cmd[0], "ffuf")
         self.assertIn("-noninteractive", cmd)
         self.assertIn("-ac", cmd)
-        self.assertEqual(call_args[1]['timeout'], 600)
+        self.assertEqual(call_args[1]['timeout'], 1200)
 
     @patch('subprocess.run')
     def test_noninteractive_auto_injected(self, mock_run):
@@ -285,7 +285,7 @@ class TestExecuteFfufMCPTool(unittest.TestCase):
         self.assertIn("-fs", cmd)
 
     @patch('subprocess.run')
-    def test_timeout_is_600_seconds(self, mock_run):
+    def test_timeout_is_1200_seconds(self, mock_run):
         """Verify the subprocess timeout is set to 600 seconds."""
         execute_ffuf = self._import_execute_ffuf()
 
@@ -295,7 +295,7 @@ class TestExecuteFfufMCPTool(unittest.TestCase):
 
         execute_ffuf("-w w.txt -u http://target/FUZZ")
 
-        self.assertEqual(mock_run.call_args[1]['timeout'], 600)
+        self.assertEqual(mock_run.call_args[1]['timeout'], 1200)
         self.assertTrue(mock_run.call_args[1]['capture_output'])
         self.assertTrue(mock_run.call_args[1]['text'])
 

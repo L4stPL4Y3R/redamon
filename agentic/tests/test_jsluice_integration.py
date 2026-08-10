@@ -387,19 +387,25 @@ class TestJsluiceProjectSettings(unittest.TestCase):
         phases = DEFAULT_AGENT_SETTINGS['TOOL_PHASE_MAP']['execute_jsluice']
         self.assertIn('exploitation', phases)
 
-    def test_phase_map_post_exploitation(self):
-        """jsluice is useful in all 3 phases (passive local analysis)."""
+    def test_phase_map_excludes_post_exploitation(self):
+        """jsluice runs during recon/exploitation, not post-exploitation
+        (consistent with the other harvest/crawl tools gau and katana)."""
         from project_settings import DEFAULT_AGENT_SETTINGS
         phases = DEFAULT_AGENT_SETTINGS['TOOL_PHASE_MAP']['execute_jsluice']
-        self.assertIn('post_exploitation', phases)
+        self.assertNotIn('post_exploitation', phases)
 
-    def test_phase_map_matches_query_graph_pattern(self):
-        """jsluice should have same phases as query_graph (passive tools in all phases)."""
+    def test_phase_map_matches_harvest_tool_pattern(self):
+        """jsluice is a JS harvest tool: same phases as its siblings gau/katana
+        (informational + exploitation), NOT the all-phases query_graph pattern."""
         from project_settings import DEFAULT_AGENT_SETTINGS
         phase_map = DEFAULT_AGENT_SETTINGS['TOOL_PHASE_MAP']
         self.assertEqual(
             sorted(phase_map['execute_jsluice']),
-            sorted(phase_map['query_graph']),
+            sorted(phase_map['execute_gau']),
+        )
+        self.assertEqual(
+            sorted(phase_map['execute_jsluice']),
+            sorted(phase_map['execute_katana']),
         )
 
 
@@ -418,9 +424,9 @@ class TestJsluicePhaseEnforcement(unittest.TestCase):
         from project_settings import is_tool_allowed_in_phase
         self.assertTrue(is_tool_allowed_in_phase('execute_jsluice', 'exploitation'))
 
-    def test_allowed_in_post_exploitation(self):
+    def test_not_allowed_in_post_exploitation(self):
         from project_settings import is_tool_allowed_in_phase
-        self.assertTrue(is_tool_allowed_in_phase('execute_jsluice', 'post_exploitation'))
+        self.assertFalse(is_tool_allowed_in_phase('execute_jsluice', 'post_exploitation'))
 
 
 # ===========================================================================
@@ -510,12 +516,14 @@ class TestJsluicePrismaSchema(unittest.TestCase):
             sorted(python_phases),
         )
 
-    def test_prisma_has_all_three_phases(self):
+    def test_prisma_phases_match_backend(self):
+        """The Prisma @default must carry the same jsluice phases as the backend
+        (informational + exploitation), so a fresh project and the agent agree."""
         prisma_map = self._parse_prisma_default()
         phases = prisma_map['execute_jsluice']
         self.assertIn('informational', phases)
         self.assertIn('exploitation', phases)
-        self.assertIn('post_exploitation', phases)
+        self.assertNotIn('post_exploitation', phases)
 
 
 # ===========================================================================

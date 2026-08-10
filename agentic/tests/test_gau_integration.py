@@ -258,7 +258,10 @@ class TestGauCrossConsistency(unittest.TestCase):
 
     def test_registry_and_phase_map_in_sync(self):
         """Every tool in TOOL_PHASE_MAP should be in TOOL_REGISTRY or be a known exception."""
-        known_non_registry = {'msf_restart'}  # msf_restart is in phase map but handled specially
+        # Tools registered via non-registry mechanisms: API tools (web_search,
+        # shodan, google_dork), the msf lifecycle helper, and tradecraft_lookup
+        # (its registry entry is injected per-session from the user's catalog).
+        known_non_registry = {'msf_restart', 'web_search', 'shodan', 'google_dork', 'tradecraft_lookup'}
         phase_map = DEFAULT_AGENT_SETTINGS['TOOL_PHASE_MAP']
         for tool in phase_map:
             if tool not in known_non_registry:

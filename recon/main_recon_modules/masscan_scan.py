@@ -314,6 +314,7 @@ def _empty_result() -> Dict:
             "unique_ports": [],
             "unique_port_count": 0,
             "cdn_hosts": 0,
+            "ai_ports_annotated": 0,
         },
     }
 

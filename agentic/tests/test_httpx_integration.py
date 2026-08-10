@@ -360,7 +360,7 @@ class TestHttpxToolRegistry(unittest.TestCase):
         from prompts.tool_registry import TOOL_REGISTRY
         kali_desc = TOOL_REGISTRY["kali_shell"]["description"]
         self.assertIn("httpx", kali_desc)
-        self.assertIn("Do NOT use for", kali_desc)
+        self.assertIn("Do NOT use kali_shell for", kali_desc)
 
     def test_kali_shell_cli_list_no_httpx(self):
         """kali_shell CLI tools list should NOT mention httpx (it has its own tool)."""
@@ -557,8 +557,10 @@ class TestHttpxCrossLayerConsistency(unittest.TestCase):
         from prompts.tool_registry import TOOL_REGISTRY
         from project_settings import DEFAULT_AGENT_SETTINGS
         phase_map = DEFAULT_AGENT_SETTINGS['TOOL_PHASE_MAP']
-        # These tools are registered via non-registry mechanisms (API tools, MCP auto-discovery)
-        special_tools = {'web_search', 'shodan', 'google_dork', 'msf_restart'}
+        # These tools are registered via non-registry mechanisms (API tools, MCP
+        # auto-discovery, or per-session runtime injection like tradecraft_lookup,
+        # whose registry entry is rebuilt each task from the user's tradecraft catalog).
+        special_tools = {'web_search', 'shodan', 'google_dork', 'msf_restart', 'tradecraft_lookup'}
         for tool in phase_map:
             self.assertTrue(
                 tool in TOOL_REGISTRY or tool in special_tools,

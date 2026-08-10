@@ -188,6 +188,13 @@ class TestBuildNucleiCommand(unittest.TestCase):
         import types
         docker_helpers_mock = types.ModuleType("helpers.docker_helpers")
         docker_helpers_mock.NUCLEI_TEMPLATES_VOLUME = "nuclei-templates"
+        # helpers/__init__.py re-exports the whole docker_helpers surface, so the
+        # mock must carry every name it imports (all no-ops here -- the command
+        # builder only needs NUCLEI_TEMPLATES_VOLUME).
+        for _n in ("is_docker_installed", "is_docker_running", "get_real_user_ids",
+                   "fix_file_ownership", "pull_nuclei_docker_image",
+                   "pull_katana_docker_image", "ensure_templates_volume"):
+            setattr(docker_helpers_mock, _n, lambda *a, **kw: None)
         sys.modules["helpers.docker_helpers"] = docker_helpers_mock
         sys.modules[".docker_helpers"] = docker_helpers_mock
         # Also need to handle relative import
