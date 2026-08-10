@@ -23,8 +23,8 @@ import sys
 import unittest
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]           # capture_proxy/
-REPO = Path(__file__).resolve().parents[2]           # repo root
+ROOT = Path(__file__).resolve().parents[1]           # scanners/capture_proxy/
+REPO = Path(__file__).resolve().parents[3]           # repo root
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -32,7 +32,7 @@ import redamon_ctx  # noqa: E402  (capture_proxy copy)
 from ingest_worker import build_row  # noqa: E402
 
 _COPIES = {
-    "capture": REPO / "capture_proxy" / "redamon_ctx.py",
+    "capture": REPO / "scanners" / "capture_proxy" / "redamon_ctx.py",
     "agent": REPO / "agentic" / "redamon_ctx.py",
     "recon": REPO / "recon" / "helpers" / "redamon_ctx.py",
 }

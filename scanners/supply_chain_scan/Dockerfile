@@ -34,10 +34,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 
 COPY --from=osv-builder /out/osv-scanner /usr/local/bin/osv-scanner
 
-COPY supply_chain_scan/requirements.txt /app/supply_chain_scan/requirements.txt
+COPY scanners/supply_chain_scan/requirements.txt /app/supply_chain_scan/requirements.txt
 RUN pip install --no-cache-dir -r /app/supply_chain_scan/requirements.txt
 
-COPY supply_chain_scan/ /app/supply_chain_scan/
+COPY scanners/supply_chain_scan/ /app/supply_chain_scan/
 
 # graph_db + supply_chain_common are bind-mounted at /app/graph_db and
 # /app/supply_chain_common by the orchestrator spawn (not baked here).

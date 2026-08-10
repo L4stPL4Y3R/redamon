@@ -1995,31 +1995,31 @@ cmd_update() {
     # wcvs: the Web Cache Vulnerability Scanner image (web cache poisoning module),
     # run docker-in-docker by the recon container. Build-only; rebuild when its
     # Dockerfile (or pinned WCVS_REF) changes.
-    if echo "$changed_files" | grep -q "^wcvs/"; then
+    if echo "$changed_files" | grep -q "^scanners/wcvs/"; then
         rebuild_tools+=(wcvs)
     fi
-    if echo "$changed_files" | grep -q "^gvm_scan/"; then
+    if echo "$changed_files" | grep -q "^scanners/gvm_scan/"; then
         rebuild_tools+=(vuln-scanner)
     fi
-    if echo "$changed_files" | grep -q "^github_secret_hunt/"; then
+    if echo "$changed_files" | grep -q "^scanners/github_secret_hunt/"; then
         rebuild_tools+=(github-secret-hunter)
     fi
-    if echo "$changed_files" | grep -q "^trufflehog_scan/"; then
+    if echo "$changed_files" | grep -q "^scanners/trufflehog_scan/"; then
         rebuild_tools+=(trufflehog-scanner)
     fi
-    if echo "$changed_files" | grep -q "^baddns_scan/"; then
+    if echo "$changed_files" | grep -q "^scanners/baddns_scan/"; then
         rebuild_tools+=(baddns-scanner)
     fi
     # ai-attack-surface: heavy build-only image (Node + promptfoo + per-tool venvs).
     # The adapter .py files are volume-mounted into the scan container at spawn
     # (hot-reload, no rebuild); ONLY the baked-in toolchain — the Dockerfile or any
     # requirements file — needs a rebuild.
-    if echo "$changed_files" | grep -qE "^ai_attack_surface_scan/(Dockerfile|.*requirements)"; then
+    if echo "$changed_files" | grep -qE "^scanners/ai_attack_surface_scan/(Dockerfile|.*requirements)"; then
         rebuild_tools+=(ai-attack-surface)
     fi
     # codefix-sandbox: the isolated CodeFix build sandbox (T6/E10). Build-only
     # image; rebuild when anything in its build context changes.
-    if echo "$changed_files" | grep -q "^codefix_sandbox/"; then
+    if echo "$changed_files" | grep -q "^scanners/codefix_sandbox/"; then
         rebuild_tools+=(codefix-sandbox)
     fi
     # supply-chain (L1 CLEAN scanner): the .py source is volume-mounted into the
@@ -2028,12 +2028,12 @@ cmd_update() {
     # Matches recon-orchestrator's precise rule. On the FIRST update onto this
     # release these files are new, so the image is built; thereafter a pure .py
     # change hot-reloads at spawn with no rebuild.
-    if echo "$changed_files" | grep -qE "^supply_chain_scan/(Dockerfile|requirements)"; then
+    if echo "$changed_files" | grep -qE "^scanners/supply_chain_scan/(Dockerfile|requirements)"; then
         rebuild_tools+=(supply-chain)
     fi
     # supply-chain-analyzer (DIRTY analyzer): entrypoint.py is BAKED (COPY), not
     # mounted, so rebuild on ANY change to the analyzer dir (entrypoint or Dockerfile).
-    if echo "$changed_files" | grep -q "^supply_chain_analyzer/"; then
+    if echo "$changed_files" | grep -q "^scanners/supply_chain_analyzer/"; then
         rebuild_tools+=(supply-chain-analyzer)
     fi
     # capture-proxy / traffic-ingest (HTTP Traffic Capture): both share the
@@ -2044,7 +2044,7 @@ cmd_update() {
     # proxy would keep serving stale capture/ingest/redaction/egress code. Handled
     # separately from rebuild_tools because it needs its own profile flag to build.
     local rebuild_capture=false
-    if echo "$changed_files" | grep -q "^capture_proxy/"; then
+    if echo "$changed_files" | grep -q "^scanners/capture_proxy/"; then
         rebuild_capture=true
     fi
 
@@ -2247,7 +2247,7 @@ cmd_supply_chain_sync() {
     # pointing at the command that could not work.
     if docker run --rm --user root \
         -v redamon-osv-db:/osv-db \
-        -v "$SCRIPT_DIR/supply_chain_common:/app/supply_chain_common:ro" \
+        -v "$SCRIPT_DIR/scanners/supply_chain_common:/app/supply_chain_common:ro" \
         -e OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY=/osv-db \
         -e PYTHONPATH=/app \
         --entrypoint python3 \
@@ -2913,12 +2913,12 @@ _ROOT_RECON_TESTS="test_censys_enrich.py,test_criminalip_enrich.py,test_fofa_enr
 # Section spec: name|image|workdir|PYTHONPATH|testpaths|covpkg|exclude
 _TEST_SECTIONS=(
     "agent|redamon-agent|/repo/agentic|/repo/agentic:/repo:/repo/mcp/servers:/repo/recon_orchestrator:/repo/services|tests|.|"
-    "root-agent|redamon-agent|/repo|/repo:/repo/agentic:/repo/mcp/servers:/repo/services|tests supply_chain_common supply_chain_analyzer supply_chain_scan graph_db services/knowledge_base mcp|supply_chain_common|${_ROOT_RECON_TESTS}"
+    "root-agent|redamon-agent|/repo|/repo:/repo/agentic:/repo/mcp/servers:/repo/services:/repo/scanners|tests scanners/supply_chain_common scanners/supply_chain_analyzer scanners/supply_chain_scan graph_db services/knowledge_base mcp|supply_chain_common|${_ROOT_RECON_TESTS}"
     "root-recon|redamon-recon|/repo|/repo:/repo/recon:/repo/recon/main_recon_modules|tests|.|"
     "recon|redamon-recon|/repo/recon|/repo/recon:/repo|tests|.|"
     "recon_orchestrator|redamon-recon-orchestrator|/repo/recon_orchestrator|/repo/recon_orchestrator:/repo|.|.|"
-    "ai_attack_surface|redamon-ai-attack-surface|/repo/ai_attack_surface_scan|/repo/ai_attack_surface_scan:/repo|tests adapters|.|"
-    "capture_proxy|redamon-capture-proxy|/repo/capture_proxy|/repo/capture_proxy:/repo|tests|.|"
+    "ai_attack_surface|redamon-ai-attack-surface|/repo/scanners/ai_attack_surface_scan|/repo/scanners/ai_attack_surface_scan:/repo|tests adapters|.|"
+    "capture_proxy|redamon-capture-proxy|/repo/scanners/capture_proxy|/repo/scanners/capture_proxy:/repo|tests|.|"
     "docker_broker|redamon-docker-broker|/repo/services/docker_broker|/repo/services/docker_broker:/repo|.|.|"
 )
 
@@ -2958,13 +2958,13 @@ _test_run_section() {
         `# recon_orchestrator/api.py resolves host paths at import; satisfy the` \
         `# *_PATH lookups so its tests import outside docker-compose (harmless elsewhere).` \
         -e RECON_PATH=/repo/recon \
-        -e GVM_SCAN_PATH=/repo/gvm_scan \
-        -e GITHUB_HUNT_PATH=/repo/github_secret_hunt \
-        -e TRUFFLEHOG_PATH=/repo/trufflehog_scan \
-        -e SUPPLY_CHAIN_PATH=/repo/supply_chain_scan \
-        -e AI_ATTACK_SURFACE_PATH=/repo/ai_attack_surface_scan \
+        -e GVM_SCAN_PATH=/repo/scanners/gvm_scan \
+        -e GITHUB_HUNT_PATH=/repo/scanners/github_secret_hunt \
+        -e TRUFFLEHOG_PATH=/repo/scanners/trufflehog_scan \
+        -e SUPPLY_CHAIN_PATH=/repo/scanners/supply_chain_scan \
+        -e AI_ATTACK_SURFACE_PATH=/repo/scanners/ai_attack_surface_scan \
         -e CUSTOM_TEMPLATES_PATH=/repo/custom_templates \
-        -e CODEFIX_WORK_PATH=/repo/codefix_sandbox \
+        -e CODEFIX_WORK_PATH=/repo/scanners/codefix_sandbox \
         --entrypoint sh \
         "$image" -c "$prep exec python /repo/tooling/scripts/pytest_isolated.py $tier $testpaths $cov_args"
 }

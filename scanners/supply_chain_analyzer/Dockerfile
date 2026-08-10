@@ -64,7 +64,7 @@ RUN find / -xdev -perm /6000 -type f -exec chmod a-s {} + 2>/dev/null || true
 # The supply_chain_common package is bind-mounted read-only at /app at spawn
 # time (like graph_db), so the entrypoint can import the shared runners without
 # baking them in. We copy the entrypoint itself so the image is self-contained.
-COPY supply_chain_analyzer/entrypoint.py /usr/local/bin/sc-analyze
+COPY scanners/supply_chain_analyzer/entrypoint.py /usr/local/bin/sc-analyze
 RUN chmod +x /usr/local/bin/sc-analyze
 
 USER analyzer

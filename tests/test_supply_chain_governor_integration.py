@@ -306,7 +306,7 @@ class TestSpawnPathParityContract(IntegrationBase):
 
     def setUp(self):
         super().setUp()
-        self.dispatch = self._read("supply_chain_common", "analyzer_dispatch.py")
+        self.dispatch = self._read("scanners", "supply_chain_common", "analyzer_dispatch.py")
         self.manager = self._read("recon_orchestrator", "container_manager.py")
 
     def test_both_sides_read_the_same_override_variable(self):

@@ -19,11 +19,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
     apt-get purge -y curl && apt-get autoremove -y && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
-COPY trufflehog_scan/requirements.txt /tmp/trufflehog_requirements.txt
+COPY scanners/trufflehog_scan/requirements.txt /tmp/trufflehog_requirements.txt
 RUN pip install --no-cache-dir -r /tmp/trufflehog_requirements.txt
 
 # Copy project files (context is parent directory, so paths are relative to project root)
-COPY trufflehog_scan/ ./trufflehog_scan/
+COPY scanners/trufflehog_scan/ ./trufflehog_scan/
 
 # Copy graph_db module (for Neo4j integration)
 COPY graph_db/ ./graph_db/

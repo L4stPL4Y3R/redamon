@@ -14,12 +14,12 @@ LABEL description="Python-based GVM vulnerability scanner for RedAmon"
 WORKDIR /app
 
 # Install dependencies (python-gvm for scanner, neo4j for graph updates)
-COPY gvm_scan/requirements.txt /tmp/gvm_requirements.txt
+COPY scanners/gvm_scan/requirements.txt /tmp/gvm_requirements.txt
 RUN pip install --no-cache-dir -r /tmp/gvm_requirements.txt && \
     pip install --no-cache-dir neo4j
 
 # Copy project files (context is parent directory, so paths are relative to project root)
-COPY gvm_scan/ ./gvm_scan/
+COPY scanners/gvm_scan/ ./gvm_scan/
 COPY graph_db/ ./graph_db/
 
 # Create output directories

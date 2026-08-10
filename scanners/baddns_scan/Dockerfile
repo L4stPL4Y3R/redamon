@@ -54,7 +54,7 @@ WORKDIR /work
 # once per target (baddns does not support batch mode), emits NDJSON to
 # stdout. The calling container redirects stdout to a file on a shared
 # volume.
-COPY baddns_scan/entrypoint.sh /usr/local/bin/baddns-batch
+COPY scanners/baddns_scan/entrypoint.sh /usr/local/bin/baddns-batch
 RUN chmod +x /usr/local/bin/baddns-batch
 
 USER baddns

@@ -112,17 +112,17 @@ recon/main_recon_modules/data/mitre_db/.last_update
 
 # Recon output files (contain sensitive scan data)
 recon/output/*.json
-gvm_scan/output/*.json
-github_secret_hunt/output/*.json
-trufflehog_scan/output/*.json
-supply_chain_scan/output/*.json
+scanners/gvm_scan/output/*.json
+scanners/github_secret_hunt/output/*.json
+scanners/trufflehog_scan/output/*.json
+scanners/supply_chain_scan/output/*.json
 !recon/output/.gitkeep
-!gvm_scan/output/.gitkeep
-!github_secret_hunt/output/.gitkeep
-!trufflehog_scan/output/.gitkeep
-!supply_chain_scan/output/.gitkeep
+!scanners/gvm_scan/output/.gitkeep
+!scanners/github_secret_hunt/output/.gitkeep
+!scanners/trufflehog_scan/output/.gitkeep
+!scanners/supply_chain_scan/output/.gitkeep
 # AI Attack Surface scan output (garak/pyrit/giskard/promptfoo reports + transcripts)
-ai_attack_surface_scan/output/
+scanners/ai_attack_surface_scan/output/
 
 # Nmap scan results
 *.nmap
@@ -209,12 +209,12 @@ agentic/readmes/README.EMPOWER.md
 agentic/readmes/README.CYPHERFIX.md
 agentic/readmes/README.FULLFIX.md
 agentic/readmes/README.TOOL_PLUGINS.md
-readmes/README.EMPOWER.md
-readmes/README.FULLFIX.md
-readmes/README.TOOL_PLUGINS.md
-readmes/README.ATTACK_PATHS.md
-readmes/AGENT.PROMPTS.md
-readmes/agent_prompts/
+docs/readmes/README.EMPOWER.md
+docs/readmes/README.FULLFIX.md
+docs/readmes/README.TOOL_PLUGINS.md
+docs/readmes/README.ATTACK_PATHS.md
+docs/readmes/AGENT.PROMPTS.md
+docs/readmes/agent_prompts/
 
 
 # Local-only working dirs (untracked; not part of the repo)

@@ -23,7 +23,7 @@ from datetime import datetime
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # Add paths for imports
-sys.path.insert(0, str(REPO_ROOT / "trufflehog_scan"))
+sys.path.insert(0, str(REPO_ROOT / "scanners" / "trufflehog_scan"))
 
 # Stub graph_db before any imports that might pull it in
 if "graph_db" not in sys.modules:

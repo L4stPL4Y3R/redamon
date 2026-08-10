@@ -21,16 +21,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends git build-essen
     && rm -rf /var/lib/apt/lists/*
 
 # --- Base (shared spine): just the Neo4j driver ---
-COPY ai_attack_surface_scan/requirements.txt /tmp/base-requirements.txt
+COPY scanners/ai_attack_surface_scan/requirements.txt /tmp/base-requirements.txt
 RUN pip install --no-cache-dir -r /tmp/base-requirements.txt
 
 # --- Per-tool venvs (isolated, conflicting deps) ---
-COPY ai_attack_surface_scan/adapters/garak/requirements.txt /tmp/garak-requirements.txt
+COPY scanners/ai_attack_surface_scan/adapters/garak/requirements.txt /tmp/garak-requirements.txt
 RUN python -m venv /opt/venv-garak \
     && /opt/venv-garak/bin/pip install --no-cache-dir -U pip \
     && /opt/venv-garak/bin/pip install --no-cache-dir -r /tmp/garak-requirements.txt
 
-COPY ai_attack_surface_scan/adapters/pyrit/requirements.txt /tmp/pyrit-requirements.txt
+COPY scanners/ai_attack_surface_scan/adapters/pyrit/requirements.txt /tmp/pyrit-requirements.txt
 # pyrit pulls base2048, which ships no arm64/aarch64 wheel and compiles a small
 # Rust extension from source. Provide a Rust toolchain ONLY for this build and
 # remove it in the same layer so the image stays slim (on amd64 a prebuilt wheel
@@ -42,7 +42,7 @@ RUN python -m venv /opt/venv-pyrit \
     && /opt/venv-pyrit/bin/pip install --no-cache-dir -r /tmp/pyrit-requirements.txt \
     && rustup self uninstall -y
 
-COPY ai_attack_surface_scan/adapters/giskard/requirements.txt /tmp/giskard-requirements.txt
+COPY scanners/ai_attack_surface_scan/adapters/giskard/requirements.txt /tmp/giskard-requirements.txt
 RUN python -m venv /opt/venv-giskard \
     && /opt/venv-giskard/bin/pip install --no-cache-dir -U pip \
     && /opt/venv-giskard/bin/pip install --no-cache-dir -r /tmp/giskard-requirements.txt
@@ -74,7 +74,7 @@ RUN pip install --no-cache-dir "PyYAML>=6.0"
 
 # Copy the scanner (spine + adapters). The runner scripts are invoked by their
 # tool's venv; the spine runs in the base interpreter.
-COPY ai_attack_surface_scan/ ./ai_attack_surface_scan/
+COPY scanners/ai_attack_surface_scan/ ./ai_attack_surface_scan/
 
 RUN mkdir -p ai_attack_surface_scan/output
 

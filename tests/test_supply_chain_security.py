@@ -78,9 +78,9 @@ class TestReviewRegressions(unittest.TestCase):
 # Directories/files that make up the supply-chain feature. Extend as phases add
 # code; the no-install grep must cover every supply-chain source tree.
 _SUPPLY_CHAIN_PATHS = [
-    "supply_chain_common",
-    "supply_chain_scan",       # Phase 2 (may not exist yet)
-    "supply_chain_analyzer",   # Phase 0.5 (may not exist yet)
+    os.path.join("scanners", "supply_chain_common"),
+    os.path.join("scanners", "supply_chain_scan"),       # Phase 2 (may not exist yet)
+    os.path.join("scanners", "supply_chain_analyzer"),   # Phase 0.5 (may not exist yet)
     os.path.join("recon", "helpers", "supply_chain"),        # Phase 3
     os.path.join("recon", "main_recon_modules", "supply_chain_recon.py"),
     os.path.join("recon", "partial_recon_modules", "supply_chain.py"),

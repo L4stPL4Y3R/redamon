@@ -27,7 +27,7 @@ _gh.GithubException = _ghe
 sys.modules["github"] = _gh
 sys.modules["github.GithubException"] = _ghe
 
-sys.path.insert(0, os.path.join(REPO_ROOT, "github_secret_hunt"))
+sys.path.insert(0, os.path.join(REPO_ROOT, "scanners", "github_secret_hunt"))
 import github_secret_hunt as ghh  # noqa: E402
 
 PASS = 0

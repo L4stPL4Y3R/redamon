@@ -21,7 +21,7 @@ if _REPO not in sys.path:
 # Load supply_chain_scan/project_settings.py in isolation (avoid colliding with the
 # other project_settings.py modules in the tree).
 _spec = importlib.util.spec_from_file_location(
-    "sc_project_settings", os.path.join(_REPO, "supply_chain_scan", "project_settings.py"))
+    "sc_project_settings", os.path.join(_REPO, "scanners", "supply_chain_scan", "project_settings.py"))
 ps = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(ps)
 

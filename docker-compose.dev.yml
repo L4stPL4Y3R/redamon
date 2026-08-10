@@ -25,8 +25,8 @@ services:
       - ./recon/output:/data/recon-output:ro
       - ./recon/wordlists:/data/recon-wordlists:rw
       - ./mcp/nuclei-templates:/data/nuclei-templates:rw
-      - ./gvm_scan/output:/data/gvm-output:ro
-      - ./github_secret_hunt/output:/data/github-hunt-output:ro
+      - ./scanners/gvm_scan/output:/data/gvm-output:ro
+      - ./scanners/github_secret_hunt/output:/data/github-hunt-output:ro
       - ./VERSION:/app/VERSION:ro
       - js_recon_uploads:/data/js-recon-uploads
       - js_recon_custom:/data/js-recon-custom

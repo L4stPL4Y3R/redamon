@@ -263,21 +263,21 @@ services:
   vuln-scanner:
     build:
       context: .
-      dockerfile: gvm_scan/Dockerfile
+      dockerfile: scanners/gvm_scan/Dockerfile
     image: redamon-vuln-scanner:latest
     profiles: ["tools"]
 
   github-secret-hunter:
     build:
       context: .
-      dockerfile: github_secret_hunt/Dockerfile
+      dockerfile: scanners/github_secret_hunt/Dockerfile
     image: redamon-github-hunter:latest
     profiles: ["tools"]
 
   trufflehog-scanner:
     build:
       context: .
-      dockerfile: trufflehog_scan/Dockerfile
+      dockerfile: scanners/trufflehog_scan/Dockerfile
     image: redamon-trufflehog:latest
     profiles: ["tools"]
 
@@ -286,7 +286,7 @@ services:
   # See recon/cache_scan/ and wcvs/Dockerfile.
   wcvs:
     build:
-      context: ./wcvs
+      context: ./scanners/wcvs
       dockerfile: Dockerfile
     image: redamon-wcvs:latest
     profiles: ["tools"]
@@ -299,7 +299,7 @@ services:
   codefix-sandbox:
     build:
       context: .
-      dockerfile: codefix_sandbox/Dockerfile
+      dockerfile: scanners/codefix_sandbox/Dockerfile
     image: redamon-codefix-sandbox:latest
     profiles: ["tools"]
 
@@ -309,7 +309,7 @@ services:
   supply-chain-analyzer:
     build:
       context: .
-      dockerfile: supply_chain_analyzer/Dockerfile
+      dockerfile: scanners/supply_chain_analyzer/Dockerfile
     image: redamon-supply-chain-analyzer:latest
     profiles: ["tools"]
 
@@ -318,7 +318,7 @@ services:
   supply-chain:
     build:
       context: .
-      dockerfile: supply_chain_scan/Dockerfile
+      dockerfile: scanners/supply_chain_scan/Dockerfile
     image: redamon-supply-chain:latest
     profiles: ["tools"]
 
@@ -329,7 +329,7 @@ services:
   baddns-scanner:
     build:
       context: .
-      dockerfile: baddns_scan/Dockerfile
+      dockerfile: scanners/baddns_scan/Dockerfile
     image: redamon-baddns:latest
     profiles: ["tools"]
 
@@ -339,7 +339,7 @@ services:
   ai-attack-surface:
     build:
       context: .
-      dockerfile: ai_attack_surface_scan/Dockerfile
+      dockerfile: scanners/ai_attack_surface_scan/Dockerfile
     image: redamon-ai-attack-surface:latest
     profiles: ["tools"]
 
@@ -415,17 +415,17 @@ services:
       - ./recon_orchestrator:/app
       - ./recon:/app/recon:ro
       - ./recon/output:/app/recon/output:rw
-      - ./gvm_scan:/app/gvm_scan:ro
-      - ./gvm_scan/output:/app/gvm_scan/output:rw
-      - ./github_secret_hunt:/app/github_secret_hunt:ro
-      - ./github_secret_hunt/output:/app/github_secret_hunt/output:rw
-      - ./trufflehog_scan:/app/trufflehog_scan:ro
-      - ./trufflehog_scan/output:/app/trufflehog_scan/output:rw
+      - ./scanners/gvm_scan:/app/gvm_scan:ro
+      - ./scanners/gvm_scan/output:/app/gvm_scan/output:rw
+      - ./scanners/github_secret_hunt:/app/github_secret_hunt:ro
+      - ./scanners/github_secret_hunt/output:/app/github_secret_hunt/output:rw
+      - ./scanners/trufflehog_scan:/app/trufflehog_scan:ro
+      - ./scanners/trufflehog_scan/output:/app/trufflehog_scan/output:rw
       # Supply-Chain scan (L1): source mounted so the orchestrator can resolve
       # SUPPLY_CHAIN_PATH (host-path detection) and bind it into the spawned scan.
-      - ./supply_chain_scan:/app/supply_chain_scan:ro
-      - ./supply_chain_scan/output:/app/supply_chain_scan/output:rw
-      - ./ai_attack_surface_scan:/app/ai_attack_surface_scan:ro
+      - ./scanners/supply_chain_scan:/app/supply_chain_scan:ro
+      - ./scanners/supply_chain_scan/output:/app/supply_chain_scan/output:rw
+      - ./scanners/ai_attack_surface_scan:/app/ai_attack_surface_scan:ro
       - ./mcp/nuclei-templates:/app/nuclei-templates:ro
       - /tmp/redamon:/tmp/redamon:rw
       # Shared with the agent: the orchestrator resolves this volume's host path
@@ -994,15 +994,15 @@ services:
       - ./recon/output:/data/recon-output:ro
       - ./recon/wordlists:/data/recon-wordlists:rw
       - ./mcp/nuclei-templates:/data/nuclei-templates:rw
-      - ./gvm_scan/output:/data/gvm-output:ro
-      - ./github_secret_hunt/output:/data/github-hunt-output:ro
-      - ./trufflehog_scan/output:/data/trufflehog-output:ro
+      - ./scanners/gvm_scan/output:/data/gvm-output:ro
+      - ./scanners/github_secret_hunt/output:/data/github-hunt-output:ro
+      - ./scanners/trufflehog_scan/output:/data/trufflehog-output:ro
       # L1 Supply-Chain scan result JSON (supply_chain_<projectId>.json), served
       # read-only by /api/supply-chain/[projectId]/download.
-      - ./supply_chain_scan/output:/data/supply-chain-output:ro
+      - ./scanners/supply_chain_scan/output:/data/supply-chain-output:ro
       # AI Attack Surface native reports (garak/pyrit/giskard/promptfoo) for the
       # transcript drill-down (§9c). Read-only; served via a path-validated route.
-      - ./ai_attack_surface_scan/output:/data/ai-attack-output:ro
+      - ./scanners/ai_attack_surface_scan/output:/data/ai-attack-output:ro
       - report_data:/data/reports
       - js_recon_uploads:/data/js-recon-uploads
       # Supply-chain SBOM/lockfile uploads: webapp writes, the scan reads (ro).
@@ -1042,7 +1042,7 @@ services:
     profiles: ["capture"]
     build:
       context: .
-      dockerfile: capture_proxy/Dockerfile
+      dockerfile: scanners/capture_proxy/Dockerfile
     image: redamon-capture-proxy:latest
     container_name: redamon-capture-proxy
     # confdir=/ca keeps the mitmproxy CA (a forge-anything key, §15.9) on a
@@ -1090,7 +1090,7 @@ services:
     profiles: ["capture"]
     build:
       context: .
-      dockerfile: capture_proxy/Dockerfile
+      dockerfile: scanners/capture_proxy/Dockerfile
     image: redamon-capture-proxy:latest
     container_name: redamon-traffic-ingest
     command: ["python","/app/ingest_worker.py"]

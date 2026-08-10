@@ -19,11 +19,11 @@ RUN useradd -m -u 10001 -s /usr/sbin/nologin capture
 RUN find / -xdev -perm /6000 -type f -exec chmod a-s {} + 2>/dev/null || true
 
 WORKDIR /app
-COPY capture_proxy/redamon_ctx.py \
-     capture_proxy/egress.py \
-     capture_proxy/capture_lib.py \
-     capture_proxy/capture_addon.py \
-     capture_proxy/ingest_worker.py \
+COPY scanners/capture_proxy/redamon_ctx.py \
+     scanners/capture_proxy/egress.py \
+     scanners/capture_proxy/capture_lib.py \
+     scanners/capture_proxy/capture_addon.py \
+     scanners/capture_proxy/ingest_worker.py \
      /app/
 # Bundle the hard-guardrail so the proxy can enforce it WITHOUT any secret or
 # network access (static domain blocklist). Kept in sync with the other copies.

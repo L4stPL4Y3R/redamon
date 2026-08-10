@@ -24,7 +24,7 @@ if _REPO not in sys.path:
 
 _spec = importlib.util.spec_from_file_location(
     "sc_analyzer_entrypoint",
-    os.path.join(_REPO, "supply_chain_analyzer", "entrypoint.py"))
+    os.path.join(_REPO, "scanners", "supply_chain_analyzer", "entrypoint.py"))
 ep = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(ep)
 

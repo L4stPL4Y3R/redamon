@@ -1,8 +1,9 @@
 """Shared pytest configuration for RedAmon (auto-tiering + isolation rules).
 
 This file is intentionally near-identical at every in-container test root
-(agentic/, recon/, recon_orchestrator/, ai_attack_surface_scan/, capture_proxy/,
-docker_broker/, and the repo root). Each container mounts only its own subtree,
+(agentic/, recon/, recon_orchestrator/, scanners/ai_attack_surface_scan/,
+scanners/capture_proxy/, services/docker_broker/, and the repo root). Each
+container mounts only its own subtree,
 so the config must be visible at each in-container rootdir; keep the copies in
 sync.
 

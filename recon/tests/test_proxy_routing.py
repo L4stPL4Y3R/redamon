@@ -20,7 +20,7 @@ from unittest import mock
 
 REPO = Path(__file__).resolve().parents[2]
 RECON_HELPERS = REPO / "recon" / "helpers"
-CAPTURE = REPO / "capture_proxy"
+CAPTURE = REPO / "scanners" / "capture_proxy"
 
 
 def _load(name, path):
