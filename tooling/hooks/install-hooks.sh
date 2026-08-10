@@ -3,17 +3,17 @@
 # install-hooks.sh - propagate the tracked hooks in hooks/ into .git/hooks/.
 #
 # .git/hooks/ is not committed and does not survive a clone, so every clone runs
-# this once:  ./hooks/install-hooks.sh
+# this once:  ./tooling/hooks/install-hooks.sh
 #
 # Idempotent. An existing hook we did not write is backed up to <hook>.local.bak
 # rather than clobbered.
 #
 set -u
 
-REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || (cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd))"
-SRC="$REPO_ROOT/hooks"
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || (cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd))"
+SRC="$REPO_ROOT/tooling/hooks"
 DEST="$(git -C "$REPO_ROOT" rev-parse --git-path hooks 2>/dev/null || echo "$REPO_ROOT/.git/hooks")"
-MARKER="hooks/install-hooks.sh"     # string every managed hook contains, for ownership detection
+MARKER="tooling/hooks/install-hooks.sh"     # string every managed hook contains, for ownership detection
 
 mkdir -p "$DEST"
 installed=0

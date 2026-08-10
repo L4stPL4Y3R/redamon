@@ -242,9 +242,9 @@ knowledge_base/data/
 **/.file_hashes.json
 
 # Deploy plan (local only)
-deploy/DEPLOY_PLAN_EC2.md
-deploy/single-host/E2E_DEPLOY_TEST_PROMPT.md
+tooling/deploy/DEPLOY_PLAN_EC2.md
+tooling/deploy/single-host/E2E_DEPLOY_TEST_PROMPT.md
 redamon-session-*.md
 
 # supply-chain guinea pig dry-run scratch output
-guinea_pigs/supply_chain_target/.dryrun/
+testing/guinea_pigs/supply_chain_target/.dryrun/

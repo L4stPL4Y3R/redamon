@@ -15,7 +15,7 @@ Tiers are inferred from the filename (kept in sync with each conftest.py):
   unit:        everything else
 
 Usage:
-  python scripts/pytest_isolated.py <tier> <testdir> [<testdir> ...]
+  python tooling/scripts/pytest_isolated.py <tier> <testdir> [<testdir> ...]
         [--parallel N] [--cov PKG --cov-floor N]
   tier ∈ {unit, integration, live, all}   (all = unit+integration, skips live)
 

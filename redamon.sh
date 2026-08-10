@@ -2899,7 +2899,7 @@ cmd_help() {
 # its own image with the WHOLE repo mounted at /repo (so cross-layer/sibling
 # imports and git HEAD resolve), test deps runtime-installed if not already
 # baked, and each test FILE isolated in its own pytest subprocess via
-# scripts/pytest_isolated.py (determinism — see readmes/README.TESTING.md).
+# tooling/scripts/pytest_isolated.py (determinism — see docs/readmes/README.TESTING.md).
 # Sections whose image is absent are skipped cleanly.
 #
 #   ./redamon.sh test              # unit gate across all sections (canonical)
@@ -2966,7 +2966,7 @@ _test_run_section() {
         -e CUSTOM_TEMPLATES_PATH=/repo/custom_templates \
         -e CODEFIX_WORK_PATH=/repo/codefix_sandbox \
         --entrypoint sh \
-        "$image" -c "$prep exec python /repo/scripts/pytest_isolated.py $tier $testpaths $cov_args"
+        "$image" -c "$prep exec python /repo/tooling/scripts/pytest_isolated.py $tier $testpaths $cov_args"
 }
 
 cmd_test() {
