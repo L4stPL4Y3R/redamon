@@ -67,7 +67,7 @@ venv/
 ENV/
 env/
 .venv/
-knowledge_base/.redamon-venv/
+services/knowledge_base/.redamon-venv/
 .env.local
 
 # Environment variables / Secrets
@@ -238,7 +238,7 @@ readmes/agent_prompts/
 bmark/
 
 # Knowledge base runtime data
-knowledge_base/data/
+services/knowledge_base/data/
 **/.file_hashes.json
 
 # Deploy plan (local only)

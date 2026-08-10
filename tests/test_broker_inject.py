@@ -7,7 +7,7 @@ import os
 import sys
 import unittest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'docker_broker'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'services', 'docker_broker'))
 
 import broker  # stdlib-only module; importing does not start the server
 

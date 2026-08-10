@@ -354,9 +354,9 @@ services:
   # holds the REAL socket (it is trusted, like the orchestrator) and serves its
   # filtered socket on the redamon_broker_socket named volume (which lives inside
   # the Linux VM, so the unix socket is shareable on macOS + Linux). See
-  # docker_broker/.
+  # services/docker_broker/.
   docker-broker:
-    build: ./docker_broker
+    build: ./services/docker_broker
     image: redamon-docker-broker:latest
     container_name: redamon-docker-broker
     restart: unless-stopped
@@ -779,8 +779,8 @@ services:
       # CodeFix working trees: the agent clones here; the orchestrator bind-mounts
       # each per-job worktree into an isolated build sandbox (T6/E10).
       - cypherfix-work:/app/codefix-work
-      - ./knowledge_base/kb_config.yaml:/app/knowledge_base/kb_config.yaml:ro
-      - ./knowledge_base/data:/app/knowledge_base/data
+      - ./services/knowledge_base/kb_config.yaml:/app/knowledge_base/kb_config.yaml:ro
+      - ./services/knowledge_base/data:/app/knowledge_base/data
       - tradecraft_cache:/app/tradecraft_cache
       # Per-project workspace — fs_* tools, output offloading, background jobs
       - ./agentic/agent-workspace:/workspace
@@ -833,7 +833,7 @@ services:
       KB_PATH: /app/knowledge_base/data
       NVD_API_KEY: "${NVD_API_KEY:-}"
     volumes:
-      - ./knowledge_base/kb_config.yaml:/app/knowledge_base/kb_config.yaml:ro
+      - ./services/knowledge_base/kb_config.yaml:/app/knowledge_base/kb_config.yaml:ro
       - kb_data:/app/knowledge_base/data
     depends_on:
       neo4j:

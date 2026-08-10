@@ -116,13 +116,13 @@ ifeq ($(_NEEDS_BOOTSTRAP),yes)
 		echo "  $(VENV_DIR) doesn't exist yet."; \
 		echo ""; \
 		echo "  Creating $(VENV_DIR) and installing from"; \
-		echo "  ../agentic/requirements.txt (takes 3-10 min on first run"; \
+		echo "  ../../agentic/requirements.txt (takes 3-10 min on first run"; \
 		echo "  due to torch + sentence-transformers downloads)."; \
 		echo ""; \
 		echo "  To use your own Python environment instead:"; \
 		echo "    1. Ctrl-C now"; \
 		echo "    2. Activate your venv (source .../bin/activate)"; \
-		echo "    3. pip install -r ../agentic/requirements.txt"; \
+		echo "    3. pip install -r ../../agentic/requirements.txt"; \
 		echo "    4. Re-run this make command"; \
 		echo "=========================================================="; \
 		echo ""; \
@@ -134,7 +134,7 @@ ifeq ($(_NEEDS_BOOTSTRAP),yes)
 			}; \
 		fi; \
 		"$(VENV_PIP)" install --quiet --upgrade pip; \
-		"$(VENV_PIP)" install -r ../agentic/requirements.txt; \
+		"$(VENV_PIP)" install -r ../../agentic/requirements.txt; \
 		touch "$(VENV_MARKER)"; \
 		echo ""; \
 		echo "✓ Bootstrap complete. Using $(VENV_PYTHON)"; \
@@ -282,10 +282,10 @@ kb-clean-full: kb-clean kb-venv-clean ## Remove Python caches AND $(VENV_DIR) (e
 .PHONY: kb-test-unit kb-test-integration
 
 kb-test-unit: _kb_ensure_deps ## Run unit tests (mocked Neo4j, no infra needed)
-	$(PY_RUN) -m pytest knowledge_base/tests/ -v -m "not neo4j"
+	$(PY_RUN) -m pytest tests/ -v -m "not neo4j"
 
 kb-test-integration: _kb_ensure_deps ## Run all tests including live Neo4j integration
-	$(PY_RUN) -m pytest knowledge_base/tests/ -v
+	$(PY_RUN) -m pytest tests/ -v
 
 # =============================================================================
 # Help

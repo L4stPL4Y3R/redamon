@@ -742,7 +742,7 @@ _migrate_legacy_kbase_flag() {
         touch "$KBASE_DISABLED_FLAG_FILE"
         return
     fi
-    if [[ -s "$SCRIPT_DIR/knowledge_base/data/index.faiss" ]]; then
+    if [[ -s "$SCRIPT_DIR/services/knowledge_base/data/index.faiss" ]]; then
         touch "$KBASE_FLAG_FILE"
     else
         touch "$KBASE_DISABLED_FLAG_FILE"
@@ -1449,7 +1449,7 @@ pull_gvm_images() {
 # Knowledge Base helpers
 # ---------------------------------------------------------------------------
 
-KB_CONFIG_YAML="$SCRIPT_DIR/knowledge_base/kb_config.yaml"
+KB_CONFIG_YAML="$SCRIPT_DIR/services/knowledge_base/kb_config.yaml"
 
 # Read a value from kb_config.yaml. Dotted paths are supported for nested
 # keys. Falls back to $2 if the file, key, or python is unavailable.
@@ -1507,7 +1507,7 @@ _kb_export_env() {
 # `?=` default, so this is authoritative.
 _kb_make() {
     NEO4J_PASSWORD="$(_env_get NEO4J_PASSWORD)" \
-        make -C knowledge_base "$@"
+        make -C services/knowledge_base "$@"
 }
 
 _kb_wait_neo4j() {
@@ -1584,7 +1584,7 @@ _kb_choose_profile() {
     # Note: FAISS files are created by Docker (root-owned, mode 600), so
     # we cannot read their contents as a normal user. Use -s (non-zero size)
     # instead of trying to parse the JSON.
-    local faiss_index="$SCRIPT_DIR/knowledge_base/data/index.faiss"
+    local faiss_index="$SCRIPT_DIR/services/knowledge_base/data/index.faiss"
     if [[ -s "$faiss_index" ]]; then
         info "KB Embedding: CPU mode (FAISS index exists, refreshing unchanged chunks)" >&2
         echo "cpu-lite"
@@ -1656,7 +1656,7 @@ _kb_bootstrap() {
 # required — uses python3's stdlib json module, which is always present.
 # Returns "0" if the file is missing or unreadable.
 _kb_get_faiss_count() {
-    local chunk_ids="$SCRIPT_DIR/knowledge_base/data/chunk_ids.json"
+    local chunk_ids="$SCRIPT_DIR/services/knowledge_base/data/chunk_ids.json"
     if [[ ! -f "$chunk_ids" ]]; then
         echo "0"
         return
@@ -1973,13 +1973,13 @@ cmd_update() {
         # pick up .py changes.
         if echo "$changed_files" | grep -q "^agentic/"; then
             rebuild_core+=(agent)
-        elif echo "$changed_files" | grep -qE "^(knowledge_base|graph_db)/"; then
+        elif echo "$changed_files" | grep -qE "^(services/knowledge_base|graph_db)/"; then
             rebuild_core+=(agent)
         fi
 
         # docker-broker: the Docker-socket filtering proxy. Rebuild when its
-        # source changes (it builds from ./docker_broker, no volume mount).
-        if echo "$changed_files" | grep -q "^docker_broker/"; then
+        # source changes (it builds from ./services/docker_broker, no volume mount).
+        if echo "$changed_files" | grep -q "^services/docker_broker/"; then
             rebuild_core+=(docker-broker)
         fi
     fi
@@ -2560,7 +2560,7 @@ cmd_purge() {
     warn "  - ALL DATA: PostgreSQL, Neo4j, GVM feeds, reports, scan results"
     warn "  - Host-side KB index state (FAISS index, manifest, last-ingest marker)"
     warn "  - KB dedup state (.manifest.json, .file_hashes.json)"
-    warn "  - Downloaded source files under knowledge_base/data/cache are PRESERVED"
+    warn "  - Downloaded source files under services/knowledge_base/data/cache are PRESERVED"
     echo ""
     echo -e "${RED}${BOLD}This action cannot be undone.${NC}"
     echo ""
@@ -2605,7 +2605,7 @@ cmd_purge() {
     # already ingested, so the bootstrap build becomes a no-op and
     # Neo4j stays empty.
     #
-    # The on-disk content under knowledge_base/data/cache (tarballs,
+    # The on-disk content under services/knowledge_base/data/cache (tarballs,
     # CSVs, YAML templates, markdown) is deliberately preserved —
     # those are ~30+ MB of downloaded source files that don't need to
     # be re-fetched from GitHub/GitLab/NVD on every reinstall. What we
@@ -2618,10 +2618,10 @@ cmd_purge() {
     # These files are created by Docker (root-owned), so normal rm may fail.
     # Try without sudo first; escalate only if needed.
     local kb_files=(
-        "$SCRIPT_DIR/knowledge_base/data/index.faiss"
-        "$SCRIPT_DIR/knowledge_base/data/chunk_ids.json"
-        "$SCRIPT_DIR/knowledge_base/data/index.faiss.manifest.json"
-        "$SCRIPT_DIR/knowledge_base/data/.last_ingest"
+        "$SCRIPT_DIR/services/knowledge_base/data/index.faiss"
+        "$SCRIPT_DIR/services/knowledge_base/data/chunk_ids.json"
+        "$SCRIPT_DIR/services/knowledge_base/data/index.faiss.manifest.json"
+        "$SCRIPT_DIR/services/knowledge_base/data/.last_ingest"
     )
     if ! rm -f "${kb_files[@]}" 2>/dev/null; then
         warn "Root-owned files detected, elevating with sudo..."
@@ -2632,17 +2632,17 @@ cmd_purge() {
     fi
 
     info "Removing host-side KB dedup state (manifest + file hashes)..."
-    if ! rm -f "$SCRIPT_DIR/knowledge_base/data/cache/.manifest.json" 2>/dev/null; then
-        sudo rm -f "$SCRIPT_DIR/knowledge_base/data/cache/.manifest.json" \
+    if ! rm -f "$SCRIPT_DIR/services/knowledge_base/data/cache/.manifest.json" 2>/dev/null; then
+        sudo rm -f "$SCRIPT_DIR/services/knowledge_base/data/cache/.manifest.json" \
             || warn "Could not remove root-owned KB manifest; remove manually with sudo."
     fi
     # Wipe every per-source .file_hashes.json without touching the
     # downloaded content alongside it. -print is for operator feedback.
-    if [[ -d "$SCRIPT_DIR/knowledge_base/data/cache" ]]; then
-        if ! find "$SCRIPT_DIR/knowledge_base/data/cache" \
+    if [[ -d "$SCRIPT_DIR/services/knowledge_base/data/cache" ]]; then
+        if ! find "$SCRIPT_DIR/services/knowledge_base/data/cache" \
             -type f -name '.file_hashes.json' -print -delete \
             2>/dev/null; then
-            sudo find "$SCRIPT_DIR/knowledge_base/data/cache" \
+            sudo find "$SCRIPT_DIR/services/knowledge_base/data/cache" \
                 -type f -name '.file_hashes.json' -print -delete \
                 2>/dev/null || true
         fi
@@ -2912,14 +2912,14 @@ _ROOT_RECON_TESTS="test_censys_enrich.py,test_criminalip_enrich.py,test_fofa_enr
 
 # Section spec: name|image|workdir|PYTHONPATH|testpaths|covpkg|exclude
 _TEST_SECTIONS=(
-    "agent|redamon-agent|/repo/agentic|/repo/agentic:/repo:/repo/mcp/servers:/repo/recon_orchestrator|tests|.|"
-    "root-agent|redamon-agent|/repo|/repo:/repo/agentic:/repo/mcp/servers|tests supply_chain_common supply_chain_analyzer supply_chain_scan graph_db knowledge_base mcp|supply_chain_common|${_ROOT_RECON_TESTS}"
+    "agent|redamon-agent|/repo/agentic|/repo/agentic:/repo:/repo/mcp/servers:/repo/recon_orchestrator:/repo/services|tests|.|"
+    "root-agent|redamon-agent|/repo|/repo:/repo/agentic:/repo/mcp/servers:/repo/services|tests supply_chain_common supply_chain_analyzer supply_chain_scan graph_db services/knowledge_base mcp|supply_chain_common|${_ROOT_RECON_TESTS}"
     "root-recon|redamon-recon|/repo|/repo:/repo/recon:/repo/recon/main_recon_modules|tests|.|"
     "recon|redamon-recon|/repo/recon|/repo/recon:/repo|tests|.|"
     "recon_orchestrator|redamon-recon-orchestrator|/repo/recon_orchestrator|/repo/recon_orchestrator:/repo|.|.|"
     "ai_attack_surface|redamon-ai-attack-surface|/repo/ai_attack_surface_scan|/repo/ai_attack_surface_scan:/repo|tests adapters|.|"
     "capture_proxy|redamon-capture-proxy|/repo/capture_proxy|/repo/capture_proxy:/repo|tests|.|"
-    "docker_broker|redamon-docker-broker|/repo/docker_broker|/repo/docker_broker:/repo|.|.|"
+    "docker_broker|redamon-docker-broker|/repo/services/docker_broker|/repo/services/docker_broker:/repo|.|.|"
 )
 
 # For the root-recon section we run ONLY the recon-oriented files, not the whole

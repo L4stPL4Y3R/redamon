@@ -148,10 +148,10 @@ RUN curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/
 
 # Copy application code
 # - graph_db/ : shared Neo4j schema (used by both agent and KB)
-# - knowledge_base/ : KB package (sibling to agentic/, imported as `knowledge_base`)
+# - services/knowledge_base/ : KB package (COPY-baked, imported as `knowledge_base`)
 # - agentic/ : the agent itself (orchestrator, tools, prompts, skills, ...)
 COPY graph_db/ ./graph_db/    
-COPY knowledge_base/ ./knowledge_base/
+COPY services/knowledge_base/ ./knowledge_base/
 COPY agentic/ ./
 
 # Make knowledge_base and graph_db importable as top-level packages
