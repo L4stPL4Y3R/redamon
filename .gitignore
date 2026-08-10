@@ -217,9 +217,13 @@ readmes/AGENT.PROMPTS.md
 readmes/agent_prompts/
 
 
-# Internal docs (top-level only — anchored so it does not also ignore nested
-# dirs named "internal", e.g. webapp/src/app/api/internal/)
-/internal/
+# Local-only working dirs (untracked; not part of the repo)
+# Anchored so they do not also ignore nested dirs of the same name,
+# e.g. webapp/src/app/api/internal/
+/_local/
+
+# DevergoLabs (separate local project kept at repo root, untracked)
+/DevergoLabs/
 
 # RedAmon local config (created by redamon.sh)
 .gvm-enabled
@@ -232,14 +236,10 @@ readmes/agent_prompts/
 
 # Benchmark data
 bmark/
-validation-benchmarks/
 
 # Knowledge base runtime data
 knowledge_base/data/
 **/.file_hashes.json
-
-# DevergoLabs
-DevergoLabs/
 
 # Deploy plan (local only)
 deploy/DEPLOY_PLAN_EC2.md
