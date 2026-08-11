@@ -6,6 +6,14 @@ import { Toggle, WikiInfoButton } from '@/components/ui'
 import type { Project } from '@prisma/client'
 import styles from '../ProjectForm.module.css'
 import { NodeInfoTooltip } from '../NodeInfoTooltip'
+import {
+  HARVESTED_ECOSYSTEM,
+  SUPPLY_CHAIN_ECOSYSTEMS,
+  SUPPLY_CHAIN_ECOSYSTEM_LABELS,
+  parseEcosystems,
+  toggleEcosystem,
+  unknownEcosystemTokens,
+} from './supplyChainEcosystems'
 
 type FormData = Omit<Project, 'id' | 'userId' | 'createdAt' | 'updatedAt' | 'user'>
 
@@ -29,6 +37,11 @@ export function SupplyChainReconSection({ data, updateField, onRun }: SupplyChai
     supplyChainReconDeepAnalysisEnabled?: boolean
   }
   const enabled = !!d.supplyChainReconEnabled
+  // Undefined only on a form that predates the field; "" is a real, empty
+  // selection (no allow-filter) and must not fall back to the default.
+  const storedEcosystems = d.supplyChainReconEcosystems ?? 'npm'
+  const selectedEcosystems = parseEcosystems(storedEcosystems)
+  const unknownTokens = unknownEcosystemTokens(storedEcosystems)
 
   return (
     <div className={styles.section}>
@@ -83,17 +96,43 @@ export function SupplyChainReconSection({ data, updateField, onRun }: SupplyChai
 
               <div className={styles.fieldGroup}>
                 <label className={styles.fieldLabel}>Ecosystems</label>
-                <input
-                  type="text"
-                  className="textInput"
-                  value={d.supplyChainReconEcosystems ?? 'npm'}
-                  onChange={(e) => updateField('supplyChainReconEcosystems' as keyof FormData, e.target.value as never)}
-                  placeholder="npm"
-                />
-                <span className={styles.fieldHint}>
-                  Comma-separated ecosystems to report. Each must be present in the offline database, populated with{' '}
-                  <code>./redamon.sh supply-chain-sync npm</code>. Valid: npm, PyPI, Go, Maven, crates.io, Packagist, RubyGems, NuGet.
-                </span>
+                <p className={styles.fieldHint} style={{ marginBottom: '0.5rem' }}>
+                  Select the ecosystems to report. Each one must be present in the offline database, populated with{' '}
+                  <code>./redamon.sh supply-chain-sync npm</code> (one sync per ecosystem).
+                </p>
+                <div className={styles.checkboxGroup} role="group" aria-label="Ecosystems">
+                  {SUPPLY_CHAIN_ECOSYSTEMS.map((eco) => (
+                    <label key={eco} className="checkboxLabel">
+                      <input
+                        type="checkbox"
+                        className="checkbox"
+                        checked={selectedEcosystems.includes(eco)}
+                        onChange={() => updateField(
+                          'supplyChainReconEcosystems' as keyof FormData,
+                          toggleEcosystem(storedEcosystems, eco) as never,
+                        )}
+                      />
+                      {SUPPLY_CHAIN_ECOSYSTEM_LABELS[eco]}
+                    </label>
+                  ))}
+                </div>
+                {unknownTokens.length > 0 && (
+                  <span className={styles.fieldHint} style={{ color: 'var(--status-warning)' }}>
+                    Not an OSV ecosystem, so nothing can ever match it: {unknownTokens.join(', ')}. It is
+                    dropped as soon as you change the selection.
+                  </span>
+                )}
+                {selectedEcosystems.length === 0 && unknownTokens.length === 0 && (
+                  <span className={styles.fieldHint} style={{ color: 'var(--status-warning)' }}>
+                    Nothing selected, so no filter is applied: every harvested package is reported.
+                  </span>
+                )}
+                {selectedEcosystems.length > 0 && !selectedEcosystems.includes(HARVESTED_ECOSYSTEM) && (
+                  <span className={styles.fieldHint} style={{ color: 'var(--status-warning)' }}>
+                    This module harvests npm packages only, so with npm unticked nothing it harvests is
+                    reported. The retire.js pass is not affected by this filter.
+                  </span>
+                )}
               </div>
 
               <div className={styles.toggleRow}>

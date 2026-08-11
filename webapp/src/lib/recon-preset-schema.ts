@@ -740,7 +740,7 @@ export const RECON_PARAMETER_CATALOG = `
 
 ## Supply Chain (malicious / vulnerable dependencies)
 - supplyChainReconEnabled: boolean - Harvest the package set the live target serves (source maps, imports, detected technologies) and verdict it against the OFFLINE OSV database. Writes Package / MalPackageFinding nodes. Fully passive and offline: it re-uses data JS Recon already downloaded and sends NO extra traffic to the target, so it is safe even in stealth/passive presets. Best paired with jsReconEnabled + jsReconSourceMaps (source-map mining is the richest source); without JS Recon it still maps detected technologies to packages.
-- supplyChainReconEcosystems: string - Comma-separated OSV ecosystems to report (default "npm")
+- supplyChainReconEcosystems: string - Comma-separated OSV ecosystems to report (default "npm"). Matched EXACTLY against the harvested package ecosystem, so use these names verbatim, case included: npm, PyPI, Go, Maven, crates.io, Packagist, RubyGems, NuGet. Empty string means no filter (report every ecosystem)
 - supplyChainReconDeepAnalysisEnabled: boolean - GuardDog behavioural analysis of flagged packages. Downloads untrusted tarballs, so keep false unless explicitly requested
 
 ## JavaScript Analysis - JS Recon (deep)

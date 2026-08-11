@@ -612,10 +612,20 @@ def run_supply_chain_recon(combined_result, settings=None):
     packages = harvest_packages(source_maps=source_maps,
                                 technologies=technologies,
                                 js_contents=js_contents)
+    # Ecosystem allow-filter. Matched EXACTLY against the harvested ecosystem,
+    # so the UI (SupplyChainReconSection) stores canonical OSV names.
+    # An allow-set that is empty AFTER parsing means "no filter": before this,
+    # a whitespace-only value ("  ") was truthy but parsed to an empty set, so
+    # it silently dropped EVERY harvested package instead of dropping none.
+    # NOTE: this filters the harvested set only - the retire.js pass merges into
+    # the artifact further down and is deliberately not filtered (it is npm-only
+    # and is where most real verdicts come from).
     ecos = settings.get("SUPPLY_CHAIN_RECON_ECOSYSTEMS")
     if ecos:
-        allow = {e.strip() for e in ecos.split(",") if e.strip()} if isinstance(ecos, str) else set(ecos)
-        packages = [p for p in packages if p.get("ecosystem") in allow]
+        raw = ecos.split(",") if isinstance(ecos, str) else list(ecos)
+        allow = {str(e).strip() for e in raw if str(e).strip()}
+        if allow:
+            packages = [p for p in packages if p.get("ecosystem") in allow]
 
     artifact = verdict_packages(packages, db_path=_OSV_DB)
 
