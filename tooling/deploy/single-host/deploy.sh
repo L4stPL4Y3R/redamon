@@ -225,6 +225,47 @@ setup_ssh() {
     SUDO_PASS="${SSH_PASSWORD}"
   fi
 
+# ---------------------------------------------------------------------------
+# Refuse an undersized target BEFORE provisioning anything.
+#
+# Without this the deploy installs Docker + nginx, clones the repo and drives
+# redamon.sh install -- 30-60 minutes of work -- only for the host to be too
+# small for the stack it just built. redamon.sh gates too, but by then the box
+# has already been mutated. Checking over SSH costs one round trip.
+#
+# The requirement tracks the ENABLED PROFILES, because GVM roughly doubles it.
+# Override with REDAMON_SKIP_RAM_GATE / REDAMON_SKIP_DISK_GATE, exactly as on the
+# host itself.
+# ---------------------------------------------------------------------------
+precheck_target() {
+  local need_gb=8 need_disk=40 why="core services"
+  if is_true "${ENABLE_GVM}"; then need_gb=16; need_disk=60; why="core + GVM"; fi
+  if is_true "${ENABLE_KB}";  then need_gb=$(( need_gb + 4 )); need_disk=$(( need_disk + 20 )); why="$why + KB"; fi
+
+  local probe mem_gb disk_gb
+  probe="$($SSH "awk '/MemTotal/{printf \"%d\", \$2/1024/1024}' /proc/meminfo; echo ' '; df -BG --output=avail / 2>/dev/null | tail -1 | tr -dc '0-9'" 2>/dev/null)" || true
+  mem_gb="${probe%% *}"; disk_gb="${probe##* }"
+
+  if [[ ! "$mem_gb" =~ ^[0-9]+$ || ! "$disk_gb" =~ ^[0-9]+$ ]]; then
+    warn "Could not read the target's RAM/disk; skipping the precheck (redamon.sh will still gate)."
+    return 0
+  fi
+  log "Target: ~${mem_gb}GB RAM, ${disk_gb}GB free disk (need ~${need_gb}GB / ~${need_disk}GB for ${why})"
+
+  if [[ "$mem_gb" -lt "$need_gb" ]] && ! is_true "${REDAMON_SKIP_RAM_GATE}"; then
+    err "Target has ~${mem_gb}GB RAM; ${why} needs ~${need_gb}GB."
+    err "  Use a bigger instance, disable a profile (ENABLE_GVM/ENABLE_KB=false),"
+    err "  or set REDAMON_SKIP_RAM_GATE=true to proceed anyway (expect OOM kills)."
+    die "Aborted before touching the host."
+  fi
+  if [[ "$disk_gb" -lt "$need_disk" ]] && ! is_true "${REDAMON_SKIP_DISK_GATE}"; then
+    err "Target has ${disk_gb}GB free; the ${why} build needs ~${need_disk}GB."
+    err "  Grow the volume, or set REDAMON_SKIP_DISK_GATE=true (the build may fail part-way)."
+    die "Aborted before touching the host."
+  fi
+  ok "Target sizing OK"
+}
+
   SSH_CONTROL_PATH="/tmp/ssh-redamon-${HOST_IP}-$$"
   local common="-p ${SSH_PORT} -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30 -o ServerAliveCountMax=8 -o ControlMaster=auto -o ControlPath=${SSH_CONTROL_PATH} -o ControlPersist=120"
   local scp_common="-P ${SSH_PORT} -o StrictHostKeyChecking=accept-new -o ControlMaster=auto -o ControlPath=${SSH_CONTROL_PATH} -o ControlPersist=120"
@@ -239,6 +280,7 @@ setup_ssh() {
   log "Establishing SSH to ${REMOTE_USER}@${HOST_IP}:${SSH_PORT} ..."
   $SSH "echo ok" >/dev/null || die "SSH connection failed"
   ok "SSH connected"
+  precheck_target
 }
 cleanup_ssh() {
   # I7: remove the transient remote secrets (deploy.env carries AUTH_SECRET, all

@@ -139,7 +139,9 @@ flag it manages. Control KB with `ENABLE_KB` only.
 ### Resources / tuning
 | Key | Purpose |
 |---|---|
-| `SWAP_SIZE_GB` | Swapfile size when host RAM < 16 GB. `0` skips. |
+| `SWAP_PCT` | Swapfile as a percentage of host RAM, at ANY size (default 25, `0` skips). 25% is what unlocks the memory governor's higher burst factor. |
+| `SWAP_SIZE_GB` | DEPRECATED explicit override in GB; blank uses `SWAP_PCT`. |
+| `OS_RESERVE_PCT` / `SERVICES_PCT` / `BURST_FACTOR` / `BURST_SWAP_MIN_PCT` / `BLAST_PCT` / `DISK_RESERVE_PCT` / `REDAMON_WEIGHT_*` | Memory-governor shares. Percentages only, so the same file is correct on an 8 GB and a 64 GB instance: redamon.sh computes the actual sizes from the target's own RAM. |
 | `REDAMON_SKIP_RAM_GATE` | `true` bypasses the 8 GB floor on tiny boxes (risky). |
 | `REDAMON_BUILD_PARALLEL` | Cap concurrent image builds. Blank -> redamon.sh auto-sizes. |
 | `DOCKER_DNS` | e.g. `8.8.8.8,8.8.4.4` merged into `/etc/docker/daemon.json` if container DNS breaks. |
@@ -337,7 +339,7 @@ its session gate. The browser reaches the agent's WebSockets at `wss://<domain>/
 installed only if missing or too old, idempotently: base apt packages (git, openssl, curl,
 jq, expect, ...), **Docker Engine + Compose v2 from Docker's official repo** (purging any old
 `docker.io`/v1 compose first), the docker service + group membership, nginx, certbot (only
-when letsencrypt is used), ufw, fail2ban, unattended-upgrades, an 8 GB swapfile on < 16 GB
+when letsencrypt is used), ufw, fail2ban, unattended-upgrades, a swapfile sized at `SWAP_PCT` of RAM
 hosts, optional Docker DNS, and inotify limits. Nothing is assumed pre-present.
 
 ## Update and rollback
@@ -361,7 +363,7 @@ Rollback is manual: `git reset --hard <prev>` on the host checkout, then `./depl
 ## Troubleshooting and FAQ
 
 - **RAM gate abort** ("need ~8 GB"): provision more RAM, or set `REDAMON_SKIP_RAM_GATE=true`
-  (risky) and keep `SWAP_SIZE_GB` on.
+  (risky) and keep swap on (`SWAP_PCT`).
 - **certbot fails**: `DOMAIN` must resolve to the host and port 80 must be reachable (open it
   in your cloud Security Group / `OPERATOR_ALLOW_CIDRS` must not block the ACME check - LE
   validates from arbitrary IPs, so 80 must be world-open). Use `LETSENCRYPT_STAGING=true` to

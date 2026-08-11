@@ -238,7 +238,7 @@ This is the primary OOM guarantee for recon. It partitions host RAM:
 
 ```
 host_total
-├─ os_headroom       (OS_HEADROOM_MEM, ~2 GB, never allocated)
+├─ os_headroom       (OS_HEADROOM_MEM, ~8% of RAM, never allocated)
 ├─ service_baseline  (SERVICE_BASELINE_MEM, sum of always-on services)
 └─ scan_pool = host_total − os_headroom − service_baseline
 ```
@@ -690,8 +690,8 @@ All are optional; defaults live in code (empty/unset → default). Documented in
 
 | Var | Default | Meaning |
 |---|---|---|
-| `OS_HEADROOM_MEM` | `2g` | RAM reserved for the OS/kernel, never handed to work. |
-| `SERVICE_BASELINE_MEM` | measured, else `6g` | total RAM the always-on services use; subtracted from the scan pool and used by the startup gate. |
+| `OS_HEADROOM_MEM` | computed (`OS_RESERVE_PCT`, ~8% of RAM) | RAM reserved for the OS/kernel, never handed to work. Written by `redamon.sh`; the built-in fallback is a percentage of host RAM, not a fixed 2g. |
+| `SERVICE_BASELINE_MEM` | measured, else computed (~60% of usable) | total RAM the always-on services use; subtracted from the scan pool and used by the startup gate. Written by the SAME computation that sets the per-service `mem_limit`s, so the scan pool and the service caps cannot disagree. The old flat 6g claimed an entire 8 GB host and under-reserved a 512 GB one by two orders of magnitude. |
 | `RECON_JOB_ENVELOPE_MEM` | measured, else per scan type (§4.3) | expected peak RAM of one recon job (container + siblings), the unit the pool is divided into. Setting it applies ONE figure to every scan type, overriding the per-type table. `0`/invalid is ignored. |
 | `RECON_MAX_CONCURRENT_GLOBAL` | unset -> **no count cap** (STRIDE D3) | hard count cap on globally-concurrent scans across all projects. `0` blocks all new scans. **The code returns `None` (no cap) when the var is unset** - there is no built-in "20"; `docker-compose.yml` supplies `30` as the shipped default, and the scan-queue dispatcher applies its own `JOB_QUEUE_MAX_CONCURRENT` ceiling (default 4) regardless. |
 | `RECON_MAX_CONCURRENT_PER_USER` | `10` (STRIDE D3) | hard count cap on concurrent scans per user, so per-project limits cannot multiply across many projects. |
