@@ -7,8 +7,11 @@
 # Build:  docker compose --profile tools build
 # GVM:    Starts automatically with `docker compose up -d`
 #         (first run takes ~10-15 min for feed sync)
-#         Default credentials: admin / admin (auto-created by gvmd)
+#         Credentials: gvmd auto-creates admin/admin, then `redamon.sh install
+#         --gvm` rotates it to a strong GVM_PASSWORD (pinned in .env) that the app
+#         also uses. Both sides read GVM_PASSWORD, so keep them in sync.
 #         Change password: docker compose exec -u gvmd gvmd gvmd --user=admin --new-password='<password>'
+#         (then set the same value as GVM_PASSWORD in .env and recreate recon-orchestrator)
 # =============================================================================
 
 services:

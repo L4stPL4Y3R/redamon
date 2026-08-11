@@ -379,6 +379,121 @@ else
     echo "== KB Makefile make -n test SKIPPED (make not installed) =="
 fi
 
+# =============================================================================
+# GVM/OpenVAS admin credential provisioning (parity with the DB secrets).
+# Root cause it locks in: the deploy used to rotate gvmd's admin to a random
+# password WITHOUT persisting GVM_PASSWORD, so the app stayed on admin/admin and
+# every GVM scan failed to authenticate. The fix: generate+pin GVM_PASSWORD
+# pre-up (ensure_gvm_secret) and apply it to the live gvmd post-up
+# (reconcile_gvm_admin_password), only when GVM is enabled.
+# =============================================================================
+
+echo "== ensure_gvm_secret: GVM disabled -> no-op =="
+TMP=$(mktemp -d); SCRIPT_DIR="$TMP"; : > "$TMP/.env"
+GVM_FLAG_FILE="$TMP/.gvm-enabled"   # absent -> is_gvm_enabled false
+ensure_gvm_secret >/dev/null 2>&1
+assert_false "no GVM_PASSWORD written when GVM disabled" "grep -q '^GVM_PASSWORD=' '$TMP/.env'"
+rm -rf "$TMP"
+
+echo "== ensure_gvm_secret: GVM enabled -> generate + pin (48 hex), idempotent =="
+TMP=$(mktemp -d); SCRIPT_DIR="$TMP"; : > "$TMP/.env"
+GVM_FLAG_FILE="$TMP/.gvm-enabled"; touch "$GVM_FLAG_FILE"
+ensure_gvm_secret >/dev/null 2>&1
+assert_true  "GVM_PASSWORD generated (48 hex)" "grep -qE '^GVM_PASSWORD=[0-9a-f]{48}\$' '$TMP/.env'"
+ensure_gvm_secret >/dev/null 2>&1
+assert_eq    "GVM_PASSWORD not duplicated" "$(grep -c '^GVM_PASSWORD=' "$TMP/.env")" "1"
+rm -rf "$TMP"
+
+echo "== ensure_gvm_secret: operator-pinned GVM_PASSWORD respected =="
+TMP=$(mktemp -d); SCRIPT_DIR="$TMP"; printf 'GVM_PASSWORD=custom-gvm-pw\n' > "$TMP/.env"
+GVM_FLAG_FILE="$TMP/.gvm-enabled"; touch "$GVM_FLAG_FILE"
+before=$(md5sum "$TMP/.env" | awk '{print $1}')
+ensure_gvm_secret >/dev/null 2>&1
+after=$(md5sum "$TMP/.env" | awk '{print $1}')
+assert_eq    ".env unchanged when GVM_PASSWORD pinned" "$before" "$after"
+rm -rf "$TMP"
+
+echo "== reconcile_gvm_admin_password behaviour (stubbed gvmd) =="
+# Fast + hermetic: sleep is a no-op so the health-wait loop never blocks; docker
+# is only consulted for `inspect` (health); _env_get and the gvmd write are
+# stubbed (an earlier test unset the real _env_get, and stubbing lets us control
+# the password) so we assert whether/what got applied. Output is captured to a
+# FILE, NOT $(...), so reconcile runs in THIS shell and the call counters survive.
+CAP="$(mktemp)"
+sleep() { :; }
+GVMD_HEALTH="healthy"; GVM_ROTATE_CALLS=0; GVM_ROTATE_RC=0; DOCKER_CALLS=0; RECON_GVM_PW="envpw"
+docker() { DOCKER_CALLS=$((DOCKER_CALLS+1)); case "${1:-}" in inspect) echo "$GVMD_HEALTH";; *) return 0;; esac; }
+_rotate_gvm_admin_password() { GVM_ROTATE_CALLS=$((GVM_ROTATE_CALLS+1)); return "$GVM_ROTATE_RC"; }
+_env_get() { [[ "$1" == "GVM_PASSWORD" ]] && echo "$RECON_GVM_PW"; return 0; }
+_reset_gvm() { GVMD_HEALTH="healthy"; GVM_ROTATE_CALLS=0; GVM_ROTATE_RC=0; DOCKER_CALLS=0; RECON_GVM_PW="envpw"; }
+
+# (a) GVM disabled -> immediate 0, touches nothing.
+_reset_gvm; TMP=$(mktemp -d); SCRIPT_DIR="$TMP"; GVM_FLAG_FILE="$TMP/.gvm-enabled"   # absent
+reconcile_gvm_admin_password >"$CAP" 2>&1; rc=$?
+assert_eq "reconcile: disabled -> 0"                 "$rc" "0"
+assert_eq "reconcile: disabled touches no docker"    "$DOCKER_CALLS" "0"
+assert_eq "reconcile: disabled does not rotate"      "$GVM_ROTATE_CALLS" "0"
+rm -rf "$TMP"
+
+# (b) enabled but no GVM_PASSWORD -> 0, no rotate (guard).
+_reset_gvm; RECON_GVM_PW=""; TMP=$(mktemp -d); SCRIPT_DIR="$TMP"; GVM_FLAG_FILE="$TMP/.gvm-enabled"; touch "$GVM_FLAG_FILE"
+reconcile_gvm_admin_password >"$CAP" 2>&1; rc=$?
+assert_eq "reconcile: no GVM_PASSWORD -> 0"          "$rc" "0"
+assert_eq "reconcile: no GVM_PASSWORD does not rotate" "$GVM_ROTATE_CALLS" "0"
+rm -rf "$TMP"
+
+# (c) enabled, gvmd healthy, apply succeeds -> 0, rotated once.
+_reset_gvm; TMP=$(mktemp -d); SCRIPT_DIR="$TMP"; GVM_FLAG_FILE="$TMP/.gvm-enabled"; touch "$GVM_FLAG_FILE"
+reconcile_gvm_admin_password >"$CAP" 2>&1; rc=$?
+assert_eq   "reconcile: healthy+apply-ok -> 0"       "$rc" "0"
+assert_eq   "reconcile: applied exactly once"        "$GVM_ROTATE_CALLS" "1"
+assert_true "reconcile: reports it set the password"  "grep -qi 'GVM admin password set' '$CAP'"
+rm -rf "$TMP"
+
+# (d) enabled, gvmd NEVER healthy -> fail-safe 0, warns, never rotates.
+_reset_gvm; GVMD_HEALTH="starting"; TMP=$(mktemp -d); SCRIPT_DIR="$TMP"; GVM_FLAG_FILE="$TMP/.gvm-enabled"; touch "$GVM_FLAG_FILE"
+reconcile_gvm_admin_password >"$CAP" 2>&1; rc=$?
+assert_eq   "reconcile: gvmd never healthy -> fail-safe 0" "$rc" "0"
+assert_eq   "reconcile: never healthy does not rotate"     "$GVM_ROTATE_CALLS" "0"
+assert_true "reconcile: warns gvmd not healthy"            "grep -qi 'gvmd not healthy' '$CAP'"
+rm -rf "$TMP"
+
+# (e) enabled, healthy, apply fails all retries -> fail-safe 0, retried, warns.
+_reset_gvm; GVM_ROTATE_RC=1; TMP=$(mktemp -d); SCRIPT_DIR="$TMP"; GVM_FLAG_FILE="$TMP/.gvm-enabled"; touch "$GVM_FLAG_FILE"
+reconcile_gvm_admin_password >"$CAP" 2>&1; rc=$?
+assert_eq   "reconcile: apply fails -> fail-safe 0"  "$rc" "0"
+assert_true "reconcile: retried the apply"           "[ '$GVM_ROTATE_CALLS' -ge 2 ]"
+assert_true "reconcile: warns it could not set"      "grep -qi 'Could not set the GVM admin password' '$CAP'"
+rm -rf "$TMP"
+unset -f sleep docker _rotate_gvm_admin_password _env_get _reset_gvm; rm -f "$CAP"
+
+echo "== redamon.sh: GVM provisioning wired into install/update =="
+SRC="$REPO_ROOT/redamon.sh"
+assert_true "ensure_gvm_secret defined"            "grep -q '^ensure_gvm_secret()' '$SRC'"
+assert_true "reconcile_gvm_admin_password defined" "grep -q '^reconcile_gvm_admin_password()' '$SRC'"
+assert_true "_rotate_gvm_admin_password defined"   "grep -q '^_rotate_gvm_admin_password()' '$SRC'"
+# cmd_install: GVM_PASSWORD must be pinned BEFORE the stack comes up.
+i_start=$(grep -n '^cmd_install()' "$SRC" | head -1 | cut -d: -f1)
+i_end=$(awk -v s="$i_start" 'NR>s && /^cmd_[a-z_]*\(\)/{print NR; exit}' "$SRC")
+gen_line=$(awk -v s="$i_start" -v e="$i_end" 'NR>s && NR<e && /ensure_gvm_secret/{print NR; exit}' "$SRC")
+up_line=$(awk -v s="$i_start" -v e="$i_end" 'NR>s && NR<e && /docker compose up -d --force-recreate/{print NR; exit}' "$SRC")
+# anchor at line start so a comment mentioning the function is not mistaken for the call
+apply_line=$(awk -v s="$i_start" -v e="$i_end" 'NR>s && NR<e && /^[[:space:]]*reconcile_gvm_admin_password/{print NR; exit}' "$SRC")
+assert_true "cmd_install pins GVM_PASSWORD ($gen_line) before up ($up_line)" "[[ -n '$gen_line' && -n '$up_line' && '$gen_line' -lt '$up_line' ]]"
+assert_true "cmd_install applies it after up ($apply_line > $up_line)"       "[[ -n '$apply_line' && '$apply_line' -gt '$up_line' ]]"
+# cmd_update: both present.
+u_start=$(grep -n '^cmd_update()' "$SRC" | head -1 | cut -d: -f1)
+u_end=$(awk -v s="$u_start" 'NR>s && /^cmd_[a-z_]*\(\)/{print NR; exit}' "$SRC")
+assert_true "cmd_update pins GVM_PASSWORD"   "awk -v s=$u_start -v e=$u_end 'NR>s&&NR<e&&/ensure_gvm_secret/{f=1} END{exit !f}' '$SRC'"
+assert_true "cmd_update reconciles gvmd"     "awk -v s=$u_start -v e=$u_end 'NR>s&&NR<e&&/reconcile_gvm_admin_password/{f=1} END{exit !f}' '$SRC'"
+
+echo "== deploy.sh: gvm_note no longer mints a throwaway password =="
+DEP="$REPO_ROOT/tooling/deploy/single-host/deploy.sh"
+gn_start=$(grep -n '^gvm_note()' "$DEP" | head -1 | cut -d: -f1)
+gn_end=$(awk -v s="$gn_start" 'NR>s && /^}/{print NR; exit}' "$DEP")
+assert_false "gvm_note does not openssl-rand a new password" "awk -v s=$gn_start -v e=$gn_end 'NR>s&&NR<e&&/openssl rand/{f=1} END{exit !f}' '$DEP'"
+assert_true  "gvm_note reads GVM_PASSWORD from .env"         "awk -v s=$gn_start -v e=$gn_end 'NR>s&&NR<e&&/GVM_PASSWORD=.*\\.env/{f=1} END{exit !f}' '$DEP'"
+
 echo
 echo "-----------------------------------------"
 printf 'Secrets suite: \033[0;32m%d passed\033[0m, ' "$PASS"

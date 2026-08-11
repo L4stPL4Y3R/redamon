@@ -128,7 +128,7 @@ intend to use supply-chain SCA.
 ### Feature flags (map to redamon.sh)
 | Key | Maps to | Notes |
 |---|---|---|
-| `ENABLE_GVM` | `--gvm` | Heavy; 10-20 min feed sync; the deploy rotates GVM's `admin/admin`. |
+| `ENABLE_GVM` | `--gvm` | Heavy; 10-20 min feed sync; the install generates a strong `GVM_PASSWORD` (pinned in the server `.env`) and applies it to gvmd's `admin`. |
 | `ENABLE_KB` | `--kbase` | Bakes ML embedding models (+~4.4 GB image). The real KB switch. |
 | `ENABLE_KB_REFRESH` | kb-refresh sidecar | |
 | `ENABLE_ZRAM` | `REDAMON_ENABLE_ZRAM=1` | Compressed-RAM cushion. |
@@ -287,8 +287,10 @@ Putting it on a public IP invalidates that, so the deploy closes the gap:
   the host's public IP and start the msf handler in RedAmon. (Alternative: a tunnel
   ngrok/chisel to `127.0.0.1:4444` with `TUNNELS_ENABLED=true`; never run a world-open 4444
   and a tunnel at once.)
-- If `ENABLE_GVM=true`, the deploy rotates GVM's default `admin/admin` and prints the new
-  password once.
+- If `ENABLE_GVM=true`, the install generates a strong `GVM_PASSWORD`, pins it in the server
+  `.env`, and applies it to gvmd's `admin` user (so the app and gvmd never disagree). The
+  deploy prints `admin / <password>` once; it is always recoverable with
+  `grep '^GVM_PASSWORD=' ~/redamon/.env` on the host.
 
 ### Cloud firewall / Security Group
 

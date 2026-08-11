@@ -623,14 +623,24 @@ gvm_note() {
   is_true "${ENABLE_GVM}" || return 0
   hr "GVM"
   warn "GVM enabled: feeds sync 10-20 min before scans work."
+  # redamon.sh install (run earlier) is now the single source of truth: it
+  # generates a strong GVM_PASSWORD in the server .env AND applies it to the live
+  # gvmd 'admin' user (ensure_gvm_secret + reconcile_gvm_admin_password). We do
+  # NOT rotate to a fresh random password here — the old code did exactly that and
+  # never persisted it, so the app stayed on admin/admin and every GVM scan failed
+  # to authenticate. Instead we RE-APPLY the pinned .env value (idempotent: gvmd
+  # --new-password needs no old password), which also converges the case where
+  # redamon.sh's reconcile timed out waiting for a slow first-boot gvmd.
   remote <<EOF
 ${PREAMBLE}
 cd "\$APP_PATH"
-NEWPASS="\$(openssl rand -hex 16)"
-if sg docker -c "docker compose exec -T -u gvmd gvmd gvmd --user=admin --new-password='\$NEWPASS'" 2>/dev/null; then
-  success "GVM admin/admin rotated. New GVM admin password (store it): \$NEWPASS"
+GVMPW="\$(grep '^GVM_PASSWORD=' .env 2>/dev/null | head -1 | cut -d= -f2-)"
+if [ -z "\$GVMPW" ]; then
+  warn "GVM_PASSWORD not found in .env; GVM may still be initialising. Check: grep '^GVM_PASSWORD=' \$APP_PATH/.env"
+elif sg docker -c "docker compose exec -T -u gvmd gvmd gvmd --user=admin --new-password='\$GVMPW'" 2>/dev/null; then
+  success "GVM admin credentials: admin / \$GVMPW  (also stored as GVM_PASSWORD in \$APP_PATH/.env)"
 else
-  warn "Could not rotate GVM password now (gvmd may still be starting). Rotate manually: docker compose exec -u gvmd gvmd gvmd --user=admin --new-password=..."
+  warn "gvmd not ready to apply the password yet; it converges on the next './redamon.sh update'. Password is in \$APP_PATH/.env (GVM_PASSWORD)."
 fi
 EOF
 }

@@ -1572,6 +1572,19 @@ _rotate_neo4j_password() {
         "ALTER CURRENT USER SET PASSWORD FROM '${old}' TO '${new}';" >/dev/null 2>&1
 }
 
+# Set the GVM/OpenVAS gvmd 'admin' user's password to <new>. Unlike Postgres and
+# Neo4j, gvmd's admin form needs NO old password: `gvmd --user=admin
+# --new-password` resets it unconditionally, so this is naturally idempotent and
+# works whether the gvmd_data volume is still on the community image's admin/admin
+# default or on a value a prior run already set. Must run inside the gvmd
+# container as the gvmd user. Returns 0 on success. (See ensure_gvm_secret /
+# reconcile_gvm_admin_password for the two-phase generate-then-apply flow.)
+_rotate_gvm_admin_password() {
+    local new="$1"
+    docker exec -u gvmd redamon-gvm-gvmd \
+        gvmd --user=admin --new-password="$new" >/dev/null 2>&1
+}
+
 # True iff `password` authenticates against the running Neo4j.
 _neo4j_auth_ok() {
     docker exec redamon-neo4j cypher-shell -u neo4j -p "$1" 'RETURN 1;' >/dev/null 2>&1
@@ -1777,6 +1790,71 @@ ensure_db_secrets() {
         echo "" >&2
         exit 1
     fi
+}
+
+# GVM/OpenVAS admin credential (STRIDE S13, parity with ensure_db_secrets). The
+# community gvmd image auto-creates the 'admin' user with the weak admin/admin
+# default on first boot and exposes NO env var to preset it — so, exactly like an
+# already-initialised Neo4j volume, the ONLY effective path is to let it boot on
+# the default and then rotate. This half runs PRE-`up`: it generates a strong
+# GVM_PASSWORD and pins it in .env so the recon-orchestrator (which reads
+# GVM_PASSWORD to spawn GVM scan containers, docker-compose.yml) gets the strong
+# value the moment it starts; reconcile_gvm_admin_password() applies the same
+# value to the live gvmd 'admin' user once gvmd is healthy (POST-`up`). Only acts
+# when GVM is enabled; an operator-pinned GVM_PASSWORD is respected. Best-effort:
+# a GVM hiccup must never block a core install, so this only ever appends a line.
+ensure_gvm_secret() {
+    is_gvm_enabled || return 0
+    local env_file="$SCRIPT_DIR/.env"
+    touch "$env_file"
+    if ! grep -q '^GVM_PASSWORD=' "$env_file" 2>/dev/null; then
+        echo "GVM_PASSWORD=$(openssl rand -hex 24)" >> "$env_file"
+        info "Generated strong GVM_PASSWORD (GVM/OpenVAS admin)"
+    fi
+}
+
+# POST-`up`: bring the live gvmd 'admin' user in line with GVM_PASSWORD from .env.
+# gvmd creates 'admin' only after it boots (and only on a FRESH gvmd_data volume
+# is it the admin/admin default), so unlike the DB rotations this cannot run
+# pre-`up`; it waits for gvmd's healthcheck, then unconditionally sets the
+# password (see _rotate_gvm_admin_password — idempotent, needs no old password).
+# Was the deploy-only, print-but-don't-persist gap that left the orchestrator on
+# admin/admin while gvmd's password had moved, so every GVM scan failed to
+# authenticate. Best-effort + fail-safe: warns and returns 0 (never aborts the
+# install) if gvmd never turns healthy or the reset keeps failing, so the core
+# stack is never held hostage to GVM. Only acts when GVM is enabled and .env pins
+# a GVM_PASSWORD (ensure_gvm_secret guarantees the latter on a --gvm run).
+reconcile_gvm_admin_password() {
+    is_gvm_enabled || return 0
+    local pw; pw="$(_env_get GVM_PASSWORD)"
+    [[ -z "$pw" ]] && return 0
+
+    # admin is created early in boot (long before the ~30 min feed sync), so a
+    # healthy gvmd is enough — no need to wait out the feeds.
+    local waited=0 max=180
+    while [[ $waited -lt $max ]]; do
+        [[ "$(docker inspect --format='{{.State.Health.Status}}' redamon-gvm-gvmd 2>/dev/null || echo x)" == "healthy" ]] && break
+        sleep 2; waited=$((waited + 2))
+    done
+    if [[ "$(docker inspect --format='{{.State.Health.Status}}' redamon-gvm-gvmd 2>/dev/null || echo x)" != "healthy" ]]; then
+        warn "gvmd not healthy yet; GVM admin password not applied from .env."
+        warn "Apply later: docker compose exec -u gvmd gvmd gvmd --user=admin --new-password=\"\$(grep '^GVM_PASSWORD=' .env | cut -d= -f2-)\""
+        return 0
+    fi
+
+    # Even a 'healthy' gvmd can reject the first manage call while its Postgres
+    # connection warms up; a short retry covers that window.
+    local attempt
+    for attempt in 1 2 3 4 5; do
+        if _rotate_gvm_admin_password "$pw"; then
+            success "GVM admin password set from .env (gvmd 'admin' no longer admin/admin)."
+            return 0
+        fi
+        sleep 3
+    done
+    warn "Could not set the GVM admin password automatically (gvmd busy)."
+    warn "Apply later: docker compose exec -u gvmd gvmd gvmd --user=admin --new-password=\"\$(grep '^GVM_PASSWORD=' .env | cut -d= -f2-)\""
+    return 0
 }
 
 # S11: minimum admin-password length enforced at creation and reset.
@@ -2360,6 +2438,9 @@ cmd_install() {
     ensure_auth_secrets
     ensure_volume_ownership
     ensure_db_secrets
+    # Pin a strong GVM admin password BEFORE `up`, so the orchestrator starts with
+    # it; reconcile_gvm_admin_password (post-up) applies it to the live gvmd.
+    ensure_gvm_secret
 
     # Build all images (tools + core services + the on-demand capture proxy).
     # The capture-proxy / traffic-ingest pair lives in the "capture" profile and is
@@ -2457,8 +2538,12 @@ cmd_install() {
     echo -e "  ${CYAN}https://github.com/samugit83/redamon${NC}"
     echo ""
     if [[ "$gvm_mode" == "true" ]]; then
+        # Apply the pinned GVM_PASSWORD to the live gvmd 'admin' user (gvmd only
+        # created it during the `up` above). Runs last so core readiness is
+        # announced first; best-effort (never aborts the install).
+        reconcile_gvm_admin_password
         warn "GVM/OpenVAS feed sync takes ~30 minutes on first run."
-        echo -e "  ${CYAN}GVM credentials:${NC} admin / admin"
+        echo -e "  ${CYAN}GVM credentials:${NC} admin / (see GVM_PASSWORD in .env)"
     fi
 }
 
@@ -2694,6 +2779,9 @@ cmd_update() {
     ensure_auth_secrets
     ensure_volume_ownership
     ensure_db_secrets
+    # Same generate-before-recreate ordering as the DB/auth secrets: pin
+    # GVM_PASSWORD so the recon-orchestrator recreate below picks it up.
+    ensure_gvm_secret
 
     # Rebuild tool-profile images. A tool image is build-only (not a running core
     # service), so a failure here must NOT abort the rest of the update (core
@@ -2757,6 +2845,12 @@ cmd_update() {
         pull_gvm_images true
         docker compose up -d --force-recreate gvm-redis gvm-postgres gvmd gvm-ospd
     fi
+
+    # Converge the gvmd 'admin' password onto GVM_PASSWORD from .env. Runs on every
+    # GVM-enabled update (self-guards + idempotent), so an existing install left on
+    # a stale/mismatched GVM admin — e.g. one provisioned before this fix — is
+    # repaired in one `update`, not just when docker-compose.yml changed.
+    is_gvm_enabled && reconcile_gvm_admin_password
 
     # Restart services with volume-mounted code changes (no rebuild needed).
     #
