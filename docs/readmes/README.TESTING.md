@@ -55,9 +55,31 @@ alias for `unit`).
 | ai_attack_surface | `redamon-ai-attack-surface` | `scanners/ai_attack_surface_scan/tests` + `adapters/*/tests` |
 | capture_proxy | `redamon-capture-proxy` | `scanners/capture_proxy/tests` |
 | docker_broker | `redamon-docker-broker` | `services/docker_broker/` |
+| shell | (host bash) | `tests/*_test.sh` |
 | webapp | (node) | `webapp/src/**/*.test.ts(x)` via vitest |
 
 A section whose image is not built is **skipped cleanly**, never failed.
+
+### The `shell` section
+
+Parts of RedAmon are bash, not Python: the proportional memory allocator, the
+preflight RAM/disk gates, secret and admin handling, and the `tooling/deploy`
+driver. Those are covered by `tests/*_test.sh`, which run **on the host** (they
+`source redamon.sh` — the `BASH_SOURCE` guard at the bottom of the script stops
+the command dispatch from firing) and need no image.
+
+They run in the same tiers as webapp (`unit`, `all`, `coverage`), so the
+canonical `./redamon.sh test` gate covers them. Every suite matched by the glob
+must be **hermetic or self-skipping**: one that needs a live stack (e.g.
+`scan_timeline_db_test.sh` without postgres) prints a `SKIP` line and exits 0.
+Smoke/live shell suites are named `*_smoke.sh` / `*_live.sh` and are deliberately
+not matched.
+
+A failing file is reported with the command to re-run it on its own:
+
+```
+  FAIL  redamon_governor_test.sh (exit 1) — re-run: bash tests/redamon_governor_test.sh
+```
 
 ---
 

@@ -44,3 +44,25 @@ RedAmon is fully Dockerized and runs on **any OS** that supports Docker and Dock
 | SYN scans (naabu, masscan) miss hosts on the local LAN | `network_mode: host` joins Docker Desktop's LinuxKit VM, not the Mac's network | Expected on Docker Desktop. Internet targets work normally; for LAN scans, run RedAmon on a Linux host |
 | Login fails after install with no error in logs | Non-interactive shell (CI, agents, some multiplexers) injected a `\u0001` SOH byte into the admin email/password prompt | Run `./redamon.sh create-admin` to (re)create the admin cleanly (`reset-password` only works once an admin already exists) |
 | No admin prompt appeared at install / can't log in | Webapp was slow to come up on first boot (common with `--gvm` or a small VM), so the automatic admin prompt was skipped | Run `./redamon.sh create-admin` once the stack is up (`./redamon.sh status`); it waits for the webapp, then prompts. Safe to re-run |
+
+---
+
+## The graph page hangs, 502s, or Neo4j logs "network aborts"
+
+These three symptoms usually appear together on a project with a very large
+graph. They have distinct causes, so check them in this order.
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| Neo4j logs `Increase in network aborts detected`, connection count climbs steadily | **Fixed in this release.** The webapp used to create a new Neo4j driver (and a new pool of up to 50 Bolt connections) on *every* production request, abandoning the previous one | Update. Confirm with `CALL dbms.listConnections()` — the count must stay flat while you reload the graph page, not climb |
+| API requests sit in `[pending]` forever, no error, no timeout | **Fixed in this release.** The driver's connection timeouts only bound *acquiring* a connection, so an unbounded whole-graph query ran forever | Update. Tune with `NEO4J_QUERY_TIMEOUT_MS` (default 120000) if you legitimately run long analytical queries |
+| HTTP 502 from nginx, `recv() failed (104: Connection reset by peer)` in its error log | The webapp container was OOM-killed mid-response. A reset with no timeout means the process died, rather than the request being slow | Check `./redamon.sh status` for OOM-killed containers and restart counts. Memory limits are sized from host RAM automatically; see [README.MEMORY_GOVERNOR.md](README.MEMORY_GOVERNOR.md) |
+| Containers OOM-killed generally | Host genuinely too small, or limits pinned by hand in `.env` | `./redamon.sh status` shows the computed allocation and warns when a running container has drifted from it |
+
+Useful checks:
+
+```bash
+./redamon.sh status                                    # OOM kills, restarts, allocation, disk
+docker logs redamon-neo4j --tail 50 | grep -i abort    # Bolt connection aborts
+docker inspect redamon-webapp --format '{{.RestartCount}} {{.State.OOMKilled}}'
+```

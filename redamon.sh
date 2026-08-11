@@ -405,13 +405,338 @@ preflight_disk_gate() {
     return 0
 }
 
-# Export a clamped "<mb>m" cap for VAR unless the user already set it.
-_export_clamped_cap() {
-    local var="$1" val="$2" floor="$3" ceil="$4"
-    [[ -n "${!var:-}" ]] && return 0          # respect explicit override
-    [[ "$val" -lt "$floor" ]] && val="$floor"
-    [[ "$val" -gt "$ceil" ]] && val="$ceil"
-    export "$var=${val}m"
+# =============================================================================
+# Proportional memory allocator
+#
+# ONE input -- the host's MemTotal -- and every limit is a percentage of it.
+# There are no fixed sizes here: a bigger host gets bigger limits, at every size,
+# without touching config. The previous scheme gave each service an independent
+# percentage with a hard ceiling, which meant the always-on services took 89% of
+# an 8 GB host and 4% of a 512 GB one, and four services were not sized at all.
+#
+#   os_reserve = MemTotal x OS_RESERVE_PCT
+#   usable     = MemTotal - os_reserve
+#   services   = usable x SERVICES_PCT          <- the guaranteed budget
+#   scan_pool  = usable - services              <- what admission may hand out
+#   service_i  = services x weight_i / SUM(weights)
+#
+# TIERS. `mem_limit` is a ceiling, not a reservation, so unused headroom costs
+# nothing and may be over-committed -- EXCEPT where the process really allocates
+# its share up front. Neo4j pre-allocates the page cache and Postgres its
+# shared_buffers, so those are `r` (reserved) and are never multiplied. Every
+# other service is `b` (burst) and gets BURST_FACTOR x its fair share, so one
+# busy service can use the headroom the others are not touching.
+#
+# FLOORS are the only absolute numbers, and they are a property of the SOFTWARE
+# (a JVM cannot boot in 128 MB), not of the host. They never bind at >= 8 GB; on
+# a smaller host the allocator reports infeasible rather than handing out limits
+# that cannot work.
+#
+# Every knob is a percentage and env-overridable. Keep the weights in sync with
+# docs/readmes/README.MEMORY_GOVERNOR.md.
+# =============================================================================
+
+# name:weight(per-mille of the services pool):floor(MB):tier(r=reserved,b=burst)
+_MEM_SPECS_BASE="NEO4J:320:1024:r POSTGRES:80:256:r AGENT:180:768:b WEBAPP:180:512:b KALI:100:512:b RECON_ORCHESTRATOR:60:256:b CAPTURE_PROXY:40:128:b DOCKER_BROKER:20:96:b TRAFFIC_INGEST:20:96:b"
+# Optional profiles ADD weight; the sum is renormalised, so enabling one shrinks
+# everybody else proportionally instead of over-committing the host.
+_MEM_SPEC_GVM="GVMD:180:768:b"
+_MEM_SPEC_KB="KB_REFRESH:150:512:b"
+
+# Results, published as parallel indexed arrays (NOT associative: redamon.sh
+# supports macOS, whose system bash is 3.2). Read by persist_memory_env and
+# cmd_status.
+_ALLOC_NAMES=()
+_ALLOC_MB=()
+_ALLOC_FLOORS=()
+_ALLOC_TIERS=()
+_ALLOC_WEIGHTS=()
+_ALLOC_OWNED=()
+_ALLOC_OS_MB=0
+_ALLOC_SERVICES_MB=0
+_ALLOC_SCAN_MB=0
+_ALLOC_TOTAL_MB=0
+_ALLOC_FEASIBLE=1
+_ALLOC_SHORTFALL_MB=0
+
+# Markers around the block in .env that the allocator owns and regenerates.
+# Anything OUTSIDE it is the operator's and is never touched.
+_MEM_BLOCK_BEGIN="# >>> redamon memory governor (auto) >>>"
+_MEM_BLOCK_END="# <<< redamon memory governor <<<"
+
+# True when VAR is assigned in .env OUTSIDE the managed block, i.e. an operator
+# pin rather than something we wrote ourselves last run.
+_env_pin_outside_block() {
+    local var="$1" env_file="$SCRIPT_DIR/.env"
+    [[ -r "$env_file" ]] || return 1
+    # A BARE `VAR=` is a placeholder, not a pin. .env.example lists every knob
+    # that way, so treating it as a pin would make the allocator skip the export
+    # and leave compose interpolating an EMPTY mem_limit -- which fails to start
+    # the whole stack on any .env copied from the example.
+    awk -v b="$_MEM_BLOCK_BEGIN" -v e="$_MEM_BLOCK_END" -v v="$var" '
+        $0 == b { inblk = 1; next }
+        $0 == e { inblk = 0; next }
+        !inblk && $0 ~ ("^[[:space:]]*" v "=[[:space:]]*[^[:space:]]") { found = 1 }
+        END { exit(found ? 0 : 1) }
+    ' "$env_file"
+}
+
+# "1.75" -> 175. Percent-integer so the rest stays integer bash math. Anything
+# below 1.0 (which would SHRINK a ceiling below its fair share) clamps to 100.
+_factor_to_pct() {
+    local v="${1:-}"
+    [[ "$v" =~ ^[0-9]+([.][0-9]+)?$ ]] || { printf '175'; return; }
+    awk -v n="$v" 'BEGIN{ p = int(n*100 + 0.5); if (p < 100) p = 100; printf "%d", p }'
+}
+
+# Read a tuning knob from the shell environment, falling back to .env.
+#
+# redamon.sh deliberately does NOT source .env (it must not inherit every app
+# var into its own shell), so a knob documented in .env.example would otherwise
+# be SILENTLY INERT -- the operator sets SERVICES_PCT=70, nothing changes, and
+# nothing says why. This is the same class of bug as the memory pins that used to
+# be overwritten on every `up`. Values inside the governor's own managed block
+# are skipped: those are outputs, not knobs.
+_env_knob() {
+    local var="$1" v="${!1:-}"
+    [[ -n "$v" ]] && { printf '%s' "$v"; return; }
+    local env_file="$SCRIPT_DIR/.env"
+    [[ -r "$env_file" ]] || return 0
+    awk -v b="$_MEM_BLOCK_BEGIN" -v e="$_MEM_BLOCK_END" -v v="$var" '
+        $0 == b { inblk = 1; next }
+        $0 == e { inblk = 0; next }
+        !inblk && index($0, v "=") == 1 { val = substr($0, length(v) + 2) }
+        END { gsub(/^[[:space:]]+|[[:space:]]+$/, "", val); print val }
+    ' "$env_file"
+}
+
+# An integer percentage knob, with a default and a sane range.
+_pct_env() {
+    local var="$1" def="$2" lo="$3" hi="$4" v
+    v="$(_env_knob "$var")"
+    [[ "$v" =~ ^[0-9]+$ ]] || { printf '%s' "$def"; return; }
+    [[ "$v" -lt "$lo" || "$v" -gt "$hi" ]] && { printf '%s' "$def"; return; }
+    printf '%s' "$v"
+}
+
+# Total swap in MB (Linux/WSL; 0 elsewhere, which is the safe answer).
+_swap_total_mb() {
+    local kb=""
+    [[ -r /proc/meminfo ]] && kb="$(awk '/^SwapTotal:/ { print $2; exit }' /proc/meminfo 2>/dev/null)"
+    [[ "$kb" =~ ^[0-9]+$ ]] || { printf '0'; return; }
+    printf '%d' $(( kb / 1024 ))
+}
+
+# Burst multiplier. Swap (or zram) lets a simultaneous peak degrade by paging
+# instead of OOM-killing, so ceilings can be over-committed further when it
+# exists -- but only if there is ENOUGH of it. Measured across 8G..128G hosts,
+# burst 2.5 over-commits by a steady ~21% of RAM, so the cushion is required to
+# cover that (25% for margin) instead of merely being present. A 64 MB zram
+# device must not unlock a multi-GB over-commit.
+_burst_pct() {
+    local bf; bf="$(_env_knob BURST_FACTOR)"
+    if [[ -n "$bf" ]]; then _factor_to_pct "$bf"; return; fi
+    local total="${BUILD_MEM_MB:-0}" swap min_pct
+    swap="$(_swap_total_mb)"
+    min_pct="$(_pct_env BURST_SWAP_MIN_PCT 25 1 100)"
+    if [[ "$total" -gt 0 && "$swap" -ge $(( total * min_pct / 100 )) ]]; then
+        printf '250'
+    else
+        printf '175'
+    fi
+}
+
+# The specs for the profiles that are actually enabled.
+_mem_specs() {
+    local specs="$_MEM_SPECS_BASE"
+    is_gvm_enabled 2>/dev/null && specs="$specs $_MEM_SPEC_GVM"
+    is_kbase_enabled 2>/dev/null && specs="$specs $_MEM_SPEC_KB"
+    printf '%s' "$specs"
+}
+
+# True when VAR is pinned by the operator: in the shell environment, or in .env
+# OUTSIDE the governor's managed block. Compose gives the shell priority over
+# .env, so exporting a computed value over an operator's pin would silently
+# override it -- the bug that made hand-tuned limits revert on every `up`.
+_mem_pinned() {
+    local var="$1"
+    # ...but NOT a value this process exported itself on an earlier pass.
+    # export_resource_caps runs more than once in a single run (e.g. cmd_update
+    # recreates the core services after rebuilding), and without this the second
+    # pass would mistake its own exports for operator pins, own nothing, and
+    # write an EMPTY managed block.
+    _mem_self_exported "$var" && return 1
+    [[ -n "${!var:-}" ]] && return 0
+    _env_pin_outside_block "$var"
+}
+
+# Vars this process has exported itself, as " A B C " for substring matching
+# (bash 3.2: no associative arrays).
+_MEM_SELF_EXPORTED=" "
+_mem_self_exported() {
+    case "$_MEM_SELF_EXPORTED" in *" $1 "*) return 0 ;; esac
+    return 1
+}
+
+# Compute the allocation. Exports every *_MEM / NEO4J_* var that is not pinned.
+# Returns 1 when the host cannot even satisfy the software floors, having still
+# exported the floor values so callers that ignore the status get a sane stack.
+allocate_memory() {
+    detect_build_resources
+    # Reset EVERY result, including _ALLOC_OWNED/_ALLOC_TOTAL_MB, before the
+    # bail-out below: leaving them set would let persist_memory_env write a block
+    # from a previous call's state on a host whose RAM we can no longer read.
+    _ALLOC_NAMES=(); _ALLOC_MB=(); _ALLOC_OWNED=()
+    _ALLOC_FEASIBLE=1; _ALLOC_SHORTFALL_MB=0; _ALLOC_TOTAL_MB=0
+    [[ "${BUILD_MEM_MB:-0}" -le 0 ]] && return 0      # RAM undetectable: fail open
+
+    local total="$BUILD_MEM_MB"
+    local os_pct svc_pct burst_pct
+    os_pct="$(_pct_env OS_RESERVE_PCT 8 1 50)"
+    svc_pct="$(_pct_env SERVICES_PCT 65 10 95)"
+    burst_pct="$(_burst_pct)"
+
+    local os_mb usable_mb services_mb scan_mb blast_mb
+    os_mb=$(( total * os_pct / 100 ))
+    usable_mb=$(( total - os_mb ))
+    services_mb=$(( usable_mb * svc_pct / 100 ))
+    scan_mb=$(( usable_mb - services_mb ))
+    # Nothing may take more than this share of the host, so one runaway service
+    # cannot starve the databases. Proportional, mirroring PER_CONTAINER_MAX in
+    # recon_orchestrator/resource_governor.py.
+    blast_mb=$(( total * "$(_pct_env BLAST_PCT 55 20 90)" / 100 ))
+
+    # Parse the specs ONCE into parallel arrays; the passes below then need no
+    # re-parsing (and no subshells) per service.
+    local spec name weight floor tier w_override wsum=0 floorsum=0
+    _ALLOC_FLOORS=(); _ALLOC_TIERS=(); _ALLOC_WEIGHTS=()
+    for spec in $(_mem_specs); do
+        IFS=':' read -r name weight floor tier <<< "$spec"
+        # A per-service weight override keeps the model proportional: it changes
+        # the SHARE, never a size.
+        w_override="$(_env_knob "REDAMON_WEIGHT_${name}")"
+        [[ "$w_override" =~ ^[0-9]+$ ]] && weight="$w_override"
+        [[ "$weight" =~ ^[0-9]+$ ]] || weight=0
+        wsum=$(( wsum + weight ))
+        floorsum=$(( floorsum + floor ))
+        _ALLOC_NAMES+=("$name")
+        _ALLOC_WEIGHTS+=("$weight")
+        _ALLOC_FLOORS+=("$floor")
+        _ALLOC_TIERS+=("$tier")
+    done
+    [[ "$wsum" -le 0 ]] && wsum=1
+
+    local i n=${#_ALLOC_NAMES[@]}
+
+    # Infeasible: the software's own minimums exceed the services budget. Pin
+    # everyone at their floor, skip the burst multiplier (a host that cannot even
+    # meet the minimums must not be handed over-committed ceilings), and report
+    # it -- preflight_ram_gate turns this into the refusal.
+    if [[ "$floorsum" -gt "$services_mb" ]]; then
+        _ALLOC_FEASIBLE=0
+        _ALLOC_SHORTFALL_MB=$(( floorsum - services_mb ))
+        for (( i = 0; i < n; i++ )); do _ALLOC_MB[$i]="${_ALLOC_FLOORS[$i]}"; done
+        _ALLOC_OS_MB="$os_mb"; _ALLOC_SERVICES_MB="$services_mb"
+        _ALLOC_SCAN_MB="$scan_mb"; _ALLOC_TOTAL_MB="$total"
+        _mem_export_all
+        return 1
+    fi
+
+    # --- fair shares, then raise anyone under its floor and reclaim the deficit
+    # --- proportionally from those still above theirs. Iterate to a fixpoint.
+    for (( i = 0; i < n; i++ )); do
+        _ALLOC_MB[$i]=$(( services_mb * ${_ALLOC_WEIGHTS[$i]} / wsum ))
+    done
+
+    local pass deficit above cur
+    for pass in 1 2 3 4 5; do
+        deficit=0; above=0
+        for (( i = 0; i < n; i++ )); do
+            floor="${_ALLOC_FLOORS[$i]}"; cur="${_ALLOC_MB[$i]}"
+            if [[ "$cur" -lt "$floor" ]]; then
+                deficit=$(( deficit + floor - cur ))
+            else
+                above=$(( above + cur - floor ))
+            fi
+        done
+        [[ "$deficit" -eq 0 ]] && break
+        [[ "$above" -le 0 ]] && break
+        for (( i = 0; i < n; i++ )); do
+            floor="${_ALLOC_FLOORS[$i]}"; cur="${_ALLOC_MB[$i]}"
+            if [[ "$cur" -lt "$floor" ]]; then
+                _ALLOC_MB[$i]="$floor"
+            else
+                _ALLOC_MB[$i]=$(( cur - (cur - floor) * deficit / above ))
+            fi
+        done
+    done
+
+    # --- burst multiplier on ceiling-type services only, then the blast bound
+    for (( i = 0; i < n; i++ )); do
+        cur="${_ALLOC_MB[$i]}"; floor="${_ALLOC_FLOORS[$i]}"
+        [[ "${_ALLOC_TIERS[$i]}" == "b" ]] && cur=$(( cur * burst_pct / 100 ))
+        [[ "$cur" -gt "$blast_mb" ]] && cur="$blast_mb"
+        [[ "$cur" -lt "$floor" ]] && cur="$floor"
+        _ALLOC_MB[$i]="$cur"
+    done
+
+    _ALLOC_OS_MB="$os_mb"
+    _ALLOC_SERVICES_MB="$services_mb"
+    _ALLOC_SCAN_MB="$scan_mb"
+    _ALLOC_TOTAL_MB="$total"
+
+    _mem_export_all
+    [[ "$_ALLOC_FEASIBLE" -eq 1 ]]
+}
+
+# Export the computed values, skipping anything the operator pinned. Neo4j is
+# special: its container limit must exceed heap + page cache or the JVM is
+# OOM-killed at boot, so the three are derived together from its one share.
+_mem_export_all() {
+    local i n=${#_ALLOC_NAMES[@]} name mb var
+    _ALLOC_OWNED=()
+    for (( i = 0; i < n; i++ )); do
+        name="${_ALLOC_NAMES[$i]}"; mb="${_ALLOC_MB[$i]}"
+        if [[ "$name" == "NEO4J" ]]; then
+            local heap pc eff_heap eff_pc
+            heap=$(( mb * 50 / 100 ))
+            pc=$(( mb * 35 / 100 ))
+            # The remaining 15% is JVM overhead (metaspace, threads, direct
+            # buffers) -- proportional, replacing a flat +1024m that made the
+            # container limit drift relative to the heap on large hosts.
+            _mem_own NEO4J_HEAP      "${heap}m"
+            _mem_own NEO4J_PAGECACHE "${pc}m"
+            # Derive the container limit from the EFFECTIVE heap/pagecache so an
+            # operator's pin can never produce a cap below the JVM heap.
+            eff_heap="$(_size_to_mb "${NEO4J_HEAP:-${heap}m}")"; [[ -z "$eff_heap" ]] && eff_heap="$heap"
+            eff_pc="$(_size_to_mb "${NEO4J_PAGECACHE:-${pc}m}")"; [[ -z "$eff_pc" ]] && eff_pc="$pc"
+            [[ $(( eff_heap + eff_pc )) -ge "$mb" ]] && mb=$(( (eff_heap + eff_pc) * 100 / 85 ))
+            _mem_own NEO4J_MEM "${mb}m"
+            _ALLOC_MB[$i]="$mb"
+            continue
+        fi
+        _mem_own "${name}_MEM" "${mb}m"
+    done
+    # Feed the scan governor from the SAME computation, so admission stops
+    # guessing. service_baseline is the guaranteed services budget (NOT the sum
+    # of burst ceilings: modelling ceilings as usage would refuse scans while RAM
+    # sat free), which makes the orchestrator's
+    #   scan_pool = total - os_headroom - service_baseline
+    # identical to ours by construction.
+    _mem_own OS_HEADROOM_MEM      "${_ALLOC_OS_MB}m"
+    _mem_own SERVICE_BASELINE_MEM "${_ALLOC_SERVICES_MB}m"
+}
+
+# Export VAR unless the operator pinned it, recording the ones we own so
+# persist_memory_env writes exactly those into the managed block. Without this
+# record a pinned var would be written back as an EMPTY assignment, which makes
+# compose interpolate `mem_limit:` to nothing and refuse to start.
+_mem_own() {
+    local var="$1" val="$2"
+    _mem_pinned "$var" && return 0
+    export "$var=$val"
+    _ALLOC_OWNED+=("$var")
+    _mem_self_exported "$var" || _MEM_SELF_EXPORTED="${_MEM_SELF_EXPORTED}${var} "
 }
 
 # Export a CPU cap of min(compose default, detected cores) for VAR, unless the
@@ -447,37 +772,129 @@ export_cpu_caps() {
     _export_cpu_cap DOCKER_BROKER_CPUS 2
 }
 
-# Derive per-service memory caps from detected RAM and export them so
-# docker-compose.yml `${VAR:-default}` picks them up. Always-on services get a
-# static generous cap sized to the host (Part 4). No-op if RAM undetectable.
+# Every var the allocator owns. Used by the migration and the managed block.
+_mem_managed_vars() {
+    local spec name
+    for spec in $(_mem_specs); do
+        name="${spec%%:*}"
+        if [[ "$name" == "NEO4J" ]]; then
+            printf 'NEO4J_MEM\nNEO4J_HEAP\nNEO4J_PAGECACHE\n'
+        else
+            printf '%s_MEM\n' "$name"
+        fi
+    done
+    printf 'OS_HEADROOM_MEM\nSERVICE_BASELINE_MEM\n'
+}
+
+# One-time migration, run only when .env has no managed block yet (i.e. the first
+# `up` after this feature landed). Hand-pinned sizes from before the allocator
+# existed -- typically an operator firefighting an OOM with WEBAPP_MEM=4g -- are
+# reported and folded into the block, so the host actually adopts the
+# proportional values. Once the block exists, anything outside it is a DELIBERATE
+# pin and is left alone forever.
+_mem_migrate_legacy_pins() {
+    local env_file="$SCRIPT_DIR/.env"
+    [[ -r "$env_file" ]] || return 0
+    grep -qF "$_MEM_BLOCK_BEGIN" "$env_file" 2>/dev/null && return 0   # not the first run
+
+    local var found=0 old
+    while read -r var; do
+        [[ -z "$var" ]] && continue
+        # Only a real value counts; a bare `VAR=` placeholder (as .env.example
+        # ships them) is nothing to migrate and must be left in place.
+        old="$(grep -E "^[[:space:]]*${var}=[[:space:]]*[^[:space:]]" "$env_file" 2>/dev/null | tail -1)" || true
+        [[ -z "$old" ]] && continue
+        if [[ "$found" -eq 0 ]]; then
+            info "memory governor: folding hand-pinned limits into the managed block"
+            info "  (to keep one, re-add it BELOW the block after this run)"
+            found=1
+        fi
+        info "  ${old#*=} -> computed   (${var})"
+        _env_strip_var "$env_file" "$var"
+    done <<< "$(_mem_managed_vars)"
+    return 0
+}
+
+# Remove every assignment of VAR from a .env file, in place, preserving mode.
+_env_strip_var() {
+    local env_file="$1" var="$2" tmp
+    tmp="$(mktemp "${env_file}.XXXXXX")" || return 0
+    grep -vE "^[[:space:]]*${var}=" "$env_file" > "$tmp" 2>/dev/null || true
+    chmod 600 "$tmp" 2>/dev/null || true
+    mv -f "$tmp" "$env_file"
+}
+
+# Write the computed allocation into a managed block in .env.
+#
+# WHY THIS EXISTS: the values used to be `export`ed into a shell that then
+# exited, so they lived exactly as long as one redamon.sh process. Any later
+# bare `docker compose up -d` -- which is what most people run locally, and what
+# had been run on the server this feature came from -- silently fell back to the
+# compose defaults, a fixed ~12.6 GB budget with no relation to the machine.
+# Persisting makes the allocation hold no matter how the stack is started, and
+# makes it visible to the operator.
+#
+# The block is REGENERATED every run (so resizing the host re-tunes automatically)
+# and everything outside it is left untouched.
+persist_memory_env() {
+    local env_file="$SCRIPT_DIR/.env"
+    [[ "${_ALLOC_TOTAL_MB:-0}" -gt 0 ]] || return 0     # nothing computed; leave .env alone
+    touch "$env_file" 2>/dev/null || return 0
+
+    local tmp
+    tmp="$(mktemp "${env_file}.XXXXXX")" || return 0
+    # Everything outside the block, verbatim (secrets, operator pins, comments).
+    awk -v b="$_MEM_BLOCK_BEGIN" -v e="$_MEM_BLOCK_END" '
+        $0 == b { inblk = 1; next }
+        $0 == e { inblk = 0; next }
+        !inblk { print }
+    ' "$env_file" > "$tmp"
+    # Trim trailing blank lines, or the leading newline we print below would make
+    # the file grow by one line on every run.
+    awk '{ l[NR] = $0 }
+         END { last = NR; while (last > 0 && l[last] ~ /^[[:space:]]*$/) last--;
+               for (i = 1; i <= last; i++) print l[i] }' \
+        "$tmp" > "${tmp}.2" && mv -f "${tmp}.2" "$tmp"
+
+    {
+        printf '\n%s\n' "$_MEM_BLOCK_BEGIN"
+        printf '# Generated by redamon.sh from MemTotal=%sMB. Do not edit: this block is\n' "$_ALLOC_TOTAL_MB"
+        printf '# rewritten on every `up`, so it re-tunes itself when the host is resized.\n'
+        printf '# To pin a value, set it ANYWHERE OUTSIDE this block: the block then omits it\n'
+        printf '# entirely, so there is never a competing assignment and order does not matter.\n'
+        printf '# os_reserve=%sMB  services=%sMB  scan_pool=%sMB\n' \
+            "$_ALLOC_OS_MB" "$_ALLOC_SERVICES_MB" "$_ALLOC_SCAN_MB"
+        # ONLY the vars we own. A pinned one is deliberately absent, so compose
+        # keeps reading the operator's value from outside the block.
+        local var
+        for var in "${_ALLOC_OWNED[@]:-}"; do
+            # `${!var:-}` (never a bare `${!var}`): the caller runs under `set -u`,
+            # so a var that vanished between the export and now must not abort the
+            # whole command mid-write.
+            [[ -z "$var" || -z "${!var:-}" ]] && continue
+            printf '%s=%s\n' "$var" "${!var}"
+        done
+        printf '%s\n' "$_MEM_BLOCK_END"
+    } >> "$tmp"
+
+    chmod 600 "$tmp" 2>/dev/null || true
+    mv -f "$tmp" "$env_file"
+}
+
+# Public entry point: CPU caps + the proportional memory allocation, exported so
+# docker-compose.yml `${VAR:-default}` picks them up, and persisted to .env so a
+# bare `docker compose up` gets the same numbers. Kept as the name every cmd_*
+# already calls. Never fails the caller -- an undersized host is reported by
+# preflight_ram_gate, which reads allocate_memory's status directly.
 export_resource_caps() {
     detect_build_resources
     # CPU caps first: unlike the memory caps they do not depend on RAM
     # detection, so they must be applied before the undetectable-RAM bail-out.
     export_cpu_caps
-    [[ "${BUILD_MEM_MB:-0}" -le 0 ]] && return 0
-    local t="$BUILD_MEM_MB"
-    # neo4j: the container mem_limit MUST exceed heap + pagecache or the JVM gets
-    # OOM-killed. Derive NEO4J_MEM from the (clamped) heap+pagecache plus JVM
-    # overhead headroom (metaspace, threads, direct buffers), never an
-    # independent fraction that could land below heap+pagecache.
-    local heap_mb pc_mb neo_mb eff_heap eff_pc
-    heap_mb=$(( t * 15 / 100 )); [[ "$heap_mb" -lt 512 ]] && heap_mb=512; [[ "$heap_mb" -gt 4096 ]] && heap_mb=4096
-    pc_mb=$(( t * 10 / 100 ));   [[ "$pc_mb"   -lt 512 ]] && pc_mb=512;   [[ "$pc_mb"   -gt 4096 ]] && pc_mb=4096
-    # Derive the container limit from the EFFECTIVE heap/pagecache (a user's
-    # NEO4J_HEAP override wins), or it could land below the JVM heap -> OOM at boot.
-    eff_heap="$(_size_to_mb "${NEO4J_HEAP:-${heap_mb}m}")"; [[ -z "$eff_heap" ]] && eff_heap="$heap_mb"
-    eff_pc="$(_size_to_mb "${NEO4J_PAGECACHE:-${pc_mb}m}")"; [[ -z "$eff_pc" ]] && eff_pc="$pc_mb"
-    neo_mb=$(( eff_heap + eff_pc + 1024 ))
-    [[ -z "${NEO4J_HEAP:-}" ]]      && export NEO4J_HEAP="${heap_mb}m"
-    [[ -z "${NEO4J_PAGECACHE:-}" ]] && export NEO4J_PAGECACHE="${pc_mb}m"
-    [[ -z "${NEO4J_MEM:-}" ]]       && export NEO4J_MEM="${neo_mb}m"
-    _export_clamped_cap AGENT_MEM         $(( t * 12 / 100 )) 1024 4096
-    _export_clamped_cap GVMD_MEM          $(( t * 12 / 100 )) 1024 3072
-    _export_clamped_cap RECON_ORCHESTRATOR_MEM $(( t * 5 / 100 )) 512 2048
-    _export_clamped_cap WEBAPP_MEM        $(( t * 6 / 100 )) 512  2048
-    _export_clamped_cap POSTGRES_MEM      $(( t * 6 / 100 )) 512  2048
-    _export_clamped_cap KALI_MEM          $(( t * 6 / 100 )) 512  2048
+    _mem_migrate_legacy_pins
+    allocate_memory || true
+    persist_memory_env
+    return 0
 }
 
 # Optional one-time compressed-RAM (zram) swap cushion so brief memory overshoots
@@ -3092,11 +3509,55 @@ cmd_test() {
     else
         error "TEST FAILURES ABOVE (tier: $tier)"
     fi
+    # Shell (bash) — the redamon.sh/deploy logic the Python sections cannot reach.
+    # Same tiers as webapp: these suites are hermetic, so they belong in the gate.
+    if [[ "$tier" == "all" || "$tier" == "coverage" || "$tier" == "unit" ]]; then
+        _test_run_shell || failed=1
+    fi
     # Webapp (vitest) — only for the broader tiers; needs node_modules.
     if [[ "$tier" == "all" || "$tier" == "coverage" || "$tier" == "unit" ]]; then
         _test_run_webapp "$tier" || failed=1
     fi
     return $failed
+}
+
+# Bash suites for the parts of the system written in shell: the memory allocator,
+# the preflight gates, secret/admin handling and the deploy driver. They exercise
+# redamon.sh itself (sourcing it — the BASH_SOURCE guard at the bottom stops the
+# dispatch from firing), so they need no image and run on the host.
+#
+# Every suite here MUST be hermetic or self-skip: any that needs a live stack
+# (e.g. scan_timeline_db_test.sh without postgres) exits 0 with a SKIP line.
+# Files named *_smoke.sh / *_live.sh are deliberately NOT matched by the glob.
+_test_run_shell() {
+    local files=("$SCRIPT_DIR"/tests/*_test.sh)
+    if [[ ! -e "${files[0]}" ]]; then
+        warn "SKIP shell suites (no tests/*_test.sh found)"
+        return 0
+    fi
+    info "=== section: shell (bash) ==="
+    local f name rc shell_failed=0 passed=0
+    for f in "${files[@]}"; do
+        name="$(basename "$f")"
+        if bash "$f" >/dev/null 2>&1; then
+            rc=0
+        else
+            rc=$?
+        fi
+        if [[ $rc -eq 0 ]]; then
+            passed=$(( passed + 1 ))
+            echo -e "  ${GREEN}ok${NC}    $name"
+        else
+            shell_failed=1
+            echo -e "  ${RED}FAIL${NC}  $name (exit $rc) — re-run: bash tests/$name"
+        fi
+    done
+    if [[ $shell_failed -eq 0 ]]; then
+        success "shell suites: ${passed} file(s) green"
+    else
+        error "shell suites: failures above"
+    fi
+    return $shell_failed
 }
 
 _test_run_webapp() {
@@ -3132,6 +3593,23 @@ cd "$SCRIPT_DIR"
 case "${1:-help}" in
     help|--help|-h) ;;
     *) export_cpu_caps ;;
+esac
+
+# Memory allocation, for EVERY command that can create or recreate a container.
+# Same reasoning as the CPU clamp above, and it must be here rather than inside
+# each command because they reach `docker compose up` by different routes:
+#   - `install` ends in `docker compose up -d --force-recreate`, so without this
+#     a FRESH install created every container with the compose fallbacks and
+#     wrote no .env block at all -- the allocation only appeared after the first
+#     later `up`.
+#   - `up dev` (cmd_up_dev) never called it either.
+#   - `update` called it only when docker-compose.yml itself had changed, so a
+#     release that touched only source, or a host that had been RESIZED, kept the
+#     previous allocation.
+# Running it here also means the .env block is written BEFORE any `docker compose
+# up` in those commands reads it.
+case "${1:-help}" in
+    install|update|up) export_resource_caps ;;
 esac
 
 case "${1:-help}" in

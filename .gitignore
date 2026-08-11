@@ -221,6 +221,7 @@ docs/readmes/agent_prompts/
 # Anchored so they do not also ignore nested dirs of the same name,
 # e.g. webapp/src/app/api/internal/
 /_local/
+/internal/
 
 # DevergoLabs (separate local project kept at repo root, untracked)
 /DevergoLabs/
@@ -248,3 +249,7 @@ redamon-session-*.md
 
 # supply-chain guinea pig dry-run scratch output
 testing/guinea_pigs/supply_chain_target/.dryrun/
+
+# transient dir used by tests/redamon_env_block_test.sh (docker must see it,
+# so it cannot live in /tmp); always removed by the test itself
+.envblock-test.*

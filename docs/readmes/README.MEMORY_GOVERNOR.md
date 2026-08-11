@@ -460,19 +460,135 @@ falling back to `/proc/meminfo` or macOS `sysctl`) for three host-side functions
   `SERVICE_BASELINE_MEM + OS_HEADROOM_MEM` (with a 512 MB tolerance for kernel overhead), it
   prints a clear message and aborts, turning a mysterious mid-scan OOM into an upfront,
   actionable error. Override with `REDAMON_SKIP_RAM_GATE=1` or `REDAMON_MIN_RAM_MB=<mb>`.
-- **`export_resource_caps`**, derives per-service `mem_limit`s from detected RAM and exports
-  them so `docker-compose.yml`'s `${VAR:-default}` interpolation picks them up. Crucially it
-  derives `NEO4J_MEM` from the *effective* heap + pagecache + overhead (never below the JVM
-  heap), so an operator-set `NEO4J_HEAP` can't produce an OOM-on-boot cap. Run on `up` and,
-  since a recent fix, on `update` too when `docker-compose.yml` changed.
+- **`allocate_memory`** (wrapped by `export_resource_caps`, which also does the CPU caps),
+  the proportional allocator described in §9.1. It exports every per-service `mem_limit` so
+  `docker-compose.yml`'s `${VAR:-default}` interpolation picks them up. Crucially it derives
+  `NEO4J_MEM` from the *effective* heap + pagecache (never below the JVM heap), so an
+  operator-set `NEO4J_HEAP` can't produce an OOM-on-boot cap.
 - **`setup_zram`**, optional, Linux-native host only (a no-op on Docker Desktop / WSL). When
   `REDAMON_ENABLE_ZRAM=1`, it sets up a one-time compressed-RAM swap cushion (zstd) so brief
   overshoots degrade gracefully instead of OOM-killing. Best-effort, never interactive
   (`sudo -n`), never fatal.
 
----
+### 9.1 The proportional allocator
 
-## 10. Calibration (`recon_orchestrator/mem_calibrate.py`)
+**There are no fixed memory sizes.** One input -- the host's `MemTotal` -- and
+every limit is a percentage of it:
+
+```
+os_reserve = MemTotal x OS_RESERVE_PCT        (default 8%)
+usable     = MemTotal - os_reserve
+services   = usable x SERVICES_PCT            (default 65%)  <- guaranteed budget
+scan_pool  = usable - services                (default 35%)  <- admission's pool
+service_i  = services x weight_i / SUM(weights)
+```
+
+The previous scheme gave each service an independent percentage with a hard
+ceiling, and left four services unsized entirely. The result was that the
+always-on services took **89% of an 8 GB host and 4% of a 512 GB one**, and
+above ~40 GB nothing scaled at all. The allocator holds them at a constant share
+of the machine at every size.
+
+**Weights** are per-mille of the services pool and are `REDAMON_WEIGHT_<SVC>`
+overridable. Enabling the GVM or KB profile *adds* weight and renormalises, so
+everyone else shrinks proportionally instead of over-committing the host.
+
+| Service | Weight | Floor | Tier |
+|---|---|---|---|
+| `NEO4J` | 320 | 1024 MB | reserved |
+| `AGENT` | 180 | 768 MB | burst |
+| `WEBAPP` | 180 | 512 MB | burst |
+| `KALI` | 100 | 512 MB | burst |
+| `POSTGRES` | 80 | 256 MB | reserved |
+| `RECON_ORCHESTRATOR` | 60 | 256 MB | burst |
+| `CAPTURE_PROXY` | 40 | 128 MB | burst |
+| `DOCKER_BROKER` | 20 | 96 MB | burst |
+| `TRAFFIC_INGEST` | 20 | 96 MB | burst |
+| `GVMD` (profile) | 180 | 768 MB | burst |
+| `KB_REFRESH` (profile) | 150 | 512 MB | burst |
+
+**Reserved vs burst.** A `mem_limit` is a ceiling, not a reservation, so unused
+headroom costs nothing and may be over-committed. Neo4j pre-allocates its page
+cache and Postgres its `shared_buffers`, so those really do consume their share
+and are **never** multiplied. Every other service is multiplied by
+`BURST_FACTOR` (default **1.75**, automatically **2.5** when swap or zram is
+active, since a simultaneous peak then pages instead of OOM-killing). That lets
+one busy service use headroom the others are not touching.
+
+**Floors** are the only absolute numbers in the system, and they describe the
+*software* (a JVM cannot boot in 128 MB), not the host. They never bind at
+>= 8 GB. Below that, `allocate_memory` returns non-zero and `preflight_ram_gate`
+refuses the host rather than handing out limits that cannot work -- which is why
+8 GB **with GVM + KB enabled** is now correctly rejected up front instead of
+over-committing and OOM-ing later.
+
+**Neo4j's share** is split internally 50% heap / 35% page cache / 15% JVM
+overhead (metaspace, threads, direct buffers). This replaced a flat `+1024m`
+overhead term that made the container limit drift relative to the heap as hosts
+grew.
+
+**Nothing may exceed `BLAST_PCT` (55%) of the host**, mirroring
+`PER_CONTAINER_MAX` in `resource_governor.py`, so a pathological weight cannot
+starve the databases.
+
+**One source of truth.** The same computation exports `OS_HEADROOM_MEM` and
+`SERVICE_BASELINE_MEM`, so the orchestrator's
+`scan_pool = total - os_headroom - service_baseline` reproduces the allocator's
+`scan_pool` exactly. `SERVICE_BASELINE_MEM` is the *guaranteed services budget*,
+deliberately **not** the sum of burst ceilings: modelling ceilings as usage would
+refuse scans while RAM sat free. A measured calibration still wins over it.
+
+**Operator pins are never overwritten.** A value set in the shell environment, or
+in `.env` outside the governor's managed block, is left alone and the computed
+value is not exported. (Compose gives the shell priority over `.env`, so exporting
+over a pin silently reverted hand-tuned limits on every `up` -- see §9.2.)
+
+### 9.2 The managed block in `.env`
+
+The allocation used to be `export`ed into a shell that then exited, so it lived
+exactly as long as one `redamon.sh` process. **A later bare `docker compose up -d`
+fell back to the compose defaults** -- a fixed ~12.6 GB budget with no relation to
+the machine -- which is what most people run locally, and what had been run on
+the production host this work came from. `persist_memory_env` writes the result
+into `.env` instead, so it holds however the stack is started:
+
+```
+# >>> redamon memory governor (auto) >>>
+# Generated by redamon.sh from MemTotal=16384MB. Do not edit: this block is
+# rewritten on every `up`, so it re-tunes itself when the host is resized.
+# To pin a value, set it ANYWHERE OUTSIDE this block: the block then omits it
+# entirely, so there is never a competing assignment and order does not matter.
+# os_reserve=1310MB  services=9798MB  scan_pool=5276MB
+NEO4J_HEAP=1567m
+NEO4J_PAGECACHE=1097m
+NEO4J_MEM=3135m
+...
+OS_HEADROOM_MEM=1310m
+SERVICE_BASELINE_MEM=9798m
+# <<< redamon memory governor <<<
+```
+
+Rules:
+
+- **Regenerated on every `up`**, so resizing the host re-tunes automatically.
+- **Everything outside the block is preserved byte for byte** (secrets, comments,
+  unrelated knobs) and the file stays mode `600`.
+- **A pinned var is omitted from the block entirely**, so there is never a
+  competing assignment and `.env` ordering is irrelevant.
+- **A bare `VAR=` is a placeholder, not a pin.** `.env.example` ships every knob
+  that way; reading it as a pin would leave compose interpolating an empty
+  `mem_limit` and the stack would refuse to start.
+- **One-time migration.** On the first run (no block yet), sizes pinned by hand
+  before the allocator existed -- typically an operator firefighting an OOM with
+  `WEBAPP_MEM=4g` -- are reported and folded in, so the host adopts the
+  proportional values. Once the block exists, anything outside it is a deliberate
+  pin and is left alone forever.
+- **Fail open.** If the host's RAM cannot be read, no block is written and `.env`
+  is untouched.
+
+Covered by [tests/redamon_env_block_test.sh](../../tests/redamon_env_block_test.sh),
+which runs each scenario in a real subprocess and asserts the outcome through
+`docker compose config` rather than by inspecting the file.
 
 Every byte figure the governor relies on is meant to be *measured*, not guessed. The
 calibration harness uses the orchestrator's Docker SDK to sample real per-container memory
@@ -649,6 +765,8 @@ blocking legitimate work:
 | [agentic/tests/test_guarddog_native_tool.py](../../agentic/tests/test_guarddog_native_tool.py) | The agent end of the lane: a 409 refusal must read as retryable and never as a clean package; `ram` vs `hard` are reported as different problems. |
 | [tests/test_guarddog_contract.py](../../tests/test_guarddog_contract.py) | Cross-service field names for BOTH response shapes (result quadruple and the typed limit payload), including that the webapp passes the 409 status through. |
 | [tests/supply_chain_governor_smoke.sh](../../tests/supply_chain_governor_smoke.sh) | SMOKE, needs a running stack: Docker accepts the governed value verbatim, the analyzer really gets it applied (`docker inspect`), no stack container is uncapped, live `/system/stats`, and a real L3 HTTP round trip that reserves and releases. |
+| [tests/redamon_governor_test.sh](../../tests/redamon_governor_test.sh) | bash: `_size_to_mb`, the proportional allocator (`allocate_memory`, weight normalisation, floors, burst factor, blast bound), `preflight_ram_gate`, neo4j heap coherence, `setup_zram` guards. |
+| [tests/redamon_preflight_test.sh](../../tests/redamon_preflight_test.sh) | bash: `preflight_disk_gate`, `_disk_free_gb`, `_docker_disk_path`, the proportional disk threshold, and the fail-open contract. |
 
 > **Test-isolation gotcha, now fixed.** Several suites put a *different* directory on
 > `sys.path` and then `import resource_governor`, so whichever ran first owned the bare
@@ -657,11 +775,17 @@ blocking legitimate work:
 > host RAM**, passing alone and failing in a combined run. The governor suites now fan
 > `set_mem_override` out to every loaded copy (`_all_governors()`) and load each
 > `project_settings.py` by explicit path under a unique name.
-| [tests/redamon_governor_test.sh](../../tests/redamon_governor_test.sh) | bash: `_size_to_mb`, `preflight_ram_gate`, `export_resource_caps` (incl. neo4j heap coherence), `setup_zram` guards. |
 
-Run the Python suites with `python3 -m unittest tests.test_resource_governor …` and the bash
-suite with `bash tests/redamon_governor_test.sh`. The governor and ledger modules are pure
-stdlib and run on the host with no Docker.
+All of the above are covered by the canonical gate: the Python suites run inside
+their section images, and the bash suites run in the `shell` section (see
+[README.TESTING.md](README.TESTING.md#the-shell-section)).
+
+```bash
+./redamon.sh test unit                  # everything, including the bash suites
+bash tests/redamon_governor_test.sh     # one bash suite on its own, while iterating
+```
+
+The governor and ledger modules are pure stdlib and run on the host with no Docker.
 
 ---
 
