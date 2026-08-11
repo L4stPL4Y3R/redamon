@@ -30,7 +30,25 @@ DEFAULT_SUPPLY_CHAIN_SETTINGS: dict[str, Any] = {
     # Read from the USER's global settings, and only in the github input mode.
     # Empty means clone anonymously (public repositories only).
     'GITHUB_ACCESS_TOKEN': '',
+    # The host the repo is cloned from: github.com or the operator's GitHub
+    # Enterprise server. Derived from the repo URL / batch override.
+    'SUPPLY_CHAIN_GITHUB_HOST': 'github.com',
+    # The GHE host the OPERATOR configured, from their global settings. This is
+    # the allowlist the clone is checked against, so it is deliberately NOT
+    # derived from the repo URL: empty means github.com only.
+    'SUPPLY_CHAIN_GHE_HOST': '',
 }
+
+
+def _host_from_repo_url(value: str) -> str:
+    """The hostname of a full https repo URL, or '' for `owner/repo` shorthand."""
+    if not isinstance(value, str) or not value.strip().lower().startswith("https://"):
+        return ''
+    from urllib.parse import urlparse
+    try:
+        return (urlparse(value.strip()).hostname or '').lower()
+    except ValueError:
+        return ''
 
 
 def fetch_supply_chain_settings(project_id: str, webapp_url: str) -> dict[str, Any]:
@@ -69,14 +87,35 @@ def fetch_supply_chain_settings(project_id: str, webapp_url: str) -> dict[str, A
     # so fetch the token when EITHER the project is github-mode OR an override is
     # active - otherwise a private batch repo would fail to clone anonymously.
     if settings['SUPPLY_CHAIN_INPUT_MODE'] == 'github' or os.environ.get('SUPPLY_CHAIN_REPO_OVERRIDE_URL', '').strip():
+        # Which host this scan will clone from: the batch override wins, else the
+        # project's own repo URL, else github.com.
+        host = (os.environ.get('SUPPLY_CHAIN_REPO_OVERRIDE_HOST', '').strip().lower()
+                or _host_from_repo_url(os.environ.get('SUPPLY_CHAIN_REPO_OVERRIDE_URL', ''))
+                or _host_from_repo_url(settings['SUPPLY_CHAIN_REPO_URL'])
+                or 'github.com')
+        settings['SUPPLY_CHAIN_GITHUB_HOST'] = host
+
         user_id = os.environ.get('USER_ID', '')
         if user_id:
             try:
                 user_url = f"{webapp_url.rstrip('/')}/api/users/{user_id}/settings?internal=true"
                 user_resp = requests.get(user_url, timeout=30, headers=headers)
                 user_resp.raise_for_status()
-                settings['GITHUB_ACCESS_TOKEN'] = (
-                    user_resp.json().get('githubAccessToken') or '')
+                user_settings = user_resp.json()
+                ghe_host = (user_settings.get('githubEnterpriseHost') or '').strip().lower()
+                settings['SUPPLY_CHAIN_GHE_HOST'] = ghe_host
+                # Credential BY HOST. A GitHub Enterprise PAT must never be sent
+                # to github.com, nor a github.com PAT to an internal server, so
+                # an unrecognised host gets NO token rather than the wrong one
+                # (the clone then fails the host allowlist anyway).
+                if host == 'github.com':
+                    settings['GITHUB_ACCESS_TOKEN'] = user_settings.get('githubAccessToken') or ''
+                elif ghe_host and host == ghe_host:
+                    settings['GITHUB_ACCESS_TOKEN'] = user_settings.get('githubEnterpriseToken') or ''
+                else:
+                    logger.warning(
+                        "Repo host %s is not the configured GitHub Enterprise host (%s); "
+                        "no credential will be used", host, ghe_host or '(none)')
             except Exception as exc:
                 # Not fatal: public repositories clone anonymously. Say so, or a
                 # private-repo failure later looks like a missing repository.
@@ -104,6 +143,9 @@ def _apply_repo_override(settings: dict[str, Any]) -> dict[str, Any]:
         return settings
     settings['SUPPLY_CHAIN_INPUT_MODE'] = 'github'
     settings['SUPPLY_CHAIN_REPO_URL'] = repo_url
+    override_host = os.environ.get('SUPPLY_CHAIN_REPO_OVERRIDE_HOST', '').strip().lower()
+    if override_host:
+        settings['SUPPLY_CHAIN_GITHUB_HOST'] = override_host
     settings['SUPPLY_CHAIN_REPO_REF'] = os.environ.get('SUPPLY_CHAIN_REPO_OVERRIDE_REF', '').strip()
     settings['SUPPLY_CHAIN_REPO_SCOPE'] = os.environ.get('SUPPLY_CHAIN_REPO_OVERRIDE_SCOPE', '').strip()
     deep = os.environ.get('SUPPLY_CHAIN_REPO_OVERRIDE_DEEP', '').strip().lower()

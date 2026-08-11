@@ -50,7 +50,7 @@ const openOrgMode = async () => {
   render(<SupplyChainInput projectId="p1" />)
   await waitFor(() => expect(screen.getByText('GitHub organization')).toBeTruthy())
   fireEvent.click(screen.getByText('GitHub organization'))
-  await waitFor(() => expect(screen.getByLabelText('Organization')).toBeTruthy())
+  await waitFor(() => expect(screen.getByLabelText('Organization or user')).toBeTruthy())
 }
 
 describe('SupplyChainInput - org batch', () => {
@@ -71,7 +71,7 @@ describe('SupplyChainInput - org batch', () => {
 
   test('queues the batch and reports how many repos it covers', async () => {
     await openOrgMode()
-    fireEvent.change(screen.getByLabelText('Organization'), { target: { value: 'acme-corp' } })
+    fireEvent.change(screen.getByLabelText('Organization or user'), { target: { value: 'acme-corp' } })
     fetchMock.mockImplementationOnce(() =>
       Promise.resolve({ ok: true, json: async () => ({ totalItems: 12 }) }))
     fireEvent.click(screen.getByText('Queue org batch'))
@@ -87,7 +87,7 @@ describe('SupplyChainInput - org batch', () => {
 
   test('a rejected batch surfaces the server reason instead of a silent no-op', async () => {
     await openOrgMode()
-    fireEvent.change(screen.getByLabelText('Organization'), { target: { value: 'acme-corp' } })
+    fireEvent.change(screen.getByLabelText('Organization or user'), { target: { value: 'acme-corp' } })
     fetchMock.mockImplementationOnce(() =>
       Promise.resolve({ ok: false, status: 403, json: async () => ({ error: 'token lacks org scope' }) }))
     fireEvent.click(screen.getByText('Queue org batch'))
@@ -96,7 +96,51 @@ describe('SupplyChainInput - org batch', () => {
 
   test('an invalid org name cannot be queued', async () => {
     await openOrgMode()
-    fireEvent.change(screen.getByLabelText('Organization'), { target: { value: 'not a valid org!' } })
+    fireEvent.change(screen.getByLabelText('Organization or user'), { target: { value: 'not a valid org!' } })
+    await waitFor(() => expect(screen.getByText(/letters, digits and dashes/)).toBeTruthy())
+    fireEvent.click(screen.getByText('Queue org batch'))
+    expect(fetchMock.mock.calls.find(c => c[1]?.method === 'POST')).toBeUndefined()
+  })
+
+  // GitHub Enterprise: the field takes a URL as well as a name. Which HOSTS are
+  // reachable is the server's decision (it owns the operator's allowlist), so the
+  // client sends a well-formed target and surfaces the server's refusal.
+  test('a GitHub Enterprise org URL is accepted and sent verbatim', async () => {
+    await openOrgMode()
+    fireEvent.change(screen.getByLabelText('Organization or user'),
+      { target: { value: 'https://ghe.example.com/orgs/acme-corp' } })
+    expect(screen.queryByText(/letters, digits and dashes/)).toBeNull()
+    fetchMock.mockImplementationOnce(() =>
+      Promise.resolve({ ok: true, json: async () => ({ totalItems: 3, org: 'acme-corp', host: 'ghe.example.com' }) }))
+    fireEvent.click(screen.getByText('Queue org batch'))
+
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(c => c[1]?.method === 'POST')
+      expect(post).toBeTruthy()
+      expect(JSON.parse(post![1].body as string)).toEqual({ org: 'https://ghe.example.com/orgs/acme-corp' })
+    })
+    // The toast names the host the batch actually ran against.
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith(
+      expect.stringContaining('acme-corp on ghe.example.com')))
+  })
+
+  test('an unconfigured host is refused by the server and the reason is shown', async () => {
+    await openOrgMode()
+    fireEvent.change(screen.getByLabelText('Organization or user'),
+      { target: { value: 'https://ghe.example.com/orgs/acme-corp' } })
+    fetchMock.mockImplementationOnce(() => Promise.resolve({
+      ok: false, status: 400,
+      json: async () => ({ error: "'ghe.example.com' is not a configured GitHub host." }),
+    }))
+    fireEvent.click(screen.getByText('Queue org batch'))
+    await waitFor(() => expect(alertError).toHaveBeenCalledWith(
+      "'ghe.example.com' is not a configured GitHub host.", 'Supply-chain org batch'))
+  })
+
+  test('a repository URL is not an account and cannot be queued', async () => {
+    await openOrgMode()
+    fireEvent.change(screen.getByLabelText('Organization or user'),
+      { target: { value: 'https://github.com/acme-corp/some-repo' } })
     await waitFor(() => expect(screen.getByText(/letters, digits and dashes/)).toBeTruthy())
     fireEvent.click(screen.getByText('Queue org batch'))
     expect(fetchMock.mock.calls.find(c => c[1]?.method === 'POST')).toBeUndefined()

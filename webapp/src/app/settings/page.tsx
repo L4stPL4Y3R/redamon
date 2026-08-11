@@ -22,6 +22,8 @@ import type { ParsedImport } from '@/lib/apiKeysTemplate'
 
 interface UserSettings {
   githubAccessToken: string
+  githubEnterpriseHost: string
+  githubEnterpriseToken: string
   tavilyApiKey: string
   shodanApiKey: string
   serpApiKey: string
@@ -77,6 +79,8 @@ interface UserSettings {
 
 const EMPTY_SETTINGS: UserSettings = {
   githubAccessToken: '',
+  githubEnterpriseHost: '',
+  githubEnterpriseToken: '',
   tavilyApiKey: '',
   shodanApiKey: '',
   serpApiKey: '',
@@ -565,6 +569,8 @@ export default function SettingsPage() {
         const data = await resp.json()
         setSettings({
           githubAccessToken: data.githubAccessToken || '',
+          githubEnterpriseHost: data.githubEnterpriseHost || '',
+          githubEnterpriseToken: data.githubEnterpriseToken || '',
           tavilyApiKey: data.tavilyApiKey || '',
           shodanApiKey: data.shodanApiKey || '',
           serpApiKey: data.serpApiKey || '',
@@ -686,6 +692,8 @@ export default function SettingsPage() {
         const data = await resp.json()
         setSettings({
           githubAccessToken: data.githubAccessToken || '',
+          githubEnterpriseHost: data.githubEnterpriseHost || '',
+          githubEnterpriseToken: data.githubEnterpriseToken || '',
           tavilyApiKey: data.tavilyApiKey || '',
           shodanApiKey: data.shodanApiKey || '',
           serpApiKey: data.serpApiKey || '',
@@ -1350,6 +1358,30 @@ export default function SettingsPage() {
               visible={!!visibleFields.githubAccessToken}
               onToggle={() => toggleFieldVisibility('githubAccessToken')}
               onChange={v => updateSetting('githubAccessToken', v)}
+            />
+            <div className="formGroup">
+              <label className="formLabel">GitHub Enterprise Host</label>
+              <input
+                className="textInput"
+                type="text"
+                placeholder="ghe.example.com"
+                value={settings.githubEnterpriseHost}
+                onChange={e => updateSetting('githubEnterpriseHost', e.target.value)}
+              />
+              <p className="formHint">
+                Optional. A self-hosted or custom-domain GitHub Enterprise server, hostname
+                only (no https://, port or path). This is also the allowlist: a Supply Chain
+                target may name this host and github.com, nothing else.
+              </p>
+            </div>
+            <SecretField
+              label="GitHub Enterprise Token"
+              hint="The PAT for the GitHub Enterprise Host above. Kept separate from the GitHub Access Token on purpose: an Enterprise credential is never sent to github.com, and vice versa"
+              badges={['Supply Chain']}
+              value={settings.githubEnterpriseToken}
+              visible={!!visibleFields.githubEnterpriseToken}
+              onToggle={() => toggleFieldVisibility('githubEnterpriseToken')}
+              onChange={v => updateSetting('githubEnterpriseToken', v)}
             />
             <SecretField
               label="Tavily API Key"

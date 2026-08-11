@@ -7,6 +7,11 @@
  * The GitHub token is resolved server-side from UserSettings (never from the
  * request body) and never stored on a row or returned. Every owner/repo/ref is
  * validated before it is persisted (and again in the container before git clone).
+ *
+ * The target may name a host (`https://ghe.example.com/orgs/acme`), but only a
+ * host the operator registered in Global Settings is accepted - see
+ * `parseOwnerTarget`. The credential is then chosen BY HOST, so a GitHub
+ * Enterprise token is never sent to api.github.com and vice versa.
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
@@ -14,7 +19,8 @@ import prisma from '@/lib/prisma'
 import { guardProject } from '@/lib/access'
 import { getEffectiveUser } from '@/lib/session'
 import { settingsFingerprint, envelopeForKind } from '@/lib/jobQueue'
-import { listOwnerRepos, isValidGitRef, isValidOwner, GithubEnumError } from '@/lib/github/orgRepos'
+import { listOwnerRepos, isValidGitRef, GithubEnumError } from '@/lib/github/orgRepos'
+import { parseOwnerTarget, allowedGithubHosts, hostHint, GITHUB_DOT_COM } from '@/lib/github/ownerTarget'
 
 export const runtime = 'nodejs'
 
@@ -35,17 +41,38 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     if (!project) return NextResponse.json({ error: 'Project not found' }, { status: 404 })
 
     const body = await request.json().catch(() => ({}))
-    const org = (typeof body?.org === 'string' && body.org.trim()) ? body.org.trim() : project.supplyChainOrgName
-    if (!org || !isValidOwner(org)) {
-      return NextResponse.json({ error: 'A valid GitHub organization or user is required.' }, { status: 400 })
-    }
+    const rawTarget = (typeof body?.org === 'string' && body.org.trim())
+      ? body.org.trim()
+      : project.supplyChainOrgName
 
-    // Token resolved server-side from the operator's settings; optional (public
-    // repos enumerate without it). NEVER read from the request body.
+    // Settings first: they carry the host allowlist, so they must be read BEFORE
+    // the target can be parsed. Tokens are resolved server-side and are NEVER
+    // read from the request body.
     const settings = await prisma.userSettings.findUnique({
-      where: { userId: eff.userId }, select: { githubAccessToken: true },
+      where: { userId: eff.userId },
+      select: { githubAccessToken: true, githubEnterpriseHost: true, githubEnterpriseToken: true },
     }).catch(() => null)
-    const token = settings?.githubAccessToken || undefined
+
+    const allowed = allowedGithubHosts(settings?.githubEnterpriseHost)
+    const target = parseOwnerTarget(rawTarget, allowed)
+    if (!target) {
+      // Distinguish "not a coordinate" from "host not registered": the second is
+      // an operator action (add the host in Global Settings), not a typo.
+      const hint = hostHint(rawTarget)
+      return NextResponse.json({
+        error: hint && !allowed.includes(hint)
+          ? `'${hint}' is not a configured GitHub host. Add it as the GitHub Enterprise Host in Global Settings first.`
+          : 'A valid GitHub organization or user is required: a name, or a URL such as https://github.com/orgs/acme.',
+      }, { status: 400 })
+    }
+    const { host, owner: org } = target
+
+    // Credential BY HOST. A GitHub Enterprise PAT must never travel to
+    // api.github.com, nor a github.com PAT to an internal server. Optional in
+    // both cases: public repos enumerate anonymously.
+    const token = (host === GITHUB_DOT_COM
+      ? settings?.githubAccessToken
+      : settings?.githubEnterpriseToken) || undefined
 
     const orgRef = project.supplyChainOrgRef || ''
     if (orgRef && !isValidGitRef(orgRef)) {
@@ -56,6 +83,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     try {
       repos = await listOwnerRepos(org, {
         token,
+        host,
         includeForks: project.supplyChainOrgIncludeForks,
         includeArchived: project.supplyChainOrgIncludeArchived,
         maxRepos: Math.max(1, project.supplyChainOrgMaxRepos || 50),
@@ -66,7 +94,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     }
 
     if (repos.length === 0) {
-      return NextResponse.json({ error: `No scannable repositories found for '${org}'.` }, { status: 400 })
+      return NextResponse.json({ error: `No scannable repositories found for '${org}' on ${host}.` }, { status: 400 })
     }
 
     const settingsHash = settingsFingerprint('supply_chain_repo', project as unknown as Record<string, unknown>)
@@ -76,7 +104,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     const result = await prisma.$transaction(async tx => {
       const batch = await tx.supplyChainBatch.create({
-        data: { projectId, userId: eff.userId, org, status: 'running', totalItems: repos.length },
+        data: { projectId, userId: eff.userId, org, host, status: 'running', totalItems: repos.length },
         select: { id: true },
       })
 
@@ -86,6 +114,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         const payload = {
           repo_url: r.url,
           repo_full_name: r.fullName,
+          // Carried per item so the scan container knows which host to clone from
+          // and which credential the settings fetch should hand it.
+          host,
           ref: safeRef,
           scope,
           deep_analysis: deepAnalysis,
@@ -124,7 +155,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       maxWait: 10_000,
     })
 
-    return NextResponse.json({ ok: true, batchId: result.id, totalItems: repos.length }, { status: 201 })
+    return NextResponse.json({
+      ok: true, batchId: result.id, totalItems: repos.length, org, host,
+    }, { status: 201 })
   } catch (error) {
     console.error('[supplyChainBatch] create failed:', error)
     return NextResponse.json(

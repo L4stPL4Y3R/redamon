@@ -9,6 +9,8 @@ const MAX_FILE_SIZE = 100 * 1024 // 100 KB
 
 const ALLOWED_KEY_FIELDS = [
   'githubAccessToken',
+  'githubEnterpriseHost',
+  'githubEnterpriseToken',
   'tavilyApiKey',
   'shodanApiKey',
   'serpApiKey',

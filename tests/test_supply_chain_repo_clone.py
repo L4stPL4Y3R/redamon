@@ -19,8 +19,10 @@ if _REPO not in sys.path:
     sys.path.insert(0, _REPO)
 
 from supply_chain_scan.repo_clone import (   # noqa: E402
-    parse_repo, clone_repo, RepoCloneError, _validate_ref,
+    parse_repo, parse_repo_target, clone_repo, RepoCloneError, _validate_ref,
 )
+
+_GHE = "ghe.example.com"
 
 
 class TestParseRepo(unittest.TestCase):
@@ -263,6 +265,74 @@ class TestCloneArgvAndCredentials(unittest.TestCase):
         with self.assertRaises(RepoCloneError) as ctx:
             clone_repo("o/r", dest_parent=self.tmp, runner=run)
         self.assertIn("timed out", str(ctx.exception))
+
+
+class TestEnterpriseHost(unittest.TestCase):
+    """A GitHub Enterprise host is honoured, but ONLY when the operator's
+    settings named it. This container re-checks the host because it must never
+    trust a value that reached it over HTTP."""
+
+    def setUp(self):
+        self.calls = []
+        self.tmp = tempfile.mkdtemp(prefix="sc-ghe-test-")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def _runner(self):
+        def run(argv, env=None, capture_output=None, text=None, timeout=None):
+            self.calls.append({"argv": argv, "env": env or {}})
+            os.makedirs(argv[-1], exist_ok=True)
+            with open(os.path.join(argv[-1], "package-lock.json"), "w") as fh:
+                fh.write("{}")
+            return _FakeProc(0)
+        return run
+
+    def test_default_host_is_github_com(self):
+        self.assertEqual(parse_repo_target("o/r"), ("github.com", "o", "r"))
+        self.assertEqual(parse_repo_target("https://github.com/o/r"),
+                         ("github.com", "o", "r"))
+
+    def test_allowed_enterprise_host_is_parsed(self):
+        self.assertEqual(parse_repo_target("https://%s/o/r.git" % _GHE, [_GHE]),
+                         (_GHE, "o", "r"))
+
+    def test_enterprise_host_is_refused_when_not_configured(self):
+        with self.assertRaises(RepoCloneError) as ctx:
+            parse_repo_target("https://%s/o/r" % _GHE)
+        self.assertIn("not an allowed GitHub host", str(ctx.exception))
+
+    def test_a_different_host_is_refused_even_with_one_configured(self):
+        with self.assertRaises(RepoCloneError):
+            parse_repo_target("https://evil.example.com/o/r", [_GHE])
+
+    def test_ssrf_shaped_hosts_cannot_be_allowlisted(self):
+        for host in ("169.254.169.254", "localhost", "10.0.0.5"):
+            with self.assertRaises(RepoCloneError, msg=host):
+                parse_repo_target("https://%s/o/r" % host, [host])
+
+    def test_a_port_is_refused(self):
+        with self.assertRaises(RepoCloneError) as ctx:
+            parse_repo_target("https://%s:8443/o/r" % _GHE, [_GHE])
+        self.assertIn("port", str(ctx.exception))
+
+    def test_a_malformed_authority_is_a_clean_refusal_not_a_traceback(self):
+        # urlparse defers parsing the port, so `.port` raises ValueError here.
+        with self.assertRaises(RepoCloneError):
+            parse_repo_target("https://%s:notaport/o/r" % _GHE, [_GHE])
+
+    def test_clone_url_is_rebuilt_on_the_enterprise_host(self):
+        clone_repo("https://%s/Owner/Repo.git" % _GHE, dest_parent=self.tmp,
+                   allowed_hosts=[_GHE], runner=self._runner())
+        argv = self.calls[0]["argv"]
+        self.assertIn("https://%s/Owner/Repo.git" % _GHE, argv)
+
+    def test_clone_refuses_a_host_the_operator_did_not_configure(self):
+        with self.assertRaises(RepoCloneError):
+            clone_repo("https://%s/o/r" % _GHE, dest_parent=self.tmp,
+                       runner=self._runner())
+        self.assertEqual(self.calls, [], "git must not run for a disallowed host")
+
+    def test_parse_repo_keeps_its_two_tuple_shape(self):
+        self.assertEqual(parse_repo("https://%s/o/r" % _GHE, [_GHE]), ("o", "r"))
 
 
 if __name__ == "__main__":

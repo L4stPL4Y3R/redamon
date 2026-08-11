@@ -88,6 +88,15 @@ model UserSettings {
 
   // Tool API Keys
   githubAccessToken String @default("") @map("github_access_token")
+  /// GitHub Enterprise (self-hosted / custom domain), e.g. "ghe.example.com".
+  /// Empty = only github.com is reachable. This is the ALLOWLIST: a host typed
+  /// into a scan input is accepted only when it matches this value, because the
+  /// host ends up in a server-side fetch and in `git clone` argv.
+  githubEnterpriseHost  String @default("") @map("github_enterprise_host")
+  /// The PAT for githubEnterpriseHost. Deliberately separate from
+  /// githubAccessToken: a GHE credential must never be sent to api.github.com,
+  /// nor a github.com credential to an internal server.
+  githubEnterpriseToken String @default("") @map("github_enterprise_token")
   tavilyApiKey    String   @default("") @map("tavily_api_key")
   shodanApiKey    String   @default("") @map("shodan_api_key")
   serpApiKey       String   @default("") @map("serp_api_key")
@@ -1181,6 +1190,8 @@ model SupplyChainBatch {
   userId      String   @map("user_id")
   /// The GitHub org/owner that was enumerated.
   org         String
+  /// The host it was enumerated from: "github.com" or a GitHub Enterprise host.
+  host        String   @default("github.com")
   /// running | done | failed | canceled
   status      String   @default("running")
   totalItems  Int      @default(0) @map("total_items")

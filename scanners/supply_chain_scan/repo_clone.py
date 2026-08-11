@@ -37,7 +37,8 @@ import stat
 import subprocess
 import tempfile
 
-__all__ = ["parse_repo", "clone_repo", "RepoCloneError", "MAX_REPO_BYTES"]
+__all__ = ["parse_repo", "parse_repo_target", "clone_repo", "RepoCloneError",
+           "MAX_REPO_BYTES", "DEFAULT_HOST"]
 
 
 class RepoCloneError(RuntimeError):
@@ -50,18 +51,43 @@ class RepoCloneError(RuntimeError):
 _OWNER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}$")
 _REPO_RE = re.compile(r"^[A-Za-z0-9._-]{1,100}$")
 _REF_RE = re.compile(r"^[A-Za-z0-9._/-]{1,255}$")
+# A dotted DNS name; the required dot also excludes `localhost`.
+_HOST_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}(\.[a-z0-9][a-z0-9-]{0,62})+$")
+_IPV4_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
+
+DEFAULT_HOST = "github.com"
 
 MAX_REPO_BYTES = int(os.environ.get("SUPPLY_CHAIN_MAX_REPO_BYTES", str(2 * 1024 * 1024 * 1024)))
 _CLONE_TIMEOUT = int(os.environ.get("SUPPLY_CHAIN_CLONE_TIMEOUT", "300"))
 
 
-def parse_repo(raw):
-    """`owner/repo` or an https://github.com/owner/repo URL -> (owner, repo).
+def _normalize_hosts(allowed_hosts):
+    """The hosts a coordinate may name. github.com is always in, and a caller's
+    extra host must still look like a DNS name - a bad value in the operator's
+    settings must not widen this to an IP literal or `localhost`."""
+    hosts = {DEFAULT_HOST}
+    for host in (allowed_hosts or ()):
+        if not isinstance(host, str):
+            continue
+        value = host.strip().lower()
+        if value and not _IPV4_RE.match(value) and _HOST_RE.match(value):
+            hosts.add(value)
+    return hosts
 
-    Raises RepoCloneError on anything else. Only github.com is accepted; a URL
-    carrying credentials is refused rather than silently stripped, so a token
-    pasted into the field is never quietly persisted.
+
+def parse_repo_target(raw, allowed_hosts=None):
+    """`owner/repo` or an https://<host>/owner/repo URL -> (host, owner, repo).
+
+    Raises RepoCloneError on anything else. The host must be github.com or one
+    the operator configured (a GitHub Enterprise server); anything else is
+    refused HERE too, not only in the webapp, because this container must never
+    trust a value that reached it over HTTP. A URL carrying credentials is
+    refused rather than silently stripped, so a token pasted into the field is
+    never quietly persisted.
     """
+    hosts = _normalize_hosts(allowed_hosts)
+    host = DEFAULT_HOST
+
     if not isinstance(raw, str):
         raise RepoCloneError("repository must be a string")
     value = raw.strip()
@@ -73,8 +99,19 @@ def parse_repo(raw):
         parsed = urlparse(value)
         if parsed.scheme != "https":
             raise RepoCloneError("only https:// GitHub URLs are accepted")
-        if (parsed.hostname or "").lower() != "github.com":
-            raise RepoCloneError("only github.com repositories are accepted")
+        # A port would let an allowed hostname be pointed at another service.
+        # .port/.hostname parse lazily and raise ValueError on a malformed
+        # authority, which must surface as a clean refusal, not a traceback.
+        try:
+            port = parsed.port
+            host = (parsed.hostname or "").lower()
+        except ValueError:
+            raise RepoCloneError("repository URL has a malformed host")
+        if port:
+            raise RepoCloneError("repository URL must not carry a port")
+        if host not in hosts:
+            raise RepoCloneError(
+                "'{}' is not an allowed GitHub host".format(host or "(none)"))
         if parsed.username or parsed.password:
             raise RepoCloneError("remove the credentials from the repository URL")
         if parsed.query or parsed.fragment:
@@ -98,6 +135,12 @@ def parse_repo(raw):
         raise RepoCloneError("repository owner/name may not be '.' or '..'")
     if ".." in owner or ".." in repo:
         raise RepoCloneError("repository owner/name may not contain '..'")
+    return host, owner, repo
+
+
+def parse_repo(raw, allowed_hosts=None):
+    """`parse_repo_target` without the host - the coordinate half only."""
+    _host, owner, repo = parse_repo_target(raw, allowed_hosts)
     return owner, repo
 
 
@@ -150,14 +193,16 @@ def _dir_size(path):
 
 
 def clone_repo(repo, *, ref=None, token=None, dest_parent=None,
-               timeout=_CLONE_TIMEOUT, max_bytes=MAX_REPO_BYTES, runner=None):
+               timeout=_CLONE_TIMEOUT, max_bytes=MAX_REPO_BYTES, runner=None,
+               allowed_hosts=None):
     """Shallow-clone `repo` and return the checkout path.
 
-    The caller owns the returned directory and must remove it. Raises
-    RepoCloneError on a bad coordinate, a clone failure, or an oversized
-    repository.
+    `repo` may be `owner/repo` (github.com) or a full https URL naming github.com
+    or an allowed GitHub Enterprise host. The caller owns the returned directory
+    and must remove it. Raises RepoCloneError on a bad coordinate, a disallowed
+    host, a clone failure, or an oversized repository.
     """
-    owner, name = parse_repo(repo)
+    host, owner, name = parse_repo_target(repo, allowed_hosts)
     ref = _validate_ref(ref)
 
     scratch = tempfile.mkdtemp(prefix="sc-repo-", dir=dest_parent)
@@ -181,7 +226,7 @@ def clone_repo(repo, *, ref=None, token=None, dest_parent=None,
     if ref:
         argv += ["--branch", ref]
     # The URL is REBUILT from the validated parts, never echoed from the input.
-    argv += ["https://github.com/{}/{}.git".format(owner, name), dest]
+    argv += ["https://{}/{}/{}.git".format(host, owner, name), dest]
 
     env = dict(os.environ)
     env["GIT_TERMINAL_PROMPT"] = "0"

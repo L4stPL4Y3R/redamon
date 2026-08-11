@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { Upload, Github, FileText, Loader2, Trash2, PackageSearch, Building2 } from 'lucide-react'
 import { parseGithubRepo, isValidGitRef } from '@/lib/validation/supplyChainInput'
+import { parseOwnerTarget, hostHint, GITHUB_DOT_COM } from '@/lib/github/ownerTarget'
 import { SETTINGS_KEYS_HREF } from '@/lib/settingsLinks'
 import { useToast } from '@/components/ui'
 import { useAlertModal } from '@/components/ui/AlertModal/AlertModal'
@@ -14,8 +15,22 @@ import styles from './OtherScansModal.module.css'
  *  so it is a view-only mode here and is never written to supplyChainInputMode. */
 export type SupplyChainSource = 'upload' | 'github' | 'org'
 
-/** GitHub owner/org: alphanumeric and dashes, 39 chars max. */
-const OWNER_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/
+/**
+ * Client-side shape check only: a bare owner name, or a URL that resolves to
+ * host + owner. Which HOSTS are actually reachable is the server's call (it owns
+ * the operator's allowlist), so a well-formed value for an unregistered host
+ * gets a specific error back from the API rather than being guessed at here.
+ */
+function orgTargetShapeOk(value: string): boolean {
+  return parseOwnerTarget(value, [GITHUB_DOT_COM]) !== null
+    || (hostHint(value) !== null && parseOwnerTarget(value, [hostHint(value) as string]) !== null)
+}
+
+/** The same shape-only check for a single `owner/repo` coordinate. */
+function repoShapeOk(value: string): boolean {
+  return parseGithubRepo(value, [GITHUB_DOT_COM]) !== null
+    || (hostHint(value) !== null && parseGithubRepo(value, [hostHint(value) as string]) !== null)
+}
 
 interface Props {
   projectId: string
@@ -73,7 +88,7 @@ export default function SupplyChainInput({
     // In 'org' mode there is nothing for Start to run: the batch has its own
     // button and queues N scans rather than starting this project's single one.
     const hasInput = source === 'org' ? false
-      : source === 'github' ? !!parseGithubRepo(repoUrl)
+      : source === 'github' ? repoShapeOk(repoUrl)
       : !!file
     onInputAvailabilityChange?.(hasInput)
   }, [source, file, repoUrl, onInputAvailabilityChange])
@@ -133,7 +148,7 @@ export default function SupplyChainInput({
     if (next !== 'org') await persist({ supplyChainInputMode: next })
   }
 
-  const orgValid = OWNER_RE.test(org.trim())
+  const orgValid = orgTargetShapeOk(org.trim())
 
   /**
    * Enumerate the org's repositories server-side and queue one supply_chain_repo
@@ -155,7 +170,8 @@ export default function SupplyChainInput({
         return
       }
       toast.success(
-        `Queued ${data.totalItems} repo scan${data.totalItems === 1 ? '' : 's'} for ${org.trim()}. ` +
+        `Queued ${data.totalItems} repo scan${data.totalItems === 1 ? '' : 's'} for ` +
+        `${data.org || org.trim()} on ${data.host || GITHUB_DOT_COM}. ` +
         'They run as capacity frees up - follow them in Scans -> Scan queue.'
       )
       setOrg('')
@@ -210,7 +226,7 @@ export default function SupplyChainInput({
     }
   }
 
-  const repoInvalid = repoUrl.trim() !== '' && !parseGithubRepo(repoUrl)
+  const repoInvalid = repoUrl.trim() !== '' && !repoShapeOk(repoUrl)
   const refInvalid = !isValidGitRef(repoRef)
 
   return (
@@ -311,12 +327,12 @@ export default function SupplyChainInput({
         ) : source === 'org' ? (
           <>
             <div className={styles.inputRow}>
-              <label className={styles.fieldLabel} htmlFor="sc-org">Organization</label>
+              <label className={styles.fieldLabel} htmlFor="sc-org">Organization or user</label>
               <input
                 id="sc-org"
                 type="text"
                 className={styles.textField}
-                placeholder="github-org-or-user"
+                placeholder="acme-corp or https://ghe.example.com/orgs/acme-corp"
                 value={org}
                 disabled={disabled || orgBusy}
                 onChange={(e) => setOrg(e.target.value)}
@@ -335,16 +351,21 @@ export default function SupplyChainInput({
             </div>
             {org.trim() !== '' && !orgValid && (
               <p className={styles.inlineError}>
-                An organization or user name: letters, digits and dashes, 39 characters max.
+                An organization or user name (letters, digits and dashes, 39 characters
+                max), or its URL - github.com, or a GitHub Enterprise host you configured
+                in Global Settings.
               </p>
             )}
             <p className={styles.hint}>
-              Enumerates the organization&apos;s repositories and queues one supply-chain
+              Enumerates the account&apos;s repositories and queues one supply-chain
               scan per repo, which run as capacity frees up (follow them in the Scans
-              tab &rarr; Scan queue). Start above stays disabled here: this queues
+              tab &rarr; Scan queue). Works for an organization or a user account; another
+              user&apos;s private repos are never visible, only your own or an org you
+              belong to. Start above stays disabled here: this queues
               many scans rather than running this project&apos;s single configured input.
               Uses the project&apos;s saved org options (forks, archived, max repos, deep
-              analysis). Private organizations need the GitHub Access Token from{' '}
+              analysis). Private repositories need the GitHub Access Token (or, for a
+              GitHub Enterprise host, the GitHub Enterprise Token) from{' '}
               <Link href={SETTINGS_KEYS_HREF} style={{ color: 'var(--accent-primary)', fontWeight: 500 }}>
                 Global Settings
               </Link>.
@@ -384,8 +405,8 @@ export default function SupplyChainInput({
             </div>
             {repoInvalid && (
               <p className={styles.inlineError}>
-                Must be a github.com repository, as owner/repo or
-                https://github.com/owner/repo.
+                Must be a repository as owner/repo, or its https URL on github.com
+                or a GitHub Enterprise host you configured in Global Settings.
               </p>
             )}
             {refInvalid && (

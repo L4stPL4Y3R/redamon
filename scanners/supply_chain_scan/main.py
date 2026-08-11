@@ -56,6 +56,7 @@ def run_supply_chain_scan(project_id: str) -> dict:
     print("=" * 70)
     if input_mode == "github":
         print(f"  Repository:     {repo_url or '(not set)'}")
+        print(f"  Host:           {get_setting('SUPPLY_CHAIN_GITHUB_HOST', 'github.com')}")
         print(f"  Ref:            {repo_ref or '(default branch)'}")
     else:
         print(f"  Input file:     {sbom_file or '(not set)'}")
@@ -73,17 +74,22 @@ def run_supply_chain_scan(project_id: str) -> dict:
             print("[!] ERROR: no repository configured (set one in Other Scans -> Supply Chain)")
             return {"error": "no repository configured"}
         try:
-            from supply_chain_scan.repo_clone import clone_repo, parse_repo, RepoCloneError
+            from supply_chain_scan.repo_clone import clone_repo, parse_repo_target, RepoCloneError
         except ImportError:
-            from repo_clone import clone_repo, parse_repo, RepoCloneError
+            from repo_clone import clone_repo, parse_repo_target, RepoCloneError
         try:
-            owner, name = parse_repo(repo_url)
+            # github.com plus, if the operator configured one, their GitHub
+            # Enterprise host. Nothing else may be cloned from, whatever the URL
+            # or the batch override says.
+            allowed_hosts = [h for h in (get_setting("SUPPLY_CHAIN_GHE_HOST", ""),) if h]
+            host, owner, name = parse_repo_target(repo_url, allowed_hosts)
             repo_slug = f"{owner}/{name}"
             token = get_setting("GITHUB_ACCESS_TOKEN", "") or None
-            print(f"[*] Cloning {repo_slug}"
+            print(f"[*] Cloning {repo_slug} from {host}"
                   f"{' @ ' + repo_ref if repo_ref else ''}"
                   f"{' (authenticated)' if token else ' (anonymous)'}...")
-            repo_dir = clone_repo(repo_url, ref=repo_ref or None, token=token)
+            repo_dir = clone_repo(repo_url, ref=repo_ref or None, token=token,
+                                  allowed_hosts=allowed_hosts)
             repo_scratch = os.path.dirname(repo_dir)
             print(f"[+] Cloned to {repo_dir}")
         except RepoCloneError as exc:

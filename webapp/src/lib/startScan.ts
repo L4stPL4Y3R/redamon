@@ -126,6 +126,9 @@ export async function dispatchStart(
     // project's default supply-chain config (Phase 6).
     if (kind === 'supply_chain_repo') {
       body.repo_override_url = typeof payload.repo_url === 'string' ? payload.repo_url : ''
+      // Empty = github.com. Set for a GitHub Enterprise batch so the container
+      // clones from that host and asks for the matching credential.
+      body.repo_override_host = typeof payload.host === 'string' ? payload.host : ''
       body.repo_override_ref = typeof payload.ref === 'string' ? payload.ref : ''
       body.repo_override_scope = typeof payload.scope === 'string' ? payload.scope : ''
       body.repo_override_deep = !!payload.deep_analysis
