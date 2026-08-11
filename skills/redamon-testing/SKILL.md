@@ -50,7 +50,7 @@ in the root [AGENTS.md](../../AGENTS.md) CRITICAL RULES; this skill is everythin
   it `@pytest.mark.xfail(strict=True, reason=...)` and say so. Tests must not enshrine bugs.
 - **NEVER put a recon test in the root [tests/](../../tests/) folder.** Root
   `tests/` runs in the **agent** image; recon files there must be listed in
-  `_ROOT_RECON_TESTS` at [redamon.sh:3014](../../redamon.sh#L3014) or they run
+  `_ROOT_RECON_TESTS` at [redamon.sh:3431](../../redamon.sh#L3431) or they run
   against the wrong image and fail on imports. New recon tests go in [recon/tests/](../../recon/tests/).
 - **NEVER add a third-party import to a test without checking it is in the section
   image.** Only `pytest`, `pytest-cov`, `pytest-xdist`, `pytest-asyncio`
@@ -95,7 +95,7 @@ Tier is auto-assigned by filename in each `conftest.py` (live checked first):
 | recon module / tool wrapper | `recon/tests/` | unit |
 | agent graph, nodes, tools, prompts | `agentic/tests/` | unit |
 | `graph_db`, `knowledge_base`, `supply_chain_*`, `mcp` | root `tests/` | unit |
-| `redamon.sh` / compose / deploy shell logic | `tests/*_test.sh` | bash, not in the gate |
+| `redamon.sh` / compose / deploy shell logic | `tests/*_test.sh` | bash, **in the gate** (`shell` section) |
 | webapp React/TS | next to the source `*.test.ts(x)` | vitest |
 
 ---
@@ -119,5 +119,5 @@ trusting "all green".
 
 - [docs/readmes/README.TESTING.md](../../docs/readmes/README.TESTING.md) - full testing guide + coverage ratchet
 - [tooling/scripts/pytest_isolated.py](../../tooling/scripts/pytest_isolated.py) - the per-file isolation gate
-- [redamon.sh:3017](../../redamon.sh#L3017) - `_TEST_SECTIONS`, section/image map, webapp hook
+- [redamon.sh:3434](../../redamon.sh#L3434) - `_TEST_SECTIONS`, section/image map, shell + webapp hooks
 - Related: root [AGENTS.md](../../AGENTS.md) for the host-pytest / Docker-gate rule
