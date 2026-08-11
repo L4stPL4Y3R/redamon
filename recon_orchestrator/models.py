@@ -262,6 +262,9 @@ class SupplyChainStartRequest(BaseModel):
     # overriding the project's supply-chain config. Optional; absent for a normal
     # single supply-chain scan.
     repo_override_url: Optional[str] = None
+    # Empty/absent = github.com. A GitHub Enterprise host, already allowlisted by
+    # the webapp against the operator's configured host.
+    repo_override_host: Optional[str] = None
     repo_override_ref: Optional[str] = None
     repo_override_scope: Optional[str] = None
     repo_override_deep: Optional[bool] = None

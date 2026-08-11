@@ -113,3 +113,62 @@ test('zero repos is a 400, no batch', async () => {
   expect(res.status).toBe(400)
   expect(h.batchCreate).not.toHaveBeenCalled()
 })
+
+// --- GitHub Enterprise ------------------------------------------------------
+// The host is operator input that becomes a server-side fetch and `git clone`
+// argv, so it is accepted ONLY when it matches the configured GHE host, and the
+// credential is chosen by host so the two tokens can never cross.
+
+test('a GHE target enumerates that host with the GHE token, and stamps it on the rows', async () => {
+  h.userSettingsFindUnique.mockResolvedValue({
+    githubAccessToken: 'ghp_dotcom',
+    githubEnterpriseHost: 'ghe.example.com',
+    githubEnterpriseToken: 'ghp_ghe',
+  })
+  h.listOwnerRepos.mockResolvedValue([
+    { fullName: 'acme/a', owner: 'acme', repo: 'a', url: 'https://ghe.example.com/acme/a.git', defaultBranch: 'main', fork: false, archived: false },
+  ])
+  const res = await POST(post({ org: 'https://ghe.example.com/orgs/acme' }), sp('p1'))
+  expect(res.status).toBe(201)
+  expect(await res.json()).toMatchObject({ org: 'acme', host: 'ghe.example.com' })
+
+  const [owner, opts] = h.listOwnerRepos.mock.calls[0]
+  expect(owner).toBe('acme')
+  expect(opts.host).toBe('ghe.example.com')
+  expect(opts.token).toBe('ghp_ghe')          // the GHE credential...
+  expect(opts.token).not.toBe('ghp_dotcom')   // ...never the github.com one
+
+  expect(h.batchCreate.mock.calls[0][0].data).toMatchObject({ org: 'acme', host: 'ghe.example.com' })
+  expect(h.jobCreate.mock.calls[0][0].data.payload).toMatchObject({ host: 'ghe.example.com' })
+})
+
+test('an unconfigured host is refused before any fetch, and says why', async () => {
+  h.userSettingsFindUnique.mockResolvedValue({
+    githubAccessToken: 'ghp_dotcom', githubEnterpriseHost: '', githubEnterpriseToken: '',
+  })
+  const res = await POST(post({ org: 'https://ghe.evil.example/orgs/acme' }), sp('p1'))
+  expect(res.status).toBe(400)
+  expect((await res.json()).error).toMatch(/not a configured GitHub host/)
+  expect(h.listOwnerRepos).not.toHaveBeenCalled()
+  expect(h.batchCreate).not.toHaveBeenCalled()
+})
+
+test('a github.com target still uses the github.com token even when a GHE host is configured', async () => {
+  h.userSettingsFindUnique.mockResolvedValue({
+    githubAccessToken: 'ghp_dotcom',
+    githubEnterpriseHost: 'ghe.example.com',
+    githubEnterpriseToken: 'ghp_ghe',
+  })
+  await POST(post({ org: 'acme' }), sp('p1'))
+  const opts = h.listOwnerRepos.mock.calls[0][1]
+  expect(opts.host).toBe('github.com')
+  expect(opts.token).toBe('ghp_dotcom')
+})
+
+test('a bare name keeps defaulting to github.com and stamps host on the batch', async () => {
+  const res = await POST(post(), sp('p1'))
+  expect(res.status).toBe(201)
+  expect(h.listOwnerRepos.mock.calls[0][1].host).toBe('github.com')
+  expect(h.batchCreate.mock.calls[0][0].data).toMatchObject({ host: 'github.com' })
+  expect(h.jobCreate.mock.calls[0][0].data.payload).toMatchObject({ host: 'github.com' })
+})

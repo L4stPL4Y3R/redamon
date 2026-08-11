@@ -3,6 +3,7 @@ import prisma from '@/lib/prisma'
 import { getSession, isInternalRequest, isScannerRequest, requireUserAccess } from '@/lib/session'
 import { orchestratorFetch } from '@/lib/orchestrator'
 import { sanitizeBodyRules } from '@/lib/captureBodyRules'
+import { isValidGithubHost } from '@/lib/github/ownerTarget'
 
 interface RouteParams {
   params: Promise<{ id: string }>
@@ -57,6 +58,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     if (!settings) {
       return NextResponse.json({
         githubAccessToken: '',
+        githubEnterpriseHost: '',
+        githubEnterpriseToken: '',
         tavilyApiKey: '',
         shodanApiKey: '',
         serpApiKey: '',
@@ -115,6 +118,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       settings = {
         ...settings,
         githubAccessToken: maskSecret(settings.githubAccessToken),
+        // The host is not a secret (the operator has to read it back to confirm
+        // what is allowlisted); its token is.
+        githubEnterpriseToken: maskSecret(settings.githubEnterpriseToken),
         tavilyApiKey: maskSecret(settings.tavilyApiKey),
         shodanApiKey: maskSecret(settings.shodanApiKey),
         serpApiKey: maskSecret(settings.serpApiKey),
@@ -187,8 +193,24 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       where: { userId: id },
     })
 
+    // The GHE host is the ALLOWLIST every supply-chain host check is made
+    // against, so it is normalized and validated on the way in rather than at
+    // each use: a pasted URL becomes a bare hostname, and anything that is not a
+    // dotted DNS name (IP literal, localhost, host:port) is refused outright.
+    if ('githubEnterpriseHost' in body) {
+      const raw = String(body.githubEnterpriseHost ?? '').trim()
+      const stripped = raw.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').replace(/\/.*$/, '').toLowerCase()
+      if (stripped && !isValidGithubHost(stripped)) {
+        return NextResponse.json(
+          { error: 'GitHub Enterprise Host must be a hostname such as ghe.example.com (no scheme, port or path)' },
+          { status: 400 },
+        )
+      }
+      body.githubEnterpriseHost = stripped
+    }
+
     const data: Record<string, string> = {}
-    const fields = ['githubAccessToken', 'tavilyApiKey', 'shodanApiKey', 'serpApiKey', 'nvdApiKey', 'vulnersApiKey', 'urlscanApiKey', 'censysApiToken', 'censysOrgId', 'fofaApiKey', 'otxApiKey', 'netlasApiKey', 'virusTotalApiKey', 'zoomEyeApiKey', 'criminalIpApiKey', 'quakeApiKey', 'hunterApiKey', 'publicWwwApiKey', 'hunterHowApiKey', 'googleApiKey', 'googleApiCx', 'onypheApiKey', 'driftnetApiKey', 'wpscanApiToken', 'pdcpApiKey', 'ngrokAuthtoken', 'chiselServerUrl', 'chiselAuth'] as const
+    const fields = ['githubAccessToken', 'githubEnterpriseHost', 'githubEnterpriseToken', 'tavilyApiKey', 'shodanApiKey', 'serpApiKey', 'nvdApiKey', 'vulnersApiKey', 'urlscanApiKey', 'censysApiToken', 'censysOrgId', 'fofaApiKey', 'otxApiKey', 'netlasApiKey', 'virusTotalApiKey', 'zoomEyeApiKey', 'criminalIpApiKey', 'quakeApiKey', 'hunterApiKey', 'publicWwwApiKey', 'hunterHowApiKey', 'googleApiKey', 'googleApiCx', 'onypheApiKey', 'driftnetApiKey', 'wpscanApiToken', 'pdcpApiKey', 'ngrokAuthtoken', 'chiselServerUrl', 'chiselAuth'] as const
 
     for (const field of fields) {
       if (field in body) {
@@ -407,6 +429,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({
       ...settings,
       githubAccessToken: maskSecret(settings.githubAccessToken),
+      githubEnterpriseToken: maskSecret(settings.githubEnterpriseToken),
       tavilyApiKey: maskSecret(settings.tavilyApiKey),
       shodanApiKey: maskSecret(settings.shodanApiKey),
       serpApiKey: maskSecret(settings.serpApiKey),

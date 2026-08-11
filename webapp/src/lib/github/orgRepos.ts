@@ -15,9 +15,15 @@
  *    not be silently treated as "no repos");
  *  - every `owner/repo` is charset-validated before it is returned (and again
  *    before it reaches `git clone` argv, in the route), so no shell/argv injection;
+ *  - the host is a parameter (github.com or a GitHub Enterprise server, which
+ *    serves the same API under /api/v3), but it is NEVER taken from the raw
+ *    operator string here: callers pass a host that `parseOwnerTarget` already
+ *    checked against the operator's allowlist;
  *  - the token is NEVER placed in a result or an error message (it lives only in
  *    the Authorization header), and any error text is scrubbed of it defensively.
  */
+
+import { GITHUB_DOT_COM, apiBaseForHost, cloneBaseForHost, isValidGithubHost } from './ownerTarget'
 
 const OWNER_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/            // GitHub login rules
 const REPO_RE = /^[A-Za-z0-9._-]{1,100}$/
@@ -37,6 +43,11 @@ export interface OrgRepo {
 
 export interface ListOwnerReposOptions {
   token?: string
+  /**
+   * github.com (default) or a GitHub Enterprise host. Must already be allowlisted
+   * by the caller; this module does not decide which hosts are reachable.
+   */
+  host?: string
   maxPages?: number
   perPage?: number
   includeForks?: boolean
@@ -93,9 +104,10 @@ async function resolveTokenLogin(
   fetchImpl: typeof fetch,
   headers: Record<string, string>,
   timeoutMs: number,
+  apiBase: string,
 ): Promise<string | null> {
   try {
-    const res = await fetchImpl('https://api.github.com/user', { headers, signal: AbortSignal.timeout(timeoutMs) })
+    const res = await fetchImpl(`${apiBase}/user`, { headers, signal: AbortSignal.timeout(timeoutMs) })
     if (!res.ok) return null
     const body = await res.json().catch(() => null)
     return body && typeof body.login === 'string' ? body.login : null
@@ -114,6 +126,11 @@ export async function listOwnerRepos(owner: string, opts: ListOwnerReposOptions 
   const maxPages = Math.max(1, opts.maxPages ?? 10)
   const maxRepos = opts.maxRepos && opts.maxRepos > 0 ? opts.maxRepos : Infinity
   const timeoutMs = opts.timeoutMs && opts.timeoutMs > 0 ? opts.timeoutMs : 15_000
+  const host = (opts.host || GITHUB_DOT_COM).toLowerCase()
+  if (!isValidGithubHost(host)) {
+    throw new GithubEnumError(`Invalid GitHub host: ${host}`)
+  }
+  const apiBase = apiBaseForHost(host)
 
   const headers: Record<string, string> = {
     Accept: 'application/vnd.github+json',
@@ -131,7 +148,7 @@ export async function listOwnerRepos(owner: string, opts: ListOwnerReposOptions 
   // to the public path.
   let ownEndpoint = false
   if (token) {
-    const login = await resolveTokenLogin(fetchImpl, headers, timeoutMs)
+    const login = await resolveTokenLogin(fetchImpl, headers, timeoutMs, apiBase)
     if (login && login.toLowerCase() === owner.toLowerCase()) ownEndpoint = true
   }
 
@@ -140,7 +157,7 @@ export async function listOwnerRepos(owner: string, opts: ListOwnerReposOptions 
   // /users does NOT (valid: all|owner|member) and 422s on `sources`. Forks are
   // filtered client-side anyway, so `owner` is the right user-endpoint value.
   // The /user/repos endpoint takes visibility+affiliation instead of `type`.
-  let base = ownEndpoint ? 'https://api.github.com/user/repos' : `https://api.github.com/orgs/${owner}/repos`
+  let base = ownEndpoint ? `${apiBase}/user/repos` : `${apiBase}/orgs/${owner}/repos`
   let repoType = 'sources'
   let triedUserFallback = ownEndpoint  // never fall back off the authenticated endpoint
 
@@ -164,7 +181,7 @@ export async function listOwnerRepos(owner: string, opts: ListOwnerReposOptions 
     if (res.status === 404 && !triedUserFallback && base.includes('/orgs/')) {
       // Not an org -> fall back to the user endpoint and restart pagination.
       // Switch `type` to a value the /users endpoint accepts (F1).
-      base = `https://api.github.com/users/${owner}/repos`
+      base = `${apiBase}/users/${owner}/repos`
       repoType = 'owner'
       triedUserFallback = true
       page = 0 // loop ++ makes this page 1
@@ -197,10 +214,12 @@ export async function listOwnerRepos(owner: string, opts: ListOwnerReposOptions 
         fullName,
         owner: parsed.owner,
         repo: parsed.repo,
-        // Construct the clone URL from the VALIDATED owner/repo, never from the
-        // untrusted clone_url field (F2 defense-in-depth): it becomes git clone
-        // argv in the scan container.
-        url: `https://github.com/${parsed.owner}/${parsed.repo}.git`,
+        // Construct the clone URL from the VALIDATED owner/repo and the
+        // ALLOWLISTED host, never from the untrusted clone_url field (F2
+        // defense-in-depth): it becomes git clone argv in the scan container.
+        // A GHE server that answers with clone_url pointing elsewhere (or at an
+        // internal alias) therefore cannot redirect the clone.
+        url: `${cloneBaseForHost(host)}/${parsed.owner}/${parsed.repo}.git`,
         defaultBranch: typeof r.default_branch === 'string' ? r.default_branch : '',
         fork,
         archived,

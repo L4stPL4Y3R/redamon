@@ -138,9 +138,20 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     // Supply-chain input: supplyChainRepoUrl becomes a `git clone` argument in
     // the scan container, so it is validated server-side. The Other Scans UI
     // validates too, but a direct PUT bypasses it.
-    {
-      const { validateSupplyChainInput } = await import('@/lib/validation/supplyChainInput')
-      const err = validateSupplyChainInput(updateData)
+    // A GitHub Enterprise host is allowed only when the operator registered it in
+    // their global settings, so the allowlist is read from there (never from the
+    // request). Only looked up when a supply-chain field is actually being written.
+    if ('supplyChainRepoUrl' in updateData || 'supplyChainInputMode' in updateData
+        || 'supplyChainRepoRef' in updateData) {
+      const [{ validateSupplyChainInput }, { allowedGithubHosts }] = await Promise.all([
+        import('@/lib/validation/supplyChainInput'),
+        import('@/lib/github/ownerTarget'),
+      ])
+      const userSettings = await prisma.userSettings.findUnique({
+        where: { userId: eff.userId }, select: { githubEnterpriseHost: true },
+      }).catch(() => null)
+      const err = validateSupplyChainInput(
+        updateData, allowedGithubHosts(userSettings?.githubEnterpriseHost))
       if (err) {
         return NextResponse.json({ error: err }, { status: 400 })
       }

@@ -9,13 +9,17 @@
  * The rules are deliberately narrow - an allowlist of what a GitHub coordinate
  * can look like, not a denylist of what an injection looks like:
  *
- *   - only github.com, only https (or the bare `owner/repo` shorthand)
+ *   - only https, and only github.com or a GitHub Enterprise host the operator
+ *     registered in Global Settings (or the bare `owner/repo` shorthand, which
+ *     always means github.com)
  *   - `owner` and `repo` restricted to GitHub's own charset
  *   - no credentials in the URL (`https://user:token@github.com/...`), which
  *     would otherwise be persisted in plain text and echoed back by GET
  *   - refs may not start with '-' (it would be read as a git option) and may
  *     not contain the sequences git itself rejects
  */
+
+import { GITHUB_DOT_COM, isValidGithubHost } from '@/lib/github/ownerTarget'
 
 export const SUPPLY_CHAIN_INPUT_MODES = ['upload', 'github'] as const
 export type SupplyChainInputMode = (typeof SUPPLY_CHAIN_INPUT_MODES)[number]
@@ -32,17 +36,25 @@ const REF_RE = /^[A-Za-z0-9._\/-]{1,255}$/
 export interface ParsedRepo {
   owner: string
   repo: string
-  /** Canonical clone URL. Always https, always github.com, never credentialed. */
+  /** github.com, or an allowed GitHub Enterprise host. */
+  host: string
+  /** Canonical clone URL. Always https, always an allowed host, never credentialed. */
   cloneUrl: string
 }
 
 /**
  * Accepts `owner/repo`, `https://github.com/owner/repo`, and the same with a
- * trailing `.git` or `/`. Returns null when the value is not a safe GitHub
- * coordinate. An empty string is NOT valid here - callers decide whether empty
- * is allowed for their mode.
+ * trailing `.git` or `/`. A URL on another host is accepted only when that host
+ * is in `allowedHosts` (github.com is the default and is always allowed).
+ * Returns null when the value is not a safe GitHub coordinate. An empty string
+ * is NOT valid here - callers decide whether empty is allowed for their mode.
  */
-export function parseGithubRepo(raw: unknown): ParsedRepo | null {
+export function parseGithubRepo(
+  raw: unknown,
+  allowedHosts: string[] = [GITHUB_DOT_COM],
+): ParsedRepo | null {
+  let host = GITHUB_DOT_COM
+  const allowed = allowedHosts.map(h => h.trim().toLowerCase()).filter(Boolean)
   if (typeof raw !== 'string') return null
   let value = raw.trim()
   if (!value || value.length > 300) return null
@@ -57,7 +69,10 @@ export function parseGithubRepo(raw: unknown): ParsedRepo | null {
     // Reject http:// outright rather than upgrading it: silently "fixing" a
     // downgrade hides that the operator asked for one.
     if (url.protocol !== 'https:') return null
-    if (url.hostname.toLowerCase() !== 'github.com') return null
+    // A port would let an allowed hostname be aimed at an unrelated service.
+    if (url.port) return null
+    host = url.hostname.toLowerCase()
+    if (!allowed.includes(host) || !isValidGithubHost(host)) return null
     // Credentials in the URL would be stored in plain text and returned by the
     // project GET. Refuse rather than strip, so the operator knows.
     if (url.username || url.password) return null
@@ -75,7 +90,7 @@ export function parseGithubRepo(raw: unknown): ParsedRepo | null {
   // the value that becomes a directory name inside the scan container.
   if (owner.includes('..') || repo.includes('..')) return null
 
-  return { owner, repo, cloneUrl: `https://github.com/${owner}/${repo}.git` }
+  return { owner, repo, host, cloneUrl: `https://${host}/${owner}/${repo}.git` }
 }
 
 export function isValidGitRef(raw: unknown): boolean {
@@ -97,7 +112,8 @@ export function isValidGitRef(raw: unknown): boolean {
  * Only validates the fields that are actually present.
  */
 export function validateSupplyChainInput(
-  data: Record<string, unknown>
+  data: Record<string, unknown>,
+  allowedHosts: string[] = [GITHUB_DOT_COM],
 ): string | null {
   if ('supplyChainInputMode' in data) {
     const mode = data.supplyChainInputMode
@@ -112,8 +128,9 @@ export function validateSupplyChainInput(
       return 'supplyChainRepoUrl must be a string'
     }
     // Empty clears the setting. Only a non-empty value has to parse.
-    if (raw.trim() && !parseGithubRepo(raw)) {
-      return 'Repository must be a github.com repo as owner/repo or https://github.com/owner/repo (no credentials in the URL)'
+    if (raw.trim() && !parseGithubRepo(raw, allowedHosts)) {
+      const hosts = allowedHosts.join(' or ')
+      return `Repository must be a repo on ${hosts}, as owner/repo or https://<host>/owner/repo (no credentials, port, query or fragment in the URL)`
     }
   }
 

@@ -3737,6 +3737,7 @@ exit $RC
     async def start_supply_chain(self, project_id: str, user_id: str,
                                  webapp_api_url: str, supply_chain_path: str,
                                  repo_override_url: Optional[str] = None,
+                                 repo_override_host: Optional[str] = None,
                                  repo_override_ref: Optional[str] = None,
                                  repo_override_scope: Optional[str] = None,
                                  repo_override_deep: Optional[bool] = None) -> "SupplyChainState":
@@ -3770,6 +3771,9 @@ exit $RC
         repo_override_env: dict[str, str] = {}
         if repo_override_url:
             repo_override_env["SUPPLY_CHAIN_REPO_OVERRIDE_URL"] = str(repo_override_url)
+            # Empty = github.com. The container re-validates it against the host
+            # the operator configured; the orchestrator only carries it.
+            repo_override_env["SUPPLY_CHAIN_REPO_OVERRIDE_HOST"] = str(repo_override_host or "")
             repo_override_env["SUPPLY_CHAIN_REPO_OVERRIDE_REF"] = str(repo_override_ref or "")
             repo_override_env["SUPPLY_CHAIN_REPO_OVERRIDE_SCOPE"] = str(repo_override_scope or "")
             if repo_override_deep is not None:

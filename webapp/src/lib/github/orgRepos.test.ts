@@ -183,6 +183,36 @@ describe('listOwnerRepos', () => {
     expect(repos.map(r => r.fullName)).toEqual(['acme/a'])
   })
 
+  test('a GitHub Enterprise host talks to /api/v3 and clones from that host', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(ghResponse([repo('acme/a')]))
+    const repos = await listOwnerRepos('acme', { fetchImpl, host: 'ghe.example.com' })
+    expect(fetchImpl.mock.calls[0][0]).toContain('https://ghe.example.com/api/v3/orgs/acme/repos')
+    expect(fetchImpl.mock.calls[0][0]).not.toContain('api.github.com')
+    // The clone URL follows the host, and is still rebuilt from the validated
+    // owner/repo rather than the server-supplied clone_url (which says github.com).
+    expect(repos[0].url).toBe('https://ghe.example.com/acme/a.git')
+  })
+
+  test('the GHE user fallback and own-account probe stay on /api/v3', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(ghResponse({ login: 'someone-else' }))          // /user
+      .mockResolvedValueOnce(ghResponse('not found', { status: 404 }))       // /orgs
+      .mockResolvedValueOnce(ghResponse([repo('alice/dotfiles')]))           // /users
+    const repos = await listOwnerRepos('alice', { fetchImpl, host: 'ghe.example.com', token: 't' })
+    expect(fetchImpl.mock.calls[0][0]).toBe('https://ghe.example.com/api/v3/user')
+    expect(fetchImpl.mock.calls[2][0]).toContain('https://ghe.example.com/api/v3/users/alice/repos')
+    expect(repos.map(r => r.fullName)).toEqual(['alice/dotfiles'])
+  })
+
+  test('a malformed host is rejected before any fetch', async () => {
+    const fetchImpl = vi.fn()
+    await expect(listOwnerRepos('acme', { fetchImpl, host: 'not a host' }))
+      .rejects.toBeInstanceOf(GithubEnumError)
+    await expect(listOwnerRepos('acme', { fetchImpl, host: '169.254.169.254' }))
+      .rejects.toBeInstanceOf(GithubEnumError)
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
   test('without a token there is no /user probe (public path, unchanged)', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(ghResponse([repo('acme/a')]))
     await listOwnerRepos('acme', { fetchImpl })
