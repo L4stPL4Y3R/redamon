@@ -481,7 +481,7 @@ default:
   stack at all, set `MCP_AUTH_TOKEN` in `.env` (or just run `redamon.sh`).
 
 This closes the unauthenticated-RCE surface tracked as STRIDE **S10 / E1 / I9**
-in `internal/security/README.TM.STRIDE.md`.
+in `_local/internal/stride/README.TM.STRIDE.md`.
 
 ## Troubleshooting
 

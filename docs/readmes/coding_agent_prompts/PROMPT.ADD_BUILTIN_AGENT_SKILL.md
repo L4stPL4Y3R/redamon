@@ -19,7 +19,7 @@ A built-in Agent Skill is wired through **9 layers**. Every new skill must touch
 | 5 | Project settings defaults | [agentic/project_settings.py](../../../agentic/project_settings.py) | Entry under `ATTACK_SKILL_CONFIG.builtIn` + any per-skill tunables (e.g. `SQLI_LEVEL`) + `fetch_agent_settings` mappings if the tunables are per-project |
 | 6 | Prisma schema default | [webapp/prisma/schema.prisma](../../../webapp/prisma/schema.prisma) line ~681 (`attackSkillConfig`) | JSON default for the Project field, plus any per-skill columns if you added Prisma-backed tunables |
 | 7 | Frontend UI + badge | [AttackSkillsSection.tsx](../../../webapp/src/components/projects/ProjectForm/sections/AttackSkillsSection.tsx) + [phaseConfig.ts](../../../webapp/src/app/graph/components/AIAssistantDrawer/phaseConfig.ts) | Per-project toggle card + classification badge color/label |
-| 8 | **Drawer skills tooltip API** | [webapp/src/app/api/users/[id]/attack-skills/available/route.ts](../../webapp/src/app/api/users/[id]/attack-skills/available/route.ts) `BUILT_IN_SKILLS` array | Drives the **Agent Skills tooltip** in the chat-drawer header (the hover panel on the active-skill badge). Skills missing from this hardcoded list will not appear in the tooltip even if classification picks them. |
+| 8 | **Drawer skills tooltip API** | [webapp/src/app/api/users/[id]/attack-skills/available/route.ts](../../../webapp/src/app/api/users/[id]/attack-skills/available/route.ts) `BUILT_IN_SKILLS` array | Drives the **Agent Skills tooltip** in the chat-drawer header (the hover panel on the active-skill badge). Skills missing from this hardcoded list will not appear in the tooltip even if classification picks them. |
 | 9 | **Drawer suggestion prompts** | [webapp/src/app/graph/components/AIAssistantDrawer/suggestionData.ts](../../../webapp/src/app/graph/components/AIAssistantDrawer/suggestionData.ts) `EXPLOITATION_GROUPS` (and `INFORMATIONAL_GROUPS` / `POST_EXPLOITATION_GROUPS` if applicable) | Example-prompt cards in the chat-drawer suggestion dropdown. Add a new `SESubGroup` block with the skill's `id`, a human title, and 4-6 ready-to-send prompt examples that exercise the skill. Without this entry the user has no one-click way to invoke the new skill. |
 
 Classification key = the snake_case string used EVERYWHERE: `cve_exploit`, `sql_injection`, `xss`, etc. Pick it once in Phase 1 and use that exact literal across all 9 layers.
@@ -97,7 +97,7 @@ Add a tunable ONLY when the answer is yes to at least one of the following, AND 
 
 **Disqualifier (do NOT make it a tunable):** the agent can decide this at runtime from observed target behaviour. Concretely: which payload to try first, whether to escalate to a noisier technique, retry counts, timing variance for oracle detection, which order to enumerate parameters in, how many parallel curls to fire. These belong in the prompt as guidance ("start with the simplest payload; escalate only if filtered"), not in settings.
 
-The competitor benchmark in [internal/SKILL_TO_ADD.md](../../internal/SKILL_TO_ADD.md) is also a useful sanity-check: count the per-skill knobs the upstream prompt actually parameterizes. Strix prompts have ~0-2 user-facing variables; Shannon has ~5-10 because of the deliverable-CLI plumbing we strip. Aim for 2-5 RedAmon tunables; over 6 usually means something belongs in code as the agent's default.
+The competitor benchmark in [internal/SKILL_TO_ADD.md](../../../_local/internal/SKILL_TO_ADD.md) is also a useful sanity-check: count the per-skill knobs the upstream prompt actually parameterizes. Strix prompts have ~0-2 user-facing variables; Shannon has ~5-10 because of the deliverable-CLI plumbing we strip. Aim for 2-5 RedAmon tunables; over 6 usually means something belongs in code as the agent's default.
 
 ### The three dynamic-prompt patterns (and when to use each)
 
@@ -434,7 +434,7 @@ Existing colors in use:
 - blue (#3b82f6) reserved for user skills
 - gray reserved for unclassified
 
-**8.3** Edit [webapp/src/app/api/users/[id]/attack-skills/available/route.ts](../../webapp/src/app/api/users/[id]/attack-skills/available/route.ts) (Layer 8).
+**8.3** Edit [webapp/src/app/api/users/[id]/attack-skills/available/route.ts](../../../webapp/src/app/api/users/[id]/attack-skills/available/route.ts) (Layer 8).
 
 This API route's `BUILT_IN_SKILLS` array feeds the **skill-tooltip overlay** rendered above the chat input by `PhaseIndicatorBar.tsx` via the `useAttackSkillData` hook. If the new skill is not added here, it will NOT appear in the tooltip even though classification, badge, and project settings work. The user will see the active badge but the popup will be missing the entry.
 
@@ -531,7 +531,7 @@ docker compose build webapp && docker compose up -d webapp
 - [ ] `BUILT_IN_SKILLS` entry added in [AttackSkillsSection.tsx](../../../webapp/src/components/projects/ProjectForm/sections/AttackSkillsSection.tsx)
 - [ ] `DEFAULT_CONFIG.builtIn.<skill_id>` added in [AttackSkillsSection.tsx](../../../webapp/src/components/projects/ProjectForm/sections/AttackSkillsSection.tsx)
 - [ ] `KNOWN_ATTACK_PATH_CONFIG[<skill_id>]` badge added in [phaseConfig.ts](../../../webapp/src/app/graph/components/AIAssistantDrawer/phaseConfig.ts)
-- [ ] **`BUILT_IN_SKILLS` entry added in [api/users/[id]/attack-skills/available/route.ts](../../webapp/src/app/api/users/[id]/attack-skills/available/route.ts)** (Layer 8: powers the chat-drawer skills tooltip; easy to miss, no UI failure on the project form if forgotten)
+- [ ] **`BUILT_IN_SKILLS` entry added in [api/users/[id]/attack-skills/available/route.ts](../../../webapp/src/app/api/users/[id]/attack-skills/available/route.ts)** (Layer 8: powers the chat-drawer skills tooltip; easy to miss, no UI failure on the project form if forgotten)
 - [ ] **Suggestion-prompt block added to `EXPLOITATION_GROUPS` in [suggestionData.ts](../../../webapp/src/app/graph/components/AIAssistantDrawer/suggestionData.ts)** (Layer 9: 4-6 ready-to-send example prompts so the user has one-click invocations in the chat drawer)
 - [ ] Stale skill-id comments swept (`grep -rn "<old skill id list>" webapp/src/`); update doc-comments in files like [webapp/src/lib/websocket-types.ts](../../../webapp/src/lib/websocket-types.ts) so they reflect the new skill set
 - [ ] Agent container rebuilt; webapp rebuilt (or hot-reloaded in dev)

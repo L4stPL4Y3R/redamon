@@ -29,7 +29,7 @@ import {
 } from '@/components/traffic/captureSettingsForm'
 import styles from '@/components/settings/Settings.module.css'
 
-// ── Egress-guard toggles (mirror capture_proxy/egress.py). All default true (block).
+// ── Egress-guard toggles (mirror scanners/capture_proxy/egress.py). All default true (block).
 type EgressToggleKey =
   | 'captureEgressBlockEmptyHost' | 'captureEgressBlockHardGuardrail' | 'captureEgressFailClosed'
   | 'captureEgressBlockUnresolvable' | 'captureEgressBlockPrivate' | 'captureEgressBlockLoopback'

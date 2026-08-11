@@ -285,7 +285,7 @@ npx prisma migrate dev
 Check `.env` credentials match `webapp/.env.local`:
 
 ```bash
-# postgres_db/.env
+# services/postgres_db/.env
 POSTGRES_PASSWORD=your_password
 
 # webapp/.env.local

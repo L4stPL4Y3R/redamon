@@ -375,8 +375,8 @@ graph TD
 - **Build context**: project root (so `services/knowledge_base/` is included)
 - **Pre-cached models**: `intfloat/e5-large-v2` (~1.3 GB) and `BAAI/bge-reranker-base` (~568 MB) downloaded at build time
 - **KB volumes**:
-  - `./knowledge_base/kb_config.yaml:/app/knowledge_base/kb_config.yaml:ro` -- config
-  - `./knowledge_base/data:/app/knowledge_base/data:ro` -- FAISS index and caches
+  - `./services/knowledge_base/kb_config.yaml:/app/knowledge_base/kb_config.yaml:ro` -- config
+  - `./services/knowledge_base/data:/app/knowledge_base/data:ro` -- FAISS index and caches
 - **KB env vars**: `KB_ENABLED`, `KB_PATH`, `KB_EMBEDDING_MODEL`, `NEO4J_URI/USER/PASSWORD`
 - **File permissions**: KB source code is `chmod -R a-w` (read-only), only `data/` is writable
 

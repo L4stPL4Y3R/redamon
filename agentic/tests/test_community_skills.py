@@ -36,7 +36,7 @@ _COMMUNITY_DIR = _AGENTIC_DIR / "community-skills"
 _REPO_ROOT = _AGENTIC_DIR.parent
 
 # Skills that follow the canonical template defined in
-# readmes/coding_agent_prompts/PROMPT.ADD_COMMUNITY_AGENT_SKILL.md
+# docs/readmes/coding_agent_prompts/PROMPT.ADD_COMMUNITY_AGENT_SKILL.md
 # (overview paragraph, "When to Classify Here", phase-numbered Workflow,
 #  Reporting Guidelines, Important Notes, phase-transition cue).
 _CANONICAL_SKILLS = {

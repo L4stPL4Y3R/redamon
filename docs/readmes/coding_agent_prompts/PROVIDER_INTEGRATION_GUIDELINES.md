@@ -267,7 +267,7 @@ If you genuinely need new columns:
    ```bash
    docker compose exec webapp npx prisma db push
    ```
-3. Update the masking logic in [webapp/src/app/api/users/[id]/llm-providers/route.ts](../../webapp/src/app/api/users/%5Bid%5D/llm-providers/route.ts) `maskSecret()` to also mask the new secret-bearing column on GET responses.
+3. Update the masking logic in [webapp/src/app/api/users/[id]/llm-providers/route.ts](../../../webapp/src/app/api/users/%5Bid%5D/llm-providers/route.ts) `maskSecret()` to also mask the new secret-bearing column on GET responses.
 4. Update the PUT `route.ts` to detect masked placeholders and preserve the prior value when the user submits the masked form unchanged.
 5. Extend the `ProviderData` interface at [LlmProviderForm.tsx:18-33](../../../webapp/src/components/settings/LlmProviderForm.tsx#L18) and `EMPTY_PROVIDER` at [LlmProviderForm.tsx:35-49](../../../webapp/src/components/settings/LlmProviderForm.tsx#L35).
 

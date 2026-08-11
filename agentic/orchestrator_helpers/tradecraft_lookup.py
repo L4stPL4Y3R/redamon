@@ -20,7 +20,7 @@ module is not yet wired up. PDF handling is a sub-extractor branch inside
 Tier 1.
 
 See plan: /home/samuele/.claude/plans/harmonic-inventing-crown.md
-See README: readmes/README.TRADECRAFT.md
+See README: docs/readmes/README.TRADECRAFT.md
 """
 
 from __future__ import annotations

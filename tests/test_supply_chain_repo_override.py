@@ -18,7 +18,7 @@ _REPO = str(Path(__file__).resolve().parents[1])
 if _REPO not in sys.path:
     sys.path.insert(0, _REPO)
 
-# Load supply_chain_scan/project_settings.py in isolation (avoid colliding with the
+# Load scanners/supply_chain_scan/project_settings.py in isolation (avoid colliding with the
 # other project_settings.py modules in the tree).
 _spec = importlib.util.spec_from_file_location(
     "sc_project_settings", os.path.join(_REPO, "scanners", "supply_chain_scan", "project_settings.py"))

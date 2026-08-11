@@ -53,7 +53,7 @@ The agentic `GET /community-skills` endpoint auto-discovers files by globbing th
 - **No container rebuild needed.** `./agentic/community-skills` is volume-mounted read-only into the agent container at [docker-compose.yml:419](../../../docker-compose.yml#L419). Dropping a `.md` file there is instantly visible to the `/community-skills` endpoint. (This is an exception to the general rule that `agentic/` changes require rebuilding `agent`: that rule applies to Python code baked into the image, not to these two mounted directories.)
 - **No Prisma migration needed.** Community skills are not a Prisma model on their own, they become `UserAttackSkill` rows on import. The schema already supports this.
 - **Skills are per-user, not global.** Each user who wants this skill must click "Import from Community" in their Global Settings. Already-imported users will NOT auto-pick up new community skills, they need to re-import (duplicates are skipped by name).
-- **Skill content is capped at 50 KB.** The validation is at [webapp/src/app/api/users/[id]/attack-skills/route.ts](../../webapp/src/app/api/users/[id]/attack-skills/route.ts) POST handler (~line 67). Keep your file well under 50,000 characters.
+- **Skill content is capped at 50 KB.** The validation is at [webapp/src/app/api/users/[id]/attack-skills/route.ts](../../../webapp/src/app/api/users/[id]/attack-skills/route.ts) POST handler (~line 67). Keep your file well under 50,000 characters.
 - **Max 20 user skills per user.** If you ship many community skills, be mindful: every imported one counts.
 - **The first non-heading paragraph becomes the description.** [agentic/api.py:572-578](../../../agentic/api.py) extracts the first 200-char stripped non-`#` line as the description shown in the import dialog. Write that line well.
 - **No em dashes anywhere.** Use hyphens or rephrase. Enforced project-wide.
@@ -80,7 +80,7 @@ Study the existing community skills to match the tone and level of detail:
 
 - [agentic/community-skills/sqli_exploitation.md](../../../agentic/community-skills/sqli_exploitation.md) - advanced SQLi beyond sqlmap basics
 - [agentic/community-skills/xss_exploitation.md](../../../agentic/community-skills/xss_exploitation.md) - reflected / stored / DOM XSS with WAF bypass
-- [agentic/community-skills/ssrf_exploitation.md](../../agentic/community-skills/ssrf_exploitation.md) - SSRF, cloud metadata, DNS rebinding
+- [agentic/community-skills/ssrf_exploitation.md](../../../agentic/community-skills/ssrf_exploitation.md) - SSRF, cloud metadata, DNS rebinding
 - [agentic/community-skills/api_testing.md](../../../agentic/community-skills/api_testing.md) - JWT, GraphQL, REST, 403 bypass
 
 Canonical template (follow this shape, the wiki at [redamon.wiki/Agent-Skills.md](../../../redamon.wiki/Agent-Skills.md) documents it and the Intent Router expects it):

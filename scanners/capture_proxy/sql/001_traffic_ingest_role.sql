@@ -8,7 +8,7 @@
 --
 -- Apply once after `prisma db push` has created the table:
 --   docker compose exec -T postgres psql -U redamon -d redamon \
---     -v role_password="'<strong-secret>'" -f - < capture_proxy/sql/001_traffic_ingest_role.sql
+--     -v role_password="'<strong-secret>'" -f - < scanners/capture_proxy/sql/001_traffic_ingest_role.sql
 -- then set the ingest DSN:
 --   TRAFFIC_INGEST_DATABASE_URL=postgresql://traffic_ingest:<secret>@postgres:5432/redamon
 

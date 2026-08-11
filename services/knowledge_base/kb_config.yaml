@@ -6,8 +6,8 @@
 # variables (see precedence below) or point KB_CONFIG_FILE at a different file.
 #
 # Precedence (lowest → highest):
-#   1. Code defaults inside knowledge_base/kb_config.py
-#   2. This file (knowledge_base/kb_config.yaml)
+#   1. Code defaults inside services/knowledge_base/kb_config.py
+#   2. This file (services/knowledge_base/kb_config.yaml)
 #   3. KB_CONFIG_FILE=path/to/other.yaml override
 #   4. Environment variables (see "Override at runtime" notes per section)
 #   5. Function/CLI arguments at call time
@@ -51,7 +51,7 @@ embedder:
 # Chunking: token budget for the markdown / text chunker
 # -----------------------------------------------------------------------------
 # These values must be kept in sync with the embedder above. The chunker
-# uses a chars/4 heuristic (knowledge_base/chunking.py estimate_tokens) which
+# uses a chars/4 heuristic (services/knowledge_base/chunking.py estimate_tokens) which
 # is approximate — prose-heavy text is roughly accurate, code/CLI-heavy text
 # under-counts. Always leave margin under the embedder's hard cap.
 #

@@ -641,7 +641,7 @@ Boundary-by-boundary:
 
 The **global** switch `UserSettings.captureProxyEnabled` drives container
 lifecycle. The trigger lives in the user-settings write
-([`webapp/src/app/api/users/[id]/settings/route.ts:221`](../webapp/src/app/api/users/[id]/settings/route.ts#L221)),
+([`webapp/src/app/api/users/[id]/settings/route.ts:221`](../../webapp/src/app/api/users/[id]/settings/route.ts#L221)),
 not in project save. It calls the orchestrator when the switch flips, or when a
 runtime knob changes while it is already enabled.
 
@@ -931,7 +931,7 @@ caps its unified-diff hunks, and offloaded bodies return an explicit
 
 ## See also
 
-- Full design rationale and phase plan: [`internal/mitmproxy_integration_plan.md`](../internal/mitmproxy_integration_plan.md)
+- Full design rationale and phase plan: [`internal/mitmproxy_integration_plan.md`](../../_local/internal/mitmproxy_integration_plan.md)
 - Threat model context: [`internal/stride/README.TM.STRIDE.md`](../../_local/internal/stride/README.TM.STRIDE.md)
 - Proxy image and addon: [`scanners/capture_proxy/`](../../scanners/capture_proxy/)
 - Agent tools: [`agentic/traffic_tools.py`](../../agentic/traffic_tools.py)

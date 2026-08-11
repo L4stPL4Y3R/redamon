@@ -39,7 +39,7 @@ const SIMPLE_KIND_ENDPOINT: Record<string, { path: (p: string) => string; fallba
   trufflehog: { path: p => `/trufflehog/${p}/start`, fallback: 'Failed to start TruffleHog scan' },
   supply_chain: { path: p => `/supply-chain/${p}/start`, fallback: 'Failed to start Supply-Chain scan' },
   // A per-repo batch item runs the supply-chain container; its repo config is
-  // applied by the env-override layer in supply_chain_scan/project_settings.py.
+  // applied by the env-override layer in scanners/supply_chain_scan/project_settings.py.
   supply_chain_repo: { path: p => `/supply-chain/${p}/start`, fallback: 'Failed to start Supply-Chain scan' },
 }
 

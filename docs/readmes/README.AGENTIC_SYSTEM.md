@@ -917,7 +917,7 @@ Skills are reusable expert playbooks the agent loads into its prompt. Three fami
 | Family | Source | Affects classification? | Affects tool routing? | Lifecycle |
 |---|---|---|---|---|
 | **Built-in attack skills** | Hard-coded prompt blocks under [agentic/prompts/](../../agentic/prompts/) (CVE exploit, brute force, SQL injection, XSS, phishing, DoS, post-exploitation) | Yes, the classifier picks one | Yes, drives `get_phase_tools()` and the exploitation prompt block | Always available; togglable per project via `ATTACK_SKILL_CONFIG.builtIn` |
-| **User attack skills** | Markdown files under [agentic/skills/](../../agentic/skills/) (categorised: `vulnerabilities/`, `network/`, `cloud/`, `tooling/`, `frameworks/`, `protocols/`, `wireless/`, `social_engineering/`, `mobile/`, `api_security/`, `active_directory/`, `reporting/`, `scan_modes/`, `coordination/`, `technologies/`) | Yes, classified as `user_skill:<id>` | No (uses generic phase tools) | Discovered at startup by [agentic/skill_loader.py](../agentic/skill_loader.py); admin-curated; up to `MAX_SKILLS=5` per session |
+| **User attack skills** | Markdown files under [agentic/skills/](../../agentic/skills/) (categorised: `vulnerabilities/`, `network/`, `cloud/`, `tooling/`, `frameworks/`, `protocols/`, `wireless/`, `social_engineering/`, `mobile/`, `api_security/`, `active_directory/`, `reporting/`, `scan_modes/`, `coordination/`, `technologies/`) | Yes, classified as `user_skill:<id>` | No (uses generic phase tools) | Discovered at startup by [agentic/skill_loader.py](../../agentic/orchestrator_helpers/skill_loader.py); admin-curated; up to `MAX_SKILLS=5` per session |
 | **Chat skills** | Same markdown format under [agentic/community-skills/](../../agentic/community-skills/) (e.g. `xss_exploitation.md`, `sqli_exploitation.md`, `ssrf_exploitation.md`, `api_testing.md`) | No | No | On-demand reference docs, injected via `/skill` or guidance queue mid-session |
 
 ### Skill File Format
@@ -3218,8 +3218,8 @@ The agent enforces three layered guardrails on every target it might touch. Each
 
 | Layer | File | Mechanism | Toggleable? | When evaluated |
 |---|---|---|---|---|
-| **Hard** | [agentic/hard_guardrail.py](../agentic/hard_guardrail.py) | Pure regex/string match against TLD patterns + ~200-domain exact set | **No**, non-disableable | At `initialize_node`; also re-checked in `think_node` when injecting the scope reminder |
-| **Soft** | [agentic/guardrail.py](../agentic/guardrail.py) | LLM-based "is this safe to scan" classifier with retry | Yes, `AGENT_GUARDRAIL_ENABLED` | At `initialize_node` after hard guardrail passes |
+| **Hard** | [agentic/hard_guardrail.py](../../agentic/orchestrator_helpers/hard_guardrail.py) | Pure regex/string match against TLD patterns + ~200-domain exact set | **No**, non-disableable | At `initialize_node`; also re-checked in `think_node` when injecting the scope reminder |
+| **Soft** | [agentic/guardrail.py](../../agentic/orchestrator_helpers/guardrail.py) | LLM-based "is this safe to scan" classifier with retry | Yes, `AGENT_GUARDRAIL_ENABLED` | At `initialize_node` after hard guardrail passes |
 | **Scope reminder** | [agentic/orchestrator_helpers/nodes/think_node.py](../../agentic/orchestrator_helpers/nodes/think_node.py) (lines ~289-305) | Prompt-level injection: "you must only operate against the project's configured target" | Implicit (depends on hard-block status + `AGENT_GUARDRAIL_ENABLED`) | Every think iteration |
 
 ### Hard Guardrail, The Floor
@@ -4334,7 +4334,7 @@ When `KB_ENABLED=null`, the project inherits the top-level `KB_ENABLED` flag fro
 
 ## Report Summarizer (Narrative Synthesis)
 
-[agentic/report_summarizer.py](../agentic/report_summarizer.py) is a separate LLM-driven module called by the webapp's report generation route (not by the orchestrator). It converts the structured pentest output (findings, CVEs, exploits, attack chains, target metadata) into professional prose.
+[agentic/report_summarizer.py](../../agentic/orchestrator_helpers/report_summarizer.py) is a separate LLM-driven module called by the webapp's report generation route (not by the orchestrator). It converts the structured pentest output (findings, CVEs, exploits, attack chains, target metadata) into professional prose.
 
 ### Sections Generated
 
@@ -4394,7 +4394,7 @@ LLM agent that **edits source code** to fix identified vulnerabilities. Operates
 
 `SEQUENTIAL_TOOLS = {"github_edit", "github_write", "github_bash"}`, these mutating tools never run in parallel even if the LLM emits a plan. Read-only tools (`glob`, `grep`, `read`, `list_dir`, `symbols`, `find_*`, `repo_map`) run concurrently.
 
-Both companion orchestrators reuse [agentic/key_rotation.py](../agentic/key_rotation.py)'s round-robin `KeyRotator` to spread load across a pool of API keys when configured.
+Both companion orchestrators reuse [agentic/key_rotation.py](../../agentic/orchestrator_helpers/key_rotation.py)'s round-robin `KeyRotator` to spread load across a pool of API keys when configured.
 
 ### Why Three Orchestrators Instead of One?
 

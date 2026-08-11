@@ -172,7 +172,7 @@ TRUFFLEHOG_PHASE_PATTERNS = [
 ]
 
 # AI Attack Surface phase patterns. Match ONLY the explicit [Phase N] markers
-# that ai_attack_surface_scan/main.py prints (numbered in execution order).
+# that scanners/ai_attack_surface_scan/main.py prints (numbered in execution order).
 # Bare keywords would false-match — e.g. "Attack" appears in the banner line
 # "AI Attack Surface scan", which would bounce the phase back to 3.
 AI_ATTACK_SURFACE_PHASE_PATTERNS = [
@@ -3429,7 +3429,7 @@ class ContainerManager:
         does - inside the hardened, secret-free analyzer image, dispatched by the
         orchestrator (the trusted socket holder). The Kali worker never touches
         Docker: it cannot, and must not (it is the least-trusted, target-facing
-        zone). See readmes/README.TM.SYSTEM_OVERVIEW.md trust boundaries.
+        zone). See docs/readmes/README.TM.SYSTEM_OVERVIEW.md trust boundaries.
 
         GuardDog downloads the attacker-authored tarball, so the container:
           - runs on the ISOLATED analyzer bridge (internet NAT for the registry,
@@ -3549,7 +3549,7 @@ class ContainerManager:
     # OSV ecosystems this sidecar knows how to seed. Also the INJECTION GATE:
     # the ecosystem string is interpolated into a shell script, so anything not
     # on this list is refused rather than escaped (same posture as sanitize_name).
-    # MUST stay in step with supply_chain_common/osv_db_sync.py SEED_MANIFESTS.
+    # MUST stay in step with scanners/supply_chain_common/osv_db_sync.py SEED_MANIFESTS.
     # This sidecar cannot import that module (it has no source mount), so the
     # list is duplicated - tests/test_supply_chain_osv_refresh.py asserts the
     # two never drift. Maven and NuGet were missing here, so an operator could

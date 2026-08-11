@@ -3,7 +3,7 @@
 # Docker socket, points a docker client at the broker socket, and asserts the
 # allow/deny policy. No impact on the RedAmon stack.
 #
-# Run: bash docker_broker/test_broker.sh
+# Run: bash services/docker_broker/test_broker.sh
 set -uo pipefail
 cd "$(dirname "$0")/.."
 

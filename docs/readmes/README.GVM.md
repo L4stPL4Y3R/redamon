@@ -33,7 +33,7 @@ RedAmon uses GVM in **headless API mode** (no web GUI) to:
 - Consume reconnaissance data (IPs, hostnames from recon output)
 - Automatically create scan targets and tasks via the Python GMP API
 - Execute vulnerability scans and stream logs in real-time to the webapp
-- Save structured JSON results (`gvm_scan/output/gvm_{projectId}.json`)
+- Save structured JSON results (`scanners/gvm_scan/output/gvm_{projectId}.json`)
 - Update the Neo4j graph with Vulnerability nodes (source="gvm"), CVE nodes, and relationships to IP/Subdomain nodes
 
 **Webapp integration:** GVM scans are triggered from the Graph page via a dedicated "GVM Scan" button. The button is only enabled when recon data exists for the project. Logs stream in real-time to a log drawer with 4-phase progress (Loading Recon Data → Connecting to GVM → Scanning IPs → Scanning Hostnames). Results can be downloaded as JSON from the toolbar.
@@ -84,7 +84,7 @@ RedAmon uses GVM in **headless API mode** (no web GUI) to:
 │            ▼                                                                        │
 │   ┌─────────────────┐                                                               │
 │   │   JSON OUTPUT   │  Structured vulnerability report                              │
-│   │                 │  └── gvm_scan/output/gvm_*.json                              │
+│   │                 │  └── scanners/gvm_scan/output/gvm_*.json                              │
 │   └─────────────────┘                                                               │
 │                                                                                     │
 └─────────────────────────────────────────────────────────────────────────────────────┘
@@ -1069,7 +1069,7 @@ PROJECT_ID=your_project_id TARGET_DOMAIN=example.com \
 
 ### Check Results
 ```bash
-cat gvm_scan/output/gvm_{projectId}.json | jq '.summary'
+cat scanners/gvm_scan/output/gvm_{projectId}.json | jq '.summary'
 ```
 
 ### Stop GVM Infrastructure

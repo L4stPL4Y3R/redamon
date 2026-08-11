@@ -2935,7 +2935,7 @@ ORDER BY s.iteration
 
 ## 🤖 AI Surface Annotations
 
-The adversarial-AI surface recon (see `internal/ADVERSARIAL_AI/AI_SURFACE_RECON.md`) lands as **property additions on existing nodes** plus new instances on existing labels. **Zero new node labels are introduced.**
+The adversarial-AI surface recon (see `_local/internal/ADVERSARIAL_AI/AI_SURFACE_RECON.md`) lands as **property additions on existing nodes** plus new instances on existing labels. **Zero new node labels are introduced.**
 
 ### Naming convention — prefix-based discovery
 

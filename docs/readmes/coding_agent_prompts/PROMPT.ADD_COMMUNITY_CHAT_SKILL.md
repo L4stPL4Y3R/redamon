@@ -8,7 +8,7 @@ Add **[SKILL_NAME]** (e.g. `ad_kill_chain`, `ffuf`, `jwt_cheatsheet`) as a new *
 
 ## Architecture recap (read this first)
 
-Chat Skills live in [agentic/skills/<category>/](../../../agentic/skills/). The loader at [agentic/skill_loader.py](../../agentic/skill_loader.py) recursively globs `**/*.md`, parses YAML frontmatter, and exposes them via `GET /skills` and `GET /skills/<skill_id:path>` in [agentic/api.py](../../../agentic/api.py).
+Chat Skills live in [agentic/skills/<category>/](../../../agentic/skills/). The loader at [agentic/skill_loader.py](../../../agentic/orchestrator_helpers/skill_loader.py) recursively globs `**/*.md`, parses YAML frontmatter, and exposes them via `GET /skills` and `GET /skills/<skill_id:path>` in [agentic/api.py](../../../agentic/api.py).
 
 ```
 agentic/skills/<category>/<skill_name>.md  (with YAML frontmatter)
@@ -61,9 +61,9 @@ Key differences from Agent Skills:
 ## Critical rules (READ BEFORE EDITING)
 
 - **No container rebuild needed.** `./agentic/skills` is volume-mounted read-only into the agent container at [docker-compose.yml:418](../../../docker-compose.yml#L418). Dropping a `.md` file into `agentic/skills/<category>/` is instantly visible to the loader. (This is an exception to the general rule that `agentic/` changes require rebuilding `agent`: that rule applies to Python code like `skill_loader.py` itself, not to the mounted `skills/` tree it reads.)
-- **YAML frontmatter is required** for a good UX. [skill_loader.py:29-50](../../agentic/skill_loader.py) parses `---`-delimited frontmatter. Without it, `name` falls back to `file_stem.replace("_", " ").title()` and `description` is empty.
+- **YAML frontmatter is required** for a good UX. [skill_loader.py:29-50](../../../agentic/orchestrator_helpers/skill_loader.py) parses `---`-delimited frontmatter. Without it, `name` falls back to `file_stem.replace("_", " ").title()` and `description` is empty.
 - **The skill ID is the path under `agentic/skills/` WITHOUT the extension**, with `/` as separator. `agentic/skills/active_directory/ad_kill_chain.md` has ID `active_directory/ad_kill_chain`. This is what `/skill <name>` matches against (partial, case-insensitive match via the frontend autocomplete at [InputArea.tsx](../../../webapp/src/app/graph/components/AIAssistantDrawer/InputArea.tsx)).
-- **Path traversal is blocked.** `load_skill_content()` at [skill_loader.py:95-118](../../agentic/skill_loader.py) resolves the path and refuses anything outside the skills directory.
+- **Path traversal is blocked.** `load_skill_content()` at [skill_loader.py:95-118](../../../agentic/orchestrator_helpers/skill_loader.py) resolves the path and refuses anything outside the skills directory.
 - **Content size cap is 50 KB.** Enforced at the chat-skills POST route, same as agent skills.
 - **Max 50 skills per user.** If importing a large catalog, communicate the cap.
 - **No Prisma migration needed.** `UserChatSkill` already exists at [webapp/prisma/schema.prisma:941-954](../../../webapp/prisma/schema.prisma).
@@ -104,7 +104,7 @@ Create [agentic/skills/<category>/<skill_name>.md](../../../agentic/skills/).
 
 ### Required YAML frontmatter
 
-[skill_loader.py:29-50](../../agentic/skill_loader.py) reads only `name` and `description` from the frontmatter. Other keys are ignored.
+[skill_loader.py:29-50](../../../agentic/orchestrator_helpers/skill_loader.py) reads only `name` and `description` from the frontmatter. Other keys are ignored.
 
 ```markdown
 ---
@@ -237,7 +237,7 @@ No rebuild. The file is live as soon as you save it (`./agentic/skills` is volum
 
 The import endpoint skips duplicates by `name`. If you edit a shipped skill and want existing users to pick up the new version:
 - They must either **delete** the old entry first (trash icon in Global Settings > Chat Skills) and re-import, OR
-- You can manually update the `content` via the PUT route at [webapp/src/app/api/users/[id]/chat-skills/[skillId]/route.ts](../../webapp/src/app/api/users/[id]/chat-skills/[skillId]/route.ts) (note: current PUT handler only updates description; you may need to extend it for content updates, or users must delete-and-reimport).
+- You can manually update the `content` via the PUT route at [webapp/src/app/api/users/[id]/chat-skills/[skillId]/route.ts](../../../webapp/src/app/api/users/[id]/chat-skills/[skillId]/route.ts) (note: current PUT handler only updates description; you may need to extend it for content updates, or users must delete-and-reimport).
 
 Flag this to the user when shipping a skill update.
 

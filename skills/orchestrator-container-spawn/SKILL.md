@@ -35,13 +35,13 @@ For the no-`env_file` knob rule, see the recon_orchestrator
   longer write the host-owned files, and the scan breaks. This was reverted after
   breaking recon/partial spawns; hardening is deliberately deferred with
   `drop_caps=False` at **every** spawn site
-  ([container_manager.py:775](../../recon_orchestrator/container_manager.py#L775),
-  :1731, :2101). Keep it deferred unless the mount is not host-owned.
+  ([container_manager.py:837](../../recon_orchestrator/container_manager.py#L837),
+  :1798, :2168). Keep it deferred unless the mount is not host-owned.
 - **NEVER add `security_opt: no-new-privileges` to these spawns.** It breaks
   `execve` for non-root users inside the recon image (reverted once already):
-  [container_manager.py:877](../../recon_orchestrator/container_manager.py#L877).
+  [container_manager.py:939](../../recon_orchestrator/container_manager.py#L939).
 - **ALWAYS apply hardening through `_scanner_hardening()`**
-  ([container_manager.py:505](../../recon_orchestrator/container_manager.py#L505)),
+  ([container_manager.py:567](../../recon_orchestrator/container_manager.py#L567)),
   not ad-hoc per spawn, so all three spawn sites stay consistent.
 - **ALWAYS keep `sibling_host_path()` robust to BOTH POSIX (`/`) and Windows
   (`\`) host paths** ([container_manager.py:53](../../recon_orchestrator/container_manager.py#L53)).

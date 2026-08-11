@@ -1,8 +1,8 @@
 """Shared pytest configuration for RedAmon (auto-tiering + isolation rules).
 
 This file is intentionally near-identical at every in-container test root
-(agentic/, recon/, recon_orchestrator/, ai_attack_surface_scan/, capture_proxy/,
-docker_broker/, and the repo root). Each container mounts only its own subtree,
+(agentic/, recon/, recon_orchestrator/, scanners/ai_attack_surface_scan/,
+scanners/capture_proxy/, services/docker_broker/, and the repo root). Each container mounts only its own subtree,
 so the config must be visible at each in-container rootdir; keep the copies in
 sync.
 
@@ -25,7 +25,7 @@ mutated; a later-collected test then imports the polluted module and silently
 drops to 0% coverage (this is exactly the bug that hid `tradecraft_lookup.py`).
 Use fixtures or ``mock.patch.dict(sys.modules, {...})`` / ``mock.patch.dict(
 os.environ, {...})`` scoped to a single test, and restore in ``tearDownModule``
-if you must shim at import time. See ``readmes/README.TESTING.md``.
+if you must shim at import time. See ``docs/readmes/README.TESTING.md``.
 
 DETERMINISM AT THE GATE — a large body of these tests was written for the old
 per-file ``python -m unittest tests.test_x`` runner, where every file was its

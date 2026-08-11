@@ -7,7 +7,7 @@ the results. This reproduces the isolation the legacy per-file
 tests stub langchain/langgraph into sys.modules at import time (and bake real
 tool objects against a fake decorator during import), which is order-dependent
 in a single shared pytest process. One process per file makes the gate
-deterministic. See readmes/README.TESTING.md.
+deterministic. See docs/readmes/README.TESTING.md.
 
 Tiers are inferred from the filename (kept in sync with each conftest.py):
   live:        live_*, *_live*, *_smoke*, smoke_*

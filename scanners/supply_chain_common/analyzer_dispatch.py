@@ -48,7 +48,7 @@ def _env(name, default):
 ANALYZER_IMAGE = _env("SUPPLY_CHAIN_ANALYZER_IMAGE",
                       "redamon-supply-chain-analyzer:latest")
 
-# Modes supply_chain_analyzer/entrypoint.py understands.
+# Modes scanners/supply_chain_analyzer/entrypoint.py understands.
 JOB_MODES = {"lockfile", "sbom", "dir", "js-dir", "purls"}
 
 # Dedicated bridge the analyzer runs on - the SAME name and driver the

@@ -5,7 +5,7 @@ WHY THIS IS AGENT-SIDE, NOT A KALI MCP TOOL
 GuardDog downloads the attacker-authored package tarball and analyses it, so it
 MUST run in the hardened, secret-free analyzer image. Only the orchestrator
 holds the Docker socket, and the Kali worker is the least-trusted, target-facing
-zone that holds no secrets (readmes/README.TM.SYSTEM_OVERVIEW.md, TB4). So the
+zone that holds no secrets (docs/readmes/README.TM.SYSTEM_OVERVIEW.md, TB4). So the
 dispatch cannot live in Kali.
 
 Instead it rides the SAME trust-consistent lane the CodeFix build sandbox uses

@@ -1036,7 +1036,7 @@ services:
   # `docker compose up` does NOT start them; the recon orchestrator manages the
   # proxy lifecycle from the per-project toggle (§8.4). Build with:
   #   docker compose --profile capture build capture-proxy
-  # Apply the scoped role once (capture_proxy/sql/001_traffic_ingest_role.sql).
+  # Apply the scoped role once (scanners/capture_proxy/sql/001_traffic_ingest_role.sql).
   # ===========================================================================
   capture-proxy:
     profiles: ["capture"]
@@ -1099,7 +1099,7 @@ services:
       CAPTURE_BODIES_DIR: /bodies
       CAPTURE_PROXY_REDACT_SECRETS: "${CAPTURE_PROXY_REDACT_SECRETS:-true}"
       CAPTURE_REDACT_SALT: "${CAPTURE_REDACT_SALT:-redamon-capture}"
-      # Scoped INSERT-only role (capture_proxy/sql/001_traffic_ingest_role.sql).
+      # Scoped INSERT-only role (scanners/capture_proxy/sql/001_traffic_ingest_role.sql).
       TRAFFIC_INGEST_DATABASE_URL: "${TRAFFIC_INGEST_DATABASE_URL:-postgresql://traffic_ingest:changeme@postgres:5432/${POSTGRES_DB:-redamon}}"
       # Tag-verification keys: source=recon -> SCANNER_API_KEY, source=agent -> INTERNAL_API_KEY.
       SCANNER_API_KEY: "${SCANNER_API_KEY:-}"
