@@ -26,3 +26,12 @@ export const GRAPH_MAX_NODES = () => intEnv('GRAPH_MAX_NODES', 20_000)
 /** Cache bounds: entries, and total nodes+links held across all entries. */
 export const GRAPH_CACHE_MAX_ENTRIES = () => intEnv('GRAPH_CACHE_MAX_ENTRIES', 8)
 export const GRAPH_CACHE_MAX_ELEMENTS = () => intEnv('GRAPH_CACHE_MAX_ELEMENTS', 200_000)
+
+/**
+ * Hard record ceiling applied INSIDE the Cypher query.
+ *
+ * One record is one (n)-[r]->(m) row, so it yields at most two nodes; 2.5x the
+ * node cap leaves generous headroom for duplicate endpoints across UNION arms
+ * while still bounding what the driver can ever materialise.
+ */
+export const GRAPH_MAX_RECORDS = () => intEnv('GRAPH_MAX_RECORDS', GRAPH_MAX_NODES() * 5 / 2)

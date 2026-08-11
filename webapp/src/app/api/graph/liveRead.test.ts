@@ -13,7 +13,13 @@ import { describe, test, expect, beforeEach, vi } from 'vitest'
 
 const h = vi.hoisted(() => ({ run: vi.fn(), close: vi.fn(), conversations: vi.fn() }))
 
-vi.mock('./neo4j', () => ({ getGraphSession: () => ({ run: h.run, close: h.close }) }))
+vi.mock('./neo4j', () => ({
+  getGraphSession: () => ({ run: h.run, close: h.close }),
+  // readLiveGraph now bounds the query at the DATABASE, so it needs the
+  // driver's Integer helper: a plain JS number is sent as a float and Neo4j
+  // rejects it for LIMIT.
+  neo4j: { int: (n: number) => n },
+}))
 vi.mock('@/lib/prisma', () => ({
   default: { conversation: { findMany: (...a: unknown[]) => h.conversations(...a) } },
 }))
@@ -90,7 +96,11 @@ describe('readLiveGraph', () => {
     await readLiveGraph('p1')
     const read = calls()[1]
     expect(read.cypher).toBe(LIVE_GRAPH_QUERY)
-    expect(read.params).toEqual({ projectId: 'p1' })
+    // The read now also carries the record ceiling. Assert the tenant key
+    // EXACTLY and that nothing else leaked in beyond the known bound, so this
+    // still fails if a future param could widen the scope.
+    expect(read.params.projectId).toBe('p1')
+    expect(Object.keys(read.params).sort()).toEqual(['maxRecords', 'projectId'])
     // Every MATCH in the query is tenant-scoped.
     const matches = LIVE_GRAPH_QUERY.split('MATCH').slice(1)
     expect(matches.length).toBeGreaterThan(10)

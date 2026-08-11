@@ -59,7 +59,13 @@ export async function GET(request: NextRequest) {
 
     // Return cached data with ETag
     return NextResponse.json(
-      { nodes: cached.data.nodes, links: cached.data.links, projectId, ...(cached.info ? { truncated: cached.info } : {}) },
+      // Same condition as the miss path below. Keying on `cached.info` alone
+      // meant a NON-truncated graph served from cache carried
+      // `truncated: {truncated:false,...}` -- a truthy object -- while the
+      // miss omitted the key entirely, so `if (data.truncated)` answered
+      // differently for identical data depending on cache state.
+      { nodes: cached.data.nodes, links: cached.data.links, projectId,
+        ...(cached.info?.truncated ? { truncated: cached.info } : {}) },
       {
         headers: {
           'ETag': `"${cached.etag}"`,
