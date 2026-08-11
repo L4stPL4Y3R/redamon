@@ -3,6 +3,14 @@ import logging
 
 import pytest
 
+# The KB's heavy dependencies (torch / sentence-transformers / faiss) ship ONLY
+# in the --kbase agent image (agentic/requirements-kb.txt, installed behind the
+# conditional block in agentic/Dockerfile). A default `./redamon.sh install`
+# builds the agent image WITHOUT them, so on any non-KB install these tests must
+# SKIP rather than fail: a hard failure on a missing prerequisite is a bug in the
+# test, and it turned `./redamon.sh test unit` red for every default install.
+pytest.importorskip("sentence_transformers", reason="KB extra: present only in the --kbase agent image")
+
 from knowledge_base.reranker import (
     DEFAULT_MAX_TOKENS_PER_SIDE,
     DEFAULT_RERANKER_MODEL,
