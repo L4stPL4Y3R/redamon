@@ -24,17 +24,17 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DEPLOY="$REPO_ROOT/deploy/single-host/deploy.sh"
-DEPLOY_ENV_EXAMPLE="$REPO_ROOT/deploy/single-host/.env.example"
+DEPLOY="$REPO_ROOT/tooling/deploy/single-host/deploy.sh"
+DEPLOY_ENV_EXAMPLE="$REPO_ROOT/tooling/deploy/single-host/.env.example"
 COMPOSE="$REPO_ROOT/docker-compose.yml"
-PATCH_DIR="$REPO_ROOT/deploy/single-host/patches"
+PATCH_DIR="$REPO_ROOT/tooling/deploy/single-host/patches"
 
 PASS=0; FAIL=0
 pass() { PASS=$((PASS+1)); printf '  \033[0;32mPASS\033[0m %s\n' "$1"; }
 fail() { FAIL=$((FAIL+1)); printf '  \033[0;31mFAIL\033[0m %s\n' "$1"; }
 
 echo "== the deploy-time patch mechanism is gone, not merely unused =="
-[ ! -d "$PATCH_DIR" ] && pass "deploy/single-host/patches/ removed" || fail "patches/ is back (deploy must not mutate source)"
+[ ! -d "$PATCH_DIR" ] && pass "tooling/deploy/single-host/patches/ removed" || fail "patches/ is back (deploy must not mutate source)"
 if grep -qE 'apply_one|git apply|patch -p[0-9]' "$DEPLOY"; then
   fail "deploy.sh applies a source patch on the host (dirties the checkout, breaks pull --ff-only)"
 else
@@ -55,7 +55,7 @@ if grep -q '^ARG NEXT_PUBLIC_AGENT_WS_URL' "$REPO_ROOT/webapp/Dockerfile" \
 else
   fail "webapp/Dockerfile lost the NEXT_PUBLIC_AGENT_WS_URL ARG (prod builds would bake localhost:8090)"
 fi
-if grep -q 'NEXT_PUBLIC_AGENT_WS_URL' "$REPO_ROOT/deploy/single-host/compose/docker-compose.prod.yml"; then
+if grep -q 'NEXT_PUBLIC_AGENT_WS_URL' "$REPO_ROOT/tooling/deploy/single-host/compose/docker-compose.prod.yml"; then
   pass "prod overlay passes the WS URL as a build arg"
 else
   fail "prod overlay no longer supplies NEXT_PUBLIC_AGENT_WS_URL"

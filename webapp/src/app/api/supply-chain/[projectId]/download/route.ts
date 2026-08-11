@@ -7,7 +7,7 @@ import path from 'path'
 
 // Path to the L1 Supply-Chain scan output directory (mounted volume or local path).
 // The CLEAN writer saves supply_chain_<projectId>.json here (see
-// supply_chain_scan/main.py:163, SUPPLY_CHAIN_OUTPUT_DIR).
+// scanners/supply_chain_scan/main.py:163, SUPPLY_CHAIN_OUTPUT_DIR).
 const SUPPLY_CHAIN_OUTPUT_PATH = process.env.SUPPLY_CHAIN_OUTPUT_PATH || '/data/supply-chain-output'
 
 interface RouteParams {

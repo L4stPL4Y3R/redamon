@@ -23,7 +23,7 @@ run() {
 # Unit / integration (no running stack required)
 run "Unit: redamon.sh secret generation"        bash tests/redamon_secrets_test.sh
 run "Integration: host-port publish policy"      bash tests/test_port_bindings.sh
-run "Unit: docker-broker policy (T1/T2 mode)"    python3 docker_broker/test_policy.py
+run "Unit: docker-broker policy (T1/T2 mode)"    python3 services/docker_broker/test_policy.py
 run "Unit: MCP bearer middleware (ASGI)"         python3 mcp/servers/tests/test_auth_middleware.py
 run "Unit: agent MCP client auth wiring"         python3 agentic/tests/test_system_mcp_auth.py
 run "Integration: SSE auth round-trip (real MCP)" python3 mcp/servers/tests/test_sse_auth_integration.py
@@ -36,8 +36,8 @@ run "Unit: JS-recon SSRF URL guard (I14)"        python3 recon/tests/test_js_rec
 
 # --- Wave 2 (STRIDE remediation wave 2) host-runnable suites ---
 run "Unit: WS same-origin + ticket gate (S3/S4)" python3 agentic/tests/test_ws_origin_auth.py
-run "Unit: broker ownership gating (E1)"          python3 docker_broker/test_ownership.py
-run "Unit: broker plumbing regression"            python3 docker_broker/test_plumbing.py
+run "Unit: broker ownership gating (E1)"          python3 services/docker_broker/test_ownership.py
+run "Unit: broker plumbing regression"            python3 services/docker_broker/test_plumbing.py
 run "Unit: scan admission caps (D3)"              python3 tests/test_admission_ledger.py
 run "Unit: redagraph tenant + scanner key (S8)"   python3 tests/test_redagraph.py
 run "Unit: github-hunt stdout redaction (I4)"     python3 tests/test_github_hunt_redaction.py

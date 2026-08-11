@@ -37,7 +37,7 @@ class TestImportsSmoke(unittest.TestCase):
 
 
 def _load_entrypoint():
-    path = os.path.join(_REPO, "supply_chain_analyzer", "entrypoint.py")
+    path = os.path.join(_REPO, "scanners", "supply_chain_analyzer", "entrypoint.py")
     spec = importlib.util.spec_from_file_location("sc_entrypoint", path)
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)

@@ -7,7 +7,7 @@
 # langchain/langgraph into sys.modules at import time and bake real tool objects
 # against a fake decorator during import — order-dependent in a single pytest
 # process. So the gate runs each test FILE in its own pytest subprocess
-# (parallelized) via scripts/pytest_isolated.py. See readmes/README.TESTING.md.
+# (parallelized) via tooling/scripts/pytest_isolated.py. See docs/readmes/README.TESTING.md.
 #
 # The whole repo is mounted at /repo (workdir /repo/agentic) so the cross-layer
 # tests resolve: REPO_ROOT=parents[2]=/repo, git HEAD is available, and sibling
@@ -54,11 +54,11 @@ run_in_image() {
 }
 
 case "$MODE" in
-    unit|focused)  run_in_image 'exec python /repo/scripts/pytest_isolated.py unit tests' ;;
-    integration)   run_in_image 'exec python /repo/scripts/pytest_isolated.py integration tests' ;;
-    live)          run_in_image 'exec python /repo/scripts/pytest_isolated.py live tests' ;;
-    all|discover)  run_in_image 'exec python /repo/scripts/pytest_isolated.py all tests' ;;
-    coverage)      run_in_image "exec python /repo/scripts/pytest_isolated.py all tests --cov . --cov-floor $COV_FLOOR" ;;
+    unit|focused)  run_in_image 'exec python /repo/tooling/scripts/pytest_isolated.py unit tests' ;;
+    integration)   run_in_image 'exec python /repo/tooling/scripts/pytest_isolated.py integration tests' ;;
+    live)          run_in_image 'exec python /repo/tooling/scripts/pytest_isolated.py live tests' ;;
+    all|discover)  run_in_image 'exec python /repo/tooling/scripts/pytest_isolated.py all tests' ;;
+    coverage)      run_in_image "exec python /repo/tooling/scripts/pytest_isolated.py all tests --cov . --cov-floor $COV_FLOOR" ;;
     tests/*|*.py|-*)
         # Passthrough: a specific file / node id / pytest args (single process).
         run_in_image "exec python -m pytest $MODE $*" ;;

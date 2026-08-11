@@ -299,7 +299,9 @@ class TestRceToolsContent(unittest.TestCase):
 
     def test_false_positive_gate_present(self):
         self.assertIn("False positive gate", self.out)
-        self.assertIn(">= 800ms", self.out)
+        # The timing-oracle guidance judges against the target's OWN measured
+        # jitter (noise floor), deliberately NOT a fixed millisecond cutoff.
+        self.assertIn("noise floor", self.out)
 
     def test_transition_phase_instruction(self):
         """Step 1 must instruct the agent to transition to exploitation."""

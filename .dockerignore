@@ -27,7 +27,7 @@
 **/coverage.xml
 
 # ---------- Virtualenvs ----------
-knowledge_base/.redamon-venv/
+services/knowledge_base/.redamon-venv/
 **/*-env/
 **/*-venv/
 **/.venv/
@@ -43,7 +43,7 @@ knowledge_base/.redamon-venv/
 
 # ---------- Test scaffolding (don't ship tests into production images) ----------
 agentic/tests/
-knowledge_base/tests/
+services/knowledge_base/tests/
 **/*.test.py
 **/*.spec.py
 

@@ -2,7 +2,7 @@
  * Shared allowlists + sanitizer for the capture-proxy body-storage policy.
  *
  * The family list, policy list, and Recommended defaults MUST mirror the backend
- * (capture_proxy/capture_lib.py: DEFAULT_BODY_RULES / classify_family). Keeping
+ * (scanners/capture_proxy/capture_lib.py: DEFAULT_BODY_RULES / classify_family). Keeping
  * them here means the settings route (server) and settings page (client) can't
  * drift from each other.
  */

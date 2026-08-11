@@ -24,10 +24,10 @@ ROOTS=(
   "agentic"              # scope: agentic
   "recon"                # scope: recon
   "recon_orchestrator"   # scope: recon_orchestrator
-  "capture_proxy"        # scope: capture_proxy
-  "supply_chain_scan"    # scope: supply_chain (dir)
-  "supply_chain_common"  # supply_chain shared lib
-  "supply_chain_analyzer" # supply_chain analyzer
+  "scanners/capture_proxy"        # scope: capture_proxy
+  "scanners/supply_chain_scan"    # scope: supply_chain (dir)
+  "scanners/supply_chain_common"  # supply_chain shared lib
+  "scanners/supply_chain_analyzer" # supply_chain analyzer
 )
 # ---------------------------------------------------------------------------
 

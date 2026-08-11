@@ -35,10 +35,18 @@ _iana_stub.get_service_name_friendly = lambda port, protocol="tcp": {
 sys.modules.setdefault("helpers", types.ModuleType("helpers"))
 sys.modules["helpers.iana_services"] = _iana_stub
 
+# Same reason: the AI-port catalog pulls the rest of helpers/ in with it. None
+# means "not a known AI port", which is the default for the ports used here.
+_ai_catalog_stub = types.ModuleType("helpers.ai_signal_catalog")
+_ai_catalog_stub.lookup_ai_port = lambda port: None
+sys.modules["helpers.ai_signal_catalog"] = _ai_catalog_stub
+setattr(sys.modules["helpers"], "ai_signal_catalog", _ai_catalog_stub)
+setattr(sys.modules["helpers"], "iana_services", _iana_stub)
+
 # Now load masscan_scan via importlib to avoid triggering helpers/__init__.py
 _spec = importlib.util.spec_from_file_location(
     "recon.main_recon_modules.masscan_scan",
-    str(PROJECT_ROOT / "recon" / "masscan_scan.py"),
+    str(PROJECT_ROOT / "recon" / "main_recon_modules" / "masscan_scan.py"),
 )
 masscan_mod = importlib.util.module_from_spec(_spec)
 sys.modules["recon.main_recon_modules.masscan_scan"] = masscan_mod

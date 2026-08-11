@@ -1,0 +1,388 @@
+# RedAmon Security Posture
+
+> **What this document is.** RedAmon is offensive software, so we hold it to the standard it tests others by. This is the **defense-in-depth control catalog**: every security layer implemented in the product, grounded in repository evidence (source, `docker-compose.yml`, nginx templates, deploy scripts). It is the companion to the **[Threat Model](README.TM.SYSTEM_OVERVIEW.md)**, which describes the assets, trust boundaries, entry points, and network surface the analysis is built on. Read the threat model for "what exists and what it is worth"; read this for "how each of those things is defended."
+>
+> **Methodology.** The platform was assessed with a systematic, adversarial threat-modeling pass (a STRIDE-style analysis across every trust boundary: spoofing, tampering, repudiation, information disclosure, denial of service, and elevation of privilege). Findings were remediated in sequenced, independently verified waves, each fix carrying a test and, where applicable, a before-and-after exploit reproduction. This document catalogs the resulting controls; the per-release history lives in the **[Changelog](../../CHANGELOG.md)** security entries.
+
+---
+
+## Table of Contents
+
+1. [Security principles](#1-security-principles)
+2. [Two deployment postures](#2-two-deployment-postures)
+3. [Network exposure and the single public origin](#3-network-exposure-and-the-single-public-origin)
+4. [Edge hardening (nginx)](#4-edge-hardening-nginx)
+5. [Host hardening](#5-host-hardening)
+6. [Authentication and session security](#6-authentication-and-session-security)
+7. [Authorization and multi-tenancy (BOLA)](#7-authorization-and-multi-tenancy-bola)
+8. [Service-to-service authentication](#8-service-to-service-authentication)
+9. [WebSocket security](#9-websocket-security)
+10. [Privilege separation and container-escape prevention](#10-privilege-separation-and-container-escape-prevention)
+11. [SSRF and egress control](#11-ssrf-and-egress-control)
+12. [Injection and input-validation defenses](#12-injection-and-input-validation-defenses)
+13. [Agent safety controls](#13-agent-safety-controls)
+14. [Secret management](#14-secret-management)
+15. [Denial-of-service and resource governance](#15-denial-of-service-and-resource-governance)
+16. [Audit and non-repudiation](#16-audit-and-non-repudiation)
+17. [Supply-chain integrity](#17-supply-chain-integrity)
+18. [Threat coverage at a glance](#18-threat-coverage-at-a-glance)
+19. [Verification and assurance](#19-verification-and-assurance)
+20. [Documented residual risks](#20-documented-residual-risks)
+21. [Reporting a vulnerability](#21-reporting-a-vulnerability)
+
+---
+
+## 1. Security principles
+
+Five principles drive every control below.
+
+- **Secure by design.** Security is a property of the architecture (privilege separation, network segmentation, a least-trusted target-facing worker that holds no secrets), not a bolt-on.
+- **Fail closed.** In the hardened posture every authentication and authorization control rejects on absence or error rather than serving. Where a control fails open, it does so only in a local dev stack with a one-time warning, and `redamon.sh` auto-generates the secret that flips it closed. The internet-facing deploy additionally runs a secrets gate that refuses to boot with any weak or unset secret.
+- **Least privilege.** Each component holds only the credentials it needs. The worker holds none; scanners hold a scoped key, not the master key; the graph worker reads through a tenant-filtered proxy with no database credentials of its own.
+- **Defense in depth.** No single control is load-bearing. The agent WebSockets, for example, sit behind an app-layer signed ticket, a server-side same-origin check, an nginx session-cookie gate, an operator IP allowlist, and a host firewall.
+- **Evidence over claims.** Every control here maps to a file in the repository, and every security fix shipped with a test. Accepted residual risks are documented in the open (see [Section 20](#20-documented-residual-risks)).
+
+---
+
+## 2. Two deployment postures
+
+RedAmon supports two postures with different trust models. The controls that apply depend on which one you run.
+
+| | **Local (default)** | **Public-internet (hardened)** |
+|---|---|---|
+| Provisioned by | `redamon.sh` / `docker compose` | `tooling/deploy/single-host/deploy.sh` |
+| Attacker model | No anonymous internet attacker; operator LAN only | **Anonymous internet attacker is a first-class actor** |
+| `webapp:3000`, `agent:8090`, `revshell:4444` | Published on `0.0.0.0` (LAN-reachable) | Re-bound to `127.0.0.1`; only nginx `443` faces the internet |
+| TLS | None | TLS 1.2/1.3, HSTS, single public origin |
+| Edge controls | None | nginx gate, rate limiting, header stripping, WS session gate |
+| Host controls | None | ufw, fail2ban, SSH hardening, unattended upgrades |
+| Secrets | Auto-generated; weak values warn only | Secrets gate **refuses to boot** on any weak/unset secret |
+
+The base platform is designed local-only and deliberately does not ship the internet-facing layer; the `tooling/deploy/single-host/` tool adds it. A plaintext `http-*` lab mode exists but is gated behind an explicit `ALLOW_INSECURE=1` opt-in and drops TLS/HSTS; it is for throwaway labs only. Sections 3-5 below are the hardened-posture layers; Sections 6-17 apply to both postures (they are in the application and infrastructure themselves).
+
+---
+
+## 3. Network exposure and the single public origin
+
+**Goal: from the internet, exactly one thing is reachable, the webapp login over HTTPS.** Everything else is bound to host loopback and reached only internally.
+
+Host-published port bindings (`docker-compose.yml`, and the `tooling/deploy/single-host/compose/docker-compose.prod.yml` overlay that re-binds the last LAN-facing ports to loopback in the hardened posture):
+
+| Port | Service | Local bind | Hardened bind |
+|---|---|---|---|
+| 3000 | webapp | `0.0.0.0` (LAN) | `127.0.0.1` (via nginx 443 only) |
+| 8090 | agent | `0.0.0.0` (LAN) | `127.0.0.1` (nginx proxies only `/ws/*`) |
+| 4444 | reverse-shell catcher | `0.0.0.0` (LAN, direct shells) | `127.0.0.1` (ufw-opened per engagement) |
+| 8010 | recon-orchestrator | `127.0.0.1` | `127.0.0.1` |
+| 5432 | PostgreSQL | `127.0.0.1` | `127.0.0.1` |
+| 7474 / 7687 | Neo4j HTTP / Bolt | `127.0.0.1` | `127.0.0.1` |
+| 8000/8002/8003/8004/8005 | Kali MCP servers | `127.0.0.1` | `127.0.0.1` |
+| 8013 / 8014 | MSF / Hydra progress | `127.0.0.1` | `127.0.0.1` |
+| 8015 | tunnel manager | `127.0.0.1` | `127.0.0.1` |
+| 8016 | terminal PTY | `127.0.0.1` | `127.0.0.1` |
+| 4040 | ngrok API | `127.0.0.1` | `127.0.0.1` |
+| 80 / 443 | nginx (host service) | not present | `0.0.0.0` (the public origin) |
+
+Containers still bind `0.0.0.0` **inside their own network namespace** so cross-container bridge traffic works; only the *host publish* is loopback-scoped. The datastores and the MCP tool surface were moved to loopback and the reverse-shell catcher is intentionally routable in the local posture (a compromised target must be able to connect back); in the hardened posture it is closed at the firewall and opened only per engagement (see [Section 13](#13-agent-safety-controls)).
+
+**Post-deploy verification.** `deploy.sh` asserts the network model after every deploy (`tooling/deploy/single-host/deploy.sh`): it reads `ss -tlnH` and fails if `3000`/`8090` are missing or bound off-loopback, and fails if any of `5432`/`7474`/`7687`/`8010` is bound off-loopback. It then confirms container health, that an admin user exists, and that `https://<host>/api/health` returns 200.
+
+**Cloud firewall.** Because Docker's iptables chains can bypass a host firewall, the provider firewall (AWS Security Group / GCP firewall / Azure NSG) is the reliable outer boundary. The deploy opens only **443** (app), **80** (ACME challenge + HTTPS redirect), and **22** (SSH, operator IP only).
+
+---
+
+## 4. Edge hardening (nginx)
+
+nginx runs as a **host service** (not a container), sits **only at the edge** on 80/443, and reverse-proxies to two loopback backends: the webapp (`127.0.0.1:3000` for `/` and `/api/*`) and the agent (`127.0.0.1:8090` for only the four `/ws/*` paths). It is not a middlebox between containers. Templates: `tooling/deploy/single-host/nginx/redamon.conf.tmpl` and the `snippets/`.
+
+**Single-origin proxy model.** The only agent routes proxied are `~ ^/ws/(agent|kali-terminal|cypherfix-triage|cypherfix-codefix)$`. The agent's entire REST surface (`/graph/exec`, `/emergency-stop-all`, `/mcp/*`, `/llm/*`, `/workspace/*`, `/sessions/*`) has no nginx route and stays loopback-only. Port 80 serves only the ACME challenge and a `301` redirect to the canonical HTTPS host (not `$host` in domain mode, to prevent open-redirect / cache poisoning).
+
+**TLS.** TLS 1.2 and 1.3 only; ECDHE-only cipher suites (AES-GCM + CHACHA20-POLY1305); `ssl_session_tickets off` (forward secrecy); OCSP stapling on; curve list `X25519:prime256v1:secp384r1`; `ssl_prefer_server_ciphers off`.
+
+**HSTS.** `Strict-Transport-Security: max-age=63072000; includeSubDomains; preload` (2 years), emitted in HTTPS modes (toggle `HSTS_ENABLE`, default on).
+
+**Security headers** (nginx is authoritative because the webapp sets none of its own, `snippets/security-headers.conf`):
+
+- `Content-Security-Policy` with `default-src 'self'`, `object-src 'none'`, `frame-ancestors 'none'`, `base-uri 'self'`, `form-action 'self'`, and **no `unsafe-eval`**. It does carry `'unsafe-inline'` on `script-src`/`style-src` (a Next.js/WebGL constraint), so the CSP is a hardening layer, not an XSS silver bullet. Shipped as `Content-Security-Policy-Report-Only` by default and promoted to enforcing via `CSP_ENFORCE=true` once the graph and terminal are confirmed rendering.
+- `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `X-Robots-Tag: noindex, nofollow, noarchive, nosnippet`.
+- `Permissions-Policy` denying accelerometer, autoplay, camera, display-capture, geolocation, gyroscope, magnetometer, microphone, payment, usb, and interest-cohort.
+- `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Resource-Policy: same-origin`.
+- Dotfiles and sensitive extensions (`.env`, `.pem`, `.key`, `.crt`, `.sql`, `.bak`, `.git`, ...) return `404`.
+- The `/api/auth/login` location adds `Cache-Control: no-store` and re-emits the security headers (an nginx `add_header` in a location drops server-level headers), so the auth-cookie response is never cached.
+
+**Inbound trust-header stripping** (`snippets/proxy-common.conf`). On every proxied request nginx clears `X-Internal-Key`, `X-Scanner-Key`, `X-User-Id`, and `X-User-Role` (the webapp trusts these from internal callers), pins `X-Forwarded-For`/`X-Real-IP` to the real peer rather than appending the client-supplied chain, and hides `X-Powered-By`. A client therefore cannot spoof identity or replay an internal service key from the edge.
+
+**WebSocket session gate.** With `WS_REQUIRE_SESSION=true` (default), nginx runs an `auth_request` against an internal `/_redamon_session` validator (which proxies to the webapp's `/api/auth/me` with body off and the trust headers stripped) before allowing any `/ws/*` upgrade. Reaching an agent socket therefore requires a logged-in session, on top of the app-layer ticket.
+
+**Operator gate.** The whole `443` server sits behind `GATE_MODE`: `ip_allowlist` (nginx `allow`/`deny` from `OPERATOR_ALLOW_CIDRS`), `basic_auth` (htpasswd via `openssl passwd -apr1`), or `none`. Leaving `OPERATOR_ALLOW_CIDRS` empty makes ufw open 443 (and SSH) to the world with a loud warning, so set it.
+
+**Rate limiting and anti-DoS.** `limit_req` of **5 requests/min** (burst 3) on `/api/auth/login` and **30 requests/sec** (burst 60) on `/api/`, both returning `429`; `limit_conn 20` per IP; slowloris timeouts (`client_body_timeout`/`client_header_timeout`/`send_timeout` 15s, `keepalive_timeout` 20s); `large_client_header_buffers 8 32k`; `client_max_body_size 60m`; a method filter returning `405` for anything outside `GET/HEAD/POST/PUT/PATCH/DELETE/OPTIONS`; `server_tokens off`; `autoindex off`.
+
+---
+
+## 5. Host hardening
+
+Applied idempotently by `tooling/deploy/single-host/deploy.sh` and `modules/`.
+
+**Firewall (ufw, `modules/firewall.sh`).** `default deny incoming`, `default allow outgoing`. SSH scoped to `SSH_ALLOW_CIDRS` (falling back to `OPERATOR_ALLOW_CIDRS`); HTTPS/443 scoped to `OPERATOR_ALLOW_CIDRS`; HTTP/80 left world-open (Let's Encrypt validates from arbitrary IPs). If a CIDR list is empty the corresponding port opens to the world with an explicit warning. Port 4444 stays closed; it is opened per engagement only, scoped to RoE target CIDRs.
+
+**SSH hardening (`modules/ssh_hardening.sh`).** `PermitRootLogin no` and pubkey auth always. Password login is disabled **only** when the deploy itself used key auth; deploying over a password leaves password login enabled so the operator cannot be locked out (a documented safety valve). Changes are validated with `sshd -t` before any restart; a bad config aborts without restarting. Also tightens `~/.ssh` and `/etc/shadow` permissions.
+
+**fail2ban (`modules/fail2ban.sh`).** Jails for `sshd` (systemd backend, maxretry 3, bantime 2h), `nginx-http-auth`, `nginx-badbots` (bantime 24h), and `nginx-limit-req`.
+
+**Unattended security upgrades (`modules/unattended_upgrades.sh`).** Automatic daily package-list update and unattended security-upgrade installation.
+
+**Host bootstrap (`modules/host_bootstrap.sh`).** Detect-and-install matrix that is idempotent and hard-fails on a half-provisioned host: base packages, Docker Engine + Compose v2 (>= 2.24) from Docker's official GPG-verified repo (purging any conflicting `docker.io`/v1 packages first), nginx, certbot (only when Let's Encrypt is used), ufw, fail2ban, unattended-upgrades, an 8 GB swapfile (mode 600) on hosts under 16 GB RAM, optional Docker DNS, and raised inotify limits.
+
+**TLS provisioning (`modules/tls.sh`).** Let's Encrypt (webroot ACME, auto-renew wired through certbot's timer with an nginx-reload deploy hook), operator-provided certificates (installed at `/etc/ssl/redamon/`, key mode 600, md5-idempotent, decrypting an encrypted key with `SSL_KEY_PASSWORD`), or self-signed for bare-IP labs. Private keys are always mode 600.
+
+---
+
+## 6. Authentication and session security
+
+Application layer, both postures. Evidence: `webapp/src/lib/auth.ts`, `middleware.ts`, `lib/loginThrottle.ts`, `lib/cookieSecurity.ts`, `app/api/auth/*`.
+
+**Login and JWT.** Passwords are hashed with **bcrypt at cost factor 12** (`bcryptjs`), compared in bcrypt's own constant-time routine. On success the webapp issues an **HS256 JWT** (`jose`) with `{ sub: userId, role }`, a **7-day** expiry, in the httpOnly cookie `redamon-auth`. The signing secret is `AUTH_SECRET`, and the code **throws if it is unset or the literal `changeme`**. Verification rejects any token missing `sub` or `role`.
+
+**Cookie flags.** `httpOnly`, `SameSite=Lax`, `Path=/`, `maxAge` 7 days, and `Secure` set from the request (`x-forwarded-proto === 'https'` in production, `lib/cookieSecurity.ts`) rather than hardcoded, so the Secure flag is correct behind the deploy's TLS terminator without breaking a plain-HTTP local stack.
+
+**Route protection (`middleware.ts`).** Every route requires a valid `redamon-auth` JWT except a tight public allowlist: `/login`, `/api/auth/login`, `/api/auth/logout`, `/api/health`, `/api/version/check`, `/api/global/tunnel-config/sync`, plus static assets. On success the middleware overwrites `x-user-id`/`x-user-role` from the verified token (a client cannot inject them). Missing token yields 401 (API) or a redirect (page); an invalid token additionally deletes the cookie.
+
+**Login lockout (`lib/loginThrottle.ts`).** In-memory throttle keyed by **both** lowercased email and source IP: **5 attempts** (`LOGIN_MAX_ATTEMPTS`) then a **900-second** lockout (`LOGIN_LOCKOUT_SECONDS`) over a rolling 15-minute window, returning **429 with `Retry-After`**. The store is bounded at 10,000 entries with oldest-first eviction so a distinct-IP flood cannot exhaust memory. The per-IP key is applied only when the client IP is trusted (`TRUST_PROXY`), so a spoofed `X-Forwarded-For` cannot cause lockout evasion or collateral lockout of a real user. In the hardened posture the nginx `limit_req` on the login route is a second, network-level brake.
+
+**CSRF stance.** State-changing routes are protected by `SameSite=Lax` cookies plus the nginx inbound trust-header stripping; there is no separate anti-CSRF token, so Lax is the load-bearing control here (noted as a residual in [Section 20](#20-documented-residual-risks)).
+
+Failed and successful logins, logout, and lockouts are all audited (see [Section 16](#16-audit-and-non-repudiation)); audit records never contain the password or hash.
+
+---
+
+## 7. Authorization and multi-tenancy (BOLA)
+
+RedAmon is multi-tenant: every user owns their projects, graph, conversations, scans, remediations, reports, presets, workspace files, and settings. Evidence: `webapp/src/lib/access.ts`, `lib/session.ts`, `graph_db/tenant_filter.py`.
+
+**Per-user object ownership.** A single trust core scopes every request to an **effective user**. A standard user is always their own id (any client-supplied `userId`/path id is ignored for ownership). Reusable guards (`guardProject`, `requireProjectAccess`, `requireConversationAccess`, `requireProjectScopedResource`, `requireUserAccess`, `ownerScope`) enforce ownership on every data route. Enforcement is **on by default** (`ACCESS_ENFORCE`, fail-closed) with a log-only phase available for rollout. Cross-user access returns **404, not 403** (anti-enumeration: an attacker cannot even confirm a resource exists); secret-exposure routes use an immediate 403 instead.
+
+**Admin impersonation is server-enforced.** An admin acts as their own id unless actively simulating user X through a signed, httpOnly `redamon-act-as` cookie (`{ sub: adminId, act: targetId }`, 12-hour expiry) minted only by the admin-only `POST /api/auth/act-as`. `getEffectiveUser` honors the act-as cookie only when it was minted by that same admin, and act-as can only narrow an admin to one user, never elevate a standard user. The agent WebSocket ticket binds the **effective** user, so a simulated session acts as the target, not the admin. Logout clears both cookies. (On a small set of user-secret GET routes an admin can still read masked values without act-as, a legacy convenience flagged in code for subsumption; it is a read, never a write.)
+
+**Graph tenant isolation (`graph_db/tenant_filter.py`).** Every Cypher query is rewritten to inject `user_id` and `project_id` predicates onto every labeled node pattern, as bound parameters, before it reaches Neo4j (which is Community edition and has no row-level RBAC). The read-only worker proxy (`/graph/exec`) additionally refuses an unlabeled `MATCH (n)` so the tenant filter can always apply. A single filter module is shared by the agent and the worker-facing proxy.
+
+**Mass-assignment defense.** Project create/update whitelists writable fields against the Prisma model metadata and strips server-managed fields; user-secret update routes re-mask secrets and reject non-settable fields before the body reaches the ORM (`webapp/src/app/api/projects/route.ts`, `users/[id]/*`).
+
+**Tenant-scoped deletion.** The Prisma schema ties child objects to their owning user/project with `onDelete: Cascade`, so deleting a tenant removes all of its data with no orphans.
+
+---
+
+## 8. Service-to-service authentication
+
+Internal calls between components are authenticated with distinct, scoped, constant-time-compared keys. All of these are generated by `redamon.sh` (`ensure_auth_secrets`, `openssl rand -hex 32`, idempotent).
+
+| Credential | Held by | Protects | Comparison |
+|---|---|---|---|
+| `AUTH_SECRET` | webapp | Login JWT + act-as cookie signing | jose verify |
+| `INTERNAL_API_KEY` | webapp, agent | Webapp/agent internal endpoints | constant-time |
+| `SCANNER_API_KEY` | scan containers | A **scoped** subset (settings + project GET, agent `/llm/*`), never the master key | constant-time |
+| `ORCHESTRATOR_API_KEY` | webapp only | Every orchestrator route except `/health` | `hmac.compare_digest` |
+| `MCP_AUTH_TOKEN` | agent | Kali MCP SSE servers, Bearer | `hmac.compare_digest` |
+| `AGENT_WS_TICKET_SECRET` | webapp (sign), agent (verify) | WebSocket tickets, kept separate from `AUTH_SECRET` so agent compromise cannot forge login cookies | `hmac.compare_digest` |
+| `TUNNEL_AUTH_TOKEN` | webapp | Tunnel manager `:8015` `/tunnel/configure` | `hmac.compare_digest` |
+
+**Key scoping is deliberate.** The orchestrator holds the real Docker socket, so its key is distinct from `INTERNAL_API_KEY` (which recon containers hold and could otherwise replay). Scanners receive only `SCANNER_API_KEY`, whose allowlist is a strict subset, so a compromised scanner cannot mint an admin or reach the control plane. The worker holds **neither** the master internal key nor the Neo4j credential.
+
+**Fail posture.** The orchestrator key, MCP bearer, tunnel token, and WebSocket ticket **fail closed** (reject when their secret is unset). The webapp/agent `X-Internal-Key` check and the scanner-key fallback fail open with a one-time warning **only** in a dev stack where the secret has not been generated yet; `redamon.sh` generates all of them on install, and the deploy secrets gate refuses to boot the internet-facing posture without them. The webapp-side comparators and the agent's LLM guard also reject the literal `changeme`; the other Python service comparators rely on the deploy secrets gate to reject weak values (and the webapp never mints a ticket signed with `changeme`, so no valid weak ticket exists). The internal-key **route allowlist** is enforced only when `INTERNAL_KEY_ALLOWLIST_ENFORCE=true`; by default it is log-only (a valid internal key is currently accepted off-allowlist with a warning), while the scanner-key allowlist is always enforced.
+
+**Header spoofing is blocked at the edge** (see [Section 4](#4-edge-hardening-nginx)): nginx strips `X-Internal-Key`, `X-Scanner-Key`, `X-User-Id`, `X-User-Role` inbound, so these headers are honored only from internal callers on the Docker network.
+
+---
+
+## 9. WebSocket security
+
+The four agent WebSockets are the most powerful surface (they include `/ws/kali-terminal`, an interactive root PTY, and the two cypherfix sockets that clone repositories and edit code). Evidence: `agentic/ws_ticket.py`, `websocket_api.py`, `api.py`, the cypherfix `websocket_handler.py` files.
+
+**Signed ticket.** Each `/ws/*` handshake requires a short-lived **HS256** ticket minted by the JWT-authenticated webapp, carrying `{ sub, pid, sid }` (user, project, session) with a **60-second** expiry and 30-second verification leeway. The agent verifies it stdlib-only: it pins `alg=HS256` (rejecting `alg:none`), compares the signature with `hmac.compare_digest`, checks expiry, and requires non-empty `sub`/`pid`/`sid`. **Identity is taken from the verified ticket claims, never from the self-asserted init frame**, which closes session hijacking. This fail-closed ticket applies to **all four** paths (close code 1008 when `AGENT_WS_TICKET_SECRET` is unset).
+
+**Same-origin check.** A server-side origin check (a defense that CORS middleware does not provide for WebSocket handshakes) runs before the socket is accepted on `/ws/kali-terminal` and the two cypherfix sockets; `/ws/agent` relies on the signed ticket alone. Allowed origins default to the webapp origin and are configurable via `AGENT_CORS_ORIGINS` (never `*`).
+
+**Anti-hijack and back-pressure.** A live session key cannot be taken over by an unverified peer (the collision is refused with close 1008 "session in use"), a verified reconnect inherits the running task and is identity-checked so a replaced connection cannot evict its successor, and new sessions past the memory-governed ceiling are refused with close 1013.
+
+**CORS.** The agent's FastAPI `CORSMiddleware` is scoped to the webapp origin with `allow_credentials=False`, replacing an earlier wildcard that had allowed cross-origin drive-by reads.
+
+---
+
+## 10. Privilege separation and container-escape prevention
+
+The target-facing worker is the least-trusted component and holds no secrets; a compromise there must not reach the host or the control plane. Evidence: `services/docker_broker/broker.py`, `docker-compose.yml`, `recon_orchestrator/container_manager.py`.
+
+**Docker-socket broker.** Recon containers need to spawn tool containers, but mounting the raw `/var/run/docker.sock` would let a compromised container run `docker run -v /:/host --privileged` and own the host. They instead mount a **filtering broker** socket. The broker (`services/docker_broker/broker.py`, stdlib-only) holds the real socket and validates every `create`, denying:
+
+- `Privileged=true`; any capability outside `{NET_RAW, NET_ADMIN}`; device passthrough.
+- Host or `container:` for `PidMode`/`IpcMode`/`UsernsMode`/`CgroupnsMode`, and `container:` network mode (host network is allowed, since raw/loopback scanning needs it); `VolumesFrom`; masked/readonly-path overrides; any `SecurityOpt` containing `unconfined`.
+- Non-allowlisted images (a fixed allowlist of the shipped tool images, operator-extensible via env), enforced on both `create` and `docker pull`.
+- Bind sources outside `/tmp/redamon` (normalized first to defeat traversal) and any path touching the docker socket; source-tree binds must be read-only, read-write only under an explicit prefix/volume allowlist.
+
+The broker also stamps a `redamon.broker-owned=1` label on everything it creates, **gates operate-on-existing verbs** (exec/attach/kill/archive/...) to broker-owned containers only, and forces an ownership filter onto `GET /containers/json`, so a pivot cannot exec into infrastructure containers or even enumerate them. Denied requests never reach the real daemon (lazy upstream connect). It injects a 2 GiB memory cap on every tool container, caps request headers at 1 MiB and create bodies at 8 MiB, and forces `Connection: close` to prevent request smuggling.
+
+**Capability scoping.** No container runs `privileged`. The Kali worker and the GVM scanner carry only `NET_ADMIN` + `NET_RAW` (raw sockets for SYN scans, tunneling); the previously-granted `SYS_PTRACE` was dropped. The kb-refresh sidecar runs `cap_drop: ALL`. Recon containers, formerly `privileged: true` (a full host-escape primitive), now request only `NET_RAW`. Note that spawned scan containers get `NET_RAW`-only plus the scoped scanner key but are not otherwise `cap_drop`ped or `no-new-privileges`; they are constrained by the broker, the pentest-net segment, and holding no master secret (see [Section 20](#20-documented-residual-risks)).
+
+**Anti-persistence.** The worker's MCP server source is mounted read-only with `PYTHONDONTWRITEBYTECODE=1`, so worker RCE cannot trojanize a server file for restart-surviving persistence.
+
+**Network segmentation.** Three bridge networks plus a per-job isolated one:
+
+- `redamon-network`: webapp, agent, kali-sandbox, postgres, neo4j.
+- `redamon-orchestrator-net` (isolated, pinned subnet): recon-orchestrator and the on-demand Ollama judge, with the webapp multi-homed in as the **only** legitimate caller. The worker cannot reach the privileged orchestration API (`:8010` is also loopback-bound).
+- `pentest-net`: kali-sandbox and spawned scanners (target-facing plane).
+- `redamon-codefix-net`: created on demand for the CodeFix build sandbox; it has NAT egress but **no RedAmon peer**.
+
+**CodeFix build sandbox.** Building an operator's GitHub repo can execute attacker-influenced code (malicious `postinstall`, prompt-injected build steps). That build/test runs in an ephemeral, per-job sandbox container: **empty environment (no secrets)**, `cap_drop=ALL`, read-only root filesystem, non-root user, setuid/setgid stripped from the image, memory/CPU/PID limited, a size-capped `/tmp` tmpfs as the only writable path, on the isolated network, with `.git` mounted read-only. It is driven via `docker exec` through `agent -> webapp -> orchestrator` (each hop authenticated), so the agent gains no new reach. The GitHub token is supplied via `GIT_ASKPASS` (never in the clone URL or `.git/config`, never entering the sandbox), git hooks are disabled, commits stage only approved files (no `git add -A`), and pushes to `main`/`master`/default are refused. A TTL reaper tears the sandbox down.
+
+---
+
+## 11. SSRF and egress control
+
+Two complementary guards, tuned to opposite trust stances.
+
+**Untrusted-target fetches (`agentic/orchestrator_helpers/fetch_guard.py`; and `recon/main_recon_modules/ip_filter.py`).** When the agent or recon fetches web content from a target (tradecraft crawl, redirects, URLs probed from a target's JavaScript), the destination is resolved via `getaddrinfo` and **every** resolved IP must be public: loopback, RFC1918 private, link-local (which covers the cloud-metadata `169.254.169.254`), reserved, multicast, unspecified, cloud-metadata hostnames, and CGNAT `100.64.0.0/10` are all rejected. IPv4-mapped IPv6 is judged on the embedded v4 address so encoding tricks cannot bypass it. Only `http`/`https` schemes are allowed.
+
+**Operator custom LLM endpoints (`agentic/orchestrator_helpers/llm_url_guard.py` and `webapp/src/lib/llm-url-guard.ts`).** Operators may point a provider at a custom `baseUrl`, so this guard preserves self-hosted models (localhost, RFC1918, Docker-service hosts pass) while rejecting the narrow never-legitimate set: the AWS/GCP/Azure metadata IP `169.254.169.254`, ECS `169.254.170.2`, Alibaba `100.100.100.200`, AWS IPv6 `fd00:ec2::254`, and `metadata.google.internal`/`metadata.goog`, plus all link-local. Because it resolves through the same `getaddrinfo` the client uses, integer/hex/octal IP encodings and IPv4-mapped IPv6 normalize and are caught. Disabling TLS verification (`sslVerify=false`) is refused for any host that resolves to a public IP (the MITM exposure of a Bearer key + prompt over a TLS-off public connection), while still allowed for private/internal self-signed endpoints.
+
+Both guards resolve the host and then hand it to the HTTP client, which re-resolves at connect time; that resolve-then-connect gap (DNS-rebinding TOCTOU) is a documented residual.
+
+---
+
+## 12. Injection and input-validation defenses
+
+**SQL injection.** All relational access goes through the Prisma query builder (parameterized). There is no `$queryRawUnsafe`/`$executeRawUnsafe` in production code; the few tagged-template raw queries are parameterized and test-only.
+
+**Cross-site scripting.** The UI is React (auto-escaping); the only `dangerouslySetInnerHTML` uses are static constants, and there is no `eval`/`new Function` in production. The nginx CSP is a second layer in the hardened posture.
+
+**Prompt injection from hostile tool output.** The agent reasons over tool output from hostile targets, so every untrusted value is wrapped in a **per-call random-nonce sentinel** the target cannot predict (`agentic/prompt_safety.py`), with a standing instruction to treat marked regions as data only and look-alike markers neutralized. This covers the ReAct trace/chain formatters, think-node and fireteam tool-output sections, execution-chain preview lines, cypherfix, the report summarizer, and tradecraft, closing the "close-the-fence and forge a SYSTEM directive" escape.
+
+**Graph write protection (`graph_db/tenant_filter.py`).** The worker-facing `/graph/exec` proxy is read-only: a write-clause regex rejects CREATE, MERGE, DELETE, DETACH DELETE, SET, REMOVE, DROP, ALTER, LOAD CSV, GRANT/DENY/REVOKE, database admin, and write procedures including `apoc.create/merge/refactor/periodic/trigger/schema/atomic`, `apoc.cypher.runWrite/doIt`, and `dbms.*`. Combined with the tenant filter and the removal of the worker's Neo4j credential, a compromised worker drops from "master read+write on all data" to "read-only, tenant-scoped reads."
+
+**Workspace path traversal (`agentic/workspace_fs.py`).** Project ids are validated (rejecting `/`, `\`, null byte, leading `.`/`..`) so `projectId=../etc` cannot escape the workspace root; protected-subdir checks normalize with `os.path.normpath` first; archive/download skips symlinks so a workspace symlink to `/etc/passwd` cannot be served inline.
+
+**Archive extraction.** `fs_extract` validates every member path against the destination and enforces entry/byte caps (5,000 entries / 500 MB); project import checks central-directory sizes before decompression; Knowledge Base curation uses a bounded, path-checked tar iterator and never calls `extractall`.
+
+**Upload validation.** Uploads are extension-allowlisted, size-capped (wordlists 50 MB, Nuclei templates 1 MB, JS recon 10 MB, RoE docs 20 MB, project import 100 MB), filename-sanitized (`path.basename` + charset strip, `PROJECT_ID_RE`), and content-validated where it matters (Nuclei templates parsed for a valid `id:`, JSON uploads parsed, RoE documents MIME-allowlisted and page-capped, parsed in memory without touching disk).
+
+**Tool image allowlist (`recon/project_settings.py`).** Recon reads webapp-influenced `*_DOCKER_IMAGE` values and passes them to `docker run`; a chokepoint pins all of them to a shipped allowlist (operator-extensible via `RECON_EXTRA_ALLOWED_IMAGES`), so an injected `attacker/evil:latest` cannot become arbitrary host container execution. The docker-broker independently enforces its own image allowlist as a second, non-identical gate.
+
+**Orchestrator input trust (`recon_orchestrator/api.py`).** The orchestrator no longer trusts a client-supplied `webapp_api_url`; all credentialed calls use server-controlled URLs, so a caller cannot redirect the internal key to an arbitrary host.
+
+---
+
+## 13. Agent safety controls
+
+The autonomous agent is powerful (it drives offensive tools against live targets), so it carries its own layered safety stack independent of the network controls above.
+
+**Non-disableable hard target guardrail (`agentic/orchestrator_helpers/hard_guardrail.py`).** A deterministic block (no LLM, no network, no settings dependency, **cannot be toggled off**) refuses government, military, education, and international targets. It matches by TLD suffix (`.gov` and its national variants, `.mil`, `.edu`/`.ac.<cc>`, `.int`, and similar government patterns) and by an exact-domain frozenset of roughly 190 intergovernmental organizations on generic TLDs (UN system, EU institutions, development banks, tribunals, arms-control and standards bodies, Red Cross, and more), including their subdomains. It is enforced in **three independent tiers** that share no settings flag: project creation (webapp), scan launch (orchestrator), and agent reasoning (agent).
+
+**LLM soft guardrail (`agentic/orchestrator_helpers/guardrail.py`).** A second tier classifies the target with an LLM and blocks major technology, cloud, social, financial, media, education, and government properties, reverse-resolving public IPs to hostnames first, while auto-allowing private/RFC1918 targets. It runs after the hard guardrail, is fail-closed at agent startup, and is operator-toggleable (`AGENT_GUARDRAIL_ENABLED`, default on).
+
+**Phase gating.** Tools are bound to agent phases (`TOOL_PHASE_MAP`) and enforced at both selection and job-spawn time; classification fails safe to the least-privileged `informational` phase. A tool cannot run outside the phase it is authorized for.
+
+**Human-in-the-loop for dangerous tools.** A `DANGEROUS_TOOLS` set (17 tools) is gated by `REQUIRE_TOOL_CONFIRMATION` (default on): the agent pauses for explicit operator approval before executing them, and fireteam members escalate the same confirmation with a bounded auto-reject timeout. Phase upgrades into exploitation / post-exploitation are likewise held for operator approval.
+
+**Emergency stop.** `/emergency-stop-all` is an operator kill-switch that halts every running agent task and tool.
+
+**Rules of Engagement.** Scan launch is gated server-side by an RoE pre-flight (target scope plus a strict time-window check) against the trusted webapp URL; active/adversarial modules (web cache poisoning, AI Gauntlet, and others) are off by default and RoE-gated. Note that at agent-reasoning time the RoE time window is currently advisory (a prompt warning), not a hard block; the hard guardrail is the non-bypassable layer.
+
+**Reverse-shell exposure is opt-in and fails closed.** Port 4444 is loopback-bound in the hardened posture. Catching a direct reverse shell requires scoping `REVSHELL_TARGET_CIDRS` to the engagement targets and running `deploy.sh revshell-open`, which starts a transient host `socat` forwarder and opens ufw only to those CIDRs. A host reboot drops the forwarder, so the exposure **fails closed**; `revshell-close` tears it down.
+
+---
+
+## 14. Secret management
+
+**Generation and rotation (`redamon.sh`).** All service secrets are generated with `openssl rand` on install, idempotently (append-if-absent). Database passwords are handled with care (`ensure_db_secrets`): on a fresh install a strong password is generated *before* the volume initializes; on an existing volume still on a legacy default, the live database is rotated in place (Postgres `ALTER USER`; Neo4j `ALTER CURRENT USER SET PASSWORD FROM ... TO ...`, the Community-safe self-service form) and the new value is written to `.env` **only after** the rotation succeeds, so a failure leaves no split-brain lockout. Compose refuses to start with unset DB passwords via `${POSTGRES_PASSWORD:?}` / `${NEO4J_PASSWORD:?}`.
+
+**Secrets gate (deploy, `modules/secrets_gate.sh`).** Before exposing a host, the deploy verifies nine secrets (`AUTH_SECRET`, `INTERNAL_API_KEY`, `SCANNER_API_KEY`, `ORCHESTRATOR_API_KEY`, `MCP_AUTH_TOKEN`, `AGENT_WS_TICKET_SECRET`, `TUNNEL_AUTH_TOKEN`, `POSTGRES_PASSWORD`, `NEO4J_PASSWORD`) and **fails the build** if any is empty, a known default (`changeme`, `redamon_secret`, ...), or shorter than 24 characters.
+
+**Log redaction (`agentic/logging_config.py`).** A redaction filter on every log handler scrubs token shapes (GitHub PAT/OAuth/fine-grained, OpenAI `sk-`, Slack `xox*`, Bearer tokens, `authorization`/`api-key`/`token` key-value pairs, `user:pass@` in URLs, AWS `AKIA...`) to `[REDACTED]`. Harvested secret values are no longer printed to secret-hunter stdout, and the LLM-provider test returns a generic error.
+
+**Secrets in transit at deploy time (`deploy.sh`).** The deploy config (`deploy.env`, carrying `AUTH_SECRET`, all API keys, DB and admin passwords) and any provided TLS keys are shipped mode 600 and are `shred -u`'d and removed on **every** exit, including error paths. The sudo password is passed out-of-band via `SUDO_ASKPASS`, never on a command line or visible in `ps`.
+
+---
+
+## 15. Denial-of-service and resource governance
+
+RedAmon runs heavy concurrent scans and agent sessions on one host, so resource exhaustion is a first-class DoS concern.
+
+**RAM-aware governor (`graph_db/resource_governor.py`).** A dual-cap system: every RAM-heavy knob keeps its configured ceiling **and** gains a second cap derived from live available memory (read from `/proc/meminfo`, VM-aware). Concurrency parameters scale down under pressure; per-unit allocations use a measured byte budget; reductions are logged with a `[RESOURCE-CAP]` marker. It fails open (to the configured cap) when memory is unreadable.
+
+**Admission ledger (`recon_orchestrator/admission_ledger.py`).** Scans are admitted only within a **global concurrent ceiling** and a **per-user ceiling** (per-user default 10; global default 20 via compose) and only while their summed memory envelope fits a global budget; excess is refused with a typed reason rather than an OOM. Reservations are released on every termination path and reconciled against live containers so a crashed scan cannot leak its reservation into a self-DoS.
+
+**Per-container caps.** Every long-lived service has `mem_limit`, `pids_limit`, and `cpus` in `docker-compose.yml` (with Neo4j's JVM heap sized under its mem_limit); every spawned scan container gets a CPU cap (scaled to cores), a fixed **512** PID cap (fork-bomb ceiling), and a memory cap; every broker-spawned tool container gets a 2 GiB memory cap injected. A startup RAM gate refuses to boot an undersized host (an ~8 GB floor derived from the service baseline plus OS headroom).
+
+**Decompression and upload caps.** Project import and the agent's `fs_extract` cap zip/tar/gz decompression; uploads are extension-allowlisted and size-capped (see [Section 12](#12-injection-and-input-validation-defenses)).
+
+**Rate limiting.** The billed LLM endpoints carry a per-key token bucket (default 60 burst, 1/s refill) and a per-user daily call cap (default 5000), returning 429 (`agentic/llm_guard.py`). The edge adds nginx `limit_req`/`limit_conn` and slowloris timeouts ([Section 4](#4-edge-hardening-nginx)).
+
+---
+
+## 16. Audit and non-repudiation
+
+Evidence: `webapp/src/lib/audit.ts`, `webapp/prisma/schema.prisma`.
+
+Two **append-only** tables record security-relevant events. `AuditLog` (`audit_log`) stores `actorId`, `action`, `targetType`, `targetId`, before/after JSON, and a `source` (api/ui/admin/system), indexed for lookup by target and by actor. `ActAsAudit` (`act_as_audit`) records admin impersonation with `event` = `start`/`end` as **separate inserts** (an end is never an in-place update, preserving the trail). Actor columns are nullable so existing rows need no backfill. Observed audited events: login success, login failure, login lockout, logout, act-as start, and act-as end. Writes are best-effort so a logging failure never breaks a request, and never record passwords or hashes. In the deploy posture the real client IP is trustworthy because `TRUST_PROXY` marks the nginx-supplied `X-Forwarded-For` authoritative.
+
+---
+
+## 17. Supply-chain integrity
+
+**Pinned build sources.** The recon image and the git-cloned tools in the Kali image build from **pinned commits or release tags** (for example jsluice, ffuf `v2.1.0`, masscan, subjack, SecLists, jwt_tool, graphql-cop, sstimap, tplmap, phpggc, chisel, the PEASS-ng suite), so a moved upstream reference fails the build loudly. The Docker CLI and Docker Engine are installed from Docker's official GPG-verified APT repository. (A subset of the Kali image's Go-installed tools still tracks `@latest`/`@master`; pinning them is a tracked supply-chain follow-up, see [Section 20](#20-documented-residual-risks).)
+
+**Knowledge Base feed pinning.** KB feeds are pinned to immutable upstream commits with per-feed sha256 (fail-closed), NVD responses are schema-validated, and the embedder/reranker revisions are pinned.
+
+**Deploy patch integrity.** The single remaining deploy-time source patch is verified against an expected **sha256** and is **fatal on mismatch**; the two earlier patches were folded into the base app and dropped.
+
+**Image allowlisting** (see [Section 12](#12-injection-and-input-validation-defenses)) prevents substitution of tool images at run time.
+
+---
+
+## 18. Threat coverage at a glance
+
+The threat-modeling pass mapped each category of threat to concrete controls:
+
+| Threat category | Representative controls |
+|---|---|
+| **Identity / spoofing** | HS256 login JWT (throws on unset/`changeme` secret); bcrypt-12 password hashing; WebSocket signed ticket + same-origin, identity from verified claims; constant-time service-key comparison; nginx strips inbound identity headers |
+| **Integrity / tampering** | Read-only graph proxy with Cypher write-block; read-only worker MCP source; docker-broker bind-mode enforcement (`:ro` source trees); pinned build sources + sha256; deploy patch sha256 (fatal); tenant-filtered writes; mass-assignment whitelists |
+| **Accountability / repudiation** | Append-only audit tables; login/logout/lockout/impersonation events; trustworthy client IP behind the proxy |
+| **Confidentiality / disclosure** | Per-user authorization with anti-enumeration 404s; SSRF/metadata egress guards; log redaction; secret hygiene at rest and in transit; scoped keys; TLS 1.2/1.3 + HSTS; security headers |
+| **Availability / denial of service** | RAM governor + admission ledger; per-container mem/PID/CPU caps; login lockout; nginx rate/connection limits + slowloris timeouts; decompression and upload caps; LLM token bucket + daily cap |
+| **Privilege / elevation** | Docker-socket broker (deny privileged/host-mount/dangerous caps); capability scoping (no `privileged`, `SYS_PTRACE` dropped); least-privilege scoped keys; worker holds no secrets; network segmentation; secret-free CodeFix build sandbox; non-disableable hard guardrail; phase gating + dangerous-tool confirmation |
+
+---
+
+## 19. Verification and assurance
+
+- **Each fix is independently verified.** Security remediations shipped in sequenced waves; each carried a unit/regression test and, where it was an exploitable weakness, a **before-and-after exploit reproduction** (for example SSRF, cross-tenant access, prompt injection, orchestrator auth, image injection, container escape).
+- **Release gate.** A security remediation suite (`tests/run_security_remediation_suite.sh`) aggregates the suites and must pass before a security release, including live end-to-end probes (a single-user cross-tenant read attempt, the WebSocket ticket + origin gate, and the tunnel-auth gate). A separate two-user cross-tenant end-to-end test (`tests/test_e2e_bola_live.sh`, 40 checks) exercises the full impersonation chain.
+- **Post-deploy asserts.** The deploy verifies the loopback network model, datastore binding, container health, admin presence, and the health endpoint on every run (see [Section 3](#3-network-exposure-and-the-single-public-origin)).
+- **Coverage is broad.** Representative test files: `webapp/src/lib/access.test.ts`, `access.composition.test.ts`, `tests/test_e2e_bola_live.sh`, `agentic/tests/test_prompt_safety.py`, `test_ssrf_exploit_reproduction.py`, `mcp/servers/tests/test_auth_middleware.py`, `recon_orchestrator/tests/test_orchestrator_auth.py`, `tests/test_port_bindings.sh`, `docker_broker` policy tests.
+
+---
+
+## 20. Documented residual risks
+
+Maturity means naming what is not yet closed. The following are accepted and tracked, not hidden:
+
+- **Local-posture weaknesses are LAN-reachable.** In the default local posture `webapp:3000`, `agent:8090`, and `4444` publish on `0.0.0.0`; several app-layer conveniences (some agent REST routes that derive identity from the request body or are unauthenticated, the dev fail-open of certain service keys, no login lockout at the network edge) are only reachable from the LAN. The hardened deploy compensates with loopback binds, the session gate, the operator gate, and the secrets gate. Do not expose the raw stack on a public IP; use `tooling/deploy/single-host/`.
+- **Plaintext secrets at rest.** Per-user LLM/OSINT keys are stored in the database without application-layer encryption, accepted for a single-operator, loopback-database host.
+- **Body-derived tenant on the graph read proxy.** The `/graph/exec` endpoint is authenticated and the query is tenant-filtered, but the tenant identity in the request body is currently logged rather than cryptographically bound; the enforcing flip is a tracked follow-up.
+- **Exfiltration to a public custom LLM endpoint.** A bring-your-own provider pointed at an attacker-controlled public endpoint is indistinguishable from a legitimate one; an opt-in operator allowlist is the planned closure.
+- **Fail-open service keys in dev; internal-key allowlist log-only by default.** The webapp/agent internal-key check and scanner-key fallback fail open with a warning when their secret is unset, and the internal-key route allowlist is enforced only with `INTERNAL_KEY_ALLOWLIST_ENFORCE=true`; `redamon.sh` generates the secrets on install and the deploy secrets gate refuses to boot without them.
+- **No CSRF token and no JWT revocation.** State-changing routes rely on `SameSite=Lax` cookies (no separate CSRF token), and login tokens are stateless for 7 days with no server-side denylist, so logout only clears the cookie and a stolen token cannot be revoked before expiry.
+- **Weak password floor on self-service change.** The password-change route enforces only a minimal length; the first-admin bootstrap requires a stronger minimum. Operators should set strong passwords (the hardened posture's login rate-limit is the only brute-force brake).
+- **DNS-rebinding TOCTOU on the SSRF guards.** The guards resolve then hand off to an HTTP client that re-resolves at connect time.
+- **Target-facing containers run `seccomp`/`AppArmor` unconfined.** The Kali sandbox and the GVM scanner disable the default syscall filter (needed by some tooling); they are isolated on `pentest-net` and hold no master secret. The broker still forbids `unconfined` for the tool containers it spawns.
+- **GVM ships with a default internal credential.** The optional GVM stack defaults to `admin/admin`; it is reachable only on the internal `pentest-net`, not from the edge, and is not part of the secrets gate.
+- **Scanner spawns are not fully hardened.** Spawned scan containers get `NET_RAW`-only and the scoped scanner key but are not `cap_drop`ped or `no-new-privileges`; they are constrained by the broker, the segment, and holding no secret.
+- **No CI-side security automation.** There is no CodeQL / Dependabot / secret-scanning / image-scanning workflow; the security remediation suite is a manual release gate and build sources are pinned by hand.
+
+The authoritative, current status lives in the **[Changelog](../../CHANGELOG.md)** security entries and the **[Threat Model](README.TM.SYSTEM_OVERVIEW.md)**.
+
+---
+
+## 21. Reporting a vulnerability
+
+Please do not open a public issue for a security report. Use GitHub Private Vulnerability Reporting or the contact in **[SECURITY.md](../../SECURITY.md)**, which also states the supported versions and disclosure timeline.

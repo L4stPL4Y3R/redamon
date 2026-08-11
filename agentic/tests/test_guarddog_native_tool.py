@@ -2,7 +2,7 @@
 
 GuardDog moved out of the Kali MCP server: dispatching the attacker-tarball
 analyzer needs the Docker socket the least-trusted Kali worker must never hold
-(readmes/README.TM.SYSTEM_OVERVIEW.md, TB4). It now rides the agent->webapp->
+(docs/readmes/README.TM.SYSTEM_OVERVIEW.md, TB4). It now rides the agent->webapp->
 orchestrator internal lane. These tests cover arg parsing, the ecosystem/charset
 gate, the exact HTTP request shape (so the trust lane can't silently regress),
 and output framing - all with httpx mocked, no network.

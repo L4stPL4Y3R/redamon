@@ -67,7 +67,7 @@ venv/
 ENV/
 env/
 .venv/
-knowledge_base/.redamon-venv/
+services/knowledge_base/.redamon-venv/
 .env.local
 
 # Environment variables / Secrets
@@ -112,17 +112,17 @@ recon/main_recon_modules/data/mitre_db/.last_update
 
 # Recon output files (contain sensitive scan data)
 recon/output/*.json
-gvm_scan/output/*.json
-github_secret_hunt/output/*.json
-trufflehog_scan/output/*.json
-supply_chain_scan/output/*.json
+scanners/gvm_scan/output/*.json
+scanners/github_secret_hunt/output/*.json
+scanners/trufflehog_scan/output/*.json
+scanners/supply_chain_scan/output/*.json
 !recon/output/.gitkeep
-!gvm_scan/output/.gitkeep
-!github_secret_hunt/output/.gitkeep
-!trufflehog_scan/output/.gitkeep
-!supply_chain_scan/output/.gitkeep
+!scanners/gvm_scan/output/.gitkeep
+!scanners/github_secret_hunt/output/.gitkeep
+!scanners/trufflehog_scan/output/.gitkeep
+!scanners/supply_chain_scan/output/.gitkeep
 # AI Attack Surface scan output (garak/pyrit/giskard/promptfoo reports + transcripts)
-ai_attack_surface_scan/output/
+scanners/ai_attack_surface_scan/output/
 
 # Nmap scan results
 *.nmap
@@ -209,17 +209,22 @@ agentic/readmes/README.EMPOWER.md
 agentic/readmes/README.CYPHERFIX.md
 agentic/readmes/README.FULLFIX.md
 agentic/readmes/README.TOOL_PLUGINS.md
-readmes/README.EMPOWER.md
-readmes/README.FULLFIX.md
-readmes/README.TOOL_PLUGINS.md
-readmes/README.ATTACK_PATHS.md
-readmes/AGENT.PROMPTS.md
-readmes/agent_prompts/
+docs/readmes/README.EMPOWER.md
+docs/readmes/README.FULLFIX.md
+docs/readmes/README.TOOL_PLUGINS.md
+docs/readmes/README.ATTACK_PATHS.md
+docs/readmes/AGENT.PROMPTS.md
+docs/readmes/agent_prompts/
 
 
-# Internal docs (top-level only — anchored so it does not also ignore nested
-# dirs named "internal", e.g. webapp/src/app/api/internal/)
+# Local-only working dirs (untracked; not part of the repo)
+# Anchored so they do not also ignore nested dirs of the same name,
+# e.g. webapp/src/app/api/internal/
+/_local/
 /internal/
+
+# DevergoLabs (separate local project kept at repo root, untracked)
+/DevergoLabs/
 
 # RedAmon local config (created by redamon.sh)
 .gvm-enabled
@@ -232,19 +237,19 @@ readmes/agent_prompts/
 
 # Benchmark data
 bmark/
-validation-benchmarks/
 
 # Knowledge base runtime data
-knowledge_base/data/
+services/knowledge_base/data/
 **/.file_hashes.json
 
-# DevergoLabs
-DevergoLabs/
-
 # Deploy plan (local only)
-deploy/DEPLOY_PLAN_EC2.md
-deploy/single-host/E2E_DEPLOY_TEST_PROMPT.md
+tooling/deploy/DEPLOY_PLAN_EC2.md
+tooling/deploy/single-host/E2E_DEPLOY_TEST_PROMPT.md
 redamon-session-*.md
 
 # supply-chain guinea pig dry-run scratch output
-guinea_pigs/supply_chain_target/.dryrun/
+testing/guinea_pigs/supply_chain_target/.dryrun/
+
+# transient dir used by tests/redamon_env_block_test.sh (docker must see it,
+# so it cannot live in /tmp); always removed by the test itself
+.envblock-test.*

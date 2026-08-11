@@ -188,7 +188,7 @@ SYSTEM_MCP_TOOL_NAMES = frozenset({
     # (supply_chain_tools.py). Dispatching the attacker-tarball analyzer needs
     # the Docker socket, which the least-trusted Kali worker must never hold, so
     # it rides the webapp->orchestrator internal lane instead of being a Kali
-    # MCP tool. See readmes/README.TM.SYSTEM_OVERVIEW.md trust boundaries.
+    # MCP tool. See docs/readmes/README.TM.SYSTEM_OVERVIEW.md trust boundaries.
     "execute_osv_scanner",
 })
 

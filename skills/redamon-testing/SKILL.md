@@ -6,7 +6,7 @@ description: >
   green run a lie.
   Trigger: editing any test_*.py, *.test.ts(x) or tests/*.sh; a test that is
   red, skipped or xfailed; a request to "run the tests", "make it green" or
-  check coverage; editing redamon.sh cmd_test, scripts/pytest_isolated.py, any
+  check coverage; editing redamon.sh cmd_test, tooling/scripts/pytest_isolated.py, any
   conftest.py or any pytest.ini.
 license: MIT
 metadata:
@@ -39,7 +39,7 @@ in the root [AGENTS.md](../../AGENTS.md) CRITICAL RULES; this skill is everythin
   `@tool` at import time, so whichever file collects first decides for all of
   them. You get **phantom failures in files you never touched** (classically
   `a coroutine was expected, got <MagicMock>`). Run `./redamon.sh test`, or one
-  file / node id. The gate exists for this: [scripts/pytest_isolated.py](../../scripts/pytest_isolated.py)
+  file / node id. The gate exists for this: [tooling/scripts/pytest_isolated.py](../../tooling/scripts/pytest_isolated.py)
   runs each FILE in its own subprocess.
 - **NEVER "fix" source because a test went red in a multi-file run.** Re-run that
   one file in isolation first; if it passes alone the failure was pollution, not a bug.
@@ -50,7 +50,7 @@ in the root [AGENTS.md](../../AGENTS.md) CRITICAL RULES; this skill is everythin
   it `@pytest.mark.xfail(strict=True, reason=...)` and say so. Tests must not enshrine bugs.
 - **NEVER put a recon test in the root [tests/](../../tests/) folder.** Root
   `tests/` runs in the **agent** image; recon files there must be listed in
-  `_ROOT_RECON_TESTS` at [redamon.sh:2899](../../redamon.sh#L2899) or they run
+  `_ROOT_RECON_TESTS` at [redamon.sh:3483](../../redamon.sh#L3483) or they run
   against the wrong image and fail on imports. New recon tests go in [recon/tests/](../../recon/tests/).
 - **NEVER add a third-party import to a test without checking it is in the section
   image.** Only `pytest`, `pytest-cov`, `pytest-xdist`, `pytest-asyncio`
@@ -95,7 +95,7 @@ Tier is auto-assigned by filename in each `conftest.py` (live checked first):
 | recon module / tool wrapper | `recon/tests/` | unit |
 | agent graph, nodes, tools, prompts | `agentic/tests/` | unit |
 | `graph_db`, `knowledge_base`, `supply_chain_*`, `mcp` | root `tests/` | unit |
-| `redamon.sh` / compose / deploy shell logic | `tests/*_test.sh` | bash, not in the gate |
+| `redamon.sh` / compose / deploy shell logic | `tests/*_test.sh` | bash, **in the gate** (`shell` section) |
 | webapp React/TS | next to the source `*.test.ts(x)` | vitest |
 
 ---
@@ -117,7 +117,7 @@ trusting "all green".
 
 ## Resources
 
-- [readmes/README.TESTING.md](../../readmes/README.TESTING.md) - full testing guide + coverage ratchet
-- [scripts/pytest_isolated.py](../../scripts/pytest_isolated.py) - the per-file isolation gate
-- [redamon.sh:2902](../../redamon.sh#L2902) - `_TEST_SECTIONS`, section/image map, webapp hook
+- [docs/readmes/README.TESTING.md](../../docs/readmes/README.TESTING.md) - full testing guide + coverage ratchet
+- [tooling/scripts/pytest_isolated.py](../../tooling/scripts/pytest_isolated.py) - the per-file isolation gate
+- [redamon.sh:3486](../../redamon.sh#L3486) - `_TEST_SECTIONS`, section/image map, shell + webapp hooks
 - Related: root [AGENTS.md](../../AGENTS.md) for the host-pytest / Docker-gate rule

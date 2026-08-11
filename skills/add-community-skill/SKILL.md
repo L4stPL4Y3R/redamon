@@ -66,5 +66,5 @@ has a skills table, add a row (check the file first; do not invent structure).
 
 ## Resources
 
-- [readmes/coding_agent_prompts/PROMPT.ADD_COMMUNITY_AGENT_SKILL.md](../../readmes/coding_agent_prompts/PROMPT.ADD_COMMUNITY_AGENT_SKILL.md) - full authoring flow, classification tips, troubleshooting
+- [docs/readmes/coding_agent_prompts/PROMPT.ADD_COMMUNITY_AGENT_SKILL.md](../../docs/readmes/coding_agent_prompts/PROMPT.ADD_COMMUNITY_AGENT_SKILL.md) - full authoring flow, classification tips, troubleshooting
 - Related skill: `builtin-agent-skill`

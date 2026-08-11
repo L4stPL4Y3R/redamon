@@ -460,7 +460,7 @@ def test_graph_schema_md_and_prompt_agree_on_lap1_ai_properties():
     """The developer-facing reference doc and the agent-facing prompt
     must agree on what properties exist. Drift means one of the two
     misleads its audience."""
-    schema_md = (PROJECT_ROOT / "readmes" / "GRAPH.SCHEMA.md").read_text()
+    schema_md = (PROJECT_ROOT / "docs" / "readmes" / "GRAPH.SCHEMA.md").read_text()
     block = _extract_ai_block(_extract_text_to_cypher_block(_read_prompt_source()))
     for prop in PROPERTY_TO_LABEL:
         assert prop in schema_md, (
@@ -470,7 +470,7 @@ def test_graph_schema_md_and_prompt_agree_on_lap1_ai_properties():
 
 
 def test_graph_schema_md_and_prompt_agree_on_technology_categories():
-    schema_md = (PROJECT_ROOT / "readmes" / "GRAPH.SCHEMA.md").read_text()
+    schema_md = (PROJECT_ROOT / "docs" / "readmes" / "GRAPH.SCHEMA.md").read_text()
     block = _extract_ai_block(_extract_text_to_cypher_block(_read_prompt_source()))
     for cat in ("ai-runtime", "ai-vector-db", "ai-framework",
                 "ai-proxy", "ai-frontend"):

@@ -81,5 +81,5 @@ docker compose exec postgres psql -U redamon -d redamon -c "UPDATE projects SET 
 
 ## Resources
 
-- Naming + servement details in [readmes/coding_agent_prompts/PROMPT.ADD_RECON_TOOL.md](../../readmes/coding_agent_prompts/PROMPT.ADD_RECON_TOOL.md) (settings multi-layer flow)
+- Naming + servement details in [docs/readmes/coding_agent_prompts/PROMPT.ADD_RECON_TOOL.md](../../docs/readmes/coding_agent_prompts/PROMPT.ADD_RECON_TOOL.md) (settings multi-layer flow)
 - Related skills: `agentic-tool-integration`, `recon-tool-integration`, `recon-ai-enrichment`

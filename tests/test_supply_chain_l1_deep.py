@@ -275,7 +275,7 @@ class TestD1SoftErrorsSurviveInvalidArtifactInL1(unittest.TestCase):
         so the reason survives, and matching that would make this test assert
         against its own explanation.
         """
-        src = open(os.path.join(_REPO, "supply_chain_scan", "main.py")).read()
+        src = open(os.path.join(_REPO, "scanners", "supply_chain_scan", "main.py")).read()
         code = "\n".join(l for l in src.splitlines()
                          if not l.lstrip().startswith("#"))
         self.assertNotIn('artifact["suspicious"] = []', code)
@@ -283,7 +283,7 @@ class TestD1SoftErrorsSurviveInvalidArtifactInL1(unittest.TestCase):
 
     def test_D1_both_layers_use_the_same_recovery(self):
         """The drift itself was the bug: two copies of one security invariant."""
-        for path in (("supply_chain_scan", "main.py"),
+        for path in (("scanners", "supply_chain_scan", "main.py"),
                      ("recon", "main_recon_modules", "supply_chain_recon.py")):
             src = open(os.path.join(_REPO, *path)).read()
             self.assertIn("recover_invalid_deep_artifact", src,

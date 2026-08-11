@@ -487,7 +487,7 @@ class TestUploadedSbomIsNotAnIsland(unittest.TestCase):
 
     def test_l1_main_anchors_uploads(self):
         """Source guard: the upload branch must not go back to anchor=None."""
-        src = open(os.path.join(_REPO, "supply_chain_scan", "main.py")).read()
+        src = open(os.path.join(_REPO, "scanners", "supply_chain_scan", "main.py")).read()
         code = "\n".join(l for l in src.splitlines()
                           if not l.lstrip().startswith("#"))
         self.assertIn("ensure_sbom_document", code)

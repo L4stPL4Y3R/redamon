@@ -35,18 +35,32 @@ For the no-`env_file` knob rule, see the recon_orchestrator
   longer write the host-owned files, and the scan breaks. This was reverted after
   breaking recon/partial spawns; hardening is deliberately deferred with
   `drop_caps=False` at **every** spawn site
-  ([container_manager.py:775](../../recon_orchestrator/container_manager.py#L775),
-  :1731, :2101). Keep it deferred unless the mount is not host-owned.
+  ([container_manager.py:837](../../recon_orchestrator/container_manager.py#L837),
+  :1798, :2168). Keep it deferred unless the mount is not host-owned.
 - **NEVER add `security_opt: no-new-privileges` to these spawns.** It breaks
   `execve` for non-root users inside the recon image (reverted once already):
-  [container_manager.py:877](../../recon_orchestrator/container_manager.py#L877).
+  [container_manager.py:939](../../recon_orchestrator/container_manager.py#L939).
 - **ALWAYS apply hardening through `_scanner_hardening()`**
-  ([container_manager.py:505](../../recon_orchestrator/container_manager.py#L505)),
+  ([container_manager.py:567](../../recon_orchestrator/container_manager.py#L567)),
   not ad-hoc per spawn, so all three spawn sites stay consistent.
 - **ALWAYS keep `sibling_host_path()` robust to BOTH POSIX (`/`) and Windows
   (`\`) host paths** ([container_manager.py:53](../../recon_orchestrator/container_manager.py#L53)).
   It derives a sibling source dir's host path for bind mounts; a POSIX-only
-  assumption breaks spawns on Windows hosts.
+  assumption breaks spawns on Windows hosts. Its two companions
+  [`parent_host_path()`](../../recon_orchestrator/container_manager.py#L77) and
+  [`join_host_path()`](../../recon_orchestrator/container_manager.py#L90) carry the
+  same POSIX+Windows discipline - never swap in `pathlib` / `Path(...).parent`,
+  which collapses a Windows host path on the Linux orchestrator.
+- **NEVER assume a scanner source dir is a repo-root sibling.** Scanners live two
+  levels deep under `scanners/<name>/`, so a bind mount to a repo-root sibling
+  (e.g. `graph_db`) must climb out of `scanners/` first:
+  `sibling_host_path(parent_host_path(scanner_path), "graph_db")`, and a
+  `scanners/`-nested sibling is reached with
+  `join_host_path(parent_host_path(recon_path), "scanners", "supply_chain_common")`.
+  The old `sibling_host_path(scanner_path, "graph_db")` now resolves to a
+  nonexistent `scanners/graph_db`; Docker silently binds an empty root-owned dir
+  there and graph writes / imports fail with no error. The build context climbs
+  two parents: `parent_host_path(parent_host_path(scanner_path))`.
 
 ---
 

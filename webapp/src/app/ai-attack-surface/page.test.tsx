@@ -27,6 +27,28 @@ const hookState = {
 }
 vi.mock('@/hooks/useAiAttackSurface', () => ({ useAiAttackSurface: () => hookState }))
 
+// Mock useAlertModal. The real hook throws unless <AlertProvider> is in the
+// tree (it is mounted in app/layout.tsx in production, which these render tests
+// bypass). vi.hoisted runs before the vi.mock factory so the refs are stable.
+const alertSpies = vi.hoisted(() => ({
+  alert: vi.fn(async () => {}),
+  alertError: vi.fn(async () => {}),
+  alertWarning: vi.fn(async () => {}),
+  confirm: vi.fn(async () => true),
+  dangerConfirm: vi.fn(async () => true),
+}))
+// Mock the DEEP path: useScanStartFailure (used by this page) imports the hook
+// from '@/components/ui/AlertModal/AlertModal', not from the '@/components/ui'
+// barrel, so mocking only the barrel leaves the real hook in the tree.
+vi.mock('@/components/ui/AlertModal/AlertModal', async (orig) => {
+  const real = (await orig()) as Record<string, unknown>
+  return { ...real, useAlertModal: () => alertSpies }
+})
+vi.mock('@/components/ui', async (orig) => {
+  const real = (await orig()) as Record<string, unknown>
+  return { ...real, useAlertModal: () => alertSpies }
+})
+
 const AiAttackSurfacePage = (await import('./page')).default
 
 beforeEach(() => {

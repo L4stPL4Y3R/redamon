@@ -226,7 +226,7 @@ class TestExecuteKatanaMCPTool(unittest.TestCase):
         self.assertIn("https://target/admin", result)
 
     @patch('subprocess.run')
-    def test_timeout_is_600_seconds(self, mock_run):
+    def test_timeout_is_1800_seconds(self, mock_run):
         """Verify the subprocess timeout is set to 600 seconds."""
         execute_katana = self._import_execute_katana()
 
@@ -236,7 +236,7 @@ class TestExecuteKatanaMCPTool(unittest.TestCase):
 
         execute_katana("-u https://target -d 2")
 
-        self.assertEqual(mock_run.call_args[1]['timeout'], 600)
+        self.assertEqual(mock_run.call_args[1]['timeout'], 1800)
         self.assertTrue(mock_run.call_args[1]['capture_output'])
         self.assertTrue(mock_run.call_args[1]['text'])
 

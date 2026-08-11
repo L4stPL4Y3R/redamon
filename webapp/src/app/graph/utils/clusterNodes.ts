@@ -16,7 +16,7 @@ const CHAIN_TYPES = new Set([
  * edges are ALL in this set is treated as structurally leafy for Pass 2 clustering,
  * even if its degree is > 1.
  *
- * Curated from the project's actual Cypher schema (see readmes/GRAPH.SCHEMA.md).
+ * Curated from the project's actual Cypher schema (see docs/readmes/GRAPH.SCHEMA.md).
  * Do NOT include attack-chain or vulnerability-link edges here - those carry
  * semantic meaning and should never be collapsed.
  */

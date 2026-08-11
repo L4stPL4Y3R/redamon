@@ -1864,7 +1864,7 @@ async def supply_chain_guarddog(request: GuarddogRequest):
     run in the hardened, secret-free analyzer image - and only the orchestrator
     holds the Docker socket, so it dispatches here. The Kali worker (least-
     trusted, target-facing) never touches Docker. See the trust-boundary section
-    of readmes/README.TM.SYSTEM_OVERVIEW.md.
+    of docs/readmes/README.TM.SYSTEM_OVERVIEW.md.
     """
     if not container_manager:
         raise HTTPException(status_code=503, detail="Service not initialized")

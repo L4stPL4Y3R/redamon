@@ -73,6 +73,34 @@ def sibling_host_path(host_path: str, name: str) -> str:
     sep = "\\" if ("\\" in p and "/" not in p) else "/"
     return f"{parent}{sep}{name}"
 
+
+def parent_host_path(host_path: str) -> str:
+    """Return the parent of ``host_path`` on the DOCKER HOST filesystem.
+
+    Separator-aware mirror of :func:`sibling_host_path` (see its docstring for why
+    ``pathlib`` is avoided for host paths). Used to climb out of ``scanners/`` when
+    a scanner source dir must resolve a repo-root sibling (e.g. ``graph_db``) or
+    the repo-root build context.
+    """
+    p = host_path.rstrip("/\\")
+    idx = max(p.rfind("/"), p.rfind("\\"))
+    return p[:idx] if idx != -1 else p
+
+
+def join_host_path(host_path: str, *names: str) -> str:
+    """Join child ``names`` under ``host_path``, separator-aware.
+
+    Companion to :func:`sibling_host_path`; used to reach a nested repo-relative
+    source dir (e.g. ``scanners/supply_chain_common``) from a known host anchor
+    without ``pathlib`` collapsing a Windows host path on the Linux orchestrator.
+    """
+    p = host_path.rstrip("/\\")
+    sep = "\\" if ("\\" in p and "/" not in p) else "/"
+    for name in names:
+        p = f"{p}{sep}{name}"
+    return p
+
+
 # Maximum number of concurrent partial recon runs per project
 MAX_PARALLEL_PARTIAL_RECONS = 12
 
@@ -144,7 +172,7 @@ TRUFFLEHOG_PHASE_PATTERNS = [
 ]
 
 # AI Attack Surface phase patterns. Match ONLY the explicit [Phase N] markers
-# that ai_attack_surface_scan/main.py prints (numbered in execution order).
+# that scanners/ai_attack_surface_scan/main.py prints (numbered in execution order).
 # Bare keywords would false-match — e.g. "Attack" appears in the banner line
 # "AI Attack Surface scan", which would bounce the phase back to 3.
 AI_ATTACK_SURFACE_PHASE_PATTERNS = [
@@ -775,7 +803,7 @@ class ContainerManager:
                     # so passing the in-container path (/app/supply_chain_common,
                     # the default) makes the broker reject the spawn with
                     # "bind mount not allowed" and the whole retire.js pass dies.
-                    "SUPPLY_CHAIN_COMMON_HOST_PATH": sibling_host_path(recon_path, "supply_chain_common"),
+                    "SUPPLY_CHAIN_COMMON_HOST_PATH": join_host_path(parent_host_path(recon_path), "scanners", "supply_chain_common"),
                     # Operator overrides for the dirty analyzer L2 spawns itself.
                     **self._analyzer_env(),
                 },
@@ -791,7 +819,7 @@ class ContainerManager:
                     # Mount graph_db module
                     sibling_host_path(recon_path, "graph_db"): {"bind": "/app/graph_db", "mode": "ro"},
                     # Supply-Chain recon (L2): shared runners + offline OSV DB.
-                    sibling_host_path(recon_path, "supply_chain_common"): {"bind": "/app/supply_chain_common", "mode": "ro"},
+                    join_host_path(parent_host_path(recon_path), "scanners", "supply_chain_common"): {"bind": "/app/supply_chain_common", "mode": "ro"},
                     self.supply_chain_osv_db_volume: {"bind": "/osv-db", "mode": "ro"},
                     # Mount /tmp for Docker-in-Docker temp files (avoids spaces in paths)
                     "/tmp/redamon": {"bind": "/tmp/redamon", "mode": "rw"},
@@ -1741,7 +1769,7 @@ class ContainerManager:
                     # so passing the in-container path (/app/supply_chain_common,
                     # the default) makes the broker reject the spawn with
                     # "bind mount not allowed" and the whole retire.js pass dies.
-                    "SUPPLY_CHAIN_COMMON_HOST_PATH": sibling_host_path(recon_path, "supply_chain_common"),
+                    "SUPPLY_CHAIN_COMMON_HOST_PATH": join_host_path(parent_host_path(recon_path), "scanners", "supply_chain_common"),
                     # Operator overrides for the dirty analyzer L2 spawns itself.
                     **self._analyzer_env(),
                 },
@@ -1754,7 +1782,7 @@ class ContainerManager:
                     f"{recon_path}": {"bind": "/app/recon", "mode": "rw"},
                     sibling_host_path(recon_path, "graph_db"): {"bind": "/app/graph_db", "mode": "ro"},
                     # Supply-Chain recon (L2): shared runners + offline OSV DB.
-                    sibling_host_path(recon_path, "supply_chain_common"): {"bind": "/app/supply_chain_common", "mode": "ro"},
+                    join_host_path(parent_host_path(recon_path), "scanners", "supply_chain_common"): {"bind": "/app/supply_chain_common", "mode": "ro"},
                     self.supply_chain_osv_db_volume: {"bind": "/osv-db", "mode": "ro"},
                     "/tmp/redamon": {"bind": "/tmp/redamon", "mode": "rw"},
                     # JS Recon shared volumes with webapp (uploaded files + custom patterns)
@@ -2099,7 +2127,7 @@ class ContainerManager:
             except NotFound:
                 logger.info(f"Building AI attack image from {ai_attack_path}")
                 self.client.images.build(
-                    path=Path(ai_attack_path).parent.as_posix(),
+                    path=parent_host_path(parent_host_path(ai_attack_path)),
                     dockerfile=f"{Path(ai_attack_path).name}/Dockerfile",
                     tag=self.ai_attack_image,
                     rm=True,
@@ -2505,7 +2533,7 @@ class ContainerManager:
             except NotFound:
                 logger.info(f"Building GVM scanner image from {gvm_scan_path}")
                 self.client.images.build(
-                    path=Path(gvm_scan_path).parent.as_posix(),
+                    path=parent_host_path(parent_host_path(gvm_scan_path)),
                     dockerfile=f"{Path(gvm_scan_path).name}/Dockerfile",
                     tag=self.gvm_image,
                     rm=True,
@@ -2550,7 +2578,7 @@ class ContainerManager:
                     # Mount graph_db module for Neo4j updates
                     sibling_host_path(recon_path, "graph_db"): {"bind": "/app/graph_db", "mode": "ro"},
                     # Supply-Chain recon (L2): shared runners + offline OSV DB.
-                    sibling_host_path(recon_path, "supply_chain_common"): {"bind": "/app/supply_chain_common", "mode": "ro"},
+                    join_host_path(parent_host_path(recon_path), "scanners", "supply_chain_common"): {"bind": "/app/supply_chain_common", "mode": "ro"},
                     self.supply_chain_osv_db_volume: {"bind": "/osv-db", "mode": "ro"},
                     # Mount gvm_scan source for development (no rebuild needed)
                     f"{gvm_scan_path}": {"bind": "/app/gvm_scan", "mode": "rw"},
@@ -2924,7 +2952,7 @@ class ContainerManager:
             except NotFound:
                 logger.info(f"Building GitHub hunt image from {github_hunt_path}")
                 self.client.images.build(
-                    path=Path(github_hunt_path).parent.as_posix(),
+                    path=parent_host_path(parent_host_path(github_hunt_path)),
                     dockerfile=f"{Path(github_hunt_path).name}/Dockerfile",
                     tag=self.github_hunt_image,
                     rm=True,
@@ -2961,7 +2989,7 @@ class ContainerManager:
                     # Mount github_secret_hunt source for development (no rebuild needed)
                     f"{github_hunt_path}": {"bind": "/app/github_secret_hunt", "mode": "rw"},
                     # Mount graph_db module for Neo4j integration
-                    sibling_host_path(github_hunt_path, "graph_db"): {"bind": "/app/graph_db", "mode": "ro"},
+                    sibling_host_path(parent_host_path(github_hunt_path), "graph_db"): {"bind": "/app/graph_db", "mode": "ro"},
                 },
                 command="python github_secret_hunt/main.py",
             )
@@ -3401,7 +3429,7 @@ class ContainerManager:
         does - inside the hardened, secret-free analyzer image, dispatched by the
         orchestrator (the trusted socket holder). The Kali worker never touches
         Docker: it cannot, and must not (it is the least-trusted, target-facing
-        zone). See readmes/README.TM.SYSTEM_OVERVIEW.md trust boundaries.
+        zone). See docs/readmes/README.TM.SYSTEM_OVERVIEW.md trust boundaries.
 
         GuardDog downloads the attacker-authored tarball, so the container:
           - runs on the ISOLATED analyzer bridge (internet NAT for the registry,
@@ -3521,7 +3549,7 @@ class ContainerManager:
     # OSV ecosystems this sidecar knows how to seed. Also the INJECTION GATE:
     # the ecosystem string is interpolated into a shell script, so anything not
     # on this list is refused rather than escaped (same posture as sanitize_name).
-    # MUST stay in step with supply_chain_common/osv_db_sync.py SEED_MANIFESTS.
+    # MUST stay in step with scanners/supply_chain_common/osv_db_sync.py SEED_MANIFESTS.
     # This sidecar cannot import that module (it has no source mount), so the
     # list is duplicated - tests/test_supply_chain_osv_refresh.py asserts the
     # two never drift. Maven and NuGet were missing here, so an operator could
@@ -3739,7 +3767,7 @@ exit $RC
             except NotFound:
                 logger.info(f"Building Supply-Chain image from {supply_chain_path}")
                 self.client.images.build(
-                    path=Path(supply_chain_path).parent.as_posix(),
+                    path=parent_host_path(parent_host_path(supply_chain_path)),
                     dockerfile=f"{Path(supply_chain_path).name}/Dockerfile",
                     tag=self.supply_chain_image, rm=True)
 
@@ -3784,7 +3812,7 @@ exit $RC
                     "/tmp/redamon": {"bind": "/tmp/redamon", "mode": "rw"},
                     f"{supply_chain_path}/output": {"bind": "/app/supply_chain_scan/output", "mode": "rw"},
                     f"{supply_chain_path}": {"bind": "/app/supply_chain_scan", "mode": "rw"},
-                    sibling_host_path(supply_chain_path, "graph_db"): {"bind": "/app/graph_db", "mode": "ro"},
+                    sibling_host_path(parent_host_path(supply_chain_path), "graph_db"): {"bind": "/app/graph_db", "mode": "ro"},
                     sibling_host_path(supply_chain_path, "supply_chain_common"): {"bind": "/app/supply_chain_common", "mode": "ro"},
                     # Deep analysis (GuardDog) dispatches a job to the DIRTY
                     # analyzer. Same posture the recon container already has:
@@ -3974,7 +4002,7 @@ exit $RC
             except NotFound:
                 logger.info(f"Building TruffleHog image from {trufflehog_path}")
                 self.client.images.build(
-                    path=Path(trufflehog_path).parent.as_posix(),
+                    path=parent_host_path(parent_host_path(trufflehog_path)),
                     dockerfile=f"{Path(trufflehog_path).name}/Dockerfile",
                     tag=self.trufflehog_image,
                     rm=True,
@@ -4011,7 +4039,7 @@ exit $RC
                     # Mount trufflehog_scan source for development (no rebuild needed)
                     f"{trufflehog_path}": {"bind": "/app/trufflehog_scan", "mode": "rw"},
                     # Mount graph_db module for Neo4j integration
-                    sibling_host_path(trufflehog_path, "graph_db"): {"bind": "/app/graph_db", "mode": "ro"},
+                    sibling_host_path(parent_host_path(trufflehog_path), "graph_db"): {"bind": "/app/graph_db", "mode": "ro"},
                 },
                 command="python trufflehog_scan/main.py",
             )

@@ -27,8 +27,8 @@ declare -A SCOPE_DIRS=(
   [agentic]="agentic"
   [recon]="recon"
   [recon_orchestrator]="recon_orchestrator"
-  [capture_proxy]="capture_proxy"
-  [supply_chain]="supply_chain_scan"
+  [capture_proxy]="scanners/capture_proxy"
+  [supply_chain]="scanners/supply_chain_scan"
 )
 # ---------------------------------------------------------------------------
 

@@ -114,7 +114,7 @@ These scripts and binaries are downloaded into `/opt/tools/{linux,windows}/` and
 | **ffuf** | Web fuzzer (directories, parameters, vhosts) | MIT | https://github.com/ffuf/ffuf | Built from source in `recon/Dockerfile`; also installed via `go install` in `mcp/kali-sandbox/Dockerfile` |
 | **Arjun** | HTTP hidden parameter discovery | AGPL-3.0 | https://github.com/s0md3v/Arjun | Installed via `pip` in `recon/requirements.txt`. **Invoked as a CLI subprocess only** (`shutil.which('arjun')` + `subprocess(['arjun', ...])` in `recon/helpers/resource_enum/arjun_helpers.py`); never imported into RedAmon source, so its AGPL scope does not extend to RedAmon's code (mere aggregation). |
 | **ParamSpider** | URL parameter mining from web archives | MIT | https://github.com/devanshbatham/ParamSpider | Installed via `pip` (git) in `recon/requirements.txt` |
-| **TruffleHog** | Credential and secret scanning | AGPL-3.0 | https://github.com/trufflesecurity/trufflehog | Pulled as Docker image `trufflesecurity/trufflehog:latest` at runtime; also installed as binary in `trufflehog_scan/Dockerfile` |
+| **TruffleHog** | Credential and secret scanning | AGPL-3.0 | https://github.com/trufflesecurity/trufflehog | Pulled as Docker image `trufflesecurity/trufflehog:latest` at runtime; also installed as binary in `scanners/trufflehog_scan/Dockerfile` |
 | **gitleaks** | Git repository secret scanner (API keys, passwords, tokens) | MIT | https://github.com/gitleaks/gitleaks | Installed via `go install` in `mcp/kali-sandbox/Dockerfile` |
 | **subzy** | Subdomain takeover fingerprint scanner (90+ providers) | GPL-2.0 | https://github.com/PentestPad/subzy | Installed via `go install` in `mcp/kali-sandbox/Dockerfile` (separate-process invocation, mere aggregation) |
 | **Nikto** | Web server vulnerability scanner | GPL-3.0 (database files non-GPL, distributable only with Nikto) | https://github.com/sullo/nikto | Installed via `apt-get` in `mcp/kali-sandbox/Dockerfile` |
@@ -122,7 +122,7 @@ These scripts and binaries are downloaded into `/opt/tools/{linux,windows}/` and
 | **testssl.sh** | SSL/TLS configuration auditing | GPL-2.0 | https://github.com/drwetter/testssl.sh | Installed via `apt-get` in `mcp/kali-sandbox/Dockerfile` |
 | **CeWL** | Custom wordlist generator from target websites | CC-BY-SA-2.0 UK (with GPL-3.0+ alternative offered by upstream) | https://github.com/digininja/CeWL | Installed via `apt-get` in `mcp/kali-sandbox/Dockerfile` |
 | **Subjack** | Subdomain takeover detection (CNAME/NS/MX/SPF + stale A records) | Apache-2.0 | https://github.com/haccer/subjack | Built from source via `go install` in `recon/Dockerfile` (multi-stage); invoked as native binary inside the recon container |
-| **BadDNS** | Deep DNS takeover detection (CNAME/NS/MX/TXT/SPF/DMARC/MTA-STS/wildcard/NSEC/references/zonetransfer modules) | **AGPL-3.0** | https://github.com/blacklanternsecurity/baddns | **Isolated in its own Docker image `redamon-baddns:latest`** (built from `baddns_scan/Dockerfile` via `pip install baddns`). RedAmon never imports from this package. The recon container spawns the sidecar via `docker run --rm` and receives results as NDJSON on stdout. The process + filesystem boundary preserves the AGPL-3.0 license scope. Upstream source code is available at the linked repository. |
+| **BadDNS** | Deep DNS takeover detection (CNAME/NS/MX/TXT/SPF/DMARC/MTA-STS/wildcard/NSEC/references/zonetransfer modules) | **AGPL-3.0** | https://github.com/blacklanternsecurity/baddns | **Isolated in its own Docker image `redamon-baddns:latest`** (built from `scanners/baddns_scan/Dockerfile` via `pip install baddns`). RedAmon never imports from this package. The recon container spawns the sidecar via `docker run --rm` and receives results as NDJSON on stdout. The process + filesystem boundary preserves the AGPL-3.0 license scope. Upstream source code is available at the linked repository. |
 
 ---
 
@@ -140,18 +140,18 @@ These scripts and binaries are downloaded into `/opt/tools/{linux,windows}/` and
 | **zeep** | Python SOAP client (WS-Security / XSW probing in the SOAP Chat Skill) | MIT | https://github.com/mvantellingen/python-zeep | Installed via `pip` in `mcp/kali-sandbox/Dockerfile` |
 | **python3-saml** | SAML toolkit (XSW / Comment Injection / Golden SAML construction in the SAML Chat Skill) | MIT | https://github.com/SAML-Toolkits/python3-saml | Installed via `pip` in `mcp/kali-sandbox/Dockerfile` |
 | **OWASP ZAP (Zed Attack Proxy)** | Browser-driven (headless Firefox) Ajax Spider for resource enumeration of JS-heavy SPAs | Apache-2.0 | https://github.com/zaproxy/zaproxy | Pulled as Docker image `ghcr.io/zaproxy/zaproxy:stable` at runtime by the recon container (`recon/helpers/resource_enum/zap_ajax_spider_helpers.py`); run with `--net=host` via the ZAP Automation Framework. RedAmon never imports from ZAP; results are parsed from an exported artifact (process + filesystem boundary). |
-| **Web Cache Vulnerability Scanner (WCVS)** | Web cache poisoning & deception scanning (header/parameter cache-key probing) for the cache-poisoning recon module | Apache-2.0 | https://github.com/Hackmanit/Web-Cache-Vulnerability-Scanner | Go binary built from source into the local image `redamon-wcvs:latest` (`wcvs/Dockerfile`); run as a separate `docker run` subprocess from the recon container (`recon/cache_scan/wcvs_runner.py`). RedAmon never links WCVS code; output is parsed from JSON (process boundary, mere aggregation). |
+| **Web Cache Vulnerability Scanner (WCVS)** | Web cache poisoning & deception scanning (header/parameter cache-key probing) for the cache-poisoning recon module | Apache-2.0 | https://github.com/Hackmanit/Web-Cache-Vulnerability-Scanner | Go binary built from source into the local image `redamon-wcvs:latest` (`scanners/wcvs/Dockerfile`); run as a separate `docker run` subprocess from the recon container (`recon/cache_scan/wcvs_runner.py`). RedAmon never links WCVS code; output is parsed from JSON (process boundary, mere aggregation). |
 
 ---
 
 ## HTTP Traffic Capture (TrafficMind)
 
-These libraries power **TrafficMind**, RedAmon's engagement-scoped HTTP capture layer (the credential-free man-in-the-middle capture proxy and its trusted ingest worker). Both are installed into the `redamon-capture-proxy` image (`capture_proxy/Dockerfile`).
+These libraries power **TrafficMind**, RedAmon's engagement-scoped HTTP capture layer (the credential-free man-in-the-middle capture proxy and its trusted ingest worker). Both are installed into the `redamon-capture-proxy` image (`scanners/capture_proxy/Dockerfile`).
 
 | Library | Purpose | License | Source Repository | How Used |
 |---------|---------|---------|-------------------|----------|
-| **mitmproxy** | Interactive TLS-capable HTTP/HTTPS intercepting proxy | MIT | https://github.com/mitmproxy/mitmproxy | Installed via `pip` (`mitmproxy~=11.1`) in `capture_proxy/Dockerfile`; run as `mitmdump -s capture_addon.py` on the target-facing network to intercept and record HTTP transactions |
-| **psycopg (psycopg[binary])** | PostgreSQL adapter for Python | LGPL-3.0 | https://github.com/psycopg/psycopg | Installed via `pip` (`psycopg[binary]~=3.2`) in `capture_proxy/Dockerfile`; used only by the trusted ingest worker (`capture_proxy/ingest_worker.py`) to INSERT captured transactions via a scoped, insert-only database role |
+| **mitmproxy** | Interactive TLS-capable HTTP/HTTPS intercepting proxy | MIT | https://github.com/mitmproxy/mitmproxy | Installed via `pip` (`mitmproxy~=11.1`) in `scanners/capture_proxy/Dockerfile`; run as `mitmdump -s capture_addon.py` on the target-facing network to intercept and record HTTP transactions |
+| **psycopg (psycopg[binary])** | PostgreSQL adapter for Python | LGPL-3.0 | https://github.com/psycopg/psycopg | Installed via `pip` (`psycopg[binary]~=3.2`) in `scanners/capture_proxy/Dockerfile`; used only by the trusted ingest worker (`scanners/capture_proxy/ingest_worker.py`) to INSERT captured transactions via a scoped, insert-only database role |
 
 ---
 
@@ -161,15 +161,15 @@ These tools power RedAmon's **Supply-Chain Discovery** module (malicious / vulne
 
 | Tool | Purpose | License | Source Repository | How Used |
 |------|---------|---------|-------------------|----------|
-| **OSV-Scanner** | Offline verdict engine — flags packages as malicious (`MAL-`) or known-vulnerable (`CVE`/`GHSA`) against a local OSV database | Apache-2.0 | https://github.com/google/osv-scanner | Go binary built from source (`@v2.4.0`) in `supply_chain_analyzer/Dockerfile`, `supply_chain_scan/Dockerfile`, `recon/Dockerfile`, and `mcp/kali-sandbox/Dockerfile`; invoked as a CLI subprocess via `supply_chain_common/osv_runner.py` with `--offline` (zero network egress) |
-| **GuardDog** | Behavioural malware analysis of a package (install hooks, obfuscation, exfil, typosquat) | Apache-2.0 | https://github.com/DataDog/guarddog | Installed via `pip` (`guarddog==3.0.1`) in `supply_chain_analyzer/Dockerfile`; invoked as a CLI subprocess (`guarddog <eco> scan`) via `supply_chain_common/guarddog_runner.py`, only inside the hardened DIRTY analyzer image |
+| **OSV-Scanner** | Offline verdict engine — flags packages as malicious (`MAL-`) or known-vulnerable (`CVE`/`GHSA`) against a local OSV database | Apache-2.0 | https://github.com/google/osv-scanner | Go binary built from source (`@v2.4.0`) in `scanners/supply_chain_analyzer/Dockerfile`, `scanners/supply_chain_scan/Dockerfile`, `recon/Dockerfile`, and `mcp/kali-sandbox/Dockerfile`; invoked as a CLI subprocess via `scanners/supply_chain_common/osv_runner.py` with `--offline` (zero network egress) |
+| **GuardDog** | Behavioural malware analysis of a package (install hooks, obfuscation, exfil, typosquat) | Apache-2.0 | https://github.com/DataDog/guarddog | Installed via `pip` (`guarddog==3.0.1`) in `scanners/supply_chain_analyzer/Dockerfile`; invoked as a CLI subprocess (`guarddog <eco> scan`) via `scanners/supply_chain_common/guarddog_runner.py`, only inside the hardened DIRTY analyzer image |
 | **Semgrep** | Static-analysis engine used internally by GuardDog | LGPL-2.1 | https://github.com/semgrep/semgrep | Pulled in transitively by GuardDog inside `supply_chain_analyzer`; runs as a separate process, `pip`-replaceable |
 | **YARA** | Pattern-matching engine used internally by GuardDog | BSD-3-Clause | https://github.com/VirusTotal/yara | Pulled in transitively by GuardDog inside `supply_chain_analyzer` |
-| **retire.js** | Black-box JS library + version harvest from target-served JavaScript (L2) | Apache-2.0 | https://github.com/RetireJS/retire.js | Installed via `npm install -g retire@5.4.3` in `supply_chain_analyzer/Dockerfile`; invoked as a CLI subprocess via `supply_chain_common/retire_runner.py` (runner wired; L2 activation is a follow-up release) |
+| **retire.js** | Black-box JS library + version harvest from target-served JavaScript (L2) | Apache-2.0 | https://github.com/RetireJS/retire.js | Installed via `npm install -g retire@5.4.3` in `scanners/supply_chain_analyzer/Dockerfile`; invoked as a CLI subprocess via `scanners/supply_chain_common/retire_runner.py` (runner wired; L2 activation is a follow-up release) |
 
-**OSV database (data, not code).** The offline OSV vulnerability database is **downloaded at runtime** by `osv-scanner --download-offline-databases` into the `redamon-osv-db` Docker volume (`supply_chain_common/osv_db_sync.py`); it is **not** bundled in any RedAmon image and is not redistributed by RedAmon. The aggregated OSV.dev data is published under **CC-BY-4.0** (individual records carry their upstream advisory sources). See https://osv.dev.
+**OSV database (data, not code).** The offline OSV vulnerability database is **downloaded at runtime** by `osv-scanner --download-offline-databases` into the `redamon-osv-db` Docker volume (`scanners/supply_chain_common/osv_db_sync.py`); it is **not** bundled in any RedAmon image and is not redistributed by RedAmon. The aggregated OSV.dev data is published under **CC-BY-4.0** (individual records carry their upstream advisory sources). See https://osv.dev.
 
-**CycloneDX SBOM format.** RedAmon synthesizes CycloneDX-format SBOMs itself (`supply_chain_common/artifact.py::to_cyclonedx`) to feed osv-scanner; it does **not** bundle or depend on any CycloneDX library. The CycloneDX specification is an OWASP project under Apache-2.0 (https://github.com/CycloneDX). Only the open format is used.
+**CycloneDX SBOM format.** RedAmon synthesizes CycloneDX-format SBOMs itself (`scanners/supply_chain_common/artifact.py::to_cyclonedx`) to feed osv-scanner; it does **not** bundle or depend on any CycloneDX library. The CycloneDX specification is an OWASP project under Apache-2.0 (https://github.com/CycloneDX). Only the open format is used.
 
 ---
 
@@ -183,7 +183,7 @@ These tools power RedAmon's **Supply-Chain Discovery** module (malicious / vulne
 | **pg-gvm** | GVM PostgreSQL database | AGPL-3.0 | https://github.com/greenbone/pg-gvm | Docker image: `registry.community.greenbone.net/community/pg-gvm:stable` |
 | **Greenbone Redis** | GVM data store | AGPL-3.0 | https://github.com/greenbone | Docker image: `registry.community.greenbone.net/community/redis-server:stable` |
 | **Greenbone Feed Data** | Vulnerability tests, SCAP, CERT, NVT data | AGPL-3.0 | https://github.com/greenbone | Docker images for `vulnerability-tests`, `notus-data`, `scap-data`, `cert-bund-data`, `dfn-cert-data`, `data-objects`, `report-formats`, `gpg-data` |
-| **python-gvm** | Python API client for GVM | GPL-3.0 | https://github.com/greenbone/python-gvm | Installed via `pip` in `gvm_scan/requirements.txt` |
+| **python-gvm** | Python API client for GVM | GPL-3.0 | https://github.com/greenbone/python-gvm | Installed via `pip` in `scanners/gvm_scan/requirements.txt` |
 
 ---
 
@@ -193,10 +193,10 @@ These red-team tools power the **AI Gauntlet** (RedAmon v5.0.0), the offensive A
 
 | Tool | Purpose | License | Source Repository | How Used |
 |------|---------|---------|-------------------|----------|
-| **garak** | Broad LLM vulnerability scanner (40 probe families: prompt injection, jailbreaks, encoding bypass, data leakage, toxicity, and more) | Apache-2.0 | https://github.com/NVIDIA/garak | Installed via `pip` into `/opt/venv-garak` in `ai_attack_surface_scan/Dockerfile`; invoked as `python -m garak` (REST generator) subprocess |
+| **garak** | Broad LLM vulnerability scanner (40 probe families: prompt injection, jailbreaks, encoding bypass, data leakage, toxicity, and more) | Apache-2.0 | https://github.com/NVIDIA/garak | Installed via `pip` into `/opt/venv-garak` in `scanners/ai_attack_surface_scan/Dockerfile`; invoked as `python -m garak` (REST generator) subprocess |
 | **PyRIT** | Bounded multi-turn LLM jailbreak / risk-identification framework (crescendo, skeleton-key, TAP, many-shot) | MIT | https://github.com/Azure/PyRIT | Installed via `pip` into `/opt/venv-pyrit`; invoked via the `pyrit_run.py` runner as a subprocess |
 | **Giskard** | App-tailored LLM safety/quality scanner (prompt injection, info disclosure, hallucination, bias, sycophancy) | Apache-2.0 | https://github.com/Giskard-AI/giskard | Installed via `pip` into `/opt/venv-giskard`; invoked via the `giskard_run.py` runner as a subprocess |
-| **promptfoo** | LLM red-team eval over public attack datasets, with local encoding strategies | MIT | https://github.com/promptfoo/promptfoo | Installed via `npm install -g promptfoo` in `ai_attack_surface_scan/Dockerfile`; invoked as the `promptfoo` CLI (`redteam generate` + `eval`) |
+| **promptfoo** | LLM red-team eval over public attack datasets, with local encoding strategies | MIT | https://github.com/promptfoo/promptfoo | Installed via `npm install -g promptfoo` in `scanners/ai_attack_surface_scan/Dockerfile`; invoked as the `promptfoo` CLI (`redteam generate` + `eval`) |
 | **Ollama** | Local model runtime serving the judge/grader (zero-egress grading) | MIT | https://github.com/ollama/ollama | Pulled as Docker image `ollama/ollama:latest` on demand by `recon_orchestrator/local_llm_manager.py`; queried over the local network only |
 | **LiteLLM** | Routes Giskard's judge / embedding calls to the local Ollama (`ollama/<model>`) | MIT | https://github.com/BerriAI/litellm | Pulled in transitively by Giskard in `/opt/venv-giskard`; keeps all model calls local |
 
@@ -303,7 +303,7 @@ These are libraries and frameworks used to build RedAmon's own web application, 
 |---------|---------|---------|-------------------|----------|
 | **Docker SDK for Python** | Docker API client | Apache-2.0 | https://github.com/docker/docker-py | `recon_orchestrator/requirements.txt` |
 | **neo4j (Python driver)** | Neo4j database driver | Apache-2.0 | https://github.com/neo4j/neo4j-python-driver | Multiple `requirements.txt` files |
-| **PyGithub** | GitHub API v3 client | LGPL-3.0 | https://github.com/PyGithub/PyGithub | `recon/requirements.txt`, `github_secret_hunt/requirements.txt`, `agentic/requirements.txt` |
+| **PyGithub** | GitHub API v3 client | LGPL-3.0 | https://github.com/PyGithub/PyGithub | `recon/requirements.txt`, `scanners/github_secret_hunt/requirements.txt`, `agentic/requirements.txt` |
 | **GitPython** | Git repository interaction | BSD-3-Clause | https://github.com/gitpython-developers/GitPython | `agentic/requirements.txt` |
 | **Paramiko** | SSH2 protocol library | LGPL-2.1 | https://github.com/paramiko/paramiko | `mcp/requirements.txt` |
 | **Boto3** | AWS SDK for Python | Apache-2.0 | https://github.com/boto/boto3 | `agentic/requirements.txt` |
@@ -312,7 +312,7 @@ These are libraries and frameworks used to build RedAmon's own web application, 
 | **Requests** | HTTP library for Python | Apache-2.0 | https://github.com/psf/requests | Multiple `requirements.txt` files |
 | **dnspython** | DNS toolkit for Python | ISC | https://github.com/rthalley/dnspython | `recon/requirements.txt` |
 | **python-whois** | WHOIS lookup library | MIT | https://github.com/richardpenman/whois | `recon/requirements.txt` |
-| **xmltodict** | XML to Python dict parser | MIT | https://github.com/martinblech/xmltodict | `gvm_scan/requirements.txt` |
+| **xmltodict** | XML to Python dict parser | MIT | https://github.com/martinblech/xmltodict | `scanners/gvm_scan/requirements.txt` |
 | **SSE-Starlette** | Server-Sent Events for Starlette/FastAPI | BSD-3-Clause | https://github.com/sysid/sse-starlette | `recon_orchestrator/requirements.txt`, `mcp/requirements.txt` |
 | **websockets** | WebSocket client and server library | BSD-3-Clause | https://github.com/python-websockets/websockets | `mcp/requirements.txt`, `agentic/requirements.txt` |
 | **PyYAML** | YAML parser and emitter | MIT | https://github.com/yaml/pyyaml | `mcp/requirements.txt` |
@@ -373,13 +373,13 @@ These are intentionally vulnerable applications included for testing purposes on
 
 | Application | Purpose | License | Source Repository | How Used |
 |-------------|---------|---------|-------------------|----------|
-| **DVWS-Node** | Damn Vulnerable Web Services (Node.js) | MIT | https://github.com/snoopysecurity/dvws-node | Cloned in `guinea_pigs/dvws-node/setup.sh` |
+| **DVWS-Node** | Damn Vulnerable Web Services (Node.js) | MIT | https://github.com/snoopysecurity/dvws-node | Cloned in `testing/guinea_pigs/dvws-node/setup.sh` |
 | **Log4Shell Vulnerable App** | Log4j RCE demonstration (CVE-2021-44228) | Apache-2.0 | https://github.com/christophetd/log4shell-vulnerable-app | Docker image: `ghcr.io/christophetd/log4shell-vulnerable-app:latest` |
 | **vsftpd 2.3.4** | Backdoored FTP server (CVE-2011-2523) | GPL-2.0 | N/A (pre-built image) | Docker image: `clintmint/vsftpd-2.3.4:1.0` |
 | **Apache Tomcat 8.5.19** | JSP upload RCE (CVE-2017-12617) | Apache-2.0 | https://github.com/vulhub/vulhub | Docker image: `vulhub/tomcat:8.5.19` |
-| **Apache httpd 2.4.49** | Path traversal RCE (CVE-2021-41773) | Apache-2.0 | https://github.com/apache/httpd | Built from source in `guinea_pigs/apache_2.4.49/Dockerfile` |
-| **Apache httpd 2.4.25** | Auth bypass (CVE-2017-3167) | Apache-2.0 | https://github.com/apache/httpd | Built from source in `guinea_pigs/apache_2.4.25/Dockerfile` |
-| **node-serialize 0.0.4** | Deserialization RCE demo | MIT | https://github.com/luin/serialize | Built from `guinea_pigs/node_serialize_1.0.0/Dockerfile` |
+| **Apache httpd 2.4.49** | Path traversal RCE (CVE-2021-41773) | Apache-2.0 | https://github.com/apache/httpd | Built from source in `testing/guinea_pigs/apache_2.4.49/Dockerfile` |
+| **Apache httpd 2.4.25** | Auth bypass (CVE-2017-3167) | Apache-2.0 | https://github.com/apache/httpd | Built from source in `testing/guinea_pigs/apache_2.4.25/Dockerfile` |
+| **node-serialize 0.0.4** | Deserialization RCE demo | MIT | https://github.com/luin/serialize | Built from `testing/guinea_pigs/node_serialize_1.0.0/Dockerfile` |
 
 ---
 
@@ -420,7 +420,7 @@ The following GPL-3.0-licensed Python libraries are **imported directly** into R
 
 | Library | License | Container | Source files affected |
 |---------|---------|-----------|----------------------|
-| **python-gvm** | GPL-3.0 | `gvm_scan` | All `.py` files in `gvm_scan/` |
+| **python-gvm** | GPL-3.0 | `gvm_scan` | All `.py` files in `scanners/gvm_scan/` |
 | **python-Wappalyzer** | GPL-3.0 | `recon` | Files in `recon/` that import Wappalyzer |
 
 Accordingly, **the Python source files listed above are dual-licensed MIT AND GPL-3.0**. You may use, copy, and distribute them under either license. When they are combined with the GPL-3.0 libraries they import, the combined executable is governed by the GPL-3.0.

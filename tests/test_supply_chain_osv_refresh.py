@@ -230,7 +230,7 @@ class TestEcosystemListsDoNotDrift(unittest.TestCase):
     """REGRESSION: three copies of the ecosystem list, two of them wrong.
 
     The set lived in three places that could not import each other:
-      * supply_chain_common/osv_db_sync.py SEED_MANIFESTS  (redamon.sh path)
+      * scanners/supply_chain_common/osv_db_sync.py SEED_MANIFESTS  (redamon.sh path)
       * container_manager._OSV_SYNC_ECOSYSTEMS             (auto-refresh)
       * redamon.sh OSV_ALL_ECOSYSTEMS                      (install/update)
 

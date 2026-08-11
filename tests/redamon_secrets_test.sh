@@ -235,7 +235,7 @@ done
 # test_kb_makefile_no_default_password (issue #160): the KB Makefile must not
 # ship a changeme123 default; redamon.sh passes the real password via _kb_make.
 echo "== KB Makefile has no insecure NEO4J_PASSWORD default =="
-KBMK="$REPO_ROOT/knowledge_base/Makefile"
+KBMK="$REPO_ROOT/services/knowledge_base/Makefile"
 assert_false "KB Makefile: no 'NEO4J_PASSWORD ?= changeme123'" "grep -qE 'NEO4J_PASSWORD[[:space:]]*\?=[[:space:]]*changeme123' '$KBMK'"
 assert_true  "KB Makefile: NEO4J_PASSWORD default is empty"    "grep -qE 'NEO4J_PASSWORD[[:space:]]*\?=[[:space:]]*\$' '$KBMK'"
 assert_true  "KB Makefile: --neo4j-password value is quoted"   "[ \"\$(grep -c 'neo4j-password \"\$(NEO4J_PASSWORD)\"' '$KBMK')\" = 2 ]"
@@ -369,7 +369,7 @@ assert_true "_kb_make forwards the make target"             "echo \"\$kb_out\" |
 # prints the recipe without executing it. Skipped gracefully if make is absent.
 if command -v make >/dev/null 2>&1; then
     echo "== KB Makefile expands --neo4j-password from env, no default (make -n) =="
-    KBDIR="$REPO_ROOT/knowledge_base"
+    KBDIR="$REPO_ROOT/services/knowledge_base"
     dry_set="$(NEO4J_PASSWORD='sup3r-secret' MODE=docker make -C "$KBDIR" -n kb-stats 2>/dev/null)"
     dry_unset="$(env -u NEO4J_PASSWORD MODE=docker make -C "$KBDIR" -n kb-stats 2>/dev/null)"
     assert_true  "make -n: password passed quoted when env set" "printf '%s' \"\$dry_set\" | grep -q -- '--neo4j-password \"sup3r-secret\"'"

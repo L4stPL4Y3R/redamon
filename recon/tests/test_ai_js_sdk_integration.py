@@ -84,6 +84,18 @@ def _import_js_recon():
     sys.modules["recon.helpers.js_recon.framework"].detect_dev_comments = lambda *a, **kw: []
     sys.modules["recon.helpers.js_recon.framework"].load_custom_frameworks = lambda *a, **kw: None
 
+    # js_recon imports is_url_safe_to_probe from recon.main_recon_modules.ip_filter
+    # (falling back to a bare `ip_filter`). Stub both so the SSRF guard is a no-op
+    # in the test (every probe target is treated as safe).
+    mrm_pkg = types.ModuleType("recon.main_recon_modules")
+    mrm_pkg.__path__ = []  # mark as a package so submodule imports resolve
+    sys.modules["recon.main_recon_modules"] = mrm_pkg
+    sys.modules["recon"].main_recon_modules = mrm_pkg  # type: ignore[attr-defined]
+    _ip_filter = types.ModuleType("ip_filter")
+    _ip_filter.is_url_safe_to_probe = lambda *a, **kw: True
+    sys.modules["ip_filter"] = _ip_filter
+    sys.modules["recon.main_recon_modules.ip_filter"] = _ip_filter
+
     # Now load js_recon itself.
     spec = importlib.util.spec_from_file_location(
         "recon.main_recon_modules.js_recon",

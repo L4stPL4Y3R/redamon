@@ -169,7 +169,7 @@ eq "the L3 reservation was released after the call" "$AFTER" "0"
 
 # -----------------------------------------------------------------------------
 echo "== broker allowlist still covers the analyzer =="
-ALLOW="$(grep -c 'redamon-supply-chain-analyzer' docker_broker/broker.py 2>/dev/null || echo 0)"
+ALLOW="$(grep -c 'redamon-supply-chain-analyzer' services/docker_broker/broker.py 2>/dev/null || echo 0)"
 gt "analyzer image is referenced by the broker policy" "$ALLOW" "0"
 
 echo

@@ -23,7 +23,7 @@ from datetime import datetime
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # Add paths for imports
-sys.path.insert(0, str(REPO_ROOT / "trufflehog_scan"))
+sys.path.insert(0, str(REPO_ROOT / "scanners" / "trufflehog_scan"))
 
 # Stub graph_db before any imports that might pull it in
 if "graph_db" not in sys.modules:
@@ -732,8 +732,8 @@ class TestDockerComposeConsistency(unittest.TestCase):
         self.assertIn("redamon-trufflehog:latest", self.content)
 
     def test_orchestrator_volume_mounts(self):
-        self.assertIn("./trufflehog_scan:/app/trufflehog_scan:ro", self.content)
-        self.assertIn("./trufflehog_scan/output:/app/trufflehog_scan/output:rw", self.content)
+        self.assertIn("./scanners/trufflehog_scan:/app/trufflehog_scan:ro", self.content)
+        self.assertIn("./scanners/trufflehog_scan/output:/app/trufflehog_scan/output:rw", self.content)
 
     def test_orchestrator_env_var(self):
         self.assertIn("TRUFFLEHOG_IMAGE: redamon-trufflehog:latest", self.content)
@@ -742,7 +742,7 @@ class TestDockerComposeConsistency(unittest.TestCase):
         self.assertIn("TRUFFLEHOG_OUTPUT_PATH: /data/trufflehog-output", self.content)
 
     def test_webapp_volume_mount(self):
-        self.assertIn("./trufflehog_scan/output:/data/trufflehog-output:ro", self.content)
+        self.assertIn("./scanners/trufflehog_scan/output:/data/trufflehog-output:ro", self.content)
 
 
 # =============================================================================

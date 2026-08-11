@@ -87,5 +87,5 @@ docker compose exec webapp npx prisma db push         # for new settings (NEVER 
 
 ## Resources
 
-- [readmes/coding_agent_prompts/PROMPT.ADD_RECON_TOOL.md](../../readmes/coding_agent_prompts/PROMPT.ADD_RECON_TOOL.md) - the full ~15-subsystem checklist (graph, report, workflow view, presets, tooltips)
+- [docs/readmes/coding_agent_prompts/PROMPT.ADD_RECON_TOOL.md](../../docs/readmes/coding_agent_prompts/PROMPT.ADD_RECON_TOOL.md) - the full ~15-subsystem checklist (graph, report, workflow view, presets, tooltips)
 - Related skills: `graph-db-writes`, `project-settings-cascade`, `recon-ai-enrichment`

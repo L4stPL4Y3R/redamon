@@ -1,6 +1,6 @@
 # RedAmon test toolchain (Part A of the testing foundation).
 #
-# Installed two ways (see readmes/README.TESTING.md):
+# Installed two ways (see docs/readmes/README.TESTING.md):
 #   * Baked into the daily-driver images (agentic/, recon/) via their
 #     requirements.txt so the canonical gate needs no runtime install.
 #   * Runtime-installed by `redamon.sh test` inside the occasional-run slim

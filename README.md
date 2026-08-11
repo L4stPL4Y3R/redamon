@@ -1,7 +1,7 @@
 <p align="center">
-  <img src="assets/logo.png" alt="RedAmon Logo" width="120"/>
+  <img src="docs/assets/logo.png" alt="RedAmon Logo" width="120"/>
   <br/>
-  <img src="assets/title.svg" alt="RedAmon" width="340"/>
+  <img src="docs/assets/title.svg" alt="RedAmon" width="340"/>
   <br/>
   <b><i><big><big>Unmask the hidden before the world does</big></big></i></b>
 </p>
@@ -23,10 +23,10 @@
 
 <p align="center">
   <a href="https://github.com/samugit83/redamon/stargazers"><img height="24" src="https://img.shields.io/github/stars/samugit83/redamon?style=flat&color=2E8B57&label=Stars" alt="GitHub Stars"/></a>
-  <img height="24" src="https://img.shields.io/badge/v6.8.0-release-2E8B57?style=flat" alt="Version 6.8.0"/>
+  <img height="24" src="https://img.shields.io/badge/v6.9.0-release-2E8B57?style=flat" alt="Version 6.9.0"/>
   <img height="24" src="https://img.shields.io/badge/WARNING-SECURITY%20TOOL-B22222?style=flat" alt="Security Tool Warning"/>
   <img height="24" src="https://img.shields.io/badge/LICENSE-MIT-4169A1?style=flat" alt="MIT License"/>
-  <a href="readmes/README.SECURITY_POSTURE.md"><img height="24" src="https://img.shields.io/badge/SECURE%20BY%20DESIGN-STRIDE%20THREAT%20MODELED-2E7D32?style=flat&logo=shield&logoColor=white" alt="Secure by Design, STRIDE Threat Modeled"/></a>
+  <a href="docs/readmes/README.SECURITY_POSTURE.md"><img height="24" src="https://img.shields.io/badge/SECURE%20BY%20DESIGN-STRIDE%20THREAT%20MODELED-2E7D32?style=flat&logo=shield&logoColor=white" alt="Secure by Design, STRIDE Threat Modeled"/></a>
   <img height="24" src="https://img.shields.io/badge/END--TO--END-PIPELINE-A01025?style=flat" alt="End-to-End Pipeline"/>
   <img height="24" src="https://img.shields.io/badge/AI-AUTONOMOUS%20AGENT-6A5ACD?style=flat&logo=openai&logoColor=white" alt="AI Powered"/>
   <a href="https://github.com/samugit83/redamon/wiki/AI-Gauntlet"><img height="24" src="https://img.shields.io/badge/%F0%9F%86%95%20AI%20GAUNTLET-OFFENSIVE%20AI%20TESTING-FF6B35?style=flat" alt="AI Gauntlet — Offensive AI Testing"/></a>
@@ -54,7 +54,7 @@
 > **LEGAL DISCLAIMER**: This tool is intended for **authorized security testing**, **educational purposes**, and **research only**. Never use this system to scan, probe, or attack any system you do not own or have explicit written permission to test. Unauthorized access is **illegal** and punishable by law. By using this tool, you accept **full responsibility** for your actions. **[Read Full Disclaimer](DISCLAIMER.md)**
 
 <p align="center">
-  <img src="assets/agent.gif" alt="RedAmon Agent Demo" width="100%"/>
+  <img src="docs/assets/agent.gif" alt="RedAmon Agent Demo" width="100%"/>
 </p>
 <p align="center">
   <a href="https://youtu.be/afViJUit0xE"><img height="24" src="https://img.shields.io/badge/▶_WATCH_DEMO-3_Parallel_Agents-FF0000?style=flat&logo=youtube&logoColor=white" alt="Watch Demo"/></a>
@@ -67,7 +67,7 @@
 
 <h2 align="center">Dynamic Multi-Tool Parallel Recon Pipeline</h2>
 <p align="center">
-<img src="assets/recon-pipeline.gif" alt="Parallel recon pipeline in action" width="100%"/>
+<img src="docs/assets/recon-pipeline.gif" alt="Parallel recon pipeline in action" width="100%"/>
 </p>
 <p align="center">
   <em>RedAmon launches multiple reconnaissance tools in parallel, each feeding results into a shared knowledge graph in real time. Tools spin up, adapt their scope based on live discoveries, and coordinate without manual intervention. The entire attack surface -- subdomains, ports, endpoints, parameters -- materializes in minutes, not hours.</em>
@@ -77,7 +77,7 @@
 
 <h2 align="center">Recon as a Living Knowledge Graph</h2>
 <p align="center">
-<img src="assets/redamon-graph.gif" alt="RedAmon Neo4j attack-surface graph rendered in 2D" width="100%"/>
+<img src="docs/assets/redamon-graph.gif" alt="RedAmon Neo4j attack-surface graph rendered in 2D" width="100%"/>
 </p>
 <p align="center">
   <em>Industry-standard scanners chained so each tool's output feeds the next, then merged into a single Neo4j knowledge graph. Findings are deduplicated, relationships are explicit, and the agent inherits a structured, fully connected attack surface ready to query in natural language.</em>
@@ -93,7 +93,7 @@ RedAmon doesn't stop at finding vulnerabilities, it fixes them. The pipeline sta
 </p>
 
 <p align="center">
-<img src="assets/cypherfix.gif" alt="CypherFix demo" width="100%"/>
+<img src="docs/assets/cypherfix.gif" alt="CypherFix demo" width="100%"/>
 </p>
 
 ---
@@ -110,13 +110,13 @@ We maintain a public **[Project Board](https://github.com/users/samugit83/projec
 <table>
 <tr>
 <td align="center" valign="top" width="50%">
-<img src="assets/samuele.png" alt="Samuele Giampieri" width="120"/><br/>
+<img src="docs/assets/samuele.png" alt="Samuele Giampieri" width="120"/><br/>
 <b>Samuele Giampieri</b>: Creator, Maintainer & AI Platform Architect<br/><br/>
 <small>AI Platform Architect & Full-Stack Lead with 15+ years of freelancing experience and more than 30 projects shipped to production, including enterprise-scale AI agentic systems. AWS-certified (DevOps Engineer, ML Specialty) and IBM-certified AI Engineer. Designs end-to-end ML solutions spanning deep learning, NLP, Computer Vision, and AI Agent systems with LangChain/LangGraph.</small><br/><br/>
 <a href="https://www.linkedin.com/in/samuele-giampieri-b1b67597/">LinkedIn</a> · <a href="https://github.com/samugit83">GitHub</a> · <a href="https://www.devergolabs.com/">Devergo Labs</a>
 </td>
 <td align="center" valign="top" width="50%">
-<img src="assets/ritesh.png" alt="Ritesh Gohil" width="120"/><br/>
+<img src="docs/assets/ritesh.png" alt="Ritesh Gohil" width="120"/><br/>
 <b>Ritesh Gohil</b>: Maintainer & Lead Security Researcher<br/><br/>
 <small>Cyber Security Engineer at Workday with over 7 years of experience in Web, API, Mobile, Network, and Cloud penetration testing. Published 11 CVEs in MITRE, with security acknowledgements from Google (4×) and Apple (6×). Secured 200+ web and mobile applications and contributed to Exploit Database, Google Hacking Database, and the AWS Community. Holds AWS Security Specialty, eWPTXv2, eCPPTv2, CRTP, and CEH certifications with expertise in red teaming, cloud security, CVE research, and security architecture review.</small><br/><br/>
 <a href="https://www.linkedin.com/in/riteshgohil25/">LinkedIn</a> · <a href="https://github.com/L4stPL4Y3R">GitHub</a>
@@ -226,7 +226,7 @@ Go to **http://localhost:3000** -- create a project, configure your target, and 
 
 > For a detailed walkthrough of every feature, check the **[Wiki](https://github.com/samugit83/redamon/wiki)**.
 >
-> Having issues? See the **[Troubleshooting](readmes/TROUBLESHOOTING.md)** guide or the **[Wiki Troubleshooting](https://github.com/samugit83/redamon/wiki/Troubleshooting)** page.
+> Having issues? See the **[Troubleshooting](docs/readmes/TROUBLESHOOTING.md)** guide or the **[Wiki Troubleshooting](https://github.com/samugit83/redamon/wiki/Troubleshooting)** page.
 
 ### Management Commands
 
@@ -272,20 +272,26 @@ The script pulls the latest code from GitHub, detects which Dockerfiles and sour
 >
 > `up` is idempotent -- it starts only what is missing and leaves running containers untouched. After this one-time step, plain `./redamon.sh update` handles everything on its own.
 
+> **Upgrading across 6.9 (repository reorganization).** 6.9 grouped the top-level directories under `scanners/`, `services/`, `testing/`, `tooling/` and `docs/`. `git pull` moves only tracked files, so data that git does not track -- the knowledge-base index, past scan outputs, and the single-host deploy `.env` and TLS material -- would otherwise be left behind at the old paths. `update` (and `up`/`status`) migrate it for you automatically and print what moved. If any file was written by a container as root and could not be moved, finish it with:
+>
+> ```bash
+> sudo ./redamon.sh migrate-layout
+> ```
+
 The webapp also checks for updates automatically and shows a notification in the UI when a new version is available.
 
 ### Deploy to a Server (Production)
 
-The Quick Start above runs RedAmon locally on `localhost`. To run a shared, internet-reachable instance on a Linux server (EC2, DigitalOcean, Hetzner, or bare metal), use the **single-host deploy** in [`deploy/single-host/`](deploy/single-host/). It drives `redamon.sh` over SSH from your laptop and wraps the stack in the internet-facing security layer RedAmon omits by default: nginx + TLS (Let's Encrypt), a host firewall, SSH hardening, and fail2ban, with a single public HTTPS origin so only the login page is reachable and everything else stays bound to loopback.
+The Quick Start above runs RedAmon locally on `localhost`. To run a shared, internet-reachable instance on a Linux server (EC2, DigitalOcean, Hetzner, or bare metal), use the **single-host deploy** in [`tooling/deploy/single-host/`](tooling/deploy/single-host/). It drives `redamon.sh` over SSH from your laptop and wraps the stack in the internet-facing security layer RedAmon omits by default: nginx + TLS (Let's Encrypt), a host firewall, SSH hardening, and fail2ban, with a single public HTTPS origin so only the login page is reachable and everything else stays bound to loopback.
 
 ```bash
-cd deploy/single-host
+cd tooling/deploy/single-host
 cp .env.example .env      # set HOST_IP, DOMAIN, SSH_KEY_PATH, OPERATOR_ALLOW_CIDRS,
                           # LETSENCRYPT_EMAIL, ADMIN_* ...
 ./deploy.sh init          # first build takes 30-60 min, then log in at https://<domain>/
 ```
 
-Full walkthrough: [Wiki: Deploying to a Server](https://github.com/samugit83/redamon/wiki/Deploying-to-a-Server). Complete reference: [deploy/single-host/README.md](deploy/single-host/README.md).
+Full walkthrough: [Wiki: Deploying to a Server](https://github.com/samugit83/redamon/wiki/Deploying-to-a-Server). Complete reference: [tooling/deploy/single-host/README.md](tooling/deploy/single-host/README.md).
 
 ### Development Mode
 
@@ -310,13 +316,13 @@ Tool images are built automatically on first run if they don't exist yet. The de
 | `mcp/kali-sandbox/Dockerfile` | `docker compose build kali-sandbox && docker compose up -d kali-sandbox` |
 | `webapp/Dockerfile` or `webapp/package.json` | `docker compose build webapp && docker compose up -d webapp` |
 | `recon/Dockerfile` | `docker compose --profile tools build recon` |
-| `gvm_scan/Dockerfile` | `docker compose --profile tools build vuln-scanner` |
-| `github_secret_hunt/Dockerfile` | `docker compose --profile tools build github-secret-hunter` |
-| `trufflehog_scan/Dockerfile` | `docker compose --profile tools build trufflehog-scanner` |
-| `baddns_scan/Dockerfile` or `baddns_scan/entrypoint.sh` | `docker compose --profile tools build baddns-scanner` |
-| `wcvs/Dockerfile` (web cache poisoning engine) | `docker compose --profile tools build wcvs` |
-| `supply_chain_scan/Dockerfile` (L1 scanner) | `docker compose --profile tools build supply-chain` |
-| `supply_chain_analyzer/` (DIRTY analyzer; entrypoint is baked) | `docker compose --profile tools build supply-chain-analyzer` |
+| `scanners/gvm_scan/Dockerfile` | `docker compose --profile tools build vuln-scanner` |
+| `scanners/github_secret_hunt/Dockerfile` | `docker compose --profile tools build github-secret-hunter` |
+| `scanners/trufflehog_scan/Dockerfile` | `docker compose --profile tools build trufflehog-scanner` |
+| `scanners/baddns_scan/Dockerfile` or `scanners/baddns_scan/entrypoint.sh` | `docker compose --profile tools build baddns-scanner` |
+| `scanners/wcvs/Dockerfile` (web cache poisoning engine) | `docker compose --profile tools build wcvs` |
+| `scanners/supply_chain_scan/Dockerfile` (L1 scanner) | `docker compose --profile tools build supply-chain` |
+| `scanners/supply_chain_analyzer/` (DIRTY analyzer; entrypoint is baked) | `docker compose --profile tools build supply-chain-analyzer` |
 | `docker-compose.yml` | `docker compose up -d` (re-creates affected containers) |
 | `prisma/schema.prisma` | `docker compose exec webapp npx prisma db push` |
 
@@ -344,7 +350,7 @@ docker builder prune -af                          # Drop ALL build cache, includ
 docker container prune -f                         # Remove stopped containers
 ```
 
-> For a complete development reference -- hot-reload rules, common commands, important rules, and AI-assisted coding guidelines -- see the **[Developer Guide](readmes/README.DEV.md)**.
+> For a complete development reference -- hot-reload rules, common commands, important rules, and AI-assisted coding guidelines -- see the **[Developer Guide](docs/readmes/README.DEV.md)**.
 
 ---
 
@@ -387,7 +393,7 @@ KB_EMBEDDING_API_KEY=ollama
 KB_EMBEDDING_API_MODEL=nomic-embed-text
 ```
 
-> **Important:** Ingestion and query must use the same model. If you switch models, rebuild the index: `make -C knowledge_base kb-rebuild-lite MODE=docker`
+> **Important:** Ingestion and query must use the same model. If you switch models, rebuild the index: `make -C services/knowledge_base kb-rebuild-lite MODE=docker`
 
 **Manage the KB:**
 
@@ -399,7 +405,7 @@ KB_EMBEDDING_API_MODEL=nomic-embed-text
 ./redamon.sh kb rebuild lite        # Wipe and rebuild from scratch
 ```
 
-> For full technical documentation -- query pipeline, data sources, ingestion profiles, scoring, security model -- see the **[Knowledge Base Technical Reference](readmes/README.KBASE.md)** or the **[Wiki: Knowledge Base & Web Search](https://github.com/samugit83/redamon/wiki/Knowledge-Base-Web-Search)**.
+> For full technical documentation -- query pipeline, data sources, ingestion profiles, scoring, security model -- see the **[Knowledge Base Technical Reference](docs/readmes/README.KBASE.md)** or the **[Wiki: Knowledge Base & Web Search](https://github.com/samugit83/redamon/wiki/Knowledge-Base-Web-Search)**.
 
 ---
 
@@ -441,14 +447,14 @@ The platform is built around six pillars:
 
 RedAmon is engineered to drop into a real security organization, not just a researcher's laptop.
 
-- **Secure by design, STRIDE threat-modeled.** The whole platform is assessed end to end under STRIDE and hardened in independently verified waves: code-level privilege separation, a filtering Docker broker in front of the host socket, fail-closed auth, SSRF egress guards, secret redaction, append-only audit trails, and a non-disableable guardrail that blocks government, military, and intergovernmental targets. See the [Security Posture](readmes/README.SECURITY_POSTURE.md) and [Threat Model](readmes/README.TM.SYSTEM_OVERVIEW.md).
+- **Secure by design, STRIDE threat-modeled.** The whole platform is assessed end to end under STRIDE and hardened in independently verified waves: code-level privilege separation, a filtering Docker broker in front of the host socket, fail-closed auth, SSRF egress guards, secret redaction, append-only audit trails, and a non-disableable guardrail that blocks government, military, and intergovernmental targets. See the [Security Posture](docs/readmes/README.SECURITY_POSTURE.md) and [Threat Model](docs/readmes/README.TM.SYSTEM_OVERVIEW.md).
 - **Fully isolated and containerized.** Every tool, scanner, and agent runs in its own container with no host-level execution. Scan jobs are spawned as ephemeral sibling containers with their own filesystem and network namespace, then torn down on completion, keeping the host clean and containing the blast radius of any exploit.
 - **Governed and multi-tenant.** Multi-user / multi-project tenancy with admin and standard roles, DB-level `user_id + project_id` scoping on every node, Rules-of-Engagement enforcement, human-in-the-loop approval gates, and 500+ per-project settings give teams the control an enterprise engagement requires.
 
-**Deploy to a server in one command.** Beyond local `localhost`, RedAmon ships a hardened [single-host deploy](deploy/single-host/) that stands up a shared, internet-reachable instance and wraps the stack in nginx + TLS (Let's Encrypt), a host firewall, SSH hardening, and fail2ban, exposing a single public HTTPS origin:
+**Deploy to a server in one command.** Beyond local `localhost`, RedAmon ships a hardened [single-host deploy](tooling/deploy/single-host/) that stands up a shared, internet-reachable instance and wraps the stack in nginx + TLS (Let's Encrypt), a host firewall, SSH hardening, and fail2ban, exposing a single public HTTPS origin:
 
 ```bash
-cd deploy/single-host
+cd tooling/deploy/single-host
 cp .env.example .env      # set DOMAIN, HOST_IP, SSH_KEY_PATH, ADMIN_* ...
 ./deploy.sh init          # builds the full stack and brings it up over SSH
 ```
@@ -463,13 +469,13 @@ RedAmon is offensive software, so we hold it to the standard it tests others by.
 
 This is not a marketing claim. It is grounded in a published, evidence-based analysis you can read:
 
-- **[Security Posture](readmes/README.SECURITY_POSTURE.md)** - the full defense-in-depth control catalog: every layer implemented, mapped to the code.
-- **[Threat Model](readmes/README.TM.SYSTEM_OVERVIEW.md)** - the assets, trust boundaries, data flows, entry points, and network surface the analysis was built on.
+- **[Security Posture](docs/readmes/README.SECURITY_POSTURE.md)** - the full defense-in-depth control catalog: every layer implemented, mapped to the code.
+- **[Threat Model](docs/readmes/README.TM.SYSTEM_OVERVIEW.md)** - the assets, trust boundaries, data flows, entry points, and network surface the analysis was built on.
 
 Highlights of what is implemented:
 
 - **Code-level privilege separation.** The target-facing worker is the least trusted component and holds no secrets; a filtering docker-broker stands between the orchestrator and the host Docker socket (image allowlist, denies `--privileged`, host-root binds, dangerous capabilities).
-- **Two deployment postures, one trust model.** Local (backends bound to loopback) and a hardened [public-internet deploy](deploy/single-host/) that adds nginx + TLS, an operator gate, login rate-limiting, and a single public origin.
+- **Two deployment postures, one trust model.** Local (backends bound to loopback) and a hardened [public-internet deploy](tooling/deploy/single-host/) that adds nginx + TLS, an operator gate, login rate-limiting, and a single public origin.
 - **Fail-closed by default.** Unset auth tokens reject rather than serve, default database credentials are refused and rotated, WebSockets require a signed ticket plus a server-side same-origin check, and every request is scoped to its authenticated owner (per-user access control with anti-enumeration 404s).
 - **Defense in depth.** SSRF egress guards, secret redaction in logs, append-only audit trails, container-escape hardening, decompression and concurrency caps, and supply-chain pinning (sha256 + commit pins).
 - **A non-disableable hard guardrail** blocks government, military, and intergovernmental targets regardless of configuration.
@@ -487,10 +493,10 @@ A fully automated, end-to-end **external attack-surface mapper** running inside 
 
 Everything runs on a **fan-out / fan-in** architecture: each phase fires as many tools in parallel as the work allows, then converges before the next phase begins. **40+ industry tools** integrate into one coordinated workflow, wildcard DNS poisoning is filtered out automatically with puredns, and **stealth mode** keeps the entire pipeline running on passive sources only when active probing is off-limits. Findings stream into the **Neo4j knowledge graph** on a background thread so the scan never blocks on database writes, and the raw JSON is preserved for download. The detailed tool-by-tool breakdown is in the matrix below.
 
-> **[Wiki: Running Reconnaissance](https://github.com/samugit83/redamon/wiki/Running-Reconnaissance)** | **[Technical: README.RECON.md](readmes/README.RECON.md)**
+> **[Wiki: Running Reconnaissance](https://github.com/samugit83/redamon/wiki/Running-Reconnaissance)** | **[Technical: README.RECON.md](docs/readmes/README.RECON.md)**
 
 <p align="center">
-  <img src="assets/recon.gif" alt="RedAmon Reconnaissance Pipeline" width="100%"/>
+  <img src="docs/assets/recon.gif" alt="RedAmon Reconnaissance Pipeline" width="100%"/>
 </p>
 
 #### Recon Pipeline Tool Matrix
@@ -560,22 +566,22 @@ Where the recon pipeline **finds** the AI surface, the **AI Gauntlet attacks it*
 
 It is **deterministic** (seeds, fixed bounds, pinned tool versions) and runs with **zero external egress**: every judge / grader / embedding call is forced to a local Ollama model, so no payload or transcript ever leaves your machine. Off by default and RoE-gated, with live phase-by-phase progress, and findings surfaced in the Red Zone **AI Gauntlet Vulnerabilities** table and the pentest report.
 
-> **[Wiki: AI Gauntlet](https://github.com/samugit83/redamon/wiki/AI-Gauntlet)** | **[Technical: AI_GAUNTLET_TECH_DOC.md](readmes/AI_GAUNTLET_TECH_DOC.md)**
+> **[Wiki: AI Gauntlet](https://github.com/samugit83/redamon/wiki/AI-Gauntlet)** | **[Technical: AI_GAUNTLET_TECH_DOC.md](docs/readmes/AI_GAUNTLET_TECH_DOC.md)**
 
 ### GVM Vulnerability Scanner
 
 **GVM/OpenVAS** performs deep network-level vulnerability assessment with 170,000+ NVTs, probing services at the protocol layer for misconfigurations, outdated software, default credentials, and known CVEs. Complements Nuclei's web-layer findings. Seven pre-configured scan profiles from quick host discovery (~2 min) to exhaustive deep scanning (~8 hours). Findings are stored as Vulnerability nodes in Neo4j alongside the recon graph.
 
-> **[Wiki: GVM Vulnerability Scanning](https://github.com/samugit83/redamon/wiki/GVM-Vulnerability-Scanning)** | **[Technical: README.GVM.md](readmes/README.GVM.md)**
+> **[Wiki: GVM Vulnerability Scanning](https://github.com/samugit83/redamon/wiki/GVM-Vulnerability-Scanning)** | **[Technical: README.GVM.md](docs/readmes/README.GVM.md)**
 
 ### AI Agent Orchestrator
 
 A **LangGraph-based autonomous agent** implementing the ReAct pattern. It progresses through three phases: **Informational** (intelligence gathering, graph queries, Shodan, Google dorking), **Exploitation** (Metasploit, Hydra credential testing, social engineering simulation), and **Post-Exploitation** (enumeration, lateral movement). The agent executes 14 security tools via MCP servers inside a Kali sandbox, supports parallel tool execution via **Wave Runner**, and provides real-time chat interaction with guidance, stop/resume, and approval workflows. **Deep Think** mode enables structured strategic analysis before acting.
 
-> **[Wiki: AI Agent Guide](https://github.com/samugit83/redamon/wiki/AI-Agent-Guide)** | **[Technical: README.AGENTIC_SYSTEM.md](readmes/README.AGENTIC_SYSTEM.md)**
+> **[Wiki: AI Agent Guide](https://github.com/samugit83/redamon/wiki/AI-Agent-Guide)** | **[Technical: README.AGENTIC_SYSTEM.md](docs/readmes/README.AGENTIC_SYSTEM.md)**
 
 <p align="center">
-  <img src="assets/exploit.gif" alt="RedAmon Exploitation Demo" width="100%"/>
+  <img src="docs/assets/exploit.gif" alt="RedAmon Exploitation Demo" width="100%"/>
 </p>
 
 #### Agent Tool Arsenal
@@ -677,7 +683,7 @@ The agent's most powerful execution mode. When an objective decomposes into **in
 
 Every safety guarantee that applies to the root agent also applies to every member: hard guardrails, soft guardrails, phase gating, Rules of Engagement, and dangerous-tool confirmations (handled **per-member, in parallel**; N members can each be awaiting your approval on their own panel simultaneously without serializing). Recursion is forbidden (a member cannot itself deploy a fireteam) and every wave has a hard cap on members, an iteration budget per member, and a wall-clock timeout. The result is wall-clock parallelism without coordination chaos, predictable termination, and an audit trail where every action is attributable to the specialist that produced it.
 
-> **[Wiki: Fireteam (Parallel Specialists)](https://github.com/samugit83/redamon/wiki/Fireteam-Parallel-Specialists)** | **[Technical: README.AGENTIC_SYSTEM.md](readmes/README.AGENTIC_SYSTEM.md#fireteam--parallel-specialist-sub-agents)**
+> **[Wiki: Fireteam (Parallel Specialists)](https://github.com/samugit83/redamon/wiki/Fireteam-Parallel-Specialists)** | **[Technical: README.AGENTIC_SYSTEM.md](docs/readmes/README.AGENTIC_SYSTEM.md#fireteam--parallel-specialist-sub-agents)**
 
 ### AI Model Providers
 
@@ -691,13 +697,13 @@ OpenAI-compatible provider settings include a **reasoning effort** control. Enab
 
 A **Neo4j knowledge graph** with 19 node types and 20+ relationship types, the single source of truth for the target's attack surface. The agent queries it before every decision via natural language → Cypher translation.
 
-> **[Wiki: Attack Surface Graph](https://github.com/samugit83/redamon/wiki/Attack-Surface-Graph)** | **[Technical: GRAPH.SCHEMA.md](readmes/GRAPH.SCHEMA.md)**
+> **[Wiki: Attack Surface Graph](https://github.com/samugit83/redamon/wiki/Attack-Surface-Graph)** | **[Technical: GRAPH.SCHEMA.md](docs/readmes/GRAPH.SCHEMA.md)**
 
 ### EvoGraph: Attack Chain Evolution
 
 A persistent, evolutionary graph tracking everything the AI agent does: tool executions, discoveries, failures, and strategic decisions. Structured chain context replaces flat execution traces, improving agent efficiency by 25%+. Cross-session memory means the agent never starts from zero.
 
-> **[Wiki: EvoGraph](https://github.com/samugit83/redamon/wiki/EvoGraph-Attack-Chain-Evolution)** | **[Technical: README.AGENTIC_SYSTEM.md](readmes/README.AGENTIC_SYSTEM.md#evograph--evolutive-attack-chain-graph)**
+> **[Wiki: EvoGraph](https://github.com/samugit83/redamon/wiki/EvoGraph-Attack-Chain-Evolution)** | **[Technical: README.AGENTIC_SYSTEM.md](docs/readmes/README.AGENTIC_SYSTEM.md#evograph--evolutive-attack-chain-graph)**
 
 ### Multi-Session Parallel Attack Chains
 
@@ -713,7 +719,7 @@ Capture is **off by default** and gated at two levels (a global master switch th
 
 The agent works the corpus through **ten `proxy_*` tools**: eight read-only analysis tools (`proxy_search`, `proxy_get`, `proxy_sitemap`, `proxy_params`, `proxy_grep`, `proxy_diff`, `proxy_to_curl`, `proxy_query`) and two active tools (`proxy_replay`, `proxy_fuzz`) that resend or Intruder-style fuzz a captured request. All ten are strictly tenant-scoped; the active tools are host-pinned to their origin, danger-flagged, phase-gated, and stealth-restricted.
 
-> **[Wiki: TrafficMind](https://github.com/samugit83/redamon/wiki/TrafficMind)** | **[Technical: README.TRAFFIC.md](readmes/README.TRAFFIC.md)**
+> **[Wiki: TrafficMind](https://github.com/samugit83/redamon/wiki/TrafficMind)** | **[Technical: README.TRAFFIC.md](docs/readmes/README.TRAFFIC.md)**
 
 ### Reverse Shells
 
@@ -731,7 +737,7 @@ Full interactive **PTY shell access** to the Kali sandbox container directly fro
 
 Two-agent pipeline: a **Triage Agent** runs 9 hardcoded Cypher queries then uses an LLM to correlate, deduplicate, and prioritize findings. A **CodeFix Agent** clones the target repo, explores the codebase with 11 tools, implements fixes, and opens a GitHub PR, replicating Claude Code's agentic design. Because the cloned repo is untrusted, its **build/test commands run in an isolated, secret-free sandbox container** (not in the agent), and the GitHub token never enters it.
 
-> **[Wiki: CypherFix](https://github.com/samugit83/redamon/wiki/CypherFix-Automated-Remediation)** | **[Technical: README.CYPHERFIX_AGENTS.md](readmes/README.CYPHERFIX_AGENTS.md)**
+> **[Wiki: CypherFix](https://github.com/samugit83/redamon/wiki/CypherFix-Automated-Remediation)** | **[Technical: README.CYPHERFIX_AGENTS.md](docs/readmes/README.CYPHERFIX_AGENTS.md)**
 
 ### Agent Skills
 
@@ -759,7 +765,7 @@ Scans GitHub repositories for leaked credentials using **700+ detectors** with a
 
 Detects known-malicious (`MAL-`) and known-vulnerable (`CVE`/`GHSA`) packages **fully offline** against a local OSV database, across three layers that share one engine and one graph model. **L1** audits an uploaded SBOM / lockfile from the **"Other Scans" modal**; **L2 (Supply-Chain Recon)** harvests the npm package set a live target actually serves during recon (source maps, imports, technologies) with zero manifest; **L3** gives the AI agent on-demand `execute_osv_scanner` / `execute_guarddog` tools. Untrusted bytes (tarballs, target JS) are processed in a hardened, secret-free, network-isolated **DIRTY** sandbox (`cap_drop=ALL`, read-only, no-install); only a schema-validated JSON artifact crosses into the creds-holding writer. Results are stored as `Package` / `MalPackageFinding` nodes (`MAL-` = malicious, `CVE`/`GHSA` = vulnerable, GuardDog = suspicious). Populate the offline DB once with `./redamon.sh supply-chain-sync npm`.
 
-> **[Technical: README.SUPPLY_CHAIN.md](readmes/README.SUPPLY_CHAIN.md)**
+> **[Technical: README.SUPPLY_CHAIN.md](docs/readmes/README.SUPPLY_CHAIN.md)**
 
 ### Project Settings
 
@@ -768,7 +774,7 @@ Detects known-malicious (`MAL-`) and known-vulnerable (`CVE`/`GHSA`) packages **
 > **[Wiki: Project Settings Reference](https://github.com/samugit83/redamon/wiki/Project-Settings-Reference)**
 
 <p align="center">
-  <img src="assets/settings.gif" alt="RedAmon Project Settings" width="100%"/>
+  <img src="docs/assets/settings.gif" alt="RedAmon Project Settings" width="100%"/>
 </p>
 
 ### Rules of Engagement (RoE)
@@ -784,7 +790,7 @@ Upload a RoE document (PDF, TXT, MD, DOCX) to auto-configure project settings an
 > **[Wiki: Insights Dashboard](https://github.com/samugit83/redamon/wiki/Insights-Dashboard)**
 
 <p align="center">
-  <img src="assets/insights.gif" alt="RedAmon Insights Dashboard" width="100%"/>
+  <img src="docs/assets/insights.gif" alt="RedAmon Insights Dashboard" width="100%"/>
 </p>
 
 ### Target Guardrail
@@ -906,9 +912,9 @@ flowchart TB
     Nmap --> GuineaPigs
 ```
 
-> **Full architecture diagrams** (data flow, Docker containers, recon pipeline, agent workflow, MCP integration): **[ARCHITECTURE.md](readmes/ARCHITECTURE.md)**
+> **Full architecture diagrams** (data flow, Docker containers, recon pipeline, agent workflow, MCP integration): **[ARCHITECTURE.md](docs/readmes/ARCHITECTURE.md)**
 >
-> **Technology stack** (70+ technologies across frontend, backend, AI, databases, security tools): **[TECH_STACK.md](readmes/TECH_STACK.md)**
+> **Technology stack** (70+ technologies across frontend, backend, AI, databases, security tools): **[TECH_STACK.md](docs/readmes/TECH_STACK.md)**
 
 ---
 
@@ -916,19 +922,19 @@ flowchart TB
 
 | Component | Description | Documentation |
 |-----------|-------------|---------------|
-| **Reconnaissance Pipeline** | Parallelized fan-out/fan-in OSINT and vulnerability scanning pipeline | [README.RECON.md](readmes/README.RECON.md) |
-| **Recon Orchestrator** | Container lifecycle management via Docker SDK | [README.RECON_ORCHESTRATOR.md](readmes/README.RECON_ORCHESTRATOR.md) |
+| **Reconnaissance Pipeline** | Parallelized fan-out/fan-in OSINT and vulnerability scanning pipeline | [README.RECON.md](docs/readmes/README.RECON.md) |
+| **Recon Orchestrator** | Container lifecycle management via Docker SDK | [README.RECON_ORCHESTRATOR.md](docs/readmes/README.RECON_ORCHESTRATOR.md) |
 | **Docker Socket Broker** | Filtering reverse-proxy for the Docker socket: spawned scan containers reach the daemon through it, so they can only create the known tool images (allowlisted, no host mounts / privileged / arbitrary images) | n/a |
-| **Graph Database** | Neo4j attack surface mapping with multi-tenant support | [README.GRAPH_DB.md](readmes/README.GRAPH_DB.md) · [GRAPH.SCHEMA.md](readmes/GRAPH.SCHEMA.md) |
-| **MCP Tool Servers** | Security tools via Model Context Protocol (Kali sandbox) | [README.MCP.md](readmes/README.MCP.md) |
-| **AI Agent Orchestrator** | LangGraph-based autonomous agent with ReAct pattern | [README.AGENTIC_SYSTEM.md](readmes/README.AGENTIC_SYSTEM.md) |
-| **CypherFix Agents** | Automated triage + code fix + GitHub PR | [README.CYPHERFIX_AGENTS.md](readmes/README.CYPHERFIX_AGENTS.md) |
-| **Web Application** | Next.js dashboard for visualization and AI interaction | [README.WEBAPP.md](readmes/README.WEBAPP.md) |
-| **GVM Scanner** | Greenbone/OpenVAS network vulnerability scanner (170K+ NVTs) | [README.GVM.md](readmes/README.GVM.md) |
+| **Graph Database** | Neo4j attack surface mapping with multi-tenant support | [README.GRAPH_DB.md](docs/readmes/README.GRAPH_DB.md) · [GRAPH.SCHEMA.md](docs/readmes/GRAPH.SCHEMA.md) |
+| **MCP Tool Servers** | Security tools via Model Context Protocol (Kali sandbox) | [README.MCP.md](docs/readmes/README.MCP.md) |
+| **AI Agent Orchestrator** | LangGraph-based autonomous agent with ReAct pattern | [README.AGENTIC_SYSTEM.md](docs/readmes/README.AGENTIC_SYSTEM.md) |
+| **CypherFix Agents** | Automated triage + code fix + GitHub PR | [README.CYPHERFIX_AGENTS.md](docs/readmes/README.CYPHERFIX_AGENTS.md) |
+| **Web Application** | Next.js dashboard for visualization and AI interaction | [README.WEBAPP.md](docs/readmes/README.WEBAPP.md) |
+| **GVM Scanner** | Greenbone/OpenVAS network vulnerability scanner (170K+ NVTs) | [README.GVM.md](docs/readmes/README.GVM.md) |
 | **TruffleHog Scanner** | Deep secret scanning with 700+ detectors and credential verification | n/a |
-| **Supply-Chain Scanner** | Offline malicious/vulnerable package detection (OSV-Scanner + GuardDog + retire.js) with a hardened DIRTY/CLEAN split; 3 layers (agent tools, standalone SBOM scan, live-target recon) | [README.SUPPLY_CHAIN.md](readmes/README.SUPPLY_CHAIN.md) |
-| **PostgreSQL Database** | Project settings, user accounts, configuration data | [README.POSTGRES.md](readmes/README.POSTGRES.md) |
-| **Test Environments** | Intentionally vulnerable Docker containers for safe testing | [README.GPIGS.md](readmes/README.GPIGS.md) |
+| **Supply-Chain Scanner** | Offline malicious/vulnerable package detection (OSV-Scanner + GuardDog + retire.js) with a hardened DIRTY/CLEAN split; 3 layers (agent tools, standalone SBOM scan, live-target recon) | [README.SUPPLY_CHAIN.md](docs/readmes/README.SUPPLY_CHAIN.md) |
+| **PostgreSQL Database** | Project settings, user accounts, configuration data | [README.POSTGRES.md](docs/readmes/README.POSTGRES.md) |
+| **Test Environments** | Intentionally vulnerable Docker containers for safe testing | [README.GPIGS.md](docs/readmes/README.GPIGS.md) |
 
 ---
 
@@ -937,16 +943,16 @@ flowchart TB
 | Resource | Link |
 |----------|------|
 | **Full Wiki** (user guide) | **[github.com/samugit83/redamon/wiki](https://github.com/samugit83/redamon/wiki)** |
-| Server Deployment (single-host) | **[Wiki: Deploying to a Server](https://github.com/samugit83/redamon/wiki/Deploying-to-a-Server)** · [deploy/single-host/README.md](deploy/single-host/README.md) |
-| **Security Posture** (defense-in-depth catalog) | **[readmes/README.SECURITY_POSTURE.md](readmes/README.SECURITY_POSTURE.md)** |
-| Supply-Chain / Malicious-Package Detection | [readmes/README.SUPPLY_CHAIN.md](readmes/README.SUPPLY_CHAIN.md) |
-| Threat Model (STRIDE) | [readmes/README.TM.SYSTEM_OVERVIEW.md](readmes/README.TM.SYSTEM_OVERVIEW.md) |
+| Server Deployment (single-host) | **[Wiki: Deploying to a Server](https://github.com/samugit83/redamon/wiki/Deploying-to-a-Server)** · [tooling/deploy/single-host/README.md](tooling/deploy/single-host/README.md) |
+| **Security Posture** (defense-in-depth catalog) | **[docs/readmes/README.SECURITY_POSTURE.md](docs/readmes/README.SECURITY_POSTURE.md)** |
+| Supply-Chain / Malicious-Package Detection | [docs/readmes/README.SUPPLY_CHAIN.md](docs/readmes/README.SUPPLY_CHAIN.md) |
+| Threat Model (STRIDE) | [docs/readmes/README.TM.SYSTEM_OVERVIEW.md](docs/readmes/README.TM.SYSTEM_OVERVIEW.md) |
 | Security Policy | [SECURITY.md](SECURITY.md) |
 | AI-Assisted Development | **[Wiki: Ship Perfect PRs with AI](https://github.com/samugit83/redamon/wiki/AI-Assisted-Development)** |
-| Developer Guide | [readmes/README.DEV.md](readmes/README.DEV.md) |
-| Architecture Diagrams | [readmes/ARCHITECTURE.md](readmes/ARCHITECTURE.md) |
-| Technology Stack | [readmes/TECH_STACK.md](readmes/TECH_STACK.md) |
-| Troubleshooting | [readmes/TROUBLESHOOTING.md](readmes/TROUBLESHOOTING.md) |
+| Developer Guide | [docs/readmes/README.DEV.md](docs/readmes/README.DEV.md) |
+| Architecture Diagrams | [docs/readmes/ARCHITECTURE.md](docs/readmes/ARCHITECTURE.md) |
+| Technology Stack | [docs/readmes/TECH_STACK.md](docs/readmes/TECH_STACK.md) |
+| Troubleshooting | [docs/readmes/TROUBLESHOOTING.md](docs/readmes/TROUBLESHOOTING.md) |
 | Changelog | [CHANGELOG.md](CHANGELOG.md) |
 | Full Disclaimer | [DISCLAIMER.md](DISCLAIMER.md) |
 | Third-Party Licenses | [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md) |
@@ -956,7 +962,7 @@ flowchart TB
 
 ## Troubleshooting
 
-RedAmon is fully Dockerized and runs on any OS with Docker Compose v2+. For OS-specific fixes (Linux, Windows, macOS), see **[Troubleshooting Guide](readmes/TROUBLESHOOTING.md)** or the **[Wiki](https://github.com/samugit83/redamon/wiki/Troubleshooting)**.
+RedAmon is fully Dockerized and runs on any OS with Docker Compose v2+. For OS-specific fixes (Linux, Windows, macOS), see **[Troubleshooting Guide](docs/readmes/TROUBLESHOOTING.md)** or the **[Wiki](https://github.com/samugit83/redamon/wiki/Troubleshooting)**.
 
 ---
 
@@ -966,7 +972,7 @@ RedAmon is fully Dockerized and runs on any OS with Docker Compose v2+. For OS-s
 <tr>
 <td width="280" align="center">
   <a href="https://github.com/samugit83/redamon/wiki/RedAmon-HackLab">
-    <img src="assets/hacklab.png" alt="RedAmon HackLab" width="260"/>
+    <img src="docs/assets/hacklab.png" alt="RedAmon HackLab" width="260"/>
   </a>
 </td>
 <td>
@@ -1033,7 +1039,7 @@ For questions, feedback, or collaboration inquiries: **devergo.sam@gmail.com**
 
 ## Legal
 
-> **Local by default; server deployment has a supported hardened path.** Out of the box RedAmon is meant to run on a **local machine** and does not include internet-facing security controls on its own. To run it on a public, internet-reachable server, use the **hardened single-host deploy** in [`deploy/single-host/`](deploy/single-host/), which puts the whole stack behind nginx + TLS, a host firewall, SSH hardening, and a single public HTTPS origin, with every internal service bound to loopback. Running the **raw** stack (without that deploy) on a public IP would expose unauthenticated internal services, so anything outside a trusted local network without the hardened deploy is entirely at your own risk.
+> **Local by default; server deployment has a supported hardened path.** Out of the box RedAmon is meant to run on a **local machine** and does not include internet-facing security controls on its own. To run it on a public, internet-reachable server, use the **hardened single-host deploy** in [`tooling/deploy/single-host/`](tooling/deploy/single-host/), which puts the whole stack behind nginx + TLS, a host firewall, SSH hardening, and a single public HTTPS origin, with every internal service bound to loopback. Running the **raw** stack (without that deploy) on a public IP would expose unauthenticated internal services, so anything outside a trusted local network without the hardened deploy is entirely at your own risk.
 
 This project is released under the [MIT License](LICENSE).
 

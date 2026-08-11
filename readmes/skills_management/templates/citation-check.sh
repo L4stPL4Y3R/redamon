@@ -1,1 +1,0 @@
-../../../skills/skill-sync/assets/citation-check.sh

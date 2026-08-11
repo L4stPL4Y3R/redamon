@@ -11,7 +11,7 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DEPLOY="$REPO_ROOT/deploy/single-host/deploy.sh"
+DEPLOY="$REPO_ROOT/tooling/deploy/single-host/deploy.sh"
 
 PASS=0; FAIL=0
 pass() { PASS=$((PASS+1)); printf '  \033[0;32mPASS\033[0m %s\n' "$1"; }
