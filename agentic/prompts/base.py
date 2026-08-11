@@ -1454,6 +1454,20 @@ TEXT_TO_CYPHER_SYSTEM = """You are a Neo4j Cypher query expert for a security re
 This is a multi-tenant security reconnaissance database storing OSINT and vulnerability data.
 Each node has `user_id` and `project_id` properties for tenant isolation (handled automatically).
 
+## MANDATORY: label every node pattern
+Put the label INSIDE the node pattern, never only in a WHERE clause. Tenant
+isolation is applied per node pattern, so a pattern that cannot be identified is
+REJECTED and you will be asked to rewrite it.
+
+  Good: MATCH (p:Package) WHERE p.ecosystem = 'npm'
+  Good: MATCH (n:Package) OPTIONAL MATCH (n)-[:FLAGGED_AS]->(m:MalPackageFinding)
+  Bad:  MATCH (n) WHERE n:Package                     <- label belongs in the pattern
+  Bad:  MATCH (n) WHERE n:Package OR n:MalPackageFinding
+
+To search several labels at once, either use a label expression in the pattern
+(`MATCH (n:Package|MalPackageFinding)`) or write one MATCH per label and combine
+them with UNION. Never scan the whole graph with a bare `(n)`.
+
 ## Node Types and Key Properties
 
 ### Infrastructure Nodes (Hierarchy: Domain -> Subdomain -> IP -> Port -> Service)
