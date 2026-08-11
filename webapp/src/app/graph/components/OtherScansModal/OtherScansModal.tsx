@@ -1,12 +1,13 @@
 'use client'
 
-import { useState } from 'react'
-import { Play, Pause, Square, Terminal, Download, Loader2, Github, Search, AlertTriangle } from 'lucide-react'
+import { useRef, useState } from 'react'
+import { Play, Pause, Square, Terminal, Download, Loader2, Github, Search, AlertTriangle, PackageSearch, Settings } from 'lucide-react'
 import Link from 'next/link'
 import { SETTINGS_KEYS_HREF } from '@/lib/settingsLinks'
+import { projectSettingsHref } from '@/lib/projectSettingsLinks'
 import { Modal, WikiInfoButton } from '@/components/ui'
 import type { GithubHuntStatus, TrufflehogStatus, SupplyChainStatus } from '@/lib/recon-types'
-import SupplyChainInput from './SupplyChainInput'
+import SupplyChainInput, { type OrgBatchState, type SupplyChainInputHandle } from './SupplyChainInput'
 import styles from './OtherScansModal.module.css'
 
 interface OtherScansModalProps {
@@ -134,6 +135,12 @@ export function OtherScansModal({
   // source is selected, and vice versa.
   const [scInputReady, setInputReady] = useState(false)
 
+  // Org mode queues N scans instead of starting this project's single one, so
+  // its action replaces Start in the row below rather than sitting beside a
+  // button that can never be enabled. Non-null only while 'org' is selected.
+  const [orgBatch, setOrgBatch] = useState<OrgBatchState | null>(null)
+  const supplyChainRef = useRef<SupplyChainInputHandle>(null)
+
   // Supply Chain derived state
   const isSCBusy = supplyChainStatus === 'running' || supplyChainStatus === 'starting' || supplyChainStatus === 'pausing'
   const isSCStopping = supplyChainStatus === 'stopping'
@@ -168,6 +175,15 @@ export function OtherScansModal({
           </div>
           <p className={styles.cardDescription}>
             Search GitHub repositories for exposed secrets, API keys, and credentials related to your target domain.
+          </p>
+          <p className={styles.cardRequirement}>
+            Requires a GitHub Access Token in{' '}
+            <Link href={SETTINGS_KEYS_HREF} style={{ color: 'var(--accent-primary)', fontWeight: 500 }}>
+              Global Settings
+            </Link>
+            . Mandatory even for public repositories: without one GitHub allows 60 requests
+            per hour, which this scan exhausts immediately. Private repositories additionally
+            need a token with repo scope.
           </p>
           {!hasGithubToken && (
             <div style={{
@@ -258,6 +274,17 @@ export function OtherScansModal({
               <Download size={12} />
               <span>Download</span>
             </button>
+
+            {projectId && (
+              <Link
+                href={projectSettingsHref(projectId, 'github-secret-hunting')}
+                className={styles.settingsButton}
+                title="Configure the target org, repos and scan options in project settings"
+                aria-label="Configure GitHub Secret Hunt in project settings"
+              >
+                <Settings size={13} />
+              </Link>
+            )}
           </div>
         </div>
 
@@ -271,6 +298,15 @@ export function OtherScansModal({
           </div>
           <p className={styles.cardDescription}>
             Deep secret scanning with 700+ detectors and optional verification against live APIs.
+          </p>
+          <p className={styles.cardRequirement}>
+            Requires a GitHub Access Token in{' '}
+            <Link href={SETTINGS_KEYS_HREF} style={{ color: 'var(--accent-primary)', fontWeight: 500 }}>
+              Global Settings
+            </Link>
+            . Mandatory even for public repositories: without one GitHub allows 60 requests
+            per hour, which this scan exhausts immediately. Private repositories additionally
+            need a token with repo scope.
           </p>
           {!hasGithubToken && (
             <div style={{
@@ -361,6 +397,17 @@ export function OtherScansModal({
               <Download size={12} />
               <span>Download</span>
             </button>
+
+            {projectId && (
+              <Link
+                href={projectSettingsHref(projectId, 'trufflehog-scanner')}
+                className={styles.settingsButton}
+                title="Configure the target org, repos and scan options in project settings"
+                aria-label="Configure TruffleHog Scanner in project settings"
+              >
+                <Settings size={13} />
+              </Link>
+            )}
           </div>
         </div>
 
@@ -383,9 +430,11 @@ export function OtherScansModal({
 
           {projectId && (
             <SupplyChainInput
+              ref={supplyChainRef}
               projectId={projectId}
               disabled={isSCActive}
               onInputAvailabilityChange={setInputReady}
+              onOrgBatchStateChange={setOrgBatch}
             />
           )}
 
@@ -394,6 +443,14 @@ export function OtherScansModal({
               <button className={styles.resumeButton} onClick={onResumeSupplyChain} disabled={scanBlocked}
                 title={scanBlocked ? blockedTitle : 'Resume Supply-Chain scan'}>
                 <Play size={12} /><span>Resume</span>
+              </button>
+            ) : orgBatch ? (
+              <button className={styles.startButton}
+                onClick={() => supplyChainRef.current?.launchOrgBatch()}
+                disabled={!orgBatch.canQueue || orgBatch.busy || isSCActive || scanBlocked}
+                title={scanBlocked ? blockedTitle : !orgBatch.canQueue ? 'Enter an organization or user above first' : 'Queue one scan per repository'}>
+                {orgBatch.busy ? <Loader2 size={12} className={styles.spinner} /> : <PackageSearch size={12} />}
+                <span>{orgBatch.busy ? 'Queuing...' : 'Queue org batch'}</span>
               </button>
             ) : (
               <button className={styles.startButton} onClick={onStartSupplyChain}

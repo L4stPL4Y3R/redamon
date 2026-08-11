@@ -1359,30 +1359,39 @@ export default function SettingsPage() {
               onToggle={() => toggleFieldVisibility('githubAccessToken')}
               onChange={v => updateSetting('githubAccessToken', v)}
             />
-            <div className="formGroup">
-              <label className="formLabel">GitHub Enterprise Host</label>
-              <input
-                className="textInput"
-                type="text"
-                placeholder="ghe.example.com"
-                value={settings.githubEnterpriseHost}
-                onChange={e => updateSetting('githubEnterpriseHost', e.target.value)}
+            {/* Host + its PAT side by side: neither is usable without the other,
+                and stacked they read as two independent settings. */}
+            <div className={styles.settingsRow}>
+              <div className="formGroup">
+                <label className="formLabel">
+                  GitHub Enterprise Host
+                  <span style={BADGE_STYLES['Supply Chain'] || BADGE_STYLES['AI Agent']}>
+                    Supply Chain
+                  </span>
+                </label>
+                <input
+                  className="textInput"
+                  type="text"
+                  placeholder="ghe.example.com"
+                  value={settings.githubEnterpriseHost}
+                  onChange={e => updateSetting('githubEnterpriseHost', e.target.value)}
+                />
+                <p className="formHint">
+                  Optional. A self-hosted or custom-domain GitHub Enterprise server, hostname
+                  only (no https://, port or path). This is also the allowlist: a Supply Chain
+                  target may name this host and github.com, nothing else.
+                </p>
+              </div>
+              <SecretField
+                label="GitHub Enterprise Token"
+                hint="The PAT for the GitHub Enterprise Host beside it. Kept separate from the GitHub Access Token on purpose: an Enterprise credential is never sent to github.com, and vice versa"
+                badges={['Supply Chain']}
+                value={settings.githubEnterpriseToken}
+                visible={!!visibleFields.githubEnterpriseToken}
+                onToggle={() => toggleFieldVisibility('githubEnterpriseToken')}
+                onChange={v => updateSetting('githubEnterpriseToken', v)}
               />
-              <p className="formHint">
-                Optional. A self-hosted or custom-domain GitHub Enterprise server, hostname
-                only (no https://, port or path). This is also the allowlist: a Supply Chain
-                target may name this host and github.com, nothing else.
-              </p>
             </div>
-            <SecretField
-              label="GitHub Enterprise Token"
-              hint="The PAT for the GitHub Enterprise Host above. Kept separate from the GitHub Access Token on purpose: an Enterprise credential is never sent to github.com, and vice versa"
-              badges={['Supply Chain']}
-              value={settings.githubEnterpriseToken}
-              visible={!!visibleFields.githubEnterpriseToken}
-              onToggle={() => toggleFieldVisibility('githubEnterpriseToken')}
-              onChange={v => updateSetting('githubEnterpriseToken', v)}
-            />
             <SecretField
               label="Tavily API Key"
               hint="Enables web_search tool for CVE research and exploit lookups"

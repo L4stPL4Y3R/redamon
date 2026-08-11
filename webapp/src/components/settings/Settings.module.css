@@ -448,6 +448,22 @@
   gap: var(--space-3);
 }
 
+/* Two fields that only make sense together (the GitHub Enterprise host and the
+   PAT for that host). Stacked in the 1-column grid they read as two unrelated
+   settings, which is exactly the confusion this pairing exists to remove. */
+.settingsRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+  align-items: start;
+}
+
+@media (max-width: 720px) {
+  .settingsRow {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* Segmented control (used by Bedrock auth method picker) */
 .segmentedControl {
   display: inline-flex;

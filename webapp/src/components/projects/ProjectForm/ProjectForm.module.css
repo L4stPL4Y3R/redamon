@@ -398,6 +398,16 @@
   margin-bottom: var(--space-2);
 }
 
+/* Always-visible statement that a credential is not optional. The amber alert
+   below it only renders when the token is MISSING, so an operator who has one
+   configured otherwise gets no indication that it is what makes the scan run. */
+.sectionRequirement {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  line-height: 1.5;
+  margin-bottom: var(--space-2);
+}
+
 .fieldRow {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));

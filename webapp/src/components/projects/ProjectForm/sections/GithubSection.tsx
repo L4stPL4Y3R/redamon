@@ -22,7 +22,9 @@ export function GithubSection({ data, updateField, hasGithubToken = false }: Git
   const [isOpen, setIsOpen] = useState(true)
 
   return (
-    <div className={styles.section}>
+    // id: scroll target for the Other Scans card's settings link. Keep it in
+    // sync with PROJECT_SECTION_ANCHORS in lib/projectSettingsLinks.ts.
+    <div className={styles.section} id="github-secret-hunting">
       <div className={styles.sectionHeader} onClick={() => setIsOpen(!isOpen)}>
         <h2 className={styles.sectionTitle}>
           <Github size={16} />
@@ -41,6 +43,17 @@ export function GithubSection({ data, updateField, hasGithubToken = false }: Git
         <div className={styles.sectionContent}>
           <p className={styles.sectionDescription}>
             Search GitHub repositories for exposed secrets, API keys, and credentials related to your target domain. Identifies leaked sensitive data that could enable unauthorized access to systems and services.
+          </p>
+
+          <p className={styles.sectionRequirement}>
+            Requires a GitHub Access Token in{' '}
+            <Link href={SETTINGS_KEYS_HREF} style={{ color: 'var(--accent-primary)', fontWeight: 500 }}>
+              Global Settings
+            </Link>
+            . Mandatory even for public repositories: without one GitHub allows 60 requests
+            per hour, which this scan exhausts immediately. Private repositories additionally
+            need a token with repo scope, and only an organization you belong to exposes them
+            (a personal account is read through its public profile).
           </p>
 
           {!hasGithubToken && (

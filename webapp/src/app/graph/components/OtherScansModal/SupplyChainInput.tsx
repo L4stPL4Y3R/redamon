@@ -1,8 +1,8 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import Link from 'next/link'
-import { Upload, Github, FileText, Loader2, Trash2, PackageSearch, Building2 } from 'lucide-react'
+import { Upload, Github, FileText, Loader2, Trash2, Building2 } from 'lucide-react'
 import { parseGithubRepo, isValidGitRef } from '@/lib/validation/supplyChainInput'
 import { parseOwnerTarget, hostHint, GITHUB_DOT_COM } from '@/lib/github/ownerTarget'
 import { SETTINGS_KEYS_HREF } from '@/lib/settingsLinks'
@@ -32,6 +32,20 @@ function repoShapeOk(value: string): boolean {
     || (hostHint(value) !== null && parseGithubRepo(value, [hostHint(value) as string]) !== null)
 }
 
+/** Org-mode readiness, reported up so the card's action row can swap its Start
+ *  button for "Queue org batch". Null whenever another source is selected. */
+export interface OrgBatchState {
+  canQueue: boolean
+  busy: boolean
+}
+
+/** The org batch lives in the card's action row but its state (the typed
+ *  account) lives here, so the parent triggers it through this handle rather
+ *  than owning a copy of the input's state. */
+export interface SupplyChainInputHandle {
+  launchOrgBatch: () => void
+}
+
 interface Props {
   projectId: string
   /** Disabled while a scan is in flight - changing the input mid-scan would
@@ -39,6 +53,9 @@ interface Props {
   disabled?: boolean
   /** Bubbles up whether a usable input exists, so the card can gate Start. */
   onInputAvailabilityChange?: (hasInput: boolean) => void
+  /** Bubbles up org-mode readiness so the card can render the queue button. */
+  onOrgBatchStateChange?: (state: OrgBatchState | null) => void
+  ref?: React.Ref<SupplyChainInputHandle>
 }
 
 interface UploadedFile {
@@ -68,6 +85,8 @@ export default function SupplyChainInput({
   projectId,
   disabled = false,
   onInputAvailabilityChange,
+  onOrgBatchStateChange,
+  ref,
 }: Props) {
   const [source, setSource] = useState<SupplyChainSource>('upload')
   const [file, setFile] = useState<UploadedFile | null>(null)
@@ -181,6 +200,19 @@ export default function SupplyChainInput({
       setOrgBusy(false)
     }
   }, [projectId, org, orgValid, orgBusy, toast, alertError])
+
+  useImperativeHandle(ref, () => ({
+    launchOrgBatch: () => { void launchOrgBatch() },
+  }), [launchOrgBatch])
+
+  // Report org-mode readiness up to the card. Only primitives change here, so
+  // the parent re-renders when the button's enabled state actually flips, not
+  // on every keystroke.
+  useEffect(() => {
+    onOrgBatchStateChange?.(
+      source === 'org' ? { canQueue: orgValid, busy: orgBusy } : null,
+    )
+  }, [source, orgValid, orgBusy, onOrgBatchStateChange])
 
   const onFilePicked = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const picked = e.target.files?.[0]
@@ -338,16 +370,6 @@ export default function SupplyChainInput({
                 onChange={(e) => setOrg(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') void launchOrgBatch() }}
               />
-              <button
-                type="button"
-                className={styles.sourceOption}
-                style={{ flex: '0 0 auto' }}
-                disabled={disabled || orgBusy || !orgValid}
-                onClick={() => void launchOrgBatch()}
-              >
-                {orgBusy ? <Loader2 size={13} className={styles.spinner} /> : <PackageSearch size={13} />}
-                <span>Queue org batch</span>
-              </button>
             </div>
             {org.trim() !== '' && !orgValid && (
               <p className={styles.inlineError}>
@@ -361,14 +383,37 @@ export default function SupplyChainInput({
               scan per repo, which run as capacity frees up (follow them in the Scans
               tab &rarr; Scan queue). Works for an organization or a user account; another
               user&apos;s private repos are never visible, only your own or an org you
-              belong to. Start above stays disabled here: this queues
-              many scans rather than running this project&apos;s single configured input.
-              Uses the project&apos;s saved org options (forks, archived, max repos, deep
-              analysis). Private repositories need the GitHub Access Token (or, for a
-              GitHub Enterprise host, the GitHub Enterprise Token) from{' '}
+              belong to.
+            </p>
+            <p className={styles.hint}>
+              What you type above decides which credential is used, and each one is
+              set in{' '}
               <Link href={SETTINGS_KEYS_HREF} style={{ color: 'var(--accent-primary)', fontWeight: 500 }}>
                 Global Settings
-              </Link>.
+              </Link>:
+            </p>
+            <ul className={styles.hintList}>
+              <li>
+                <code>acme-corp</code> or a <code>github.com</code> URL &rarr; uses the
+                <strong> GitHub Access Token</strong>. Public repos are enumerated without
+                it; private repos need it, and it also lifts the anonymous rate limit.
+              </li>
+              <li>
+                A URL on your GitHub Enterprise server, e.g.{' '}
+                <code>https://ghe.example.com/orgs/acme-corp</code> &rarr; uses the
+                <strong> GitHub Enterprise Token</strong>. That server must first be
+                registered as the <strong>GitHub Enterprise Host</strong>, which is also
+                the allowlist.
+              </li>
+              <li>
+                Any other host &rarr; refused before anything runs. No token is sent and
+                no connection to it is made.
+              </li>
+            </ul>
+            <p className={styles.hint}>
+              The two tokens are never interchanged: a github.com token is not sent to an
+              Enterprise server, and vice versa. If the matching one is missing the scan
+              still runs anonymously, which succeeds for public repositories only.
             </p>
           </>
         ) : (

@@ -24,7 +24,9 @@ export function TrufflehogSection({ data, updateField, hasGithubToken = false }:
     ((data as any).trufflehogGithubRepos ?? '').length > 0
 
   return (
-    <div className={styles.section}>
+    // id: scroll target for the Other Scans card's settings link. Keep it in
+    // sync with PROJECT_SECTION_ANCHORS in lib/projectSettingsLinks.ts.
+    <div className={styles.section} id="trufflehog-scanner">
       <div className={styles.sectionHeader} onClick={() => setIsOpen(!isOpen)}>
         <h2 className={styles.sectionTitle}>
           <Search size={16} />
@@ -42,6 +44,16 @@ export function TrufflehogSection({ data, updateField, hasGithubToken = false }:
         <div className={styles.sectionContent}>
           <p className={styles.sectionDescription}>
             Deep secret scanning with 700+ detectors and optional verification against live APIs.
+          </p>
+
+          <p className={styles.sectionRequirement}>
+            Requires a GitHub Access Token in{' '}
+            <Link href={SETTINGS_KEYS_HREF} style={{ color: 'var(--accent-primary)', fontWeight: 500 }}>
+              Global Settings
+            </Link>
+            . Mandatory even for public repositories: without one GitHub allows 60 requests
+            per hour, which this scan exhausts immediately. Private repositories additionally
+            need a token with repo scope.
           </p>
 
           {!hasGithubToken && (

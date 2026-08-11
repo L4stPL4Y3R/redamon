@@ -6,6 +6,11 @@
  * The two things that must not regress: 'org' is an ACTION, not an input, so it
  * must never be persisted as the project's scan input mode, and Start must not
  * think the project has something to scan while it is selected.
+ *
+ * The queue button now lives in the CARD's action row (it replaces a Start that
+ * can never be enabled in this mode), while the account it acts on lives in this
+ * component. That seam is the thing most likely to break silently, so the tests
+ * that press the button render the real modal rather than a stand-in harness.
  */
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react'
@@ -15,12 +20,17 @@ const alertError = vi.fn()
 
 vi.mock('@/components/ui', () => ({
   useToast: () => ({ success: (...a: unknown[]) => toastSuccess(...a), info: vi.fn(), error: vi.fn() }),
+  // The card is rendered for real; only its chrome is stubbed.
+  Modal: ({ isOpen, children }: { isOpen: boolean; children: React.ReactNode }) =>
+    isOpen ? <div>{children}</div> : null,
+  WikiInfoButton: () => null,
 }))
 vi.mock('@/components/ui/AlertModal/AlertModal', () => ({
   useAlertModal: () => ({ alertError: (...a: unknown[]) => alertError(...a) }),
 }))
 
 import SupplyChainInput from './SupplyChainInput'
+import { OtherScansModal } from './OtherScansModal'
 
 const PROJECT = {
   supplyChainInputMode: 'upload',
@@ -46,11 +56,26 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+/** Renders the whole Supply-Chain card, so the queue button under test is the
+ *  one the operator actually presses. */
 const openOrgMode = async () => {
-  render(<SupplyChainInput projectId="p1" />)
+  render(
+    <OtherScansModal
+      isOpen
+      onClose={() => {}}
+      hasReconData
+      hasGithubToken
+      projectId="p1"
+    />
+  )
   await waitFor(() => expect(screen.getByText('GitHub organization')).toBeTruthy())
   fireEvent.click(screen.getByText('GitHub organization'))
   await waitFor(() => expect(screen.getByLabelText('Organization or user')).toBeTruthy())
+}
+
+/** Buttons carry a <span> label; find them by that visible text. */
+function buttonsByLabel(label: string): HTMLButtonElement[] {
+  return screen.getAllByRole('button').filter(b => b.textContent?.includes(label)) as HTMLButtonElement[]
 }
 
 describe('SupplyChainInput - org batch', () => {
@@ -144,6 +169,32 @@ describe('SupplyChainInput - org batch', () => {
     await waitFor(() => expect(screen.getByText(/letters, digits and dashes/)).toBeTruthy())
     fireEvent.click(screen.getByText('Queue org batch'))
     expect(fetchMock.mock.calls.find(c => c[1]?.method === 'POST')).toBeUndefined()
+  })
+
+  // Start can never be enabled in org mode (this queues N scans rather than
+  // running the project's single input), so the card swaps it for the queue
+  // action instead of showing a button that is permanently dead.
+  test('the card swaps its Start button for the queue action in org mode', async () => {
+    await openOrgMode()
+    expect(buttonsByLabel('Queue org batch')).toHaveLength(1)
+    // GitHub Hunt and TruffleHog keep theirs; only Supply-Chain's is replaced.
+    expect(buttonsByLabel('Start')).toHaveLength(2)
+  })
+
+  test('the queue button stays disabled until an account is typed', async () => {
+    await openOrgMode()
+    expect(buttonsByLabel('Queue org batch')[0].disabled).toBe(true)
+    fireEvent.change(screen.getByLabelText('Organization or user'), { target: { value: 'acme-corp' } })
+    await waitFor(() => expect(buttonsByLabel('Queue org batch')[0].disabled).toBe(false))
+  })
+
+  // Leaving org mode must give Start back, or the card would be stuck with an
+  // action that no longer matches the selected source.
+  test('choosing another source restores Start', async () => {
+    await openOrgMode()
+    fireEvent.click(screen.getByText('Uploaded SBOM / lockfile'))
+    await waitFor(() => expect(buttonsByLabel('Queue org batch')).toHaveLength(0))
+    expect(buttonsByLabel('Start')).toHaveLength(3)
   })
 
   // Start runs the project's single configured input; in org mode there is none.

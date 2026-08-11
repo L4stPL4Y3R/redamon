@@ -7,6 +7,7 @@ import dynamic from 'next/dynamic'
 import type { Project } from '@prisma/client'
 import { validateProjectForm } from '@/lib/validation'
 import { isHardBlockedDomain } from '@/lib/hard-guardrail'
+import { tabForAnchor } from '@/lib/projectSettingsLinks'
 import { useProject } from '@/providers/ProjectProvider'
 import useReconStatus from '@/hooks/useReconStatus'
 import { useMultiPartialReconStatus } from '@/hooks/useMultiPartialReconStatus'
@@ -189,6 +190,9 @@ export function ProjectForm({
   const router = useRouter()
   const [activeTab, setActiveTab] = useState<TabId>('target')
   const [viewMode, setViewMode] = useState<'tabs' | 'workflow'>('workflow')
+  // A section anchor waiting to be scrolled to, e.g. arriving from an Other
+  // Scans card via /projects/<id>/settings#github-secret-hunting.
+  const [pendingAnchor, setPendingAnchor] = useState<string | null>(null)
   const [isLoadingDefaults, setIsLoadingDefaults] = useState(mode === 'create')
   const [formData, setFormData] = useState<ProjectFormData>(() => ({
     ...MINIMAL_DEFAULTS,
@@ -256,6 +260,27 @@ export function ProjectForm({
       })
       .catch(() => setHasGithubToken(false))
   }, [userId])
+
+  // Deep link into one section: /projects/<id>/settings#github-secret-hunting.
+  // The tab has to be selected first - the section is not in the DOM until then -
+  // so the scroll is deferred to the effect below rather than done here.
+  useEffect(() => {
+    const anchor = window.location.hash.slice(1)
+    if (!anchor) return
+    const tab = tabForAnchor(anchor)
+    if (!tab) return
+    setActiveTab(tab as TabId)
+    setPendingAnchor(anchor)
+  }, [])
+
+  // Both setters above batch into one render, so by the time this runs the
+  // section has been committed and can be scrolled to. Cleared either way: a
+  // missing element must not leave a scroll armed for a later tab switch.
+  useEffect(() => {
+    if (!pendingAnchor) return
+    document.getElementById(pendingAnchor)?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+    setPendingAnchor(null)
+  }, [pendingAnchor])
 
   // Prefer URL param on settings page so wordlist upload etc. always get a real id.
   // In create mode, generate a stable ID upfront so uploads (JS Recon, FFuf wordlists)
