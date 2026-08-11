@@ -2590,7 +2590,7 @@ async def text_to_cypher(body: TextToCypherRequest):
 
     Returns the raw Cypher (without tenant filters) for the webapp to save and execute.
     """
-    from tools import Neo4jToolManager
+    from tools import Neo4jToolManager, CypherGenerationTimeout
     from orchestrator_helpers.llm_setup import setup_llm, _resolve_provider_key
     from project_settings import DEFAULT_AGENT_SETTINGS, fetch_agent_settings
     import requests as _requests
@@ -2729,8 +2729,10 @@ async def text_to_cypher(body: TextToCypherRequest):
                     status_code=400,
                 )
 
-            # Validate by executing (with tenant filter) to catch syntax errors
-            filtered = manager._inject_tenant_filter(cypher, body.user_id, body.project_id)
+            # Validate by executing (with tenant filter) to catch syntax errors.
+            # An unscopable pattern raises TenantScopeError, which the retry loop
+            # below feeds back to the model rather than executing unfiltered.
+            filtered = manager._scope_query(cypher, body.user_id, body.project_id)
             manager.graph.query(
                 filtered,
                 params={
@@ -2741,6 +2743,11 @@ async def text_to_cypher(body: TextToCypherRequest):
 
             # Return the raw (un-filtered) Cypher for saving
             return JSONResponse(content={"cypher": cypher})
+
+        except CypherGenerationTimeout as e:
+            # Terminal: retrying would burn the same budget on the same model.
+            logger.error(f"text-to-cypher: {e}")
+            return JSONResponse(content={"error": str(e)}, status_code=504)
 
         except Exception as e:
             last_error = str(e)
@@ -2765,7 +2772,8 @@ async def text_to_cypher(body: TextToCypherRequest):
 # `op=cypher` always requires a labelled node pattern + the tenant filter.
 # =============================================================================
 
-_GRAPH_LABEL_NODE_RE = re.compile(r'\(\w+:\w+')
+# (the old `\(\w+:\w+` "has a labelled pattern" guard was replaced by
+#  graph_db.tenant_filter.scope_query, which checks EVERY node pattern)
 _graph_exec_driver = None
 
 _GRAPH_TYPES_CYPHER = (
@@ -2823,7 +2831,12 @@ class GraphExecRequest(BaseModel):
 
 @app.post("/graph/exec", tags=["Graph"], dependencies=[Depends(require_internal_auth_only)])
 async def graph_exec(body: GraphExecRequest):
-    from graph_db.tenant_filter import find_disallowed_write_operation, inject_tenant_filter
+    from graph_db.tenant_filter import (
+        find_disallowed_write_operation,
+        has_labelled_node_pattern,
+        scope_query,
+        TenantScopeError,
+    )
 
     if not body.user_id or not body.project_id:
         return JSONResponse(status_code=400, content={"error": "missing tenant identity"})
@@ -2852,11 +2865,17 @@ async def graph_exec(body: GraphExecRequest):
         bad = find_disallowed_write_operation(cypher)
         if bad:
             return JSONResponse(status_code=403, content={"error": f"write operation rejected ({bad}); read-only"})
-        # Worker-supplied Cypher MUST carry a labelled node pattern so the tenant
-        # filter can scope it; un-scoped `MATCH (n) ...` is refused (no cross-tenant).
-        if not _GRAPH_LABEL_NODE_RE.search(cypher):
+        # Worker-supplied Cypher must name the labels it wants (least privilege:
+        # no blind whole-graph dump from the sandbox) AND be provably scoped to
+        # ONE project. The label check alone used to be the only guard, and it
+        # passed queries like `MATCH (p:Package) OPTIONAL MATCH (n)` with `(n)`
+        # left unscoped; scope_query now covers every pattern in the query.
+        if not has_labelled_node_pattern(cypher):
             return JSONResponse(status_code=400, content={"error": "query has no labelled node pattern; cannot scope to tenant"})
-        final = inject_tenant_filter(cypher, body.user_id, body.project_id)
+        try:
+            final = scope_query(cypher, body.user_id, body.project_id)
+        except TenantScopeError as e:
+            return JSONResponse(status_code=400, content={"error": str(e)})
         params = {"tenant_user_id": body.user_id, "tenant_project_id": body.project_id}
     else:
         return JSONResponse(status_code=400, content={"error": f"unknown op {op!r}"})

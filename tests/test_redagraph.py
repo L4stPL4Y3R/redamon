@@ -81,24 +81,168 @@ class TestInjectTenantFilter(unittest.TestCase):
         self.assertEqual(out.count("user_id: $tenant_user_id"), 2)
         self.assertEqual(out.count("project_id: $tenant_project_id"), 2)
 
-    def test_anonymous_node_is_NOT_filtered(self):
-        # Documents the known behaviour: unlabelled (n) is left alone.
-        # Callers must add explicit WHERE filters for queries that use them.
-        q = "MATCH (n) RETURN n"
-        out = tf.inject_tenant_filter(q, "U", "P")
-        self.assertEqual(q, out)
+    def test_unlabelled_node_is_scoped(self):
+        # Was previously left alone, which let `MATCH (n) WHERE n:Package` read
+        # every tenant's nodes. See TestCrossTenantLeakRegression below.
+        out = tf.inject_tenant_filter("MATCH (n) RETURN n", "U", "P")
+        self.assertEqual(
+            out,
+            "MATCH (n {user_id: $tenant_user_id, project_id: $tenant_project_id}) RETURN n",
+        )
 
-    def test_anonymous_with_label_only(self):
-        # `(:Subdomain)` (no var) is also not picked up — same caveat.
-        q = "MATCH (:Subdomain) RETURN count(*)"
-        out = tf.inject_tenant_filter(q, "U", "P")
-        self.assertEqual(q, out)
+    def test_anonymous_with_label_only_is_scoped(self):
+        out = tf.inject_tenant_filter("MATCH (:Subdomain) RETURN count(*)", "U", "P")
+        self.assertEqual(
+            out,
+            "MATCH (:Subdomain {user_id: $tenant_user_id, project_id: $tenant_project_id}) "
+            "RETURN count(*)",
+        )
 
     def test_relationship_brackets_are_not_touched(self):
         q = "MATCH (d:Domain)-[r:HAS_PORT]->(p:Port) RETURN r"
         out = tf.inject_tenant_filter(q, "U", "P")
         self.assertNotIn("r:HAS_PORT {", out)
         self.assertIn("(p:Port {user_id: $tenant_user_id", out)
+
+    def test_already_scoped_pattern_is_not_doubled(self):
+        once = tf.inject_tenant_filter("MATCH (p:Package) RETURN p", "U", "P")
+        twice = tf.inject_tenant_filter(once, "U", "P")
+        self.assertEqual(once, twice)
+        self.assertEqual(twice.count("user_id: $tenant_user_id"), 1)
+
+
+class TestCrossTenantLeakRegression(unittest.TestCase):
+    """Every node-pattern shape must be scoped, not just `(var:Label)`.
+
+    The old regex `\\((\\w+):(\\w+)...\\)` matched only that one shape. Live on
+    2026-08-11 an agent asked for "all malicious packages", the model emitted
+    `MATCH (n) WHERE n:MalPackageFinding ...`, nothing was injected, and the
+    answer contained a finding belonging to a different project.
+    """
+
+    LEAK_SHAPES = {
+        "unlabelled variable": "MATCH (n) WHERE n:Package RETURN n",
+        "multi label": "MATCH (n:Package:Npm) RETURN n",
+        "backtick label": "MATCH (n:`Mal Package`) RETURN n",
+        "unlabelled with props": 'MATCH (n {name: "x"}) RETURN n',
+        "label without variable": "MATCH (:Subdomain) RETURN count(*)",
+        "anonymous endpoint": "MATCH (p:Package)-[:DEPENDS_ON]->() RETURN p",
+        "second pattern unlabelled": "MATCH (p:Package) OPTIONAL MATCH (n) RETURN p, n",
+        "label expression": "MATCH (n:Package|MalPackageFinding) RETURN n",
+    }
+
+    def test_every_leak_shape_is_scoped(self):
+        for name, query in self.LEAK_SHAPES.items():
+            with self.subTest(shape=name):
+                out = tf.scope_query(query, "U", "P")
+                self.assertIsNone(
+                    tf.find_unscoped_node_pattern(out),
+                    f"{name} still has an unscoped pattern: {out}",
+                )
+
+    def test_the_live_leaking_query(self):
+        """The exact query that returned another project's malicious package."""
+        query = (
+            "MATCH (n)\n"
+            "WHERE n:JsReconFinding OR n:Secret OR n:TrufflehogFinding\n"
+            "   OR (n:MalPackageFinding AND (n.advisory_id STARTS WITH 'MAL-'"
+            " OR any(a IN coalesce(n.aliases,[]) WHERE a STARTS WITH 'MAL-')))\n"
+            "OPTIONAL MATCH (pkg:Package)-[:FLAGGED_AS]->(n)\n"
+            "RETURN labels(n)[0] AS node_type, pkg.name AS package\n"
+        )
+        out = tf.scope_query(query, "U", "P")
+        self.assertIsNone(tf.find_unscoped_node_pattern(out))
+        # The driving MATCH is what leaked; it must carry the tenant keys.
+        self.assertIn(
+            "MATCH (n {user_id: $tenant_user_id, project_id: $tenant_project_id})", out
+        )
+
+    def test_unscoped_query_is_refused_not_executed(self):
+        with self.assertRaises(tf.TenantScopeError) as ctx:
+            # A pattern the grammar cannot parse must fail closed.
+            tf.scope_query("MATCH (n:) RETURN n", "U", "P")
+        self.assertIn("could not be scoped", str(ctx.exception))
+
+    def test_find_unscoped_reports_the_offending_pattern(self):
+        self.assertIsNone(
+            tf.find_unscoped_node_pattern(
+                "MATCH (p:Package {user_id: $tenant_user_id, project_id: $tenant_project_id}) RETURN p"
+            )
+        )
+        self.assertEqual(
+            tf.find_unscoped_node_pattern("MATCH (p:Package) RETURN p"), "(p:Package)"
+        )
+
+
+class TestScopingDoesNotBreakValidQueries(unittest.TestCase):
+    """Function calls and expressions must not be mistaken for node patterns.
+
+    `collect(p)` and `(p)` are the same characters; getting this wrong either
+    corrupts a valid query or rejects it. Each of these executed successfully
+    against Neo4j 5 after scoping.
+    """
+
+    VALID = [
+        "MATCH (p:Package) RETURN count(*) AS c",
+        "MATCH (p:Package) RETURN collect(p.name) AS names",
+        "MATCH (d:Domain)-[r:HAS_SUBDOMAIN]->(s:Subdomain) RETURN d, r, s",
+        "MATCH (p:Package) RETURN coalesce(p.purl, p.name) AS id ORDER BY id LIMIT 10",
+        "CALL { MATCH (p:Package) RETURN count(p) AS c } RETURN c",
+        "MATCH (p:Package) WHERE EXISTS { MATCH (p)-[:FLAGGED_AS]->(m:MalPackageFinding) } RETURN p",
+        "MATCH (p:Package) WHERE COUNT { (p)-[:HAS_VULNERABILITY]->(v:Vulnerability) } > 2 RETURN p",
+        "MATCH (p:Package) RETURN toLower(p.name) AS n, substring(p.version, 0, 3) AS v",
+        "MATCH path = (a:Domain)-[:HAS_SUBDOMAIN*1..3]->(b:Subdomain) RETURN path LIMIT 5",
+        "MATCH (p:Package) WITH p, count(*) AS c WHERE c > 1 RETURN p.name, c",
+        "MATCH (p:Package) RETURN (p) AS node",
+    ]
+
+    def test_valid_queries_are_not_refused(self):
+        for query in self.VALID:
+            with self.subTest(query=query):
+                tf.scope_query(query, "U", "P")  # must not raise
+
+    def test_function_calls_are_not_rewritten(self):
+        out = tf.scope_query("MATCH (p:Package) RETURN collect(p.name) AS names", "U", "P")
+        self.assertIn("collect(p.name)", out)
+
+    def test_string_literal_is_not_treated_as_a_pattern(self):
+        out = tf.scope_query("MATCH (p:Package) WHERE p.name CONTAINS 'MATCH (x)' RETURN p", "U", "P")
+        self.assertIn("'MATCH (x)'", out)
+        self.assertEqual(out.count("user_id: $tenant_user_id"), 1)
+
+    def test_comment_is_not_treated_as_a_pattern(self):
+        out = tf.scope_query("MATCH (p:Package) // MATCH (q)\nRETURN p", "U", "P")
+        self.assertEqual(out.count("user_id: $tenant_user_id"), 1)
+
+
+class TestHasLabelledNodePattern(unittest.TestCase):
+    """The /graph/exec least-privilege gate: the worker must name its labels.
+
+    Isolation does not rely on this any more (scope_query scopes unlabelled
+    patterns too), but a compromised kali-sandbox should still not be able to
+    dump every node type with a bare `MATCH (n)`.
+    """
+
+    def test_bare_match_has_no_label(self):
+        self.assertFalse(tf.has_labelled_node_pattern("MATCH (n) RETURN n"))
+        self.assertFalse(tf.has_labelled_node_pattern("MATCH (n) WHERE n:Package RETURN n"))
+
+    def test_labelled_forms_accepted(self):
+        for query in (
+            "MATCH (p:Package) RETURN p",
+            "MATCH (:Subdomain) RETURN count(*)",
+            "MATCH (n:`Mal Package`) RETURN n",
+            "MATCH (p:Package) OPTIONAL MATCH (n) RETURN p, n",
+        ):
+            with self.subTest(query=query):
+                self.assertTrue(tf.has_labelled_node_pattern(query))
+
+    def test_second_unlabelled_pattern_is_still_scoped(self):
+        """The gate passes, and scoping must still cover the unlabelled half."""
+        query = "MATCH (p:Package) OPTIONAL MATCH (n) RETURN p, n"
+        self.assertTrue(tf.has_labelled_node_pattern(query))
+        out = tf.scope_query(query, "U", "P")
+        self.assertEqual(out.count("user_id: $tenant_user_id"), 2)
 
 
 class TestFindDisallowedWriteOperation(unittest.TestCase):

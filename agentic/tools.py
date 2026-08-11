@@ -22,6 +22,9 @@ from prompts import TEXT_TO_CYPHER_SYSTEM
 from graph_db.tenant_filter import (
     find_disallowed_write_operation as _shared_find_disallowed_write_operation,
     inject_tenant_filter as _shared_inject_tenant_filter,
+    scope_query as _shared_scope_query,
+    code_positions as _shared_code_positions,
+    TenantScopeError,
 )
 
 # Workspace / offload / job-runner integration.
@@ -338,6 +341,36 @@ class MCPToolsManager:
 # NEO4J TOOL MANAGER
 # =============================================================================
 
+# Wall-clock budget for ONE text-to-Cypher LLM call, in seconds. A slow provider
+# (observed: 4m32s for a single generation on a "flash" model) turned query_graph
+# into a multi-minute hang, because CYPHER_MAX_RETRIES generations run back to
+# back with no clock on any of them. 0 or a negative value disables the bound.
+CYPHER_GENERATION_TIMEOUT_DEFAULT = 120.0
+
+
+def _cypher_generation_timeout() -> float:
+    """Seconds allowed for one text-to-Cypher call; 0.0 means unbounded."""
+    raw = os.environ.get("CYPHER_GENERATION_TIMEOUT")
+    if raw is None or raw.strip() == "":
+        return CYPHER_GENERATION_TIMEOUT_DEFAULT
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        logger.warning(
+            f"Invalid CYPHER_GENERATION_TIMEOUT={raw!r}, "
+            f"using {CYPHER_GENERATION_TIMEOUT_DEFAULT}s"
+        )
+        return CYPHER_GENERATION_TIMEOUT_DEFAULT
+
+
+class CypherGenerationTimeout(Exception):
+    """A single text-to-Cypher LLM call exceeded its wall-clock budget.
+
+    Terminal, not retryable: a model that blew the budget once will blow it
+    again, and retrying only multiplies the wait the caller is already stuck in.
+    """
+
+
 class Neo4jToolManager:
     """Manages Neo4j graph query tool with tenant filtering."""
 
@@ -383,9 +416,32 @@ class Neo4jToolManager:
         return cls._truncate_at_first_return(cypher.strip().rstrip(";").strip())
 
     @classmethod
+    def _top_level_code_mask(cls, cypher: str) -> List[bool]:
+        """Mark the offsets that are executable code at brace depth 0.
+
+        False for anything inside `{ }` (a CALL/COLLECT/EXISTS/COUNT subquery or
+        a map literal), inside a string or backtick-quoted identifier, or inside
+        a `//` / `/* */` comment. Shares one lexical scan with the tenant filter
+        so both agree on what is code and what is a literal.
+        """
+        is_code, depth = _shared_code_positions(cypher)
+        return [code and level == 0 for code, level in zip(is_code, depth)]
+
+    @classmethod
     def _truncate_at_first_return(cls, cypher: str) -> str:
-        """If the model emitted multiple top-level RETURN clauses, keep only the first."""
-        return_positions = [m.start() for m in re.finditer(r'\bRETURN\b', cypher, re.IGNORECASE)]
+        """If the model emitted multiple top-level RETURN clauses, keep only the first.
+
+        Only TOP-LEVEL RETURNs count. A RETURN inside a `CALL { ... }` subquery
+        is part of one statement, not a second query: cutting there left a
+        dangling block and produced a guaranteed SyntaxError, which then burned
+        every CYPHER_MAX_RETRIES regeneration on the same mangled shape.
+        """
+        mask = cls._top_level_code_mask(cypher)
+        return_positions = [
+            m.start()
+            for m in re.finditer(r'\bRETURN\b', cypher, re.IGNORECASE)
+            if mask[m.start()]
+        ]
         if len(return_positions) < 2:
             return cypher
         # Cut at the start of the second RETURN, then trim trailing whitespace/newlines.
@@ -397,6 +453,15 @@ class Neo4jToolManager:
 
     def _inject_tenant_filter(self, cypher: str, user_id: str, project_id: str) -> str:
         return _shared_inject_tenant_filter(cypher, user_id, project_id)
+
+    def _scope_query(self, cypher: str, user_id: str, project_id: str) -> str:
+        """Tenant-scope a query, refusing anything that cannot be proven scoped.
+
+        Raises TenantScopeError, which the query_graph retry loop turns into a
+        regeneration with the reason attached, so the model rewrites the query
+        with explicit labels instead of the tool returning cross-project rows.
+        """
+        return _shared_scope_query(cypher, user_id, project_id)
 
     async def _generate_cypher(
         self,
@@ -496,11 +561,23 @@ Cypher Query:"""
         # text-to-Cypher on their OWN model; fall back to the manager's llm.
         from orchestrator_helpers.llm_retry import retry_llm_call
         llm = current_llm.get() or self.llm
-        response = await retry_llm_call(
+        call = retry_llm_call(
             llm,
             prompt,
             label="query_graph text-to-cypher",
         )
+        timeout = _cypher_generation_timeout()
+        if timeout:
+            try:
+                response = await asyncio.wait_for(call, timeout)
+            except asyncio.TimeoutError:
+                raise CypherGenerationTimeout(
+                    f"Cypher generation exceeded {timeout:g}s "
+                    f"(CYPHER_GENERATION_TIMEOUT). The configured model is too "
+                    f"slow for this question; simplify it or switch model."
+                )
+        else:
+            response = await call
         from orchestrator_helpers.json_utils import normalize_content
         return self._extract_cypher_from_response(normalize_content(response.content))
 
@@ -582,8 +659,9 @@ Cypher Query:"""
                         if _found:
                             return f"Error: Write operations are not allowed in graph queries (found: {_found.strip()})"
 
-                        # Step 2: Inject mandatory tenant filters
-                        filtered_cypher = manager._inject_tenant_filter(cypher, user_id, project_id)
+                        # Step 2: Inject mandatory tenant filters. A query that
+                        # cannot be scoped raises instead of running unfiltered.
+                        filtered_cypher = manager._scope_query(cypher, user_id, project_id)
                         logger.info(f"[{user_id}/{project_id}] Filtered Cypher: {filtered_cypher}")
 
                         # Step 3: Execute the filtered query
@@ -599,6 +677,12 @@ Cypher Query:"""
                             return "No results found"
 
                         return str(result)
+
+                    except CypherGenerationTimeout as e:
+                        # Terminal: the remaining attempts would each burn the
+                        # same budget on the same slow model.
+                        logger.error(f"[{user_id}/{project_id}] {e}")
+                        return f"Error querying graph: {e}"
 
                     except Exception as e:
                         error_msg = str(e)
