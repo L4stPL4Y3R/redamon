@@ -1,5 +1,13 @@
 generator client {
   provider = "prisma-client-js"
+  // "native" alone was enough only while every `prisma generate` ran on the
+  // machine that would run the client. It does not: node_modules is shared with
+  // the container build, so a generate from the wrong base left the host with a
+  // musl engine and every Prisma call failing with "could not locate the Query
+  // Engine for debian-openssl-3.0.x". Both targets here are Debian/OpenSSL 3
+  // (Ubuntu 24.04 host, node:22-slim image); the explicit entry pins it so a
+  // generate from either side produces an engine the other can load.
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
 datasource db {

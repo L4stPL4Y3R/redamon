@@ -20,7 +20,13 @@
  */
 import { describe, test, expect, beforeAll, afterAll } from 'vitest'
 import neo4j, { Driver, Session } from 'neo4j-driver'
-import prisma from '@/lib/prisma'
+// NOT a static import: '@/lib/prisma' constructs a PrismaClient at module scope
+// and Prisma 6 loads its query engine inside that constructor. On a machine whose
+// engine does not match, that rejects with nobody awaiting it, so even a SKIPPED
+// run of this suite emitted an unhandled rejection and made vitest exit 1. The
+// client is pulled in from beforeAll instead, after the skip check.
+type PrismaClientModule = typeof import('@/lib/prisma').default
+let prisma: PrismaClientModule
 import { createToken, AUTH_COOKIE_NAME } from '@/lib/auth'
 
 const NEO4J_URI      = process.env.NEO4J_URI      || 'bolt://localhost:7687'
@@ -67,6 +73,7 @@ const skipSuite = !AUTH_SECRET
 
 beforeAll(async () => {
   if (skipSuite) return
+  prisma = (await import('@/lib/prisma')).default
   driver = neo4j.driver(NEO4J_URI, neo4j.auth.basic(NEO4J_USER, NEO4J_PASSWORD))
   session = driver.session()
 
@@ -107,7 +114,7 @@ afterAll(async () => {
   } finally {
     await session?.close()
     await driver?.close()
-    await prisma.$disconnect()
+    await prisma?.$disconnect()
   }
 }, 30_000)
 

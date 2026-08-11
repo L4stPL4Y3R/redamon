@@ -10,7 +10,12 @@
 import { describe, test, expect, beforeAll, afterAll } from 'vitest'
 import { PrismaClient } from '@prisma/client'
 
-const prisma = new PrismaClient()
+// Constructed in beforeAll, not here: Prisma 6 loads its query engine inside the
+// PrismaClient constructor, and on a machine whose engine does not match that
+// rejects with nobody awaiting it. At module scope that fired even when the
+// suite below was skipped, so a run with no DATABASE_URL still reported an
+// unhandled rejection and made vitest exit 1.
+let prisma: PrismaClient
 let testUserId: string
 let testProjectId: string
 
@@ -18,6 +23,7 @@ const HAS_DB = process.env.DATABASE_URL !== undefined
 
 beforeAll(async () => {
   if (!HAS_DB) return
+  prisma = new PrismaClient()
   const user = await prisma.user.create({
     data: {
       email: `vhostsni-prisma-test-${Date.now()}@example.com`,
@@ -40,7 +46,7 @@ afterAll(async () => {
       await prisma.user.delete({ where: { id: testUserId } })
     } catch { /* ignore */ }
   }
-  await prisma.$disconnect()
+  await prisma?.$disconnect()
 })
 
 describe.skipIf(!HAS_DB)('Prisma round-trip: vhostSni* fields', () => {
