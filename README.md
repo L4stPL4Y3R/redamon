@@ -114,11 +114,12 @@ We maintain a public **[Project Board](https://github.com/users/samugit83/projec
 <b>Samuele Giampieri</b>: Creator, Maintainer & AI Platform Architect<br/><br/>
 <small>AI Platform Architect & Full-Stack Lead with 15+ years of freelancing experience and more than 30 projects shipped to production, including enterprise-scale AI agentic systems. AWS-certified (DevOps Engineer, ML Specialty) and IBM-certified AI Engineer. Designs end-to-end ML solutions spanning deep learning, NLP, Computer Vision, and AI Agent systems with LangChain/LangGraph.</small><br/><br/>
 <a href="https://www.linkedin.com/in/samuele-giampieri-b1b67597/">LinkedIn</a> · <a href="https://github.com/samugit83">GitHub</a> · <a href="https://www.devergolabs.com/">Devergo Labs</a><br/><br/>
-<a href="https://pathbreak.io/"><img src="docs/assets/pathbreak.png" alt="Pathbreak" width="90"/></a><br/>
-<b>From the same creator: <a href="https://pathbreak.io/">Pathbreak</a></b><br/>
+<a href="https://pathbreak.io/"><img src="docs/assets/pathbreak.png" alt="Pathbreak - Agentic Cloud Security" width="90"/></a><br/>
+<b>From the same creator: <a href="https://pathbreak.io/">Pathbreak - Agentic Cloud Security</a></b><br/>
 <i>See the attack path. Then break it.</i><br/><br/>
 <small>Pathbreak is an agentic cloud security platform that discovers and validates the real attack paths a threat actor would exploit across your cloud. It catches the control-plane chains most tools miss.</small><br/><br/>
-<a href="https://pathbreak.io/"><b>pathbreak.io</b></a>
+<a href="https://pathbreak.io/"><b>Pathbreak - agentic cloud security</b></a><br/>
+<small>pathbreak.io</small>
 </td>
 <td align="center" valign="top" width="50%">
 <img src="docs/assets/ritesh.png" alt="Ritesh Gohil" width="120"/><br/>
