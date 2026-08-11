@@ -379,41 +379,36 @@ export default function SupplyChainInput({
               </p>
             )}
             <p className={styles.hint}>
-              Enumerates the account&apos;s repositories and queues one supply-chain
-              scan per repo, which run as capacity frees up (follow them in the Scans
-              tab &rarr; Scan queue). Works for an organization or a user account; another
-              user&apos;s private repos are never visible, only your own or an org you
-              belong to.
+              Enumerates the account&apos;s repos and queues one supply-chain scan per
+              repo, which run as capacity frees up (follow them in Scans &rarr; Scan
+              queue). Works for a user or an org you belong to; you only ever see your
+              own repos, never another user&apos;s private ones.
             </p>
             <p className={styles.hint}>
-              What you type above decides which credential is used, and each one is
-              set in{' '}
+              What you type decides which credential is used, both set in{' '}
               <Link href={SETTINGS_KEYS_HREF} style={{ color: 'var(--accent-primary)', fontWeight: 500 }}>
                 Global Settings
               </Link>:
             </p>
             <ul className={styles.hintList}>
               <li>
-                <code>acme-corp</code> or a <code>github.com</code> URL &rarr; uses the
-                <strong> GitHub Access Token</strong>. Public repos are enumerated without
-                it; private repos need it, and it also lifts the anonymous rate limit.
+                An org name or a github.com URL uses the GitHub Access Token. Public
+                repos don&apos;t need it; private repos do, and it lifts the anonymous
+                rate limit.
               </li>
               <li>
-                A URL on your GitHub Enterprise server, e.g.{' '}
-                <code>https://ghe.example.com/orgs/acme-corp</code> &rarr; uses the
-                <strong> GitHub Enterprise Token</strong>. That server must first be
-                registered as the <strong>GitHub Enterprise Host</strong>, which is also
-                the allowlist.
+                A GitHub Enterprise URL (e.g. https://ghe.example.com/orgs/acme-corp)
+                uses the GitHub Enterprise Token. That host must first be registered as
+                the GitHub Enterprise Host (the allowlist).
               </li>
               <li>
-                Any other host &rarr; refused before anything runs. No token is sent and
-                no connection to it is made.
+                Any other host is refused before anything runs; no token is sent and no
+                connection is made.
               </li>
             </ul>
             <p className={styles.hint}>
-              The two tokens are never interchanged: a github.com token is not sent to an
-              Enterprise server, and vice versa. If the matching one is missing the scan
-              still runs anonymously, which succeeds for public repositories only.
+              The two tokens are never swapped. If the matching one is missing, the scan
+              runs anonymously (public repos only).
             </p>
           </>
         ) : (

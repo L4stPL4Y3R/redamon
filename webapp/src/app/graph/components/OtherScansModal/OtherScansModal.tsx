@@ -176,15 +176,6 @@ export function OtherScansModal({
           <p className={styles.cardDescription}>
             Search GitHub repositories for exposed secrets, API keys, and credentials related to your target domain.
           </p>
-          <p className={styles.cardRequirement}>
-            Requires a GitHub Access Token in{' '}
-            <Link href={SETTINGS_KEYS_HREF} style={{ color: 'var(--accent-primary)', fontWeight: 500 }}>
-              Global Settings
-            </Link>
-            . Mandatory even for public repositories: without one GitHub allows 60 requests
-            per hour, which this scan exhausts immediately. Private repositories additionally
-            need a token with repo scope.
-          </p>
           {!hasGithubToken && (
             <div style={{
               display: 'flex',
@@ -298,15 +289,6 @@ export function OtherScansModal({
           </div>
           <p className={styles.cardDescription}>
             Deep secret scanning with 700+ detectors and optional verification against live APIs.
-          </p>
-          <p className={styles.cardRequirement}>
-            Requires a GitHub Access Token in{' '}
-            <Link href={SETTINGS_KEYS_HREF} style={{ color: 'var(--accent-primary)', fontWeight: 500 }}>
-              Global Settings
-            </Link>
-            . Mandatory even for public repositories: without one GitHub allows 60 requests
-            per hour, which this scan exhausts immediately. Private repositories additionally
-            need a token with repo scope.
           </p>
           {!hasGithubToken && (
             <div style={{
