@@ -8,9 +8,9 @@
  */
 import prisma from '@/lib/prisma'
 import { getGraphSession } from './neo4j'
+import { GRAPH_PERF_DEBUG } from './config'
 import { formatGraphRecords, type FormattedGraphData } from './format'
 
-const GRAPH_PERF_DEBUG = true
 
 /**
  * Read-time reconcile: attack-chain nodes are session-scoped by chain_id (=

@@ -56,7 +56,30 @@ LLM_MODELS_VOLUME = os.environ.get("LOCAL_LLM_VOLUME", "redamon_llm_models")
 # past what the governor assumed was free and OOM the host. Cap it (Docker mem_limit
 # string, e.g. "8g"). Empty/"0"/"none" disables the cap (GPU or a very large judge
 # model). Must comfortably hold the LOCAL_LLM_MODEL in CPU mode; raise for bigger.
-LLM_MEM_LIMIT = (os.environ.get("LOCAL_LLM_MEM", "8g") or "").strip()
+def _default_llm_mem() -> str:
+    """Ollama's ceiling, sized from the host rather than a flat 8g.
+
+    8g was right for a 16-32 GB workstation and wrong everywhere else: on an 8 GB
+    host it promised the entire machine, and on a 128 GB one it needlessly capped
+    a judge model that had room to spare. Take a share of the SCAN POOL, since
+    the judge is on-demand work like a scan, not an always-on service. Floors at
+    4g so a small model still loads; falls back to 8g when /proc is unreadable
+    (same fail-open contract as the rest of the governor).
+    """
+    try:
+        import resource_governor as _rg
+        mem = _rg.read_mem()
+        if not mem or mem[0] <= 0:
+            return "8g"
+        # scan pool ~= 32% of host (redamon.sh: (1 - OS_RESERVE_PCT) x (1 - SERVICES_PCT));
+        # the judge may claim half of it.
+        gb = max(4, (mem[0] * 16 // 100) // (1024 ** 3))
+        return f"{gb}g"
+    except Exception:
+        return "8g"
+
+
+LLM_MEM_LIMIT = (os.environ.get("LOCAL_LLM_MEM") or _default_llm_mem()).strip()
 LLM_PORT = int(os.environ.get("LOCAL_LLM_PORT", "11434"))
 # Ollama is spawned on the shared bridge network and publishes its port to the
 # host. Two consumers reach it two different ways:

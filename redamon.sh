@@ -284,6 +284,20 @@ _size_to_mb() {
     }'
 }
 
+# Free-space threshold for the RUNTIME warning: max(absolute floor, DISK_RESERVE_PCT
+# of the filesystem). DISK_FULL_BUILD_GB stays absolute because it models image
+# SIZES (a property of the images, not of the disk); this one models "enough room
+# to keep operating", which is proportional to the disk you actually have.
+_disk_reserve_gb() {
+    local path="${1:-}" total pct floor=10
+    pct="$(_pct_env DISK_RESERVE_PCT 10 1 90)"
+    total="$(df -BG --output=size "$path" 2>/dev/null | tail -1 | tr -dc '0-9')"
+    [[ "$total" =~ ^[0-9]+$ ]] || { printf '%s' "$floor"; return; }
+    local want=$(( total * pct / 100 ))
+    [[ "$want" -lt "$floor" ]] && want="$floor"
+    printf '%s' "$want"
+}
+
 # Refuse to start when the host/VM can't hold the always-on core services, with
 # a clear message, instead of failing mysteriously later. Returns 1 to abort.
 # Override with REDAMON_SKIP_RAM_GATE=1 or REDAMON_MIN_RAM_MB=<mb>.
@@ -293,10 +307,27 @@ preflight_ram_gate() {
     local required_mb baseline_mb headroom_mb
     if [[ -n "${REDAMON_MIN_RAM_MB:-}" ]]; then
         required_mb="${REDAMON_MIN_RAM_MB//[^0-9]/}"
-    else
+    elif [[ -n "${SERVICE_BASELINE_MEM:-}" || -n "${OS_HEADROOM_MEM:-}" ]]; then
+        # An operator pinned the budget: honour it verbatim.
         baseline_mb="$(_size_to_mb "${SERVICE_BASELINE_MEM:-6g}")"; [[ -z "$baseline_mb" ]] && baseline_mb=6144
         headroom_mb="$(_size_to_mb "${OS_HEADROOM_MEM:-2g}")";      [[ -z "$headroom_mb" ]] && headroom_mb=2048
         required_mb=$(( baseline_mb + headroom_mb ))
+    else
+        # Ask the ALLOCATOR whether this host can actually satisfy the software
+        # floors of the services that will run. That makes the gate
+        # PROFILE-AWARE: enabling GVM adds five more services with their own
+        # minimums, so `--gvm` on an 8 GB host is now refused up front instead of
+        # passing a flat 8 GB check and OOM-ing later.
+        if allocate_memory; then
+            return 0
+        fi
+        error "Insufficient memory: ~$(( ${BUILD_MEM_MB:-0} / 1024 ))GB available to Docker (source: ${BUILD_RES_SOURCE:-unknown}),"
+        error "  which cannot cover the minimums of the services this profile starts"
+        error "  (short by ~$(( _ALLOC_SHORTFALL_MB / 1024 + 1 ))GB)."
+        is_gvm_enabled 2>/dev/null && error "  The --gvm profile roughly doubles the requirement; try without it."
+        is_kbase_enabled 2>/dev/null && error "  The Knowledge Base profile also adds to it."
+        error "Free up memory, raise the Docker VM memory, or set REDAMON_SKIP_RAM_GATE=1 to override."
+        return 1
     fi
     [[ -z "$required_mb" || "$required_mb" -le 0 ]] && return 0
     # ~512MB slack: docker-info MemTotal on a physical 8GB host reads ~7.7GB
@@ -2287,6 +2318,13 @@ cmd_install() {
     print_banner
     check_prerequisites
 
+    # Gate BEFORE any Docker work. `install` used to build 16 images (30-60 min)
+    # and only then discover the host was too small, because the RAM gate lived
+    # in cmd_up and install ends in a raw `docker compose up -d`. `update` never
+    # ran it at all.
+    if ! preflight_ram_gate; then exit 1; fi
+    if ! preflight_disk_gate "$DISK_FULL_BUILD_GB" "install"; then exit 1; fi
+
     local version
     version="$(get_version)"
     info "Installing RedAmon v${version}..."
@@ -2635,6 +2673,13 @@ cmd_update() {
             error "Update aborted before any image was touched. v${old_version} is still installed and running."
             exit 1
         fi
+    fi
+    # RAM gate too: `update` never ran one, so a release that adds a service (or
+    # a host that shrank) was only discovered after the rebuild. Same contract as
+    # the disk gate above -- abort while the old version is still working.
+    if ! preflight_ram_gate; then
+        error "Update aborted before any image was touched. v${old_version} is still installed and running."
+        exit 1
     fi
 
     # Export version for build arg
@@ -3020,10 +3065,19 @@ cmd_up() {
     # Warn (never block) on a nearly-full disk: scans write into volumes, and
     # Postgres/Neo4j fail hard when the filesystem fills under them.
     local free_gb=""
-    free_gb="$(_disk_free_gb "$(_docker_disk_path)")" || true   # advisory only
-    if [[ -n "$free_gb" && "$free_gb" -lt 10 ]]; then
-        warn "Only ${free_gb}GB free on the Docker filesystem. Scans and the database need room."
+    free_gb="$(_disk_free_gb "$(_docker_disk_path)")" || true
+    # Proportional, not a flat 10GB: on the 500GB disk of the incident this work
+    # came from, 10GB is 2% -- it would have warned only long after 97% full.
+    local disk_warn_gb; disk_warn_gb="$(_disk_reserve_gb "$(_docker_disk_path)")"
+    if [[ -n "$free_gb" && "$free_gb" -lt "$disk_warn_gb" ]]; then
+        warn "Only ${free_gb}GB free on the Docker filesystem (want ~${disk_warn_gb}GB). Scans and the database need room."
         warn "  Reclaim space with: docker builder prune -af"
+        # Below the absolute floor this stops being advisory: Postgres and Neo4j
+        # fail hard when the filesystem fills under them, and a scan writing into
+        # a volume is how that happens.
+        if ! preflight_disk_gate "$DISK_PARTIAL_BUILD_GB" "start the stack"; then
+            return 1
+        fi
     fi
 
     export_resource_caps
@@ -3227,6 +3281,80 @@ cmd_purge() {
     info "To reinstall: ./redamon.sh install"
 }
 
+# Operational memory view for `status`.
+#
+# WHY: status printed version, flags, KB counts and `docker compose ps` -- no
+# restart counts, no OOM flag, no disk. The operator whose 502 investigation
+# started this work had to run `docker inspect --format '{{.RestartCount}}'` by
+# hand to find the cause. An OOM kill is the single most useful thing this
+# command can tell you, so it says it.
+_status_memory_report() {
+    echo ""
+    echo -e "  ${CYAN}Memory:${NC}"
+
+    # The computed allocation (does not touch .env; status must stay read-only).
+    if allocate_memory >/dev/null 2>&1 || [[ "${_ALLOC_TOTAL_MB:-0}" -gt 0 ]]; then
+        printf '    host %sMB  |  os %sMB  services %sMB  scan pool %sMB  (burst %s%%)\n' \
+            "$_ALLOC_TOTAL_MB" "$_ALLOC_OS_MB" "$_ALLOC_SERVICES_MB" "$_ALLOC_SCAN_MB" "${_ALLOC_BURST_PCT:-?}"
+    fi
+
+    local any=0 c name mem restarts oomk drift
+    while read -r c; do
+        [[ -z "$c" ]] && continue
+        read -r mem restarts oomk <<< "$(docker inspect "$c" \
+            --format '{{.HostConfig.Memory}} {{.RestartCount}} {{.State.OOMKilled}}' 2>/dev/null)"
+        [[ -z "$mem" ]] && continue
+        name="${c#redamon-}"
+        drift=""
+        # Drift: a running container whose cap differs from what we would compute
+        # now. Usually means a bare `docker compose up` bypassed the governor --
+        # on a deploy host that ALSO republishes ports off loopback.
+        local want; want="$(_status_expected_mb "$name")"
+        if [[ -n "$want" && "$mem" != "0" ]] && [[ $(( mem / 1048576 )) -ne "$want" ]]; then
+            drift=" ${YELLOW}(expected ${want}MB)${NC}"
+        fi
+        if [[ "$oomk" == "true" ]]; then
+            echo -e "    ${RED}OOM-KILLED${NC}  ${c} (cap $(( mem / 1048576 ))MB, restarts ${restarts})"
+            any=1
+        elif [[ "${restarts:-0}" -gt 0 ]]; then
+            echo -e "    ${YELLOW}restarts=${restarts}${NC}  ${c} (cap $(( mem / 1048576 ))MB)${drift}"
+            any=1
+        elif [[ -n "$drift" ]]; then
+            echo -e "    ${c}: $(( mem / 1048576 ))MB${drift}"
+            any=1
+        fi
+    done <<< "$(docker ps --format '{{.Names}}' 2>/dev/null | grep '^redamon-' || true)"
+    [[ "$any" -eq 0 ]] && echo -e "    ${GREEN}no OOM kills, no restarts, no cap drift${NC}"
+
+    # Disk: the incident had 187GB used against ~70GB of images, and nothing
+    # surfaced the missing ~117GB of build cache and volumes.
+    local path free reserve
+    path="$(_docker_disk_path)"; free="$(_disk_free_gb "$path")"
+    reserve="$(_disk_reserve_gb "$path")"
+    if [[ -n "$free" ]]; then
+        if [[ "$free" -lt "$reserve" ]]; then
+            echo -e "    ${YELLOW}disk: ${free}GB free on ${path} (want ~${reserve}GB) -- docker system df${NC}"
+        else
+            echo -e "    disk: ${free}GB free on ${path}"
+        fi
+    fi
+}
+
+# The MB this service should have, from the allocation just computed.
+_status_expected_mb() {
+    local svc="$1" i n=${#_ALLOC_NAMES[@]} key
+    case "$svc" in
+        webapp) key=WEBAPP ;; agent) key=AGENT ;; neo4j) key=NEO4J ;;
+        postgres) key=POSTGRES ;; kali) key=KALI ;;
+        recon-orchestrator) key=RECON_ORCHESTRATOR ;; docker-broker) key=DOCKER_BROKER ;;
+        capture-proxy) key=CAPTURE_PROXY ;; traffic-ingest) key=TRAFFIC_INGEST ;;
+        *) return ;;
+    esac
+    for (( i = 0; i < n; i++ )); do
+        [[ "${_ALLOC_NAMES[$i]}" == "$key" ]] && { printf '%s' "${_ALLOC_MB[$i]}"; return; }
+    done
+}
+
 cmd_status() {
     _migrate_reorg_layout
     _migrate_legacy_kbase_flag
@@ -3276,6 +3404,8 @@ cmd_status() {
         # Fall back to plain ps so the user still sees the "no services" message.
         docker compose ps
     }
+
+    _status_memory_report
 
     # Orchestrator-spawned AI containers (NOT compose-managed, so absent above):
     # the on-demand local LLM + any in-flight AI Attack Surface scan containers.

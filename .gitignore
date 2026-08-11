@@ -196,6 +196,11 @@ kubeconfig
 ehthumbs.db
 Thumbs.db
 
+# Node dependencies + tool caches. Anchored nowhere on purpose: running
+# vitest/npm from the repo root (instead of webapp/ or e2e/) plants a stray
+# node_modules/.vite cache here.
+node_modules/
+
 # Next.js build output
 .next/
 out/

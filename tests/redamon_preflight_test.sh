@@ -283,5 +283,45 @@ else
     fail ".last_update is NOT gitignored (it will be re-added by the next git add -A)"
 fi
 
+echo ""
+echo -e "\033[1m== the gates run BEFORE any Docker work (install/update) ==\033[0m"
+# BUG: preflight_ram_gate lived only in cmd_up. `install` ends in a raw
+# `docker compose up -d`, so it built 16 images (30-60 min) and only then
+# discovered the host was too small; `update` never ran a RAM gate at all.
+for _c in cmd_install cmd_update; do
+    _body="$(awk -v f="^${_c}\\(\\)" '$0 ~ f {on=1} on {print} on && /^}/ {exit}' "$REPO_ROOT/redamon.sh")"
+    case "$_body" in
+        *preflight_ram_gate*) pass "$_c runs the RAM gate" ;;
+        *) fail "$_c runs the RAM gate (absent)" ;;
+    esac
+done
+# Compare positions WITHIN cmd_install's own body: `compose_build` also appears
+# elsewhere in the file, so a whole-file grep compares the wrong two lines.
+_body="$(awk '/^cmd_install\(\)/{on=1} on {print} on && /^}/{exit}' "$REPO_ROOT/redamon.sh")"
+_gate_at=$(printf '%s\n' "$_body" | grep -n "preflight_ram_gate" | head -1 | cut -d: -f1)
+_build_at=$(printf '%s\n' "$_body" | grep -n "compose_build" | head -1 | cut -d: -f1)
+if [[ -n "$_gate_at" && -n "$_build_at" && "$_gate_at" -lt "$_build_at" ]]; then
+    pass "install gates (body line $_gate_at) BEFORE its build (body line $_build_at)"
+else
+    fail "install gates before its build (gate=$_gate_at build=$_build_at)"
+fi
+
+echo -e "\033[1m== the disk threshold is proportional, not a flat 10GB ==\033[0m"
+# A flat 10GB is 2% of the 500GB disk in the incident this came from: it would
+# have warned only long after 97% full.
+df() { printf 'x\n%sG\n' "$STUB_DISK_TOTAL_GB"; }
+STUB_DISK_TOTAL_GB=100 ; assert_eq "100GB disk -> 10GB reserve"  "$(_disk_reserve_gb /x)" "10"
+STUB_DISK_TOTAL_GB=500 ; assert_eq "500GB disk -> 50GB, not 10"  "$(_disk_reserve_gb /x)" "50"
+STUB_DISK_TOTAL_GB=2000; assert_eq "2TB disk -> 200GB reserve"   "$(_disk_reserve_gb /x)" "200"
+STUB_DISK_TOTAL_GB=20  ; assert_eq "small disk floors at 10GB"   "$(_disk_reserve_gb /x)" "10"
+STUB_DISK_TOTAL_GB=400 ; assert_eq "DISK_RESERVE_PCT honoured"   "$(DISK_RESERVE_PCT=25 _disk_reserve_gb /x)" "100"
+STUB_DISK_TOTAL_GB=""  ; assert_eq "unreadable df falls back"    "$(_disk_reserve_gb /x)" "10"
+unset -f df
+
 printf '\n\033[1m== RESULT ==\033[0m  \033[0;32m%d passed\033[0m, \033[0;31m%d failed\033[0m\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
+
+# `docker compose up -d`, so it built 16 images (30-60 min) and only then
+
+
+

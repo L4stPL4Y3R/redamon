@@ -1,15 +1,36 @@
 import { createHash } from 'crypto'
-
-const GRAPH_PERF_DEBUG = true
+import {
+  GRAPH_PERF_DEBUG,
+  GRAPH_CACHE_MAX_ENTRIES,
+  GRAPH_CACHE_MAX_ELEMENTS,
+} from './config'
+import type { TruncationInfo } from './truncate'
 
 interface CacheEntry {
   data: { nodes: any[]; links: any[] }
   etag: string
   timestamp: number
+  /** Truncation state is cached WITH the payload: a cache hit must report the
+   *  same "showing N of M" the miss did, or the UI flips between complete and
+   *  partial for identical data. */
+  info?: TruncationInfo
+  /** nodes+links, kept so eviction does not have to re-walk the payload. */
+  elements: number
 }
 
+/**
+ * Bounded LRU. Map preserves insertion order, so the oldest key is the first
+ * one `keys().next()` yields; re-inserting on read moves an entry to the back.
+ *
+ * WHY BOUNDED: this used to be an unbounded Map keyed by project. N projects
+ * with large graphs each pinned a full copy of their payload for the whole
+ * process lifetime -- on top of the response object and its JSON string. The
+ * webapp OOM that started this work had that as a multiplier.
+ */
 const cache = new Map<string, CacheEntry>()
 const TTL = 10_000 // 10 seconds
+
+let totalElements = 0
 
 /**
  * Generate a fast ETag from graph data.
@@ -30,30 +51,74 @@ function generateEtag(nodes: any[], links: any[]): string {
   return createHash('md5').update(raw).digest('hex').slice(0, 16)
 }
 
+function drop(projectId: string): void {
+  const entry = cache.get(projectId)
+  if (!entry) return
+  totalElements -= entry.elements
+  if (totalElements < 0) totalElements = 0
+  cache.delete(projectId)
+}
+
+/** Evict oldest-first until BOTH bounds are satisfied. */
+function evictToFit(): void {
+  const maxEntries = GRAPH_CACHE_MAX_ENTRIES()
+  const maxElements = GRAPH_CACHE_MAX_ELEMENTS()
+  while (cache.size > maxEntries || totalElements > maxElements) {
+    const oldest = cache.keys().next()
+    if (oldest.done) break
+    if (GRAPH_PERF_DEBUG) {
+      console.log(`[GraphPerf:Cache] EVICT projectId=${oldest.value} (entries=${cache.size} elements=${totalElements})`)
+    }
+    drop(oldest.value)
+  }
+}
+
 export function getCached(projectId: string): CacheEntry | null {
   const entry = cache.get(projectId)
   if (!entry) return null
 
   const age = Date.now() - entry.timestamp
   if (age > TTL) {
-    cache.delete(projectId)
+    drop(projectId)
     if (GRAPH_PERF_DEBUG) console.log(`[GraphPerf:Cache] EXPIRED projectId=${projectId} (age=${age}ms)`)
     return null
   }
 
+  // Touch: re-insert so this becomes the most-recently-used key.
+  cache.delete(projectId)
+  cache.set(projectId, entry)
   return entry
 }
 
-export function setCached(projectId: string, data: { nodes: any[]; links: any[] }): string {
+export function setCached(
+  projectId: string,
+  data: { nodes: any[]; links: any[] },
+  info?: TruncationInfo,
+): string {
   const etag = generateEtag(data.nodes, data.links)
-  cache.set(projectId, { data, etag, timestamp: Date.now() })
+  drop(projectId) // replacing: release the previous entry's element count first
+  const elements = data.nodes.length + data.links.length
+  cache.set(projectId, { data, etag, timestamp: Date.now(), info, elements })
+  totalElements += elements
+  evictToFit()
   if (GRAPH_PERF_DEBUG) console.log(`[GraphPerf:Cache] SET projectId=${projectId} etag=${etag} nodes=${data.nodes.length} links=${data.links.length}`)
   return etag
 }
 
 export function invalidateCache(projectId: string): void {
   if (cache.has(projectId)) {
-    cache.delete(projectId)
+    drop(projectId)
     if (GRAPH_PERF_DEBUG) console.log(`[GraphPerf:Cache] INVALIDATE projectId=${projectId}`)
   }
+}
+
+/** Test/introspection hook: current cache occupancy. */
+export function cacheStats(): { entries: number; elements: number } {
+  return { entries: cache.size, elements: totalElements }
+}
+
+/** Test hook: drop everything. */
+export function clearCache(): void {
+  cache.clear()
+  totalElements = 0
 }

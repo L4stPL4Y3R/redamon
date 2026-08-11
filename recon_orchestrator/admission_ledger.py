@@ -21,10 +21,31 @@ from typing import Callable, Dict, Optional, Tuple
 
 import resource_governor as rg
 
-# Built-in fallback baseline if neither env nor profile provides one: assume the
-# always-on core services need ~6 GB. Deliberately generous (safe, not aggressive).
-_FALLBACK_SERVICE_BASELINE = 6 * 1024 ** 3
-_FALLBACK_OS_HEADROOM = 2 * 1024 ** 3
+# Built-in fallbacks when neither env nor profile provides a figure.
+#
+# These are PERCENTAGES OF HOST RAM, not fixed sizes. They used to be a flat 6 GB
+# baseline and 2 GB headroom, which meant the scan pool was computed from numbers
+# that had no relationship to the machine OR to what redamon.sh actually handed
+# the always-on services: on an 8 GB host the two constants alone claimed the
+# entire machine, and on a 512 GB host they under-reserved by two orders of
+# magnitude. redamon.sh now exports OS_HEADROOM_MEM and SERVICE_BASELINE_MEM from
+# the same computation that sets the per-service mem_limits, so these apply only
+# when it has never run (a bare `docker compose up` on a fresh clone).
+#
+# Absolute floors are kept so a tiny host still reserves something meaningful.
+_FALLBACK_SERVICE_BASELINE_PCT = 60   # matches redamon.sh's services share of usable
+_FALLBACK_OS_HEADROOM_PCT = 8         # matches redamon.sh's OS_RESERVE_PCT
+_FALLBACK_SERVICE_BASELINE_MIN = 2 * 1024 ** 3
+_FALLBACK_OS_HEADROOM_MIN = 512 * 1024 ** 2
+
+
+def _pct_of_host(pct: int, floor: int) -> int:
+    """`pct` percent of host RAM, never below `floor`. Falls back to the floor
+    when /proc/meminfo is unreadable (same fail-open contract as the governor)."""
+    mem = rg.read_mem()
+    if not mem or mem[0] <= 0:
+        return floor
+    return max(floor, mem[0] * pct // 100)
 
 # D3: generous per-user concurrent-scan default when RECON_MAX_CONCURRENT_PER_USER
 # is unset. Fails SAFE to a real number, never to "no cap".
@@ -80,14 +101,19 @@ class ReservationLedger:
     # --- configuration (read fresh so env changes / test overrides apply) -----
 
     def os_headroom(self) -> int:
-        return rg.env_bytes("OS_HEADROOM_MEM", _FALLBACK_OS_HEADROOM)
+        return rg.env_bytes(
+            "OS_HEADROOM_MEM",
+            _pct_of_host(_FALLBACK_OS_HEADROOM_PCT, _FALLBACK_OS_HEADROOM_MIN),
+        )
 
     def service_baseline(self) -> int:
         env = rg.env_bytes("SERVICE_BASELINE_MEM", None)
         if env is not None:
             return env
         prof = rg.envelope("service_baseline_bytes")
-        return prof if prof else _FALLBACK_SERVICE_BASELINE
+        if prof:
+            return prof
+        return _pct_of_host(_FALLBACK_SERVICE_BASELINE_PCT, _FALLBACK_SERVICE_BASELINE_MIN)
 
     def host_total(self) -> int:
         mem = self._mem_reader()

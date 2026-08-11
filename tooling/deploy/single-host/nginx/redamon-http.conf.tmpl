@@ -27,6 +27,18 @@ server {
     limit_conn conn 20;
     client_body_timeout 15s; client_header_timeout 15s; send_timeout 15s; keepalive_timeout 20s;
     large_client_header_buffers 8 32k;
+    # Compress JSON. Ubuntu's stock nginx.conf ships `gzip on` with EVERY
+    # gzip_types line commented out, so only text/html was compressed and the
+    # graph payload -- highly repetitive JSON, typically 5-10x -- crossed the wire
+    # raw. Set at server level so the base nginx.conf stays untouched.
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 5;
+    gzip_min_length 1024;
+    gzip_types application/json application/javascript text/css text/plain
+               text/javascript application/xml image/svg+xml;
+
     client_max_body_size 60m;
     autoindex off;
 

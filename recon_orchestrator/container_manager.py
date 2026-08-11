@@ -183,6 +183,17 @@ AI_ATTACK_SURFACE_PHASE_PATTERNS = [
 ]
 
 
+def _env_size(name: str, default: str) -> str:
+    """A Docker size from env, treating EMPTY as unset.
+
+    compose passes these as `${VAR:-}`, so the variable is present but blank when
+    nobody set it; `os.environ.get(name, default)` then returns "" rather than the
+    default and Docker gets an empty mem_limit. Always resolve sizes through here.
+    """
+    raw = (os.environ.get(name) or "").strip()
+    return raw if raw else default
+
+
 class ContainerManager:
     """Manages Docker containers for recon, GVM scan, GitHub hunt, and TruffleHog processes"""
 
@@ -228,7 +239,7 @@ class ContainerManager:
         # agent. job_id -> {"container_id", "created_at"}.
         self.codefix_sandbox_image = os.environ.get("CODEFIX_SANDBOX_IMAGE", "redamon-codefix-sandbox:latest")
         self.codefix_sandbox_network = os.environ.get("CODEFIX_SANDBOX_NETWORK", "redamon-codefix-net")
-        self.codefix_sandbox_mem = os.environ.get("CODEFIX_SANDBOX_MEM", "2g")
+        self.codefix_sandbox_mem = _env_size("CODEFIX_SANDBOX_MEM", "2g")
         self.codefix_sandbox_nanocpus = int(os.environ.get("CODEFIX_SANDBOX_NANOCPUS", str(2_000_000_000)))
         self.codefix_sandbox_pids = int(os.environ.get("CODEFIX_SANDBOX_PIDS", "512"))
         # Max lifetime before the reaper force-removes a sandbox (orphaned by a
@@ -1265,7 +1276,7 @@ class ContainerManager:
             cap_drop=["ALL"],
             read_only=True,
             tmpfs={"/tmp": "size=64m,exec"},
-            mem_limit=os.environ.get("CAPTURE_PROXY_MEM", "384m"),
+            mem_limit=_env_size("CAPTURE_PROXY_MEM", "384m"),
             pids_limit=256,
             restart_policy={"Name": "unless-stopped"},
             labels={"redamon.capture": "proxy"},
@@ -1292,7 +1303,7 @@ class ContainerManager:
             cap_drop=["ALL"],
             read_only=True,
             tmpfs={"/tmp": "size=64m,exec"},
-            mem_limit=os.environ.get("TRAFFIC_INGEST_MEM", "256m"),
+            mem_limit=_env_size("TRAFFIC_INGEST_MEM", "256m"),
             pids_limit=256,
             restart_policy={"Name": "unless-stopped"},
             labels={"redamon.capture": "ingest"},
@@ -3663,7 +3674,10 @@ exit $RC
                 # Root is needed to write the root-owned DB tree, but no capability
                 # is: drop them all so the sidecar cannot do anything but download.
                 cap_drop=["ALL"],
-                mem_limit="1g",
+                # Governed like every other sibling spawn; "1g" is only the
+                # last resort when the governor is disabled. It was a bare
+                # literal, the one spawn site that ignored the governor entirely.
+                mem_limit=self._tool_container_mem_limit("osv_db_sync") or "1g",
                 pids_limit=256,
                 environment={
                     "OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY": "/osv-db",

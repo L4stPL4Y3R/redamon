@@ -337,7 +337,26 @@ def _parse_int(s: str, default: int) -> int:
         return default
 
 
-BROKER_TOOL_MEM = _parse_size(os.environ.get("BROKER_TOOL_MEM_BYTES", ""), 2 * 1024**3)
+def _default_tool_mem() -> int:
+    """Sibling tool ceiling from the governor, not a flat 2 GiB.
+
+    container_cap() exists precisely because THREE processes spawn capped
+    containers; the broker was the one still using a literal, so a calibrated
+    host's measured tool envelope was ignored here while being honoured on the
+    other two paths. Falls back to 2 GiB if the governor is unavailable (the
+    broker must never fail to start: recon could then spawn no tool at all).
+    """
+    try:
+        import resource_governor as _rg
+        cap = _rg.container_cap(_rg.tool_container_envelope("_default"))
+        if cap and cap > 0:
+            return int(cap)
+    except Exception:
+        pass
+    return 2 * 1024**3
+
+
+BROKER_TOOL_MEM = _parse_size(os.environ.get("BROKER_TOOL_MEM_BYTES", ""), _default_tool_mem())
 # Defensive parse: a non-integer (e.g. "512m") must not crash the broker at import,
 # which would leave recon unable to spawn ANY tool container.
 BROKER_TOOL_PIDS = max(0, _parse_int(os.environ.get("BROKER_TOOL_PIDS", "0"), 0))  # 0 = don't set

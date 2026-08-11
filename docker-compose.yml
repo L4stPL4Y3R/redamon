@@ -559,6 +559,14 @@ services:
       REDAMON_MEM_GOVERNOR: ${REDAMON_MEM_GOVERNOR:-}
       OS_HEADROOM_MEM: ${OS_HEADROOM_MEM:-}
       SERVICE_BASELINE_MEM: ${SERVICE_BASELINE_MEM:-}
+      # Caps for the containers the ORCHESTRATOR spawns itself. The orchestrator
+      # has no env_file, so a var reaches it only by being listed here -- without
+      # these the allocator's values were computed, written to .env, and then
+      # ignored at spawn time: capture-proxy ran at the hardcoded 384m and
+      # traffic-ingest at 256m on a 31.7 GB host, verified live.
+      CAPTURE_PROXY_MEM: ${CAPTURE_PROXY_MEM:-}
+      TRAFFIC_INGEST_MEM: ${TRAFFIC_INGEST_MEM:-}
+      CODEFIX_SANDBOX_MEM: ${CODEFIX_SANDBOX_MEM:-}
       RECON_JOB_ENVELOPE_MEM: ${RECON_JOB_ENVELOPE_MEM:-}
       RESOURCE_PROFILE_PATH: ${RESOURCE_PROFILE_PATH:-}
       RESOURCE_PROFILE_DEFAULT_PATH: ${RESOURCE_PROFILE_DEFAULT_PATH:-}

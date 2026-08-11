@@ -138,28 +138,29 @@ bootstrap_unattended_upgrades() {
 
 # --- 9. swap (hosts < 16GB, when SWAP_SIZE_GB>0 and no active swap) ---
 bootstrap_swap() {
-  local size="${SWAP_SIZE_GB:-8}"
-  [[ "${size}" =~ ^[0-9]+$ ]] || size=0
-  [[ "${size}" -eq 0 ]] && { info "SWAP_SIZE_GB=0 -- skipping swap"; return 0; }
-
-  local mem_kb mem_gb
-  mem_kb=$(awk '/MemTotal/{print $2}' /proc/meminfo)
+  # Swap as a PERCENTAGE of RAM, at every host size. It used to be a flat 8GB
+  # created only when RAM < 16GB, so a 64GB host got none at all -- and the
+  # memory governor keys its higher burst factor off having swap worth at least
+  # BURST_SWAP_MIN_PCT (25%) of RAM, so "no swap" silently costs you headroom.
+  local pct="${SWAP_PCT:-25}" size="${SWAP_SIZE_GB:-}" mem_kb mem_gb
+  mem_kb=$(awk '/MemTotal/{print $2}' /proc/meminfo 2>/dev/null || echo 0)
   mem_gb=$(( mem_kb / 1024 / 1024 ))
-  if [[ "${mem_gb}" -ge 16 ]]; then
-    info "Host RAM ~${mem_gb}GB (>=16GB) -- swap not needed"
-    return 0
+  if [[ -n "$size" && "$size" =~ ^[0-9]+$ ]]; then
+    : # explicit (deprecated) override wins
+  else
+    [[ "$pct" =~ ^[0-9]+$ ]] || pct=25
+    size=$(( mem_gb * pct / 100 ))
   fi
+  [[ "${size:-0}" -eq 0 ]] && { info "swap: disabled (SWAP_PCT=0 / SWAP_SIZE_GB=0)"; return 0; }
   if [[ -n "$(swapon --show 2>/dev/null)" ]]; then
     info "Active swap already present -- skipping"
     return 0
   fi
-  step "Host bootstrap: ${size}GB swapfile"
+  step "Host bootstrap: ${size}GB swapfile (${pct}% of ~${mem_gb}GB RAM)"
   if [[ ! -f /swapfile ]]; then
     run_sudo fallocate -l "${size}G" /swapfile || run_sudo dd if=/dev/zero of=/swapfile bs=1M count=$((size*1024))
     run_sudo chmod 600 /swapfile
   fi
-  # (Re)format if it isn't a valid swap area (handles a stale/unformatted file from a
-  # prior partial run). We only reach here when `swapon --show` was empty, so mkswap is safe.
   run_sudo mkswap /swapfile
   run_sudo swapon /swapfile || true
   if ! grep -q '^/swapfile ' /etc/fstab; then

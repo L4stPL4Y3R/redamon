@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getGraphSession } from './neo4j'
 import { readLiveGraph } from './liveRead'
 import { getCached, setCached, invalidateCache } from './cache'
+import { truncateGraph } from './truncate'
+import { GRAPH_PERF_DEBUG } from './config'
 import { requireEffectiveUser, requireProjectAccess } from '@/lib/access'
-
-const GRAPH_PERF_DEBUG = true
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams
@@ -59,7 +59,7 @@ export async function GET(request: NextRequest) {
 
     // Return cached data with ETag
     return NextResponse.json(
-      { nodes: cached.data.nodes, links: cached.data.links, projectId },
+      { nodes: cached.data.nodes, links: cached.data.links, projectId, ...(cached.info ? { truncated: cached.info } : {}) },
       {
         headers: {
           'ETag': `"${cached.etag}"`,
@@ -74,10 +74,21 @@ export async function GET(request: NextRequest) {
   try {
     // Same read path the version endpoint uses for the CURRENT version
     // (Scan Timeline Section 4.1), including the orphan-chain reconcile.
-    const { nodes, links } = await readLiveGraph(projectId)
+    const full = await readLiveGraph(projectId)
+
+    // Bound the payload BEFORE it is cached or serialised: the response object,
+    // the cached copy and the JSON string are all live at once, so an unbounded
+    // graph is held three times over.
+    const { nodes, links, info } = truncateGraph(full.nodes, full.links)
+    if (info.truncated) {
+      console.warn(
+        `[Graph] project=${projectId} truncated to ${info.returnedNodes}/${info.totalNodes} nodes ` +
+        `(${info.returnedLinks}/${info.totalLinks} links); raise GRAPH_MAX_NODES to change`,
+      )
+    }
 
     // Cache the result and get ETag
-    const etag = setCached(projectId, { nodes, links })
+    const etag = setCached(projectId, { nodes, links }, info)
 
     // Check if client already has this version
     if (ifNoneMatch && ifNoneMatch === `"${etag}"`) {
@@ -91,7 +102,7 @@ export async function GET(request: NextRequest) {
       })
     }
 
-    const responseData = JSON.stringify({ nodes, links, projectId })
+    const responseData = JSON.stringify({ nodes, links, projectId, ...(info.truncated ? { truncated: info } : {}) })
     if (GRAPH_PERF_DEBUG) console.log(`[GraphPerf:API] Response size: ${(responseData.length / 1024).toFixed(1)}KB`)
 
     return new NextResponse(responseData, {
