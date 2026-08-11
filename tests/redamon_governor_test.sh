@@ -70,9 +70,14 @@ echo "== allocate_memory: the proportional allocator =="
 # RAM. A fixed number reappearing here is a regression, and `no cap repeats
 # across two host sizes` below is the test that catches it.
 
-MEM_VARS=(NEO4J_HEAP NEO4J_PAGECACHE NEO4J_MEM AGENT_MEM GVMD_MEM KB_REFRESH_MEM
+# EVERY var the allocator can export. A var missing here is not unset between
+# cases, so a stale value from an earlier host size is then read as an operator
+# pin and the allocator correctly declines to overwrite it - which looks like an
+# allocator bug but is a leaky harness.
+MEM_VARS=(NEO4J_HEAP NEO4J_PAGECACHE NEO4J_MEM AGENT_MEM KB_REFRESH_MEM
           RECON_ORCHESTRATOR_MEM WEBAPP_MEM POSTGRES_MEM KALI_MEM CAPTURE_PROXY_MEM
-          DOCKER_BROKER_MEM TRAFFIC_INGEST_MEM OS_HEADROOM_MEM SERVICE_BASELINE_MEM)
+          DOCKER_BROKER_MEM TRAFFIC_INGEST_MEM OS_HEADROOM_MEM SERVICE_BASELINE_MEM
+          GVMD_MEM GVM_OSPD_MEM GVM_REDIS_MEM GVM_POSTGRES_MEM GVM_DATA_MEM)
 
 # Isolate from the repo's real .env: an operator pin there would otherwise make
 # the allocator (correctly) skip the export and fail these assertions.
@@ -309,6 +314,115 @@ printf 'SERVICES_PCT=abc\n' > "$MEM_TMP/.env"
 eq "a garbage .env value falls back"       "$(_pct_env SERVICES_PCT 65 10 95)" "65"
 rm -f "$MEM_TMP/.env"
 export BURST_FACTOR=1.75
+
+echo "== the over-commit invariant holds BY CONSTRUCTION =="
+# BUG: BURST_FACTOR was a hand-tuned constant. 2.5 fitted the base profile, but
+# enabling GVM adds five more burst-tier services and the same 2.5 promised
+# ~10 GB more than a 31.7 GB host could back. The multiplier is now DERIVED from
+# the real cushion, so:
+#   os_reserve + reserved + SUM(burst ceilings) <= MemTotal + swap
+# at every host size and every profile combination.
+inv_check() {   # inv_check <hostMB> <swapMB> <gvm> <kb> <label>
+    local t="$1" sw="$2" g="$3" k="$4" lbl="$5"
+    _swap_total_mb() { printf '%s' "$sw"; }
+    WANT_GVM="$g"; WANT_KB="$k"
+    fresh_process; unset BURST_FACTOR
+    STUB_MEM="$t"; allocate_memory
+    local s=0 i
+    for i in "${!_ALLOC_NAMES[@]}"; do
+        if [[ "${_ALLOC_NAMES[$i]}" == "GVM_DATA" ]]; then
+            # ONE compose var caps N containers, so the group costs N x the slice.
+            s=$(( s + (_ALLOC_MB[i] / _GVM_DATA_CONTAINERS) * _GVM_DATA_CONTAINERS ))
+        else
+            s=$(( s + _ALLOC_MB[i] ))
+        fi
+    done
+    local worst=$(( s + _ALLOC_OS_MB )) avail=$(( t + sw ))
+    if [[ "$worst" -le "$avail" ]]; then
+        ok "worst case fits RAM+swap ($lbl, burst ${_ALLOC_BURST_PCT}%)"
+    else
+        bad "worst case fits RAM+swap ($lbl)" "${worst}MB" "<= ${avail}MB"
+    fi
+}
+inv_check 31736 8191  0 0 "31.7G swap8G base"
+inv_check 31736 8191  1 0 "31.7G swap8G +gvm"
+inv_check 31736 8191  1 1 "31.7G swap8G +gvm+kb"
+inv_check 16384 4096  0 0 "16G swap4G base"
+inv_check 16384 4096  1 0 "16G swap4G +gvm"
+inv_check 16384 0     0 0 "16G noswap base"
+inv_check 16384 0     1 0 "16G noswap +gvm"
+inv_check  8192 2048  0 0 "8G swap2G base"
+inv_check 65536 16384 1 1 "64G swap16G +gvm+kb"
+inv_check 524288 0    1 1 "512G noswap +gvm+kb"
+
+# The clamp must ENGAGE when the request does not fit, and stay out of the way
+# when it does.
+_swap_total_mb() { printf '8191'; }
+WANT_GVM=0; WANT_KB=0; fresh_process; unset BURST_FACTOR
+STUB_MEM=31736; allocate_memory
+eq "base profile keeps the full 250% (it fits)" "$_ALLOC_BURST_PCT" "250"
+WANT_GVM=1; fresh_process; unset BURST_FACTOR
+STUB_MEM=31736; allocate_memory
+if [[ "$_ALLOC_BURST_PCT" -lt 250 && "$_ALLOC_BURST_PCT" -ge 100 ]]; then
+    ok "adding GVM clamps the burst down to what fits (${_ALLOC_BURST_PCT}%)"
+else
+    bad "adding GVM clamps the burst" "$_ALLOC_BURST_PCT" "100..249"
+fi
+# An operator asking for something absurd is bounded by physics, not trusted.
+WANT_GVM=0; fresh_process; BURST_FACTOR=50 STUB_MEM=31736 allocate_memory
+sum_absurd=0; for m in "${_ALLOC_MB[@]}"; do sum_absurd=$(( sum_absurd + m )); done
+if [[ "$_ALLOC_BURST_PCT" -lt 5000 && $(( sum_absurd + _ALLOC_OS_MB )) -le $(( 31736 + 8191 )) ]]; then
+    ok "an absurd BURST_FACTOR=50 is clamped to the real cushion (${_ALLOC_BURST_PCT}%)"
+else
+    bad "an absurd BURST_FACTOR is clamped" "$_ALLOC_BURST_PCT% -> $(( sum_absurd + _ALLOC_OS_MB ))MB" "<= 39927MB"
+fi
+# Never below 1.0: a ceiling must never be shrunk BELOW its guaranteed share.
+inv_check 8192 0 1 1 "8G noswap +gvm+kb (tightest)"
+if [[ "$_ALLOC_BURST_PCT" -ge 100 ]]; then ok "burst never drops below 100%"
+else bad "burst never drops below 100%" "$_ALLOC_BURST_PCT" ">= 100"; fi
+# Keep a deterministic stub for the remainder of the suite: `unset -f` would
+# DELETE redamon.sh's own implementation for every later assertion.
+_swap_total_mb() { printf '%s' "${STUB_SWAP_MB:-0}"; }
+STUB_SWAP_MB=0
+WANT_GVM=0; WANT_KB=0; export BURST_FACTOR=1.75
+
+echo "== the GVM stack is sized, not just gvmd =="
+# BUG: only gvmd had a mem_limit. ospd-openvas (the scanner), redis (holds the
+# whole VT feed) and GVM's own postgres had NO knob at all, so on a --gvm host
+# they ran uncapped beside a fully budgeted everything-else.
+fresh_process; WANT_GVM=1; STUB_MEM=31736; allocate_memory
+for v in GVMD_MEM GVM_OSPD_MEM GVM_REDIS_MEM GVM_POSTGRES_MEM GVM_DATA_MEM; do
+    if [[ -n "${!v:-}" ]]; then ok "$v is allocated"; else bad "$v is allocated" "<unset>" "a size"; fi
+done
+# GVM_DATA is a GROUP share: one var caps 9 loaders, so the exported value is
+# the per-container slice, not the group total.
+for i in "${!_ALLOC_NAMES[@]}"; do
+    if [[ "${_ALLOC_NAMES[$i]}" == "GVM_DATA" ]]; then
+        eq "GVM_DATA_MEM is the per-container slice" \
+           "$(mb "$GVM_DATA_MEM")" "$(( _ALLOC_MB[i] / _GVM_DATA_CONTAINERS ))"
+    fi
+done
+WANT_GVM=0; fresh_process; STUB_MEM=31736; allocate_memory
+eq "GVM vars are absent when the profile is off" "${GVM_OSPD_MEM:-<unset>}" "<unset>"
+
+# Structural: every service compose will actually RUN must carry a mem_limit, so
+# a new service cannot be added uncapped without this going red. Asked of
+# `docker compose config` rather than parsed by hand: it resolves the active
+# profiles and excludes the volumes/networks blocks.
+if docker compose version >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
+    uncapped="$(cd "$REPO_ROOT" && docker compose config 2>/dev/null | python3 -c "
+import sys, yaml
+d = yaml.safe_load(sys.stdin) or {}
+print(' '.join(n for n, s in sorted((d.get('services') or {}).items()) if not s.get('mem_limit')))
+" 2>/dev/null)"
+    if [[ -z "$uncapped" ]]; then
+        ok "every service compose resolves declares a mem_limit"
+    else
+        bad "every service compose resolves declares a mem_limit" "uncapped:$uncapped" "all capped"
+    fi
+else
+    echo "  SKIP  compose/python3 unavailable (structural mem_limit check)"
+fi
 
 echo "== hardening regressions =="
 # BUG: burst 2.5 used to be unlocked by the mere PRESENCE of swap. Measured

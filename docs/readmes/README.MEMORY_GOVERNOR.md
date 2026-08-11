@@ -504,16 +504,45 @@ everyone else shrinks proportionally instead of over-committing the host.
 | `CAPTURE_PROXY` | 40 | 128 MB | burst |
 | `DOCKER_BROKER` | 20 | 96 MB | burst |
 | `TRAFFIC_INGEST` | 20 | 96 MB | burst |
-| `GVMD` (profile) | 180 | 768 MB | burst |
-| `KB_REFRESH` (profile) | 150 | 512 MB | burst |
+| `GVMD` (gvm profile) | 120 | 768 MB | burst |
+| `GVM_OSPD` (gvm profile) | 110 | 512 MB | burst |
+| `GVM_REDIS` (gvm profile) | 90 | 256 MB | burst |
+| `GVM_POSTGRES` (gvm profile) | 50 | 256 MB | burst |
+| `GVM_DATA` (gvm profile) | 40 | 192 MB | burst |
+| `KB_REFRESH` (kb profile) | 150 | 512 MB | burst |
+
+**GVM is a stack, not a service.** Sizing only `gvmd` left ospd-openvas (the
+actual scanner), redis (which holds the whole VT feed and is routinely
+multi-GB) and GVM's own postgres with *no* `mem_limit` at all, so on a `--gvm`
+host they ran uncapped beside a fully budgeted everything-else and could consume
+the scan pool and the OS reserve. `GVM_DATA` is one share divided across the nine
+one-shot feed loaders -- six of them have no `depends_on`, so they start
+concurrently and their memory stacks during setup; `GVM_DATA_MEM` is therefore
+the *per-container* slice, not the group total.
 
 **Reserved vs burst.** A `mem_limit` is a ceiling, not a reservation, so unused
 headroom costs nothing and may be over-committed. Neo4j pre-allocates its page
 cache and Postgres its `shared_buffers`, so those really do consume their share
 and are **never** multiplied. Every other service is multiplied by
-`BURST_FACTOR` (default **1.75**, automatically **2.5** when swap or zram is
-active, since a simultaneous peak then pages instead of OOM-killing). That lets
-one busy service use headroom the others are not touching.
+`BURST_FACTOR` (default **1.75**, automatically **2.5** when swap of at least
+`BURST_SWAP_MIN_PCT` of RAM exists, since a simultaneous peak then pages instead
+of OOM-killing). That lets one busy service use headroom the others are not
+touching.
+
+`BURST_FACTOR` is a **request, not a guarantee**. How much over-commit is safe
+depends on the host *and* on which profiles are enabled -- turning on GVM adds
+five more burst-tier services, and a fixed 2.5 then promised ~10 GB more than a
+31.7 GB host could back. The multiplier is therefore clamped to the real cushion:
+
+```
+cushion   = MemTotal + swap - os_reserve - reserved_total
+max_burst = cushion / burst_fair_total
+```
+
+so `os_reserve + reserved + SUM(burst ceilings) <= MemTotal + swap` holds **by
+construction** at every host size and profile combination, rather than because a
+constant happened to fit. In practice the base profile keeps its full 250% while
+`--gvm` clamps itself to ~230%.
 
 **Floors** are the only absolute numbers in the system, and they describe the
 *software* (a JVM cannot boot in 128 MB), not the host. They never bind at

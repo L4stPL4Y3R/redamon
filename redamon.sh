@@ -440,7 +440,20 @@ preflight_disk_gate() {
 _MEM_SPECS_BASE="NEO4J:320:1024:r POSTGRES:80:256:r AGENT:180:768:b WEBAPP:180:512:b KALI:100:512:b RECON_ORCHESTRATOR:60:256:b CAPTURE_PROXY:40:128:b DOCKER_BROKER:20:96:b TRAFFIC_INGEST:20:96:b"
 # Optional profiles ADD weight; the sum is renormalised, so enabling one shrinks
 # everybody else proportionally instead of over-committing the host.
-_MEM_SPEC_GVM="GVMD:180:768:b"
+#
+# GVM is a STACK, not a service. Sizing only gvmd left the three other
+# long-running containers -- ospd-openvas (the actual scanner), redis (holds the
+# whole VT feed, routinely multi-GB) and its own postgres -- with no mem_limit at
+# all, so on a --gvm host they sat uncapped next to a carefully budgeted
+# everything-else and could eat the scan pool and the OS reserve. GVM_DATA is one
+# shared cap for the nine one-shot feed loaders: six of them have no depends_on,
+# so they start concurrently and their memory stacks during setup.
+_MEM_SPEC_GVM="GVMD:120:768:b GVM_OSPD:110:512:b GVM_REDIS:90:256:b GVM_POSTGRES:50:256:b GVM_DATA:40:192:b"
+# GVM_DATA's share is the TOTAL for the loader group; the exported
+# GVM_DATA_MEM is that divided by the container count, because ONE compose
+# var caps all of them and six start concurrently. Counting the group once
+# while applying it nine times would understate the worst case ninefold.
+_GVM_DATA_CONTAINERS=9
 _MEM_SPEC_KB="KB_REFRESH:150:512:b"
 
 # Results, published as parallel indexed arrays (NOT associative: redamon.sh
@@ -458,6 +471,7 @@ _ALLOC_SCAN_MB=0
 _ALLOC_TOTAL_MB=0
 _ALLOC_FEASIBLE=1
 _ALLOC_SHORTFALL_MB=0
+_ALLOC_BURST_PCT=0
 
 # Markers around the block in .env that the allocator owns and regenerates.
 # Anything OUTSIDE it is the operator's and is never touched.
@@ -671,6 +685,39 @@ allocate_memory() {
         done
     done
 
+    # --- clamp the burst so the worst case cannot exceed what physically exists.
+    #
+    # BURST_FACTOR is what the operator ASKS for; it is not automatically safe.
+    # A ceiling is only over-committable to the extent there is RAM+swap to
+    # absorb a simultaneous peak, and how much headroom that leaves depends on
+    # the host AND on which profiles are enabled -- enabling GVM adds five more
+    # burst-tier services, and a fixed 2.5 then promised ~10 GB more than a
+    # 31.7 GB host could back. Derive the ceiling instead of assuming one:
+    #
+    #   cushion   = MemTotal + swap - os_reserve - reserved_total
+    #   max_burst = cushion / burst_fair_total
+    #
+    # so `os + reserved + SUM(burst ceilings) <= MemTotal + swap` holds by
+    # construction at every host size and every profile combination.
+    local reserved_total=0 burst_fair=0
+    for (( i = 0; i < n; i++ )); do
+        if [[ "${_ALLOC_TIERS[$i]}" == "b" ]]; then
+            burst_fair=$(( burst_fair + _ALLOC_MB[i] ))
+        else
+            reserved_total=$(( reserved_total + _ALLOC_MB[i] ))
+        fi
+    done
+    local cushion max_burst
+    local swap_mb; swap_mb="$(_swap_total_mb)"
+    [[ "$swap_mb" =~ ^[0-9]+$ ]] || swap_mb=0   # never let an empty read poison the sum
+    cushion=$(( total + swap_mb - os_mb - reserved_total ))
+    if [[ "$burst_fair" -gt 0 && "$cushion" -gt 0 ]]; then
+        max_burst=$(( cushion * 100 / burst_fair ))
+        [[ "$max_burst" -lt 100 ]] && max_burst=100
+        [[ "$burst_pct" -gt "$max_burst" ]] && burst_pct="$max_burst"
+    fi
+    _ALLOC_BURST_PCT="$burst_pct"
+
     # --- burst multiplier on ceiling-type services only, then the blast bound
     for (( i = 0; i < n; i++ )); do
         cur="${_ALLOC_MB[$i]}"; floor="${_ALLOC_FLOORS[$i]}"
@@ -713,6 +760,11 @@ _mem_export_all() {
             [[ $(( eff_heap + eff_pc )) -ge "$mb" ]] && mb=$(( (eff_heap + eff_pc) * 100 / 85 ))
             _mem_own NEO4J_MEM "${mb}m"
             _ALLOC_MB[$i]="$mb"
+            continue
+        fi
+        if [[ "$name" == "GVM_DATA" ]]; then
+            # One var caps N containers: export the PER-CONTAINER slice.
+            _mem_own GVM_DATA_MEM "$(( mb / _GVM_DATA_CONTAINERS ))m"
             continue
         fi
         _mem_own "${name}_MEM" "${mb}m"
