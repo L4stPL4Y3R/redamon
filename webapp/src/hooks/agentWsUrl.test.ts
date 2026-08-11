@@ -82,16 +82,16 @@ describe('buildAgentWsUrl -- browser auto-detect, local dev keeps :8090', () => 
 
 describe('buildAgentWsUrl -- browser auto-detect, proxied deploy uses same origin (the fix)', () => {
   test('custom domain over https -> wss same-origin, NO :8090', () => {
-    stubLocation({ protocol: 'https:', hostname: 'redamon.pentest.megaleo.com', port: '' })
+    stubLocation({ protocol: 'https:', hostname: 'redamon.example.com', port: '' })
     const url = buildAgentWsUrl('/ws/kali-terminal')
-    expect(url).toBe('wss://redamon.pentest.megaleo.com/ws/kali-terminal')
+    expect(url).toBe('wss://redamon.example.com/ws/kali-terminal')
     expect(url).not.toContain(':8090')
   })
 
   test('custom domain over http -> ws same-origin, NO :8090', () => {
-    stubLocation({ protocol: 'http:', hostname: 'redamon.pentest.megaleo.com', port: '' })
+    stubLocation({ protocol: 'http:', hostname: 'redamon.example.com', port: '' })
     const url = buildAgentWsUrl('/ws/agent')
-    expect(url).toBe('ws://redamon.pentest.megaleo.com/ws/agent')
+    expect(url).toBe('ws://redamon.example.com/ws/agent')
     expect(url).not.toContain(':8090')
   })
 
@@ -110,7 +110,7 @@ describe('buildAgentWsUrl -- browser auto-detect, proxied deploy uses same origi
   })
 
   test('no WS path across the four sockets leaks :8090 on a proxied host', () => {
-    stubLocation({ protocol: 'https:', hostname: 'redamon.pentest.megaleo.com', port: '' })
+    stubLocation({ protocol: 'https:', hostname: 'redamon.example.com', port: '' })
     for (const p of PATHS) {
       expect(buildAgentWsUrl(p)).not.toContain(':8090')
     }
