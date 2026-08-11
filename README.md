@@ -124,6 +124,14 @@ We maintain a public **[Project Board](https://github.com/users/samugit83/projec
 </tr>
 </table>
 
+<p align="center">
+<a href="https://pathbreak.io/"><img src="docs/assets/pathbreak.png" alt="Pathbreak" width="90"/></a><br/>
+<b>From the same team: <a href="https://pathbreak.io/">Pathbreak</a></b><br/>
+<i>See the attack path. Then break it.</i><br/><br/>
+<small>Pathbreak is an agentic cloud security platform that discovers and validates the real attack paths a threat actor would exploit across your cloud. It catches the control-plane chains most tools miss.</small><br/><br/>
+<a href="https://pathbreak.io/"><b>pathbreak.io</b></a>
+</p>
+
 ---
 
 ## Quick Start
