@@ -113,7 +113,14 @@ echo "== dispatch + help wiring for create-admin =="
 SRC="$REPO_ROOT/redamon.sh"
 assert_true "dispatch has a create-admin) arm"       "grep -qE '^\s*create-admin\)\s*cmd_create_admin' '$SRC'"
 assert_true "cmd_create_admin is defined"            "grep -q '^cmd_create_admin()' '$SRC'"
-assert_true "help lists create-admin"                "(cd '$REPO_ROOT' && ./redamon.sh help 2>/dev/null | grep -qi 'create-admin')"
+# Capture FIRST, then grep. Piping the script straight into `grep -q` is a race:
+# grep exits the instant it matches and closes the pipe, `redamon.sh help` is
+# still writing its ~40 lines and dies with SIGPIPE (141), and `set -o pipefail`
+# then reports the whole pipeline as failed. On an idle box the writer finishes
+# first and it passes; under load it loses the race. Measured before this fix:
+# 40/40 pass serially, 14/24 FAIL when run concurrently.
+HELP_OUT="$(cd "$REPO_ROOT" && ./redamon.sh help 2>/dev/null || true)"
+assert_true "help lists create-admin"                "echo \"\$HELP_OUT\" | grep -qi 'create-admin'"
 
 echo
 echo "-----------------------------------------"
