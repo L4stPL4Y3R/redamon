@@ -41,6 +41,14 @@ DEFAULT_GVM_SETTINGS: dict[str, Any] = {
     # Poll interval for checking scan status (seconds)
     'POLL_INTERVAL': 30,
 
+    # Readiness wait before a scan gives up on gvmd. A gvmd (re)start re-imports
+    # ALL feeds; the scan configs ("Full and fast", ...) come from the Data Objects
+    # feed, which is gated behind the heavy SCAP CVE import and can take the better
+    # part of an hour on a busy host. READY_MAX_RETRIES x READY_RETRY_INTERVAL is
+    # the total budget (120 x 30s = 60 min). Raise READY_MAX_RETRIES on slow hosts.
+    'READY_MAX_RETRIES': 120,      # 120 x 30s = 60 min (was effectively 60 x 30s = 30 min)
+    'READY_RETRY_INTERVAL': 30,
+
     # Cleanup targets and tasks after scan completion
     'CLEANUP_AFTER_SCAN': True,
 }

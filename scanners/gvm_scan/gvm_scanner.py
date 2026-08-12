@@ -111,20 +111,23 @@ class GVMScanner:
         self.xml_format_id: Optional[str] = None
         self.port_list_id: Optional[str] = None
     
-    def connect(self, max_retries: int = 60, retry_interval: int = 30) -> bool:
+    def connect(self, max_retries: int = None, retry_interval: int = None) -> bool:
         """
         Establish connection to GVMD with retry logic.
 
         Waits for gvmd to be fully ready (feeds imported, scan configs loaded).
-        On first boot this can take 20-30 minutes.
-
         Args:
-            max_retries: Maximum number of connection attempts (default: 30)
-            retry_interval: Seconds between retries (default: 30)
+            max_retries: Max connection attempts (default: READY_MAX_RETRIES, 120)
+            retry_interval: Seconds between retries (default: READY_RETRY_INTERVAL, 30)
 
         Returns:
             True if connected successfully
         """
+        if max_retries is None:
+            max_retries = get_setting('READY_MAX_RETRIES', 120)
+        if retry_interval is None:
+            retry_interval = get_setting('READY_RETRY_INTERVAL', 30)
+
         for attempt in range(1, max_retries + 1):
             try:
                 # Clean up any previous failed connection
@@ -179,7 +182,7 @@ class GVMScanner:
                     )
                     print(
                         f"    Retrying in {retry_interval}s... "
-                        f"(first boot takes ~10-15 min for feed sync)"
+                        f"(a gvmd (re)start re-imports feeds; can take up to ~60 min)"
                     )
                     time.sleep(retry_interval)
                 else:
