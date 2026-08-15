@@ -214,3 +214,29 @@ class TestPythonTypeScriptParity(_IocTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestIpLiteralHost(_IocTestCase):
+    """A target addressed by IP only (the supply_chain_target guinea pig).
+
+    The capture proxy sets targetIp on the RESPONSE hook only, so a
+    request-only capture arrives with host="192.88.99.10" and no resolved ip.
+    An IP-literal host must be looked up in the ips table, exactly as the sync
+    routes IP literals out of the feed's `domains` array.
+    """
+
+    def _write_ip_intel(self):
+        self._write_intel(domains={}, wildcards=[], ips={"192.88.99.10": _rec("GP-HOST-IP")})
+        intel_mod.reset_cache()
+
+    def test_ip_literal_host_matches_without_a_resolved_ip(self):
+        self._write_ip_intel()
+        self.assertEqual(ioc_match.match_transaction("192.88.99.10")[0], "GP-HOST-IP")
+
+    def test_ip_literal_host_with_a_port_matches(self):
+        self._write_ip_intel()
+        self.assertEqual(ioc_match.match_transaction("192.88.99.10:8080")[0], "GP-HOST-IP")
+
+    def test_a_different_ip_still_does_not_match(self):
+        self._write_ip_intel()
+        self.assertEqual(ioc_match.match_transaction("10.9.9.9"), (None, None))

@@ -181,6 +181,10 @@ export function matchTransaction(
       }
       const exact = tables.domains[candidate]
       if (exact) return exact
+      // An IP-literal Host belongs in the ips table (mirrors the Python matcher
+      // and the sync, which routes IP literals out of the feed's domains array).
+      const asIp = tables.ips[candidate]
+      if (asIp) return asIp
       for (const [suffix, rec] of tables.wildcards) {
         if (candidate.endsWith(suffix)) return rec
       }

@@ -206,6 +206,14 @@ def match_host(host, intel=None, *, ip=None, ignore_suffixes=None):
             rec = intel.domains.get(candidate)
             if rec is not None:
                 return rec
+            # An IP-literal Host header belongs in the ips table, not domains -
+            # the sync routes IP literals out of the feed's `domains` array the
+            # same way. Without this a target addressed by IP only matches when
+            # the caller also supplies a resolved ip, and the capture proxy sets
+            # that on the response hook only.
+            rec = intel.ips.get(candidate)
+            if rec is not None:
+                return rec
             for suffix, wrec in intel.wildcards:
                 if candidate.endswith(suffix):
                     return wrec
