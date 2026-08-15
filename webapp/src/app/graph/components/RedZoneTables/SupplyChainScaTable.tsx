@@ -8,6 +8,7 @@ import {
   SeverityBadge, Mono, Truncated, NumCell, ListCell, LinkedListCell, filterRowsByText,
 } from './formatters'
 import { normalizeSeverity, SEVERITY_RANK, type Severity } from './types'
+import { isHttpUrl } from '@/lib/url-utils'
 import rowStyles from './RedZoneTableRow.module.css'
 
 /**
@@ -204,8 +205,12 @@ function IncidentDetailRow({ row }: { row: VerdictRow }) {
             </ol>
           </>
         )}
-        {row.incidentUrl && (
-          <a href={row.incidentUrl} target="_blank" rel="noopener noreferrer">
+        {isHttpUrl(row.incidentUrl) && (
+          // isHttpUrl, not a truthiness check: this URL comes from a public feed
+          // anyone can publish to, and React renders a `javascript:` href
+          // happily. The sync gates it too; this covers rows an earlier sync
+          // stored before that gate existed.
+          <a href={row.incidentUrl!} target="_blank" rel="noopener noreferrer">
             supplychainattack.org incident ↗
           </a>
         )}

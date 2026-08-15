@@ -8,7 +8,7 @@
  *
  * Run: npx vitest run src/lib/scaIntel.test.ts
  */
-import { describe, test, expect, beforeEach, afterEach } from 'vitest'
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -189,5 +189,47 @@ describe('cross-language parity', () => {
 
   test.each(PARITY_CASES)('host=$host ip=$ip -> $expected', ({ host, ip, expected }) => {
     expect(iocColumns(host, ip).iocIncidentId).toBe(expected)
+  })
+})
+
+describe('stale cache after a re-sync', () => {
+  // The webapp runs for days while the refresh sidecar rewrites the volume
+  // underneath it. Caching forever meant a freshly synced IOC never applied to
+  // newly ingested traffic until someone restarted the container.
+  test('a re-sync is picked up without a restart', () => {
+    writeIntel(dir, { domains: { 'old.example.com': REC('OLD') } })
+    const first = loadScaIntel(true)
+    expect(matchTransaction('new.example.com', null, first)).toBeNull()
+
+    // Backdate the cached mtime so the next call sees a change, then re-sync.
+    writeIntel(dir, { domains: { 'new.example.com': REC('NEW') } })
+    const future = Date.now() + 120_000
+    vi.spyOn(Date, 'now').mockReturnValue(future)
+    try {
+      const second = loadScaIntel()
+      expect(matchTransaction('new.example.com', null, second)?.incident_id).toBe('NEW')
+    } finally {
+      vi.restoreAllMocks()
+    }
+  })
+
+  test('inside the window the cached copy is served', () => {
+    writeIntel(dir, { domains: { 'a.example.com': REC('A') } })
+    const first = loadScaIntel(true)
+    writeIntel(dir, { domains: { 'b.example.com': REC('B') } })
+    // No clock advance: still inside the 60s window.
+    expect(loadScaIntel()).toBe(first)
+  })
+
+  test('a volume that disappears degrades rather than serving stale data', () => {
+    writeIntel(dir, { domains: { 'a.example.com': REC('A') } })
+    loadScaIntel(true)
+    rmSync(join(dir, 'manifest.json'))
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 120_000)
+    try {
+      expect(loadScaIntel().available).toBe(false)
+    } finally {
+      vi.restoreAllMocks()
+    }
   })
 })

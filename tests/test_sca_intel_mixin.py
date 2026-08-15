@@ -56,6 +56,12 @@ class FakeSession:
             return FakeResult({"linked": 1})
         if "DEPENDS_ON" in query and "RETURN count" in query:
             return FakeResult({"c": 1})
+        # The correlation write returns `count(c)`; without this the fake said
+        # "anchor not found" for every call, so the stats counters could never
+        # be asserted. Tests that need the anchor-missing case assert on the
+        # skip path before the query instead.
+        if "CONTACTS_MALICIOUS_HOST" in query:
+            return FakeResult({"linked": 1})
         return FakeResult()
 
 
@@ -284,7 +290,9 @@ class TestScaIntelGraphWrite(unittest.TestCase):
         self.assertEqual(kwargs["matched_host"], "cdn.evil.example")
         for label in ("Domain", "Subdomain", "ExternalDomain", "IP"):
             self.assertNotIn("MERGE ({}:{}".format(label[0].lower(), label), query)
-        self.assertIn("c.matched_host = $matched_host", query)
+        # It rides the relationship - and since F4 it is part of that
+        # relationship's identity, not a property SET on it.
+        self.assertIn("CONTACTS_MALICIOUS_HOST {matched_host: $matched_host}", query)
 
     def test_incident_text_lands_on_sca_prefixed_properties(self):
         session, _ = self._write(_correlation())
@@ -323,3 +331,129 @@ class TestScaIntelGraphWrite(unittest.TestCase):
     def test_hit_without_a_base_url_is_skipped(self):
         session, stats = self._write(_correlation(base_url=None))
         self.assertEqual(stats["pulses_merged"], 0)
+
+
+class TestOrphanThreatPulseRegression(unittest.TestCase):
+    """BUG: orphan ThreatPulse when the anchor BaseURL does not exist.
+
+    The statement MERGEd the ThreatPulse and only THEN matched the BaseURL, so a
+    correlation naming a base_url that is not in the graph (http_probe never ran,
+    a port/scheme mismatch, a partial recon) still created the node - it just had
+    no relationship. Those orphans render as floating nodes in the graph view and
+    count against the 20,000-node read cap, and nothing ever cleans them up.
+
+    Cypher runs left to right, so the ONLY fix is to match the anchor first: with
+    no anchor row there is nothing to carry forward and the MERGE never runs.
+    """
+
+    def test_base_url_is_matched_before_the_pulse_is_merged(self):
+        session = FakeSession()
+        Writer(session).update_graph_from_sca_intel(_correlation(), "u1", "p1")
+        query = next(q for q, _ in session.queries if "ThreatPulse" in q)
+        match_at = query.index("MATCH (u:BaseURL")
+        merge_at = query.index("MERGE (tp:ThreatPulse")
+        self.assertLess(
+            match_at, merge_at,
+            "the BaseURL must be MATCHed BEFORE the ThreatPulse is MERGEd, or a "
+            "missing anchor leaves an orphan node behind")
+
+
+class TestSourceToolRegression(unittest.TestCase):
+    """BUG: every suspicious finding was written with source_tool='guarddog'.
+
+    The mapping hardcoded the tool, so a typosquat finding reached the graph
+    claiming GuardDog produced it. That is wrong on its own, and it also defeats
+    the SCA table's per-tool wording: the UI reads source_tool, so a typosquat
+    row rendered as "GuardDog behavioural hit" no matter what the table did.
+    """
+
+    def _write(self, suspicious):
+        session = FakeSession()
+        Writer(session).update_graph_from_supply_chain(
+            {"packages": [], "malicious": [], "vulnerable": [],
+             "suspicious": suspicious}, "u1", "p1")
+        return _finding_query(session)[1]
+
+    def test_typosquat_finding_is_not_attributed_to_guarddog(self):
+        kwargs = self._write([{
+            "name": "lodahs", "ecosystem": "npm", "rule": "typosquat",
+            "advisory_id": "typosquat-of-lodash", "severity": "low",
+        }])
+        self.assertEqual(kwargs["source_tool"], "typosquat")
+
+    def test_guarddog_finding_still_says_guarddog(self):
+        kwargs = self._write([{
+            "name": "evil-pkg", "ecosystem": "npm", "rule": "npm-install-script",
+            "severity": "medium",
+        }])
+        self.assertEqual(kwargs["source_tool"], "guarddog")
+
+    def test_unknown_rule_defaults_to_guarddog_for_backwards_compat(self):
+        """Existing rows and existing rules must not change meaning."""
+        kwargs = self._write([{
+            "name": "evil-pkg", "ecosystem": "npm", "rule": "some-future-rule",
+            "severity": "medium",
+        }])
+        self.assertEqual(kwargs["source_tool"], "guarddog")
+
+
+class TestMultiHostEdgeCollapseRegression(unittest.TestCase):
+    """F4: several contacted hosts for ONE incident collapsed into one edge.
+
+    One incident commonly lists several attacker domains, and a target can
+    contact more than one. Keyed on the two nodes alone, the second host MERGEd
+    the SAME relationship and overwrote `matched_host`, so the Threat Intel
+    table showed one contacted host and the rest of the evidence was silently
+    lost. The host has to be part of the relationship's identity.
+    """
+
+    def _two_hosts_one_incident(self):
+        base = _correlation()["correlations"][0]
+        second = dict(base)
+        second["matched_host"] = "b.evil.example"
+        second["source_url"] = "https://b.evil.example/x.js"
+        first = dict(base)
+        first["matched_host"] = "a.evil.example"
+        return {"correlations": [first, second], "checked": 2, "available": True}
+
+    def test_the_matched_host_is_part_of_the_relationship_identity(self):
+        session = FakeSession()
+        Writer(session).update_graph_from_sca_intel(
+            self._two_hosts_one_incident(), "u1", "p1")
+        query = next(q for q, _ in session.queries if "ThreatPulse" in q)
+        self.assertIn("CONTACTS_MALICIOUS_HOST {matched_host: $matched_host}", query)
+        # ...and therefore is NOT re-SET afterwards, which is what overwrote it.
+        self.assertNotIn("c.matched_host =", query)
+
+    def test_each_host_produces_its_own_edge(self):
+        session = FakeSession()
+        stats = Writer(session).update_graph_from_sca_intel(
+            self._two_hosts_one_incident(), "u1", "p1")
+        hosts = [kw["matched_host"] for q, kw in session.queries if "ThreatPulse" in q]
+        self.assertEqual(sorted(hosts), ["a.evil.example", "b.evil.example"])
+        self.assertEqual(stats["relationships_created"], 2)
+        # The params alone do not prove separate edges - they differed under the
+        # bug too. What decides it is whether the host is in the MERGE key.
+        query = next(q for q, _ in session.queries if "ThreatPulse" in q)
+        self.assertIn("CONTACTS_MALICIOUS_HOST {matched_host: $matched_host}", query)
+
+    def test_the_pulse_node_is_still_shared_between_them(self):
+        """One incident is still one ThreatPulse; only the edges multiply."""
+        session = FakeSession()
+        Writer(session).update_graph_from_sca_intel(
+            self._two_hosts_one_incident(), "u1", "p1")
+        pulse_ids = {kw["pulse_id"] for q, kw in session.queries if "ThreatPulse" in q}
+        self.assertEqual(len(pulse_ids), 1)
+
+    def test_the_same_host_twice_still_merges_to_one_edge(self):
+        """Idempotency is preserved: a re-scan must not duplicate the edge."""
+        corr = _correlation()
+        session = FakeSession()
+        writer = Writer(session)
+        writer.update_graph_from_sca_intel(corr, "u1", "p1")
+        writer.update_graph_from_sca_intel(corr, "u1", "p1")
+        hosts = [kw["matched_host"] for q, kw in session.queries if "ThreatPulse" in q]
+        self.assertEqual(hosts, ["cdn.evil.example", "cdn.evil.example"])
+        # Same MERGE key both times, so Neo4j converges on one relationship.
+        self.assertIn("{matched_host: $matched_host}",
+                      next(q for q, _ in session.queries if "ThreatPulse" in q))

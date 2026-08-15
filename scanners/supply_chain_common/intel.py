@@ -12,6 +12,7 @@ that the pass did not run rather than reporting a clean result.
 import json
 import os
 import threading
+import time
 
 __all__ = ["load_intel", "reset_cache", "Intel", "match_host",
            "enrich_findings", "DEFAULT_INTEL_PATH", "MAX_ENTRIES",
@@ -33,7 +34,17 @@ DEFAULT_IGNORE_SUFFIXES = (
     "pipedream.net",
 )
 
+# How often a long-lived process re-checks whether the volume was re-synced.
+# The webapp and traffic-ingest run for days, and the refresh sidecar rewrites
+# this volume underneath them: without a re-check they would answer from the
+# copy they loaded at boot forever, so a freshly synced IOC would never apply to
+# newly captured traffic. Bounded to one stat() per window rather than one per
+# captured request, because this sits on the ingest path.
+RELOAD_CHECK_SECONDS = int(os.environ.get("SCA_INTEL_RELOAD_CHECK_SECONDS", "60") or 60)
+
 _CACHE = None
+_CACHE_MTIME = None
+_CACHE_CHECKED_AT = 0.0
 _CACHE_LOCK = threading.Lock()
 
 
@@ -83,23 +94,41 @@ def _truncate_map(mapping, budget):
     return {k: mapping[k] for k in keys}, 0
 
 
+def _manifest_mtime(path):
+    try:
+        return os.path.getmtime(os.path.join(path, "manifest.json"))
+    except OSError:
+        return None
+
+
 def load_intel(path=None, *, force_reload=False):
-    """Load the intel tables once per process. Never raises."""
-    global _CACHE
+    """Load the intel tables, re-reading them after a re-sync. Never raises."""
+    global _CACHE, _CACHE_MTIME, _CACHE_CHECKED_AT
     resolved = path or os.environ.get("SCA_INTEL_PATH") or DEFAULT_INTEL_PATH
 
     with _CACHE_LOCK:
         if _CACHE is not None and not force_reload and _CACHE.path == resolved:
-            return _CACHE
+            now = time.time()
+            if now - _CACHE_CHECKED_AT < RELOAD_CHECK_SECONDS:
+                return _CACHE
+            _CACHE_CHECKED_AT = now
+            # manifest.json is written last and only on a successful sync, so
+            # its mtime is exactly "the data changed".
+            if _manifest_mtime(resolved) == _CACHE_MTIME:
+                return _CACHE
         _CACHE = _load_uncached(resolved)
+        _CACHE_MTIME = _manifest_mtime(resolved)
+        _CACHE_CHECKED_AT = time.time()
         return _CACHE
 
 
 def reset_cache():
     """Drop the module-level cache. For tests, and for a deliberate reload."""
-    global _CACHE
+    global _CACHE, _CACHE_MTIME, _CACHE_CHECKED_AT
     with _CACHE_LOCK:
         _CACHE = None
+        _CACHE_MTIME = None
+        _CACHE_CHECKED_AT = 0.0
 
 
 def _load_uncached(path):

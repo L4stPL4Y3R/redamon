@@ -29,6 +29,7 @@ Output layout under --out:
 import ipaddress
 import json
 import os
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -66,6 +67,38 @@ MAX_INCIDENTS = 50000
 MAX_PACKAGES_PER_INCIDENT = 50
 MAX_REMEDIATION_STEPS = 20
 
+# Registry/ccTLD suffixes under which ANYONE can register. A bare wildcard on one
+# of these is not an IOC, it is "every website in a country": '*.co.uk' stored as
+# the suffix '.co.uk' matches every .co.uk asset in the graph and every captured
+# request to one. The feed is attacker-influenceable, so one crafted entry would
+# otherwise flood an engagement with false positives.
+#
+# Label count cannot be the test: '*.evil-attacker.com' also has a two-label body
+# and IS a legitimate, valuable IOC. Only suffix identity distinguishes them, and
+# a full public-suffix list is not available here (this module is stdlib-only by
+# contract), so this is the pragmatic subset: the multi-label public suffixes an
+# engagement realistically meets. A deeper wildcard under one
+# ('*.attacker.co.uk') scopes to a single registrable domain and is KEPT.
+PUBLIC_REGISTRY_SUFFIXES = frozenset({
+    "co.uk", "org.uk", "me.uk", "ac.uk", "gov.uk", "net.uk", "sch.uk",
+    "com.au", "net.au", "org.au", "edu.au", "gov.au", "id.au",
+    "co.jp", "or.jp", "ne.jp", "ac.jp", "go.jp",
+    "com.br", "net.br", "org.br", "gov.br",
+    "com.cn", "net.cn", "org.cn", "gov.cn", "edu.cn",
+    "co.in", "net.in", "org.in", "gen.in", "firm.in",
+    "co.nz", "net.nz", "org.nz", "govt.nz",
+    "co.za", "org.za", "net.za", "gov.za",
+    "com.mx", "com.ar", "com.tr", "com.sg", "com.hk", "com.tw", "com.my",
+    "com.ph", "com.vn", "com.pl", "com.ua", "com.ru", "com.es", "com.pt",
+    "co.kr", "or.kr", "ne.kr", "go.kr",
+    "co.il", "org.il", "net.il", "ac.il", "gov.il",
+    "co.id", "or.id", "web.id", "go.id",
+    "com.co", "com.pe", "com.ve", "com.ec", "com.uy", "com.py",
+    "co.th", "in.th", "ac.th", "go.th",
+    "gov.uk", "nhs.uk", "police.uk",
+    "eu.org", "us.com", "uk.com", "eu.com", "cn.com", "de.com", "jp.net",
+})
+
 # Public hosting apexes where a BARE wildcard covers every tenant of a shared
 # platform. '*.workers.dev' is all of Cloudflare Workers: shipping it would flag
 # every legitimate target that uses a Worker. A specific host under one of these
@@ -77,6 +110,12 @@ PUBLIC_HOSTING_APEXES = frozenset({
     "repl.co", "replit.dev", "ngrok.io", "ngrok-free.app", "onrender.com",
     "fly.dev", "surge.sh", "azurewebsites.net", "cloudfront.net",
     "amplifyapp.com", "r2.dev", "trycloudflare.com",
+    # Wildcard-DNS services: every name under them resolves to the IP embedded
+    # in the name, so a bare wildcard is "the entire internet by another route".
+    # The live feed does use specific hosts under these (e.g. an sslip.io host
+    # naming one attacker IP), which is why only the BARE wildcard is dropped.
+    "sslip.io", "nip.io", "xip.io", "traefik.me", "localtest.me",
+    "requestbin.net", "webhook.site", "interact.sh", "burpcollaborator.net",
 })
 
 
@@ -199,11 +238,37 @@ def _cap(value):
     return value[:MAX_STRING_LEN]
 
 
+def _safe_link(value):
+    """An http(s) URL, or "" for anything else.
+
+    The feed's `url` reaches an <a href> in three tables. React escapes text but
+    does NOT block a `javascript:` href, so an incident published with
+    `javascript:...` would execute in the operator's authenticated session the
+    moment they clicked through. Anyone can get an advisory published, which is
+    exactly why every other field here is charset-gated; this one was only
+    length-capped.
+
+    Gated at sync time so a poisoned URL never reaches the volume, the graph or
+    the browser. The render sites re-check for rows an earlier sync stored.
+    """
+    url = _cap(value).strip()
+    if not url:
+        return ""
+    lowered = url.lower()
+    if not (lowered.startswith("http://") or lowered.startswith("https://")):
+        return ""
+    # Control characters can split the attribute or smuggle a second scheme past
+    # a naive prefix check ("java\tscript:"); no legitimate URL carries them.
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in url):
+        return ""
+    return url
+
+
 def _incident_record(inc):
     """The compact record shared by every lookup file."""
     return {
         "incident_id": inc["_id"],
-        "url": _cap(inc.get("url")),
+        "url": _safe_link(inc.get("url")),
         "title": _cap(inc.get("title")),
         "status": _cap(inc.get("status")),
         "severity": _cap(inc.get("severity")),
@@ -264,11 +329,17 @@ def _ip_is_usable(addr):
 
 
 def _is_bare_public_apex_wildcard(host):
-    """True for '*.workers.dev' (drop) but not '*.cf99.workers.dev' (keep)."""
+    """True for a wildcard whose body is a shared namespace anyone can register
+    or deploy under: '*.workers.dev', '*.co.uk' (drop).
+
+    False for a wildcard scoped to one registrable domain, which is what a real
+    IOC looks like: '*.evil-attacker.com', '*.cf99.workers.dev',
+    '*.attacker.co.uk' (keep).
+    """
     if not host.startswith("*."):
         return False
     body = host[2:]
-    return body in PUBLIC_HOSTING_APEXES
+    return body in PUBLIC_HOSTING_APEXES or body in PUBLIC_REGISTRY_SUFFIXES
 
 
 def normalize(incidents):
@@ -366,6 +437,24 @@ def normalize(incidents):
         for fake, original in _typosquat_pairs(inc):
             typosquats[fake] = {"original": original, "incident_id": incident_id}
             stats["typosquats"] += 1
+
+    # The counters above count OCCURRENCES processed; the tables are keyed by
+    # host/package, so several incidents naming the same indicator collapse to
+    # one entry (last writer wins - one record per indicator is the data shape).
+    # Reporting only the occurrence count overstated real coverage 5x on the
+    # live feed (1,159 "domains" -> 221 usable), and the sync report is meant to
+    # be read as coverage. Both numbers ship, so a large gap between them is
+    # visible rather than silently flattering.
+    stats["domains_unique"] = len(domains)
+    stats["ips_unique"] = len(ips)
+    stats["packages_unique"] = len(packages)
+    stats["typosquats_unique"] = len(typosquats)
+    stats["wildcards_unique"] = len(wildcards)
+    stats["indicator_collisions"] = (
+        (stats["domains"] - len(domains))
+        + (stats["ips"] - len(ips))
+        + (stats["packages"] - len(packages))
+    )
 
     return {
         "network_iocs": {"domains": domains, "wildcards": wildcards, "ips": ips},
@@ -522,6 +611,29 @@ def sync_intel(out_path, *, url=FEED_URL, force=False,
 
     try:
         norm = normalize(incidents)
+
+        # A well-formed feed that carries NO indicators is not a clean result,
+        # it is a broken publisher. The envelope check upstream only proves
+        # there are incidents; a schema change or a partial regeneration can
+        # ship thousands of incidents with empty `iocs`, which normalizes to
+        # empty tables, overwrites the good ones, and reports success. Readers
+        # then load available=True and match nothing, so C7 records nothing
+        # either - the same silent false clean the envelope rule exists to stop,
+        # one level further down.
+        #
+        # Deliberately narrow: ONLY a total wipe is refused, never a shrink. A
+        # feed legitimately drops indicators between revisions, and a
+        # percentage heuristic here would reject good syncs.
+        if not force and _indicator_total(norm) == 0:
+            previous = _previous_indicator_total(out_path)
+            if previous > 0:
+                return {"status": "failed",
+                        "detail": ("feed carried no indicators at all while {} "
+                                   "are already stored; refusing to overwrite "
+                                   "good data with an empty set (use --force to "
+                                   "override)".format(previous)),
+                        "stats": norm["stats"]}
+
         revised = _cap(payload.get("revised")) or ""
         manifest = {
             "feed_url": url,
@@ -543,6 +655,39 @@ def sync_intel(out_path, *, url=FEED_URL, force=False,
             "stats": norm["stats"]}
 
 
+def _indicator_total(norm):
+    """Every usable lookup entry in a normalized result."""
+    net = norm.get("network_iocs") or {}
+    return (len(net.get("domains") or {})
+            + len(net.get("wildcards") or [])
+            + len(net.get("ips") or {})
+            + len(norm.get("packages") or {})
+            + len(norm.get("typosquats") or {}))
+
+
+def _previous_indicator_total(out_path):
+    """What is already on the volume, for the empty-overwrite guard.
+
+    Read defensively: an unreadable or absent previous set counts as 0, so a
+    first sync onto a cold volume is never blocked by this.
+    """
+    total = 0
+    for name, key in (("network_iocs.json", None), ("packages.json", None),
+                      ("typosquats.json", None)):
+        try:
+            with open(os.path.join(out_path, name)) as fh:
+                blob = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        if name == "network_iocs.json" and isinstance(blob, dict):
+            total += (len(blob.get("domains") or {})
+                      + len(blob.get("wildcards") or [])
+                      + len(blob.get("ips") or {}))
+        elif isinstance(blob, dict):
+            total += len(blob)
+    return total
+
+
 def _write_all(out_path, norm, manifest):
     """Write every file atomically, manifest LAST.
 
@@ -559,11 +704,37 @@ def _write_all(out_path, norm, manifest):
 
 
 def _write_json(out_path, name, payload):
+    """Write one table, atomically, through a temp file UNIQUE to this writer.
+
+    A fixed `<name>.tmp` was not safe: two writers can be in here at once (the
+    operator's `redamon.sh sca-intel-sync --force` skips both the TTL and the
+    retry floor, so it can land on top of a scan-triggered refresh), and the
+    orchestrator's lock is per-process. Both would open the SAME path, truncate
+    it, and interleave their writes; the surviving file could be spliced from
+    two streams. A corrupt table then reads back as `available=True` with ZERO
+    entries, because the loader treats a parse failure as an empty table - a
+    silent false clean, which is the one outcome this whole feature exists to
+    prevent.
+
+    A pid suffix would NOT be enough: each container has its own PID namespace,
+    so two sidecars are both pid 1. mkstemp is unique on the shared filesystem
+    itself, which is the only scope that matters here.
+    """
     final = os.path.join(out_path, name)
-    tmp = final + ".tmp"
-    with open(tmp, "w") as fh:
-        json.dump(payload, fh, separators=(",", ":"), sort_keys=True)
-    os.replace(tmp, final)
+    fd, tmp = tempfile.mkstemp(dir=out_path, prefix=name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            json.dump(payload, fh, separators=(",", ":"), sort_keys=True)
+        # Atomic: the reader sees either the old file or the new one, never a
+        # half-written one. Concurrent writers now race only on WHICH complete
+        # file wins, which is survivable; they no longer corrupt one.
+        os.replace(tmp, final)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def _make_world_readable(out_path):

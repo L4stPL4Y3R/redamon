@@ -88,9 +88,12 @@ export function pickCapture(d: Record<string, unknown>): CaptureSettings {
     captureEgressBlockReserved: b(d.captureEgressBlockReserved, true),
     captureEgressBlockMulticast: b(d.captureEgressBlockMulticast, true),
     captureEgressBlockUnspecified: b(d.captureEgressBlockUnspecified, true),
-    // An empty string is a MEANINGFUL value here (the operator cleared the list),
-    // so `??` rather than `||`: falling back on empty would silently re-apply
-    // the shipped defaults and keep suppressing hosts they asked to see.
+    // The FORM preserves an empty string (so the box round-trips what the
+    // operator typed and the dirty-check works), but note the matchers treat
+    // empty as "use the shipped provider list" - that is what the field's
+    // tooltip promises, and both the Python and TypeScript matchers implement
+    // it. Suppression therefore cannot be turned off by clearing the box; to
+    // see OAST hits, replace the list with a host you never use.
     scaIntelIgnoreSuffixes: typeof d.scaIntelIgnoreSuffixes === 'string'
       ? d.scaIntelIgnoreSuffixes
       : DEFAULT_CAPTURE.scaIntelIgnoreSuffixes,

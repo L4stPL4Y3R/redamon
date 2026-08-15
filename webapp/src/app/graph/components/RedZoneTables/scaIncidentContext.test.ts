@@ -93,3 +93,29 @@ describe('table wiring', () => {
     expect(SOURCE).toContain('colSpan={12}')
   })
 })
+
+describe('javascript: URI regression (security)', () => {
+  // The incident URL comes from a public catalog anyone can publish to, and
+  // React renders a `javascript:` href without complaint. Every render site must
+  // scheme-check rather than truthiness-check, because rows stored by a sync
+  // that predates the source-side gate are still in the database.
+  const SINKS: [string, string][] = [
+    ['SCA table', SOURCE],
+    ['Threat Intel table', readFileSync(
+      join(process.cwd(), 'src/app/graph/components/RedZoneTables/ThreatIntelTable.tsx'), 'utf8')],
+    ['Traffic page', readFileSync(
+      join(process.cwd(), 'src/app/traffic/page.tsx'), 'utf8')],
+  ]
+
+  test.each(SINKS)('%s guards the incident href with isHttpUrl', (_name, src) => {
+    expect(src).toContain('isHttpUrl')
+    // No render site may gate an incident href on truthiness alone.
+    expect(src).not.toMatch(/\{\s*r\.iocIncidentUrl\s*\?/)
+    expect(src).not.toMatch(/\{\s*row\.incidentUrl\s*&&/)
+    expect(src).not.toMatch(/\{\s*r\.incidentUrl\s*\?/)
+  })
+
+  test.each(SINKS)('%s imports the shared helper rather than rolling its own', (_name, src) => {
+    expect(src).toMatch(/import \{[^}]*isHttpUrl[^}]*\} from '@\/lib\/url-utils'/)
+  })
+})

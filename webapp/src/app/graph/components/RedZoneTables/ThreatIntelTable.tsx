@@ -6,7 +6,7 @@ import { useRedZoneTable } from './useRedZoneTable'
 import type { RedZoneExportConfig } from './exportCsv'
 import { useRedZoneFilters, type RedZoneFilterColumn } from './useRedZoneFilters'
 import { ExternalLink } from '@/components/ui'
-import { resolveLinkable } from '@/lib/url-utils'
+import { isHttpUrl, resolveLinkable } from '@/lib/url-utils'
 import {
   Mono,
   Truncated,
@@ -222,8 +222,10 @@ export const ThreatIntelTable = memo(function ThreatIntelTable({ projectId }: Pr
                   // party the target contacted, carried on the relationship.
                   <span title={r.incidentSummary || undefined}>
                     <Mono>{r.contactedHost}</Mono>
-                    {r.incidentUrl
-                      ? <> <ExternalLink href={r.incidentUrl}>{r.incidentId || 'incident'}</ExternalLink></>
+                    {/* isHttpUrl, not truthiness: the URL comes from a public
+                        feed and React renders a `javascript:` href happily. */}
+                    {isHttpUrl(r.incidentUrl)
+                      ? <> <ExternalLink href={r.incidentUrl!}>{r.incidentId || 'incident'}</ExternalLink></>
                       : (r.incidentId ? <> <span className={rowStyles.listChip}>{r.incidentId}</span></> : null)}
                   </span>
                 ) : <span className={rowStyles.nullCell}>-</span>}

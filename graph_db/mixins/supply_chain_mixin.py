@@ -77,6 +77,23 @@ _INCIDENT_PROPS = ("incident_id", "incident_url", "incident_summary",
                    "incident_status", "incident_feed_revised")
 
 
+# Which tool produced a `suspicious` finding. This used to be hardcoded to
+# "guarddog" for every one of them, which was true when GuardDog was the only
+# producer and became wrong the moment typosquat detection started writing here:
+# a typosquat finding reached the graph claiming GuardDog found it, and the SCA
+# table (which reads source_tool to word the verdict) then labelled it a
+# behavioural hit. Anything unrecognised still maps to guarddog so existing rows
+# and existing rules keep their meaning.
+_SUSPICIOUS_TOOL_BY_RULE = {
+    "typosquat": "typosquat",
+}
+
+
+def _suspicious_tool(finding):
+    rule = (finding.get("rule") or "").strip().lower()
+    return _SUSPICIOUS_TOOL_BY_RULE.get(rule, "guarddog")
+
+
 def _incident_params(finding):
     """Cypher params for the incident properties; None when never enriched.
 
@@ -186,12 +203,12 @@ class SupplyChainMixin:
                  "relationships_created": 0, "errors": []}
 
         packages = data.get("packages") or []
-        # Map both malicious (OSV MAL-) and suspicious (GuardDog) into findings.
+        # Map malicious (OSV MAL-) and suspicious findings into one list.
         findings = []
         for m in data.get("malicious") or []:
             findings.append(("malicious", "osv", m.get("advisory_id"), m))
         for s in data.get("suspicious") or []:
-            findings.append(("suspicious", "guarddog", s.get("rule"), s))
+            findings.append(("suspicious", _suspicious_tool(s), s.get("rule"), s))
 
         with self.driver.session() as session:
             for pkg in packages:
@@ -522,6 +539,13 @@ class SupplyChainMixin:
     def update_graph_from_sca_intel(self, correlation, user_id, project_id):
         """MERGE a ThreatPulse per matched incident + CONTACTS_MALICIOUS_HOST.
 
+        The BaseURL is MATCHed FIRST and the pulse MERGEd after it. Cypher runs
+        left to right, so ordering it the other way created the ThreatPulse and
+        only then discovered there was nothing to attach it to - leaving an
+        orphan node that renders as a floating node in the graph view, counts
+        against the 20,000-node read cap, and is never cleaned up. With the match
+        first, no anchor means no row to carry forward and nothing is written.
+
         REUSES ThreatPulse rather than adding a label: RedAmon already models
         "a named threat report listing indicators, attached to a discovered
         asset" (OTX enrichment writes exactly that). The 20,000-node graph read
@@ -554,6 +578,8 @@ class SupplyChainMixin:
                 try:
                     res = session.run(
                         """
+                        MATCH (u:BaseURL {url: $base_url, user_id: $uid, project_id: $pid})
+                        WITH u
                         MERGE (tp:ThreatPulse {pulse_id: $pulse_id, user_id: $uid, project_id: $pid})
                         ON CREATE SET tp.created_at = datetime()
                         SET tp.name         = $name,
@@ -568,11 +594,9 @@ class SupplyChainMixin:
                             tp.sca_remediation   = $remediation,
                             tp.sca_feed_revised  = $feed_revised,
                             tp.updated_at   = datetime()
-                        WITH tp
-                        MATCH (u:BaseURL {url: $base_url, user_id: $uid, project_id: $pid})
-                        MERGE (u)-[c:CONTACTS_MALICIOUS_HOST]->(tp)
-                        SET c.matched_host = $matched_host,
-                            c.evidence     = $evidence,
+                        WITH u, tp
+                        MERGE (u)-[c:CONTACTS_MALICIOUS_HOST {matched_host: $matched_host}]->(tp)
+                        SET c.evidence     = $evidence,
                             c.source_url   = $source_url,
                             c.updated_at   = datetime()
                         RETURN count(c) AS linked
@@ -590,9 +614,16 @@ class SupplyChainMixin:
                         remediation=[str(r) for r in (inc.get("remediation") or [])][:20],
                         feed_revised=inc.get("feed_revised") or "",
                         base_url=base_url,
-                        # The attacker host lives on the RELATIONSHIP. Merging it
-                        # as a node would put a host the target does not own into
-                        # the attack surface.
+                        # The attacker host lives on the RELATIONSHIP, and it is
+                        # part of that relationship's IDENTITY. One incident
+                        # commonly lists several attacker domains, and a target
+                        # can contact more than one: keyed on the two nodes
+                        # alone, the second host MERGEd the SAME edge and
+                        # overwrote the first, so the table showed one contacted
+                        # host and silently lost the rest of the evidence.
+                        # Merging it as a NODE is still forbidden - that would
+                        # put a host the target does not own into its attack
+                        # surface.
                         matched_host=hit.get("matched_host") or "",
                         evidence=hit.get("evidence") or "graph-host-match",
                         source_url=hit.get("source_url") or "",

@@ -11,7 +11,7 @@
  * supply_chain_common/intel.py. Kept deliberately small for that reason: every
  * rule added here has to be added there too.
  */
-import { readFileSync } from 'node:fs'
+import { readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
 /**
@@ -64,7 +64,20 @@ function emptyIntel(): ScaIntel {
   return { available: false, domains: {}, wildcards: [], ips: {}, revised: '' }
 }
 
+/**
+ * How often this process re-checks whether the volume was re-synced.
+ *
+ * Next.js runs for days and the refresh sidecar rewrites the volume underneath
+ * it, so without a re-check the route would answer from the copy it loaded at
+ * boot forever and a freshly synced IOC would never apply. Mirrors the Python
+ * reader's window so the two ingest paths cannot disagree about how fresh their
+ * view is.
+ */
+const RELOAD_CHECK_MS = 60_000
+
 let cache: ScaIntel | null = null
+let cacheMtimeMs: number | null = null
+let cacheCheckedAt = 0
 
 function readJson(name: string): unknown {
   try {
@@ -74,15 +87,33 @@ function readJson(name: string): unknown {
   }
 }
 
+function manifestMtimeMs(): number | null {
+  try {
+    return statSync(join(intelPath(), 'manifest.json')).mtimeMs
+  } catch {
+    return null
+  }
+}
+
 /**
- * Load the intel tables once per process. Never throws: a missing volume, an
- * unreadable file and a never-synced deploy all yield available=false.
+ * Load the intel tables, re-reading them after a re-sync. Never throws: a
+ * missing volume, an unreadable file and a never-synced deploy all yield
+ * available=false.
  */
 export function loadScaIntel(force = false): ScaIntel {
-  if (cache && !force) return cache
+  if (cache && !force) {
+    const now = Date.now()
+    if (now - cacheCheckedAt < RELOAD_CHECK_MS) return cache
+    cacheCheckedAt = now
+    // manifest.json is written last and only on a successful sync, so its
+    // mtime is exactly "the data changed".
+    if (manifestMtimeMs() === cacheMtimeMs) return cache
+  }
   const manifest = readJson('manifest.json') as { revised?: string } | null
   if (!manifest || typeof manifest !== 'object') {
     cache = emptyIntel()
+    cacheMtimeMs = manifestMtimeMs()
+    cacheCheckedAt = Date.now()
     return cache
   }
   const network = (readJson('network_iocs.json') || {}) as {
@@ -100,12 +131,16 @@ export function loadScaIntel(force = false): ScaIntel {
     ips: network.ips || {},
     revised: String(manifest.revised || ''),
   }
+  cacheMtimeMs = manifestMtimeMs()
+  cacheCheckedAt = Date.now()
   return cache
 }
 
 /** Test seam: drop the module-level cache. */
 export function resetScaIntelCache(): void {
   cache = null
+  cacheMtimeMs = null
+  cacheCheckedAt = 0
 }
 
 function ignoreSuffixes(): string[] {

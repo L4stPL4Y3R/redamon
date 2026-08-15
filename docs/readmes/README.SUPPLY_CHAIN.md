@@ -251,6 +251,11 @@ contract keeps the previous files on rejection, so `manifest.json` never advance
 while the feed is broken, and a TTL-only check would re-fetch on every single scan
 spawn. A separate attempt marker bounds that to one attempt per hour.
 
+Readers are long-lived (the webapp, `traffic-ingest`), so they re-check
+`manifest.json`'s mtime at most once a minute and reload when it changed. A
+re-sync therefore applies within that window without a restart, at a cost of one
+`stat` per window rather than one per captured request.
+
 | Knob (orchestrator env) | Default | Meaning |
 |---|---|---|
 | `SCA_INTEL_AUTO_REFRESH` | `true` | `false` for a strictly air-gapped deploy |
