@@ -63,6 +63,44 @@ def _finding_title(finding, advisory):
     return "finding"
 
 
+# Incident context (B): the seven properties the supplychainattack.org catalog
+# contributes to a finding that ALREADY EXISTS. They are attached upstream by
+# supply_chain_common.intel.enrich_findings, which runs after the last artifact
+# validation, so this layer only reads optional keys and never requires them.
+#
+# graph_db must NOT import supply_chain_common: graph_db is COPY-baked into the
+# agent image while supply_chain_common is bind-mounted at scan spawn and is
+# absent there. The field list is therefore duplicated, and a test asserts the
+# two never drift.
+_INCIDENT_PROPS = ("incident_id", "incident_url", "incident_summary",
+                   "incident_blast_radius", "incident_remediation",
+                   "incident_status", "incident_feed_revised")
+
+
+def _incident_params(finding):
+    """Cypher params for the incident properties; None when never enriched.
+
+    A remediation list is capped and stringified here as well as upstream: this
+    mixin is also reachable from an artifact that came off disk (a re-import, a
+    restored snapshot), where the upstream cap cannot be assumed.
+    """
+    params = {}
+    for prop in _INCIDENT_PROPS:
+        value = finding.get(prop)
+        if prop == "incident_remediation":
+            if isinstance(value, list):
+                value = [str(v) for v in value[:20]]
+            elif value:
+                value = [str(value)]
+            else:
+                value = None
+        elif value is not None and not isinstance(value, str):
+            value = str(value)
+        # "" reads as "present but empty" in the UI; absent is the honest state.
+        params[prop] = value or None
+    return params
+
+
 # The Vulnerability node's severity enum is critical|high|medium|low|info -
 # there is no "unknown". An ungraded advisory lands at info so it does not
 # inflate the alert stream.
@@ -248,7 +286,14 @@ class SupplyChainMixin:
                             mf.advisory_id = $advisory, mf.severity = $severity,
                             mf.confidence = $confidence, mf.title = $title,
                             mf.detail = $detail, mf.soft_error = $soft_error,
-                            mf.aliases = $aliases, mf.last_seen = datetime()
+                            mf.aliases = $aliases, mf.last_seen = datetime(),
+                            mf.incident_id = $incident_id,
+                            mf.incident_url = $incident_url,
+                            mf.incident_summary = $incident_summary,
+                            mf.incident_blast_radius = $incident_blast_radius,
+                            mf.incident_remediation = $incident_remediation,
+                            mf.incident_status = $incident_status,
+                            mf.incident_feed_revised = $incident_feed_revised
                         WITH mf
                         MERGE (p:Package {purl: $purl, user_id: $uid, project_id: $pid})
                         ON CREATE SET p.first_seen = datetime(), p.name = $pname,
@@ -273,6 +318,14 @@ class SupplyChainMixin:
                         # None, not "": an absent detail should be an absent
                         # property, not an empty string that reads as present.
                         detail=f.get("detail") or f.get("message") or None,
+                        # Incident context (B). Optional keys: the enrichment
+                        # step is a local dictionary join that may not have run
+                        # (never-synced volume, air-gapped deploy), so these are
+                        # read with .get and land as None rather than failing the
+                        # write. NOTE these deliberately do NOT touch `title` -
+                        # that is the graph viewer's node name, guarded at 120
+                        # chars, and incident titles would blow past it.
+                        **_incident_params(f),
                     )
                     if verdict == "malicious":
                         stats["malicious_merged"] += 1

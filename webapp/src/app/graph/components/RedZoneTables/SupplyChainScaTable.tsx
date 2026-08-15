@@ -1,6 +1,6 @@
 'use client'
 
-import { memo, useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, memo, useCallback, useEffect, useMemo, useState } from 'react'
 import { RedZoneTableShell } from './RedZoneTableShell'
 import { useRedZoneFilters } from './useRedZoneFilters'
 import type { RedZoneExportConfig } from './exportCsv'
@@ -43,6 +43,17 @@ interface VerdictRow {
   baseUrls: string[]
   repos: string[]
   sboms: string[]
+  // Incident context from the supplychainattack.org catalog (feature B). All
+  // null when the intel volume was never synced; the detail row is rendered
+  // conditionally so a never-synced deploy shows nothing rather than an empty
+  // panel that reads as "no incident is known about this package".
+  incidentId: string | null
+  incidentUrl: string | null
+  incidentSummary: string | null
+  incidentBlastRadius: string | null
+  incidentRemediation: string[]
+  incidentStatus: string | null
+  incidentFeedRevised: string | null
 }
 
 interface PackageRow {
@@ -110,7 +121,25 @@ const PAGE_SIZE = 100
  * the failure mode the whole feature is built to avoid: "GuardDog ran and found
  * something" and "GuardDog never ran" must not look alike.
  */
-function VerdictChip({ row }: { row: Pick<VerdictRow, 'verdict' | 'softError' | 'advisoryId'> }) {
+/**
+ * What a non-malicious verdict actually means depends on WHICH tool produced it.
+ * This used to hardcode GuardDog for every `verdict !== 'malicious'` row, so a
+ * finding from any other tool was mislabelled as a behavioural hit.
+ */
+export function suspiciousVerdictTitle(sourceTool: string | null): string {
+  switch ((sourceTool || '').toLowerCase()) {
+    case 'guarddog':
+      return 'GuardDog behavioural hit, not a terminal verdict'
+    case 'typosquat':
+      return 'Name is a near-miss of a popular package, not a terminal verdict'
+    case 'retirejs':
+      return 'retire.js matched a known-vulnerable library version'
+    default:
+      return 'Non-terminal verdict: flagged, but not confirmed malicious'
+  }
+}
+
+function VerdictChip({ row }: { row: Pick<VerdictRow, 'verdict' | 'softError' | 'advisoryId' | 'sourceTool'> }) {
   const notAnalysed = row.softError || row.advisoryId === 'guarddog-not-run'
   if (notAnalysed) {
     return <span className={`${rowStyles.sevBadge} ${rowStyles.sevInfo}`} title="The behavioural pass did not produce a verdict for this package. It is UNCHECKED, not clean.">not analysed</span>
@@ -118,7 +147,74 @@ function VerdictChip({ row }: { row: Pick<VerdictRow, 'verdict' | 'softError' | 
   if (row.verdict === 'malicious') {
     return <span className={`${rowStyles.sevBadge} ${rowStyles.sevCritical}`} title="OSV MAL- advisory: the package itself is malware">malicious</span>
   }
-  return <span className={`${rowStyles.sevBadge} ${rowStyles.sevMedium}`} title="GuardDog behavioural hit, not a terminal verdict">{row.verdict}</span>
+  return <span className={`${rowStyles.sevBadge} ${rowStyles.sevMedium}`} title={suspiciousVerdictTitle(row.sourceTool)}>{row.verdict}</span>
+}
+
+export function hasIncident(row: Pick<VerdictRow, 'incidentId' | 'incidentSummary'>): boolean {
+  return !!(row.incidentId || row.incidentSummary)
+}
+
+/**
+ * The incident column is EMPTY, not "none", when the catalog was never synced.
+ * "None" would assert that no incident is known, which is a claim the product
+ * cannot make without the data.
+ */
+function IncidentToggle({ row, open, onToggle }: {
+  row: VerdictRow
+  open: boolean
+  onToggle: (findingId: string) => void
+}) {
+  if (!hasIncident(row)) return <span className={rowStyles.nullCell}>-</span>
+  return (
+    <button
+      type="button"
+      onClick={() => onToggle(row.findingId)}
+      aria-expanded={open}
+      style={{
+        cursor: 'pointer', background: 'transparent', fontSize: 11,
+        border: '1px solid rgba(255,255,255,0.25)', borderRadius: 4,
+        padding: '1px 6px', color: 'inherit',
+      }}
+    >
+      {open ? '▾' : '▸'} {row.incidentId || 'incident'}
+    </button>
+  )
+}
+
+function IncidentDetailRow({ row }: { row: VerdictRow }) {
+  return (
+    <tr>
+      <td colSpan={12} style={{ padding: '8px 14px', fontSize: 12, opacity: 0.92 }}>
+        {row.incidentSummary && <p style={{ margin: '0 0 6px' }}>{row.incidentSummary}</p>}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, marginBottom: 6 }}>
+          {row.incidentStatus && <span><strong>Status:</strong> {row.incidentStatus}</span>}
+          {row.incidentBlastRadius && <span><strong>Blast radius:</strong> {row.incidentBlastRadius}</span>}
+          {row.incidentFeedRevised && (
+            // The feed revision is what makes a finding interpretable later: a
+            // restored Scan Timeline snapshot carries the enrichment it had when
+            // it was taken, not today's.
+            <span><strong>Feed revision:</strong> {row.incidentFeedRevised}</span>
+          )}
+        </div>
+        {row.incidentRemediation.length > 0 && (
+          <>
+            <strong>Remediation</strong>
+            <ol style={{ margin: '4px 0 6px 18px' }}>
+              {row.incidentRemediation.map((step, i) => <li key={i}>{step}</li>)}
+            </ol>
+          </>
+        )}
+        {row.incidentUrl && (
+          <a href={row.incidentUrl} target="_blank" rel="noopener noreferrer">
+            supplychainattack.org incident ↗
+          </a>
+        )}
+        <div style={{ marginTop: 6, opacity: 0.6, fontSize: 11 }}>
+          Incident data: supplychainattack.org
+        </div>
+      </td>
+    </tr>
+  )
 }
 
 type PkgStatus = 'malicious' | 'vulnerable' | 'suspicious' | 'not analysed' | 'unverdictable' | 'clean'
@@ -135,7 +231,10 @@ const STATUS_CLASS: Record<PkgStatus, string> = {
 const STATUS_TITLE: Record<PkgStatus, string> = {
   malicious: 'An OSV MAL- advisory matched this package',
   vulnerable: 'One or more CVE/GHSA advisories match this version',
-  suspicious: 'GuardDog flagged behaviour, not a terminal verdict',
+  // Tool-neutral on purpose: the packages sheet rolls up findings from several
+  // tools, so naming GuardDog here mislabelled every non-GuardDog finding. The
+  // per-tool wording lives on the verdict chip, where the tool is known.
+  suspicious: 'Flagged as suspicious, not a terminal verdict (see the Verdicts sheet for which tool)',
   'not analysed': 'The behavioural pass never produced a verdict for this package',
   unverdictable:
     'No version was ever resolved, so osv-scanner could not match a version-specific advisory. This package was never actually checked.',
@@ -221,6 +320,16 @@ const EXPORT_COLUMNS: Record<SheetKey, { key: string; header: string }[]> = {
     { key: 'sboms', header: 'SBOM File' },
     { key: 'firstSeen', header: 'First Seen' },
     { key: 'lastSeen', header: 'Last Seen' },
+    // Incident context (B). Declared here so the per-column filter engine and
+    // the CSV export both pick them up; without this the columns exist in the
+    // UI but cannot be filtered or exported.
+    { key: 'incidentId', header: 'Incident' },
+    { key: 'incidentStatus', header: 'Incident Status' },
+    { key: 'incidentSummary', header: 'Incident Summary' },
+    { key: 'incidentBlastRadius', header: 'Blast Radius' },
+    { key: 'incidentRemediation', header: 'Remediation' },
+    { key: 'incidentUrl', header: 'Incident URL' },
+    { key: 'incidentFeedRevised', header: 'Feed Revision' },
   ],
   packages: [
     { key: 'name', header: 'Package' },
@@ -291,6 +400,12 @@ export const SupplyChainScaTable = memo(function SupplyChainScaTable({ projectId
   const [active, setActive] = useState<SheetKey>(isSheetKey(initialSheet) ? initialSheet : 'verdicts')
   const [search, setSearch] = useState('')
   const [limit, setLimit] = useState(PAGE_SIZE)
+  // Per-finding incident detail disclosure (feature B). Keyed by findingId so a
+  // re-sort or a filter change does not move the open panel to another row.
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+  const toggleIncident = useCallback((findingId: string) => {
+    setExpanded(prev => ({ ...prev, [findingId]: !prev[findingId] }))
+  }, [])
 
   const fetchData = useCallback(async () => {
     if (!projectId) { setData(null); return }
@@ -398,27 +513,31 @@ export const SupplyChainScaTable = memo(function SupplyChainScaTable({ projectId
             <tr>
               <th>Verdict</th><th>Sev</th><th>Advisory / Rule</th><th>Package</th>
               <th>Version</th><th>Eco</th><th>Tool</th><th>Origin</th>
-              <th>Anchor</th><th>Title</th><th>Detail</th>
+              <th>Anchor</th><th>Title</th><th>Detail</th><th>Incident</th>
             </tr>
           </thead>
           <tbody>
             {(sliced as unknown as VerdictRow[]).map((r, i) => (
-              <tr key={r.findingId || `${r.purl}-${i}`}>
-                <td><VerdictChip row={r} /></td>
-                <td><SeverityBadge severity={normalizeSeverity(r.severity)} /></td>
-                <td>
-                  <Mono>{r.advisoryId || '-'}</Mono>
-                  {r.aliases.length > 0 && <ListCell items={r.aliases} max={2} />}
-                </td>
-                <td>{r.name ? <Mono>{r.name}</Mono> : <span className={rowStyles.nullCell}>-</span>}</td>
-                <td><VersionCell version={r.version} /></td>
-                <td>{r.ecosystem || '-'}</td>
-                <td>{r.sourceTool || '-'}</td>
-                <td><span className={rowStyles.listChip}>{originOf(r)}</span></td>
-                <td><AnchorCell row={r} /></td>
-                <td><Truncated text={r.title} max={240} /></td>
-                <td><Truncated text={r.detail} max={240} /></td>
-              </tr>
+              <Fragment key={r.findingId || `${r.purl}-${i}`}>
+                <tr>
+                  <td><VerdictChip row={r} /></td>
+                  <td><SeverityBadge severity={normalizeSeverity(r.severity)} /></td>
+                  <td>
+                    <Mono>{r.advisoryId || '-'}</Mono>
+                    {r.aliases.length > 0 && <ListCell items={r.aliases} max={2} />}
+                  </td>
+                  <td>{r.name ? <Mono>{r.name}</Mono> : <span className={rowStyles.nullCell}>-</span>}</td>
+                  <td><VersionCell version={r.version} /></td>
+                  <td>{r.ecosystem || '-'}</td>
+                  <td>{r.sourceTool || '-'}</td>
+                  <td><span className={rowStyles.listChip}>{originOf(r)}</span></td>
+                  <td><AnchorCell row={r} /></td>
+                  <td><Truncated text={r.title} max={240} /></td>
+                  <td><Truncated text={r.detail} max={240} /></td>
+                  <td><IncidentToggle row={r} open={!!expanded[r.findingId]} onToggle={toggleIncident} /></td>
+                </tr>
+                {expanded[r.findingId] && <IncidentDetailRow row={r} />}
+              </Fragment>
             ))}
           </tbody>
         </table>

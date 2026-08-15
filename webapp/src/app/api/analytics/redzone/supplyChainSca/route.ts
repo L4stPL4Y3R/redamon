@@ -87,6 +87,17 @@ export async function GET(request: NextRequest) {
               coalesce(f.aliases, [])       AS aliases,
               toString(f.first_seen)        AS firstSeen,
               toString(f.last_seen)         AS lastSeen,
+              // Incident context from the supplychainattack.org catalog. Null on
+              // every finding when the intel volume was never synced, which is
+              // why the UI renders the detail row conditionally rather than
+              // showing an empty panel.
+              f.incident_id             AS incidentId,
+              f.incident_url            AS incidentUrl,
+              f.incident_summary        AS incidentSummary,
+              f.incident_blast_radius   AS incidentBlastRadius,
+              coalesce(f.incident_remediation, []) AS incidentRemediation,
+              f.incident_status         AS incidentStatus,
+              f.incident_feed_revised   AS incidentFeedRevised,
               p.purl            AS purl,
               p.name            AS name,
               p.version         AS version,
@@ -189,6 +200,13 @@ export async function GET(request: NextRequest) {
         baseUrls: toStrList(r.get('baseUrls')),
         repos: toStrList(r.get('repos')),
         sboms: toStrList(r.get('sboms')),
+        incidentId: (r.get('incidentId') as string) ?? null,
+        incidentUrl: (r.get('incidentUrl') as string) ?? null,
+        incidentSummary: (r.get('incidentSummary') as string) ?? null,
+        incidentBlastRadius: (r.get('incidentBlastRadius') as string) ?? null,
+        incidentRemediation: toStrList(r.get('incidentRemediation')),
+        incidentStatus: (r.get('incidentStatus') as string) ?? null,
+        incidentFeedRevised: (r.get('incidentFeedRevised') as string) ?? null,
       })),
       packages: packages.records.map((r: Neo4jRecord) => ({
         purl: (r.get('purl') as string) || '',

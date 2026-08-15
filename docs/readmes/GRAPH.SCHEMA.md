@@ -1878,7 +1878,7 @@ RETURN s.name AS host, svc.name AS service, u.url AS url,
 | Secret | id, secret_type, severity, source, source_url, base_url, sample | ✅ Unique (global), ✅ Tenant index |
 | JsReconFinding | id, finding_type, severity, confidence, title, detail, source_url, package_name, package_version | ✅ Unique (global), ✅ Tenant index |
 | Package | purl, ecosystem, name, version, source, source_path, first_seen, last_seen | ✅ Unique (purl, user_id, project_id) |
-| MalPackageFinding | finding_id, verdict, source_tool, advisory_id, severity, confidence, title, detail, soft_error, aliases | ✅ Unique (finding_id, user_id, project_id) |
+| MalPackageFinding | finding_id, verdict, source_tool, advisory_id, severity, confidence, title, detail, soft_error, aliases, incident_id, incident_url, incident_summary, incident_blast_radius, incident_remediation, incident_status, incident_feed_revised | ✅ Unique (finding_id, user_id, project_id) |
 
 ---
 
@@ -3216,12 +3216,33 @@ Uniqueness: `(purl, user_id, project_id)` (tenant-scoped).
   title, detail,
   soft_error,    // true = the behavioural pass produced NO verdict (UNCHECKED, not clean)
   aliases,       // OSV alias ids for the advisory (a MAL- often also has a GHSA-)
+  // --- incident context, from the public supplychainattack.org catalog -------
+  // Attached AFTER the last artifact validation by
+  // supply_chain_common.intel.enrich_findings, so these are deliberately NOT on
+  // the DIRTY->CLEAN artifact allowlist: the analyzer may never supply them.
+  // All NULL when the intel volume was never synced. NULL means "not in the
+  // catalog OR never synced", never "this package is safe".
+  incident_id,            // e.g. SCA-0001
+  incident_url,           // link to the incident write-up
+  incident_summary,       // free text, THIRD-PARTY and attacker-influenceable
+  incident_blast_radius,  // e.g. "3,000 downloads"
+  incident_remediation,   // list of steps, capped at 20
+  incident_status,        // e.g. confirmed
+  incident_feed_revised,  // feed revision that produced this enrichment
   user_id, project_id,
   first_seen, last_seen
 })
 ```
 
 Uniqueness: `(finding_id, user_id, project_id)` (tenant-scoped).
+The incident text never sets `verdict` and never sets `title`: the match is
+name-only (weaker evidence than an OSV verdict), and `title` is the graph
+viewer's node name, guarded at 120 chars.
+
+A Scan Timeline snapshot serializes all node properties with no allowlist, so
+these ride along and restoring an old version restores the enrichment as it was
+at snapshot time. That is correct and intended: `incident_feed_revised` is what
+makes a restored snapshot interpretable.
 Only OSV `MAL-` ids produce `verdict=malicious`; `CVE-`/`GHSA-` are kept in raw
 JSON only, never written as malicious.
 

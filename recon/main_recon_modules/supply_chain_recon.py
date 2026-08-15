@@ -681,6 +681,25 @@ def run_supply_chain_recon(combined_result, settings=None):
             print("[!][SupplyChainRecon] deep analysis failed: {}".format(exc))
             artifact["errors"].append("deep analysis failed: {}".format(exc))
 
+    # Incident context (B). MUST come after the LAST validate_artifact above:
+    # the incident_* properties are deliberately absent from the artifact
+    # allowlist, so enriching before the gate would fail validation. This is the
+    # ordering that keeps the DIRTY->CLEAN boundary closed - nothing may add
+    # fields before the last gate, and this is a trusted LOCAL dictionary join
+    # with no network and no new findings.
+    try:
+        from supply_chain_common.intel import enrich_findings, load_intel
+
+        _intel = load_intel()
+        enrich_findings(artifact, _intel)
+        if not _intel.available:
+            print("[!][SupplyChainRecon] incident intel unavailable; findings "
+                  "carry no incident context")
+    except Exception as exc:
+        # C7 again: record that the pass did not run, never fail the scan for it.
+        print("[!][SupplyChainRecon] incident enrichment failed: {}".format(exc))
+        artifact["errors"].append("incident enrichment failed: {}".format(exc))
+
     combined_result["supply_chain_recon"] = {
         "artifact": artifact,
         "base_urls": base_urls,
