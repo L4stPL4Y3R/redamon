@@ -336,6 +336,8 @@ Two **append-only** tables record security-relevant events. `AuditLog` (`audit_l
 
 **Image allowlisting** (see [Section 12](#12-injection-and-input-validation-defenses)) prevents substitution of tool images at run time.
 
+**Third-party threat feeds are treated as untrusted input, not as data we trust.** The supply-chain incident catalog (supplychainattack.org) is fetched by a sidecar that is host-pinned (the allowlist is re-checked on every redirect hop), byte-capped, envelope-validated, and runs `cap_drop: ALL` with no Neo4j, Postgres or Docker-socket access. Its volume is mounted **read-only everywhere except that sidecar** and is deliberately absent from the broker's `ALLOWED_RW_VOLUMES`, so a compromised scanner cannot poison the intel other scans then trust. Because anyone can get an advisory published, every field is gated on the way in: hostnames against an LDH charset (prose entries and slash-joined garbage are dropped **and counted**), IPs against `is_global` so a poisoned entry cannot make RedAmon flag its own infrastructure, package names against the same `sanitize_name` used for subprocess arguments, incident URLs against an http(s) scheme check (they reach `<a href>` sinks, and React renders a `javascript:` href without complaint), and free text capped. A feed that returns no indicators at all is refused rather than allowed to overwrite good data with an empty set. The incident prose reaches the agent through `query_graph` wrapped in the same unforgeable `UNTRUSTED_GRAPH_DATA` boundary tool output gets, decided from the executed Cypher rather than the result text so a column alias cannot turn the containment off.
+
 ---
 
 ## 18. Threat coverage at a glance

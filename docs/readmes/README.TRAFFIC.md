@@ -510,6 +510,12 @@ Shape (grouped):
 - **Passive signals:** `hasSetCookie`, `hadAuth`, `reflectedParams`,
   `securityHeadersMissing`, `cookieFlagIssues` (computed by the proxy only when
   `captureProxyPassiveDetect` is on).
+- **Supply-chain incident match:** `iocIncidentId`, `iocIncidentUrl`. Set when
+  the request's host or resolved IP appears in the offline incident catalog
+  (see [README.SUPPLY_CHAIN.md](README.SUPPLY_CHAIN.md)). A local set lookup, no
+  network and no new credential, so the worker's INSERT-only role is unchanged.
+  **NULL means "no match OR the catalog was never synced" — never "this host is
+  clean".** Both writers set them; see the warning below.
 - **Timestamps:** `startedAt`, `createdAt`.
 - **Reserved (declared but not yet wired):** `labels`, `findingId`, `flowRef`. No
   code writes or reads these today, so transaction tagging, finding links, and
@@ -537,7 +543,9 @@ validated against `^[0-9a-f]{64}$` to block path traversal
 [`webapp/src/app/traffic/page.tsx`](../../webapp/src/app/traffic/page.tsx). A
 server-paginated, Burp-style table. Columns: Time, Source (recon/agent badge),
 Tool, Method, Host, Path, Status (colored by class, "BLK" if blocked), Length,
-response Time, Flags (cookie / reflect / replay / out-of-scope). Filters: date
+response Time, Flags (cookie / reflect / replay / out-of-scope / **ioc**, which
+links to the incident write-up when the catalog supplied a usable http(s) URL —
+the link is scheme-checked at render because the feed is third-party). Filters: date
 range, source, tool, host, method, status class, run, URL search (`q`), body
 search (`bodyq`), set-cookie, 5xx-only. A detail drawer shows full request /
 response with a client-side "Copy as curl" (`toCurl` in the page, distinct from
@@ -708,6 +716,26 @@ ones are pushed to the orchestrator on the settings save.
 | `captureEgressBlockReserved` | UserSettings | true | egress guard: block IANA-reserved ranges |
 | `captureEgressBlockMulticast` | UserSettings | true | egress guard: block `224.0.0.0/4`, `ff00::/8` |
 | `captureEgressBlockUnspecified` | UserSettings | true | egress guard: block `0.0.0.0`, `::` |
+| `scaIntelIgnoreSuffixes` | UserSettings | the 5 OAST providers | hosts excluded from the supply-chain incident match |
+
+`scaIntelIgnoreSuffixes` is per-USER, not per-project: an operator's OAST
+provider is a property of their tooling, not of a target. The incident catalog
+legitimately lists `oastify.com` and friends as indicators, so without this list
+a pentester running Burp Collaborator would flag their own callbacks on every
+engagement. **Clearing the box restores the shipped list rather than disabling
+suppression** — to see OAST hits, replace it with a host you never use. It
+reaches the ingest worker as `CAPTURE_IOC_IGNORE_SUFFIXES` via the same
+capture-config reconciler that carries the egress policy, because the worker
+holds no credential that could read it from the database.
+
+> **Both writers must set the IOC columns.** `captured_http_transactions` has
+> two writers — the Python spool worker (`build_row`) and the webapp's direct
+> ingest route — and if only one of them flagged, an operator would see some
+> requests marked and reasonably conclude the unmarked ones had been checked and
+> cleared. A shared case table is duplicated in `tests/test_sca_ioc_match.py`
+> and `webapp/src/lib/scaIntel.test.ts`; changing one side alone turns the other
+> red. Note this breaks transiently during a deploy that restarts the two
+> services at different times.
 
 The eleven `captureEgress*` fields are pushed to the orchestrator on save (as the
 `egress*` keys of `CaptureProxyConfig`) and injected into the spawned proxy as the

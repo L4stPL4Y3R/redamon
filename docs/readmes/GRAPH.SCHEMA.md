@@ -1298,6 +1298,32 @@ OTX threat intelligence pulses — named threat reports associating indicators (
 })
 ```
 
+**Second writer: supply-chain incident correlation.** The same label is reused
+for an incident from the public supplychainattack.org catalog, written by
+`recon/main_recon_modules/sca_intel_correlate.py` +
+`graph_db/mixins/supply_chain_mixin.py::update_graph_from_sca_intel()`. Those
+nodes carry `pulse_id: "sca-<incident_id>"` and a distinct property set:
+
+```cypher
+(:ThreatPulse {
+    pulse_id: "sca-SCA-0001",         // "sca-" prefix distinguishes the writer
+    name: "Compromised CDN script",   // incident title
+    tags: ["compromised-cdn"],        // the incident's attack vectors
+    author_name: "supplychainattack.org",
+    sca_incident_id, sca_incident_url, sca_status,
+    sca_summary,                      // THIRD-PARTY prose, attacker-influenceable
+    sca_blast_radius,
+    sca_remediation,                  // list of steps, capped at 20
+    sca_feed_revised,                 // feed revision that produced this
+    user_id, project_id, created_at, updated_at
+})
+```
+
+`adversary` is deliberately **left unset** on these: the incident feed has no
+threat-actor field, and both the Red Zone route and the report roll
+`pulse.adversary` into an adversary list, so a fabricated value would propagate
+into a headline.
+
 **Constraints:**
 ```cypher
 CREATE CONSTRAINT threatpulse_unique IF NOT EXISTS
@@ -1311,7 +1337,23 @@ FOR (tp:ThreatPulse) ON (tp.user_id, tp.project_id);
 ```cypher
 (IP)-[:APPEARS_IN_PULSE]->(ThreatPulse)
 (Domain)-[:APPEARS_IN_PULSE]->(ThreatPulse)
+
+// Supply-chain incident correlation. A DIFFERENT claim from the two above.
+(BaseURL)-[:CONTACTS_MALICIOUS_HOST {matched_host, evidence, source_url, updated_at}]->(ThreatPulse)
 ```
+
+`APPEARS_IN_PULSE` means "this asset of mine is named in the report".
+`CONTACTS_MALICIOUS_HOST` means "my target reached a third-party host that a
+published incident names" — the host belongs to someone else. The two must not
+be conflated: reusing `APPEARS_IN_PULSE` for the second case would inject
+supply-chain incidents into the Red Zone's Domain/IP arms and the report's OTX
+section, where they would read as "your host is a known threat indicator".
+
+The attacker host is **never a node**. It is not part of the target's attack
+surface, so it lives on the relationship in `matched_host`, which is part of the
+relationship's MERGE key — one incident often names several attacker domains,
+and keying on the two nodes alone silently collapsed them onto one edge.
+`evidence` is `graph-host-match` (recon) or `captured-traffic`.
 
 **Visual:** Circle, red-orange (#dc4a22) — threat intelligence context.
 
