@@ -24,6 +24,7 @@ COPY scanners/capture_proxy/redamon_ctx.py \
      scanners/capture_proxy/capture_lib.py \
      scanners/capture_proxy/capture_addon.py \
      scanners/capture_proxy/ingest_worker.py \
+     scanners/capture_proxy/ioc_match.py \
      /app/
 # Bundle the hard-guardrail so the proxy can enforce it WITHOUT any secret or
 # network access (static domain blocklist). Kept in sync with the other copies.
