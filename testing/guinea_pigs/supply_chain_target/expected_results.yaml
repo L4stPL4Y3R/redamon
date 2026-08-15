@@ -26,6 +26,13 @@ totals:
   # packages is one node with two HAS_VULNERABILITY edges.
   vulnerable_findings_in_artifact: 102
   vulnerability_nodes_min: 95
+  # Supply-chain incident intel (6.10.0). Requires ./load_fixture_intel.sh -
+  # against the LIVE catalog these numbers are not reproducible, which is the
+  # whole reason the fixture exists.
+  typosquat_catalog_hits: 3      # axios, is-odd, lodahs
+  typosquat_fuzzy_hits: 0        # supplyChainTyposquatEnabled is off by default
+  intel_hosts_checked: 6         # 1 base-URL host + 5 mined from vendor-telemetry.js
+  intel_hosts_matched: 3
 
 # ---------------------------------------------------------------------------
 # PATH A - technologies -> purl. The only version-bearing source in the
@@ -331,6 +338,111 @@ non_package_sources_yield_nothing: true
 # ---------------------------------------------------------------------------
 # Graph shape.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# SUPPLY-CHAIN INCIDENT INTEL (6.10.0). All of this requires the FIXTURE
+# catalog: ./load_fixture_intel.sh (restore with --restore).
+#
+# Why a fixture and not the live feed: the live catalog changes daily, so an
+# expectation written against it rots and a red assertion would not tell you
+# whether the code broke or the publisher edited an incident. The fixture also
+# means no test ever references genuinely attacker-controlled infrastructure -
+# every host here is under .test (RFC 6761, guaranteed not to resolve).
+# ---------------------------------------------------------------------------
+incident_intel:
+
+  # --- D: typosquat detection -------------------------------------------
+  # The CATALOG branch always runs; the edit-distance branch is behind
+  # supplyChainTyposquatEnabled and contributes nothing by default.
+  typosquat_findings:
+    - name: axios
+      via: packages.json direct hit (npm/axios)
+      source_tool: typosquat
+      verdict: suspicious          # NEVER malicious: only an OSV MAL- id is
+      advisory_id: typosquat-of-axios
+    - name: is-odd
+      via: packages.json direct hit (npm/is-odd)
+      source_tool: typosquat
+      # Versionless and OSV-clean, so the catalog hit is the ONLY thing that
+      # can produce a finding for it. Proves the direct-hit branch in isolation.
+      advisory_id: typosquat-of-is-odd
+    - name: lodahs
+      via: typosquats.json pair (lodahs -> lodash)
+      source_tool: typosquat
+      advisory_id: typosquat-of-lodash
+
+  # --- B: incident context on findings that ALREADY exist ---------------
+  # D runs BEFORE B, so a typosquat finding whose package is in the catalog
+  # picks up its own write-up in the same pass. It used to run after, and those
+  # findings silently never got one.
+  enriched_findings:
+    - name: axios
+      bucket: malicious            # the OSV MAL-2026-2307 finding
+      incident_id: GP-PKG-AXIOS
+      incident_feed_revised: 2026-08-15-FIXTURE
+      has_remediation: true
+    - name: axios
+      bucket: suspicious           # the typosquat finding, same package
+      incident_id: GP-PKG-AXIOS
+    - name: is-odd
+      bucket: suspicious
+      incident_id: GP-PKG-ISODD
+    - name: lodahs
+      bucket: suspicious
+      # NEGATIVE: lodahs is in typosquats.json but NOT packages.json, so B has
+      # nothing to join on. Absent incident context is correct here.
+      incident_id: null
+  # The verdict is never touched by enrichment.
+  enrichment_never_changes_verdict: true
+
+  # --- A2: malicious-host correlation ------------------------------------
+  # Hosts come from the target's own BaseURLs plus the hosts js_recon mined out
+  # of vendor-telemetry.js. The URLs there sit inside CALL SHAPES
+  # (fetch/axios.get) because the endpoint extractor only matches those - an
+  # object-literal value yields nothing, which is how the first draft of this
+  # fixture silently produced checked=1 matched=0.
+  host_correlations:
+    - matched_host: cdn.gp-skimmer.test
+      incident_id: GP-HOST-001
+      via: exact domain
+    - matched_host: telemetry.gp-exfil.test
+      incident_id: GP-HOST-002
+      via: exact domain
+      # Its catalog record carries a javascript: URL on purpose. The sync
+      # strips such URLs; this fixture is installed BYPASSING the sync, so the
+      # hostile value is present and the RENDER sites must refuse it. That is
+      # the defence-in-depth path, tested independently of the sync gate.
+      hostile_url_in_record: true
+    - matched_host: a.gp-wildcard.test
+      incident_id: GP-HOST-003
+      via: wildcard suffix .gp-wildcard.test
+  hosts_that_must_not_match:
+    - host: gp-wildcard.test
+      why: the apex itself is not under the ".gp-wildcard.test" suffix
+    - host: cdn.gp-clean.test
+      why: absent from the catalog entirely
+  # The attacker host is NEVER a node. It rides the relationship.
+  attacker_host_is_not_a_node: true
+  evidence: graph-host-match
+
+  # --- A1: captured traffic (needs the capture proxy, not the dry run) ---
+  # The fixture flags the guinea pig's OWN IP, so any captured request to the
+  # target exercises the resolved-IP branch without contacting anything real.
+  captured_traffic:
+    flagged_by: resolved IP 192.88.99.10
+    incident_id: GP-HOST-IP
+    columns: [ioc_incident_id, ioc_incident_url]
+    both_ingest_paths_must_agree: true
+
+  # --- C7: the catalog is a DEPENDENCY, and its absence is recorded ------
+  # Run WITHOUT ./load_fixture_intel.sh (or with an empty volume) and the
+  # artifact must carry these, rather than reporting a clean result.
+  when_catalog_unavailable:
+    errors_contain:
+      - "sca-intel: typosquat catalog lookup did not run"
+      - "sca-intel: incident catalog unavailable"
+      - "sca-intel: malicious-host correlation did not run"
+    findings_still_written: true   # the scan completes; only enrichment is absent
+
 graph:
   malicious_finding:
     advisory_id: MAL-2026-2307

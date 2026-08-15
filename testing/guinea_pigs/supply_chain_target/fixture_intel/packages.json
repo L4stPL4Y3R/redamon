@@ -1,0 +1,26 @@
+{
+  "npm/axios": {
+    "incident_id": "GP-PKG-AXIOS",
+    "url": "https://supplychainattack.org/",
+    "title": "GUINEA PIG: malicious axios release",
+    "status": "confirmed",
+    "severity": "critical",
+    "summary": "FIXTURE. Matches the package the target already serves as axios@1.14.1, which OSV independently flags MAL-2026-2307. Proves B enriches an EXISTING finding without changing its verdict.",
+    "blast_radius": "3,000 downloads (fixture)",
+    "remediation": ["Pin axios to a known-good release", "Rotate any credentials the process held", "Audit outbound traffic from build agents"],
+    "attack_vectors": ["malicious-package"],
+    "last_updated": "2026-08-05"
+  },
+  "npm/is-odd": {
+    "incident_id": "GP-PKG-ISODD",
+    "url": "https://supplychainattack.org/",
+    "title": "GUINEA PIG: catalog-known bad package",
+    "status": "under-investigation",
+    "severity": "medium",
+    "summary": "FIXTURE. is-odd is harvested from the source map with NO version and NO OSV finding, so it proves the catalog direct-hit creates a suspicious finding on its own.",
+    "blast_radius": "unknown",
+    "remediation": ["Remove the dependency"],
+    "attack_vectors": ["malicious-package"],
+    "last_updated": "2026-08-06"
+  }
+}

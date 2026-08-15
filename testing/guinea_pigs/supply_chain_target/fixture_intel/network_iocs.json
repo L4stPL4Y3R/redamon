@@ -1,0 +1,56 @@
+{
+  "domains": {
+    "cdn.gp-skimmer.test": {
+      "incident_id": "GP-HOST-001",
+      "url": "https://supplychainattack.org/",
+      "title": "GUINEA PIG: compromised CDN script",
+      "status": "confirmed",
+      "severity": "high",
+      "summary": "FIXTURE. A CDN-hosted script was replaced with a card skimmer. This record is synthetic and exists only to give the guinea pig a deterministic A2 hit.",
+      "blast_radius": "3,000 sites (fixture)",
+      "remediation": ["Remove the script tag", "Rotate any keys the page held"],
+      "attack_vectors": ["compromised-cdn"],
+      "last_updated": "2026-08-01"
+    },
+    "telemetry.gp-exfil.test": {
+      "incident_id": "GP-HOST-002",
+      "url": "javascript:alert('the render sites must refuse this')",
+      "title": "GUINEA PIG: exfil endpoint with a hostile URL",
+      "status": "confirmed",
+      "severity": "high",
+      "summary": "FIXTURE. Carries a javascript: URL on purpose: the sync gate should strip it, and every render site should refuse it even if an older sync stored it.",
+      "blast_radius": "unknown",
+      "remediation": ["Block the host at the egress proxy"],
+      "attack_vectors": ["data-exfiltration"],
+      "last_updated": "2026-08-02"
+    }
+  },
+  "wildcards": [
+    [".gp-wildcard.test", {
+      "incident_id": "GP-HOST-003",
+      "url": "https://supplychainattack.org/",
+      "title": "GUINEA PIG: attacker-controlled subdomain space",
+      "status": "confirmed",
+      "severity": "medium",
+      "summary": "FIXTURE. Proves suffix matching: any host under .gp-wildcard.test matches, but gp-wildcard.test itself and lookalikes must not.",
+      "blast_radius": "unknown",
+      "remediation": ["Block the parent domain"],
+      "attack_vectors": ["typosquatting"],
+      "last_updated": "2026-08-03"
+    }]
+  ],
+  "ips": {
+    "192.88.99.10": {
+      "incident_id": "GP-HOST-IP",
+      "url": "https://supplychainattack.org/",
+      "title": "GUINEA PIG: the target's own address",
+      "status": "confirmed",
+      "severity": "high",
+      "summary": "FIXTURE. Flags the guinea pig's own IP so every captured request to it exercises A1's resolved-IP path without contacting any real attacker infrastructure.",
+      "blast_radius": "n/a",
+      "remediation": ["n/a - fixture"],
+      "attack_vectors": ["malicious-infrastructure"],
+      "last_updated": "2026-08-04"
+    }
+  }
+}
