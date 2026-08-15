@@ -86,6 +86,20 @@ RUN apt-get update && apt-get install -y --fix-missing \
     gcc \
     g++ \
     make \
+    # Toolchain for source-built Python wheels. The Kali base ships an
+    # ever-newer python3 (FROM ...:latest), so any pinned dependency can lose
+    # its pre-built wheel on the next base bump and fall back to compiling from
+    # source. Keeping the full build toolchain here makes that fallback succeed
+    # regardless of Python version, instead of failing on a missing tool:
+    #   - cmake / ninja-build: unicorn (via pwntools)
+    #   - libgit2-dev / pkg-config: pygit2 (via guarddog)
+    #   - python3-dev: C-extension headers (Python.h)
+    cmake \
+    ninja-build \
+    build-essential \
+    libgit2-dev \
+    pkg-config \
+    python3-dev \
     # Scripting (for execute_code perl support)
     perl \
     # Build dependencies for naabu (requires libpcap)

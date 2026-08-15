@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.9.1] - 2026-08-15
+
+### Fixed
+
+- **`./redamon.sh install` failed to build the `kali-sandbox` image on a fresh host.** The Kali rolling base moved its default `python3` to 3.14, which has no prebuilt wheels for `unicorn` (pulled in by `pwntools`) or `pygit2` (pulled in by `guarddog`), so pip fell back to compiling them from source and died on a missing `cmake`. The image now installs the full build toolchain (`cmake`, `ninja-build`, `build-essential`, `libgit2-dev`, `pkg-config`, `python3-dev`) so the source-build fallback succeeds regardless of the base Python version. Verified on Python 3.14.6: `unicorn`, `pygit2` and `guarddog` all build and import ([#170]).
+
 ## [6.9.0] - 2026-08-10
 
 ### Added
