@@ -88,7 +88,10 @@ describe('diffCapture', () => {
       if (typeof next[k] === 'boolean') raw[k] = !next[k]
       else if (typeof next[k] === 'number') raw[k] = (next[k] as number) + 1
     }
+    // String fields are not covered by the generic flip above, so each one is
+    // changed explicitly here.
     next.captureProxyScope = 'recon'
+    next.scaIntelIgnoreSuffixes = 'example.test'
     next.captureProxyBodyRules = { image: 'disk' }
     const diff = diffCapture(DEFAULT_CAPTURE, next)
     // Every scalar field flipped, plus scope + bodyRules → all keys present.

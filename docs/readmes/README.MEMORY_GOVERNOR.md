@@ -400,6 +400,16 @@ and RoE overrides, so it tightens whatever they leave, mirroring the existing
   `*_MAX_FILES`, `*_MAX_RESULTS`, `VHOST_SNI_MAX_CANDIDATES_PER_IP`, …). Scaled by the
   BYTE-BUDGET model using the measured `bytes_per_unit` of their family.
 
+**Deliberately NOT governed: `SCA_INTEL_MAX_ENTRIES`.** The supply-chain incident
+intel tables are an in-memory accumulator and look like a budget key, but the
+whole set is ~3 MB at the 10,000-entry default — noise against a model that
+budgets hundreds of megabytes. It is also read from the environment at import
+time by `scanners/supply_chain_common/intel.py` rather than from the settings
+dict, and `apply_memory_governor` only walks that dict, so an entry in
+`_GOV_BUDGET_KEYS` would be silently inert rather than merely unnecessary. The
+cap exists for a correctness reason, not a memory one: it bounds a hostile feed.
+Tune it with the env var if you ever need to.
+
 ```mermaid
 flowchart TD
     F[recon start: get_settings] --> ST[apply_stealth_overrides]

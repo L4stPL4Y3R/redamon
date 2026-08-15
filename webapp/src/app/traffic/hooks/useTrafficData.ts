@@ -27,6 +27,11 @@ export interface TrafficRow {
   reflectedParams: boolean
   blocked: boolean
   inScope: boolean
+  // A1: the request went to a host a published supply-chain incident names.
+  // Null is the normal state and means "no match OR the catalog was never
+  // synced" - it is not a statement that the host is clean.
+  iocIncidentId: string | null
+  iocIncidentUrl: string | null
 }
 
 export interface TrafficDetail extends TrafficRow {

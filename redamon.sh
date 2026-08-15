@@ -1420,6 +1420,32 @@ OSV_ALL_ECOSYSTEMS="npm PyPI Go Maven crates.io Packagist RubyGems NuGet"
 # Best-effort by design: it downloads ~279 MB on a cold install and MUST NOT
 # fail install/update if the network is unavailable. The scan-time guard still
 # reports an actionable error if an ecosystem is missing.
+ensure_sca_intel() {
+    # Supply-chain incident catalog (~5 MB). Best-effort, exactly like the OSV
+    # database above.
+    #
+    # Why this runs here at all, given the orchestrator refreshes the catalog on
+    # the scan-spawn path: that refresh only fires when a SCAN starts. Captured
+    # traffic (A1) does not need a scan - an operator using only the AI agent
+    # with HTTP Traffic Capture on would never trigger one, so the catalog would
+    # stay empty and every captured request would silently read as "no match".
+    # Seeding it here closes that hole and costs one 5 MB fetch.
+    if [[ "$(_env_get SCA_INTEL_AUTO_REFRESH "$SCRIPT_DIR/.env")" == "false" ]]; then
+        info "SCA_INTEL_AUTO_REFRESH=false; skipping the supply-chain incident catalog (air-gapped)"
+        return 0
+    fi
+    if ! docker image inspect redamon-supply-chain-analyzer:latest &>/dev/null; then
+        warn "Analyzer image not built yet; skipping incident catalog (run './redamon.sh sca-intel-sync' after the build)"
+        return 0
+    fi
+    info "Ensuring supply-chain incident catalog"
+    # SUBSHELL for the same reason as ensure_osv_db: cmd_sca_intel_sync exits 1
+    # on failure, and a bare `|| warn` cannot catch an exit - it would abort the
+    # whole install/update. A missing catalog must degrade to "did not run",
+    # never stop the stack coming up.
+    ( cmd_sca_intel_sync ) || warn "Incident catalog sync incomplete; supply-chain findings will carry no incident context until './redamon.sh sca-intel-sync' succeeds"
+}
+
 ensure_osv_db() {
     local ecos="${OSV_DB_ECOSYSTEMS:-$(_env_get OSV_DB_ECOSYSTEMS "$SCRIPT_DIR/.env")}"
     ecos="${ecos:-$OSV_ALL_ECOSYSTEMS}"
@@ -2472,6 +2498,7 @@ cmd_install() {
     # database empty - the supply-chain feature would then report "no <eco>
     # ecosystem" on every scan until someone ran supply-chain-sync by hand.
     ensure_osv_db
+    ensure_sca_intel
 
     # Pull GVM images with retry (large images, unreliable registry)
     if [[ "$gvm_mode" == "true" ]]; then
@@ -2798,6 +2825,7 @@ cmd_update() {
     # release that rebuilds it (or a prior `clean` that removed it) must not be
     # synced against a missing image.
     ensure_osv_db
+    ensure_sca_intel
 
     # Rebuild the capture-proxy image if its source changed, then refresh a running
     # proxy onto it. Build-only + best-effort: a failure must not abort the update.
@@ -2919,8 +2947,20 @@ cmd_update() {
     # Ensure an admin user exists (prompts if none found)
     ensure_admin
 
-    # HTTP Traffic Capture: restore the proxy if the master switch is on (a stack
-    # recreate during update leaves the orchestrator-spawned pair down).
+    # HTTP Traffic Capture. Order matters, and it is the reverse of what it looks
+    # like: the capture pair is spawned BY THE ORCHESTRATOR, so it must be
+    # reconciled AFTER the orchestrator has been recreated onto the new code, not
+    # only after its own image was rebuilt.
+    #
+    # The early _reconcile_capture_if_running (next to the image build above)
+    # refreshes the pair onto the new IMAGE, but it necessarily runs while the
+    # OLD orchestrator is still serving, so the pair comes back with the old
+    # SPAWN SPEC - old mounts, old env. Anything this release adds to that spec
+    # (e.g. the supply-chain incident catalog mount) would be missing, silently,
+    # until someone toggled capture off and on. Reconciling again here, after the
+    # restarts, is what actually applies it. Idempotent and best-effort.
+    _reconcile_capture_if_running
+    # ...and start it if it was down (a stack recreate leaves the pair stopped).
     ensure_capture_proxy_running
 }
 
@@ -2963,6 +3003,39 @@ cmd_supply_chain_sync() {
         success "OSV database sync complete."
     else
         error "OSV database sync failed."
+        exit 1
+    fi
+}
+
+cmd_sca_intel_sync() {
+    local analyzer_img="redamon-supply-chain-analyzer:latest"
+    local force=""
+    [[ "${1:-}" == "--force" ]] && force="--force"
+    export_version
+    if ! docker image inspect "$analyzer_img" &>/dev/null; then
+        info "Supply-chain analyzer image not found, building it (first time only)..."
+        if ! compose_build --profile tools build supply-chain-analyzer; then
+            error "Could not build $analyzer_img. Build the tool images first: ./redamon.sh update"
+            exit 1
+        fi
+    fi
+    docker volume inspect redamon-sca-intel &>/dev/null || docker volume create redamon-sca-intel >/dev/null
+    info "Syncing supply-chain incident intel (supplychainattack.org, ~5 MB)."
+    # Same two rules as cmd_supply_chain_sync above:
+    #   --user root       the volume is root-owned and read-only to every scanner
+    #   supply_chain_common bind-mount is MANDATORY - intel_sync.py is our module
+    #                     and is NOT baked into the analyzer image, so without
+    #                     this the run dies with ModuleNotFoundError.
+    if docker run --rm --user root \
+        -v redamon-sca-intel:/sca-intel \
+        -v "$SCRIPT_DIR/scanners/supply_chain_common:/app/supply_chain_common:ro" \
+        -e PYTHONPATH=/app \
+        --entrypoint python3 \
+        "$analyzer_img" \
+        -m supply_chain_common.intel_sync --out /sca-intel $force; then
+        success "Supply-chain incident intel sync complete."
+    else
+        error "Supply-chain incident intel sync failed."
         exit 1
     fi
 }
@@ -3082,6 +3155,7 @@ cmd_up_dev() {
     ensure_auth_secrets
     ensure_volume_ownership
     ensure_osv_db
+    ensure_sca_intel
     ensure_db_secrets
 
     info "Starting RedAmon in DEV mode (GVM: ${gvm_flag})..."
@@ -3181,6 +3255,7 @@ cmd_up() {
     ensure_auth_secrets
     ensure_volume_ownership
     ensure_osv_db
+    ensure_sca_intel
     ensure_db_secrets
 
     info "Starting RedAmon (GVM: ${gvm_mode})..."
@@ -3669,6 +3744,7 @@ cmd_help() {
     echo -e "  ${GREEN}reset-password${NC}   Reset an existing user's password"
     echo -e "  ${GREEN}kb <command>${NC}     Knowledge Base management (build/update/rebuild/stats)"
     echo -e "  ${GREEN}supply-chain-sync [ecos]${NC}  Populate the offline OSV DB (default: npm; e.g. 'npm PyPI Go')"
+    echo -e "  ${GREEN}sca-intel-sync [--force]${NC}  Populate the supply-chain incident intel (supplychainattack.org)"
     echo -e "  ${GREEN}test [tier]${NC}      Run the test suite: unit (default) | integration | live | all | coverage"
     echo -e "  ${GREEN}help${NC}             Show this help message"
     echo ""
@@ -3929,6 +4005,7 @@ case "${1:-help}" in
     reset-password) cmd_reset_password ;;
     create-admin)   cmd_create_admin ;;
     supply-chain-sync) shift; cmd_supply_chain_sync "$@" ;;
+    sca-intel-sync) shift; cmd_sca_intel_sync "$@" ;;
     test)           shift; cmd_test "${1:-unit}" ;;
     help|--help|-h) cmd_help ;;
     *)

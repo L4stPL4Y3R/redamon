@@ -121,7 +121,11 @@ _CANONICAL_ALLOWED = {_canonical_image(i) for i in ALLOWED_IMAGES}
 # as named volumes and checked against ALLOWED_VOLUMES.
 _DEFAULT_BIND_PREFIXES = ["/tmp/redamon"]
 ALLOWED_BIND_PREFIXES = _DEFAULT_BIND_PREFIXES + _csv_env("DOCKER_BROKER_ALLOWED_BIND_PREFIXES")
-ALLOWED_VOLUMES = set(_csv_env("DOCKER_BROKER_ALLOWED_VOLUMES")) | {"nuclei-templates", "redamon-osv-db"}
+# NOTE: redamon-sca-intel is allowlisted for READ only, deliberately absent from
+# ALLOWED_RW_VOLUMES below. That denial is what stops a spawned scanner poisoning
+# the incident intel that other scans then trust.
+ALLOWED_VOLUMES = set(_csv_env("DOCKER_BROKER_ALLOWED_VOLUMES")) | {
+    "nuclei-templates", "redamon-osv-db", "redamon-sca-intel"}
 
 # T1/T2: host paths a tool container may bind READ-WRITE. Any other allowed
 # host path (e.g. the source tree under ${PWD}, which is an allowed *read*

@@ -1298,6 +1298,32 @@ OTX threat intelligence pulses — named threat reports associating indicators (
 })
 ```
 
+**Second writer: supply-chain incident correlation.** The same label is reused
+for an incident from the public supplychainattack.org catalog, written by
+`recon/main_recon_modules/sca_intel_correlate.py` +
+`graph_db/mixins/supply_chain_mixin.py::update_graph_from_sca_intel()`. Those
+nodes carry `pulse_id: "sca-<incident_id>"` and a distinct property set:
+
+```cypher
+(:ThreatPulse {
+    pulse_id: "sca-SCA-0001",         // "sca-" prefix distinguishes the writer
+    name: "Compromised CDN script",   // incident title
+    tags: ["compromised-cdn"],        // the incident's attack vectors
+    author_name: "supplychainattack.org",
+    sca_incident_id, sca_incident_url, sca_status,
+    sca_summary,                      // THIRD-PARTY prose, attacker-influenceable
+    sca_blast_radius,
+    sca_remediation,                  // list of steps, capped at 20
+    sca_feed_revised,                 // feed revision that produced this
+    user_id, project_id, created_at, updated_at
+})
+```
+
+`adversary` is deliberately **left unset** on these: the incident feed has no
+threat-actor field, and both the Red Zone route and the report roll
+`pulse.adversary` into an adversary list, so a fabricated value would propagate
+into a headline.
+
 **Constraints:**
 ```cypher
 CREATE CONSTRAINT threatpulse_unique IF NOT EXISTS
@@ -1311,7 +1337,23 @@ FOR (tp:ThreatPulse) ON (tp.user_id, tp.project_id);
 ```cypher
 (IP)-[:APPEARS_IN_PULSE]->(ThreatPulse)
 (Domain)-[:APPEARS_IN_PULSE]->(ThreatPulse)
+
+// Supply-chain incident correlation. A DIFFERENT claim from the two above.
+(BaseURL)-[:CONTACTS_MALICIOUS_HOST {matched_host, evidence, source_url, updated_at}]->(ThreatPulse)
 ```
+
+`APPEARS_IN_PULSE` means "this asset of mine is named in the report".
+`CONTACTS_MALICIOUS_HOST` means "my target reached a third-party host that a
+published incident names" — the host belongs to someone else. The two must not
+be conflated: reusing `APPEARS_IN_PULSE` for the second case would inject
+supply-chain incidents into the Red Zone's Domain/IP arms and the report's OTX
+section, where they would read as "your host is a known threat indicator".
+
+The attacker host is **never a node**. It is not part of the target's attack
+surface, so it lives on the relationship in `matched_host`, which is part of the
+relationship's MERGE key — one incident often names several attacker domains,
+and keying on the two nodes alone silently collapsed them onto one edge.
+`evidence` is `graph-host-match` (recon) or `captured-traffic`.
 
 **Visual:** Circle, red-orange (#dc4a22) — threat intelligence context.
 
@@ -1878,7 +1920,7 @@ RETURN s.name AS host, svc.name AS service, u.url AS url,
 | Secret | id, secret_type, severity, source, source_url, base_url, sample | ✅ Unique (global), ✅ Tenant index |
 | JsReconFinding | id, finding_type, severity, confidence, title, detail, source_url, package_name, package_version | ✅ Unique (global), ✅ Tenant index |
 | Package | purl, ecosystem, name, version, source, source_path, first_seen, last_seen | ✅ Unique (purl, user_id, project_id) |
-| MalPackageFinding | finding_id, verdict, source_tool, advisory_id, severity, confidence, title, detail, soft_error, aliases | ✅ Unique (finding_id, user_id, project_id) |
+| MalPackageFinding | finding_id, verdict, source_tool, advisory_id, severity, confidence, title, detail, soft_error, aliases, incident_id, incident_url, incident_summary, incident_blast_radius, incident_remediation, incident_status, incident_feed_revised | ✅ Unique (finding_id, user_id, project_id) |
 
 ---
 
@@ -3216,12 +3258,33 @@ Uniqueness: `(purl, user_id, project_id)` (tenant-scoped).
   title, detail,
   soft_error,    // true = the behavioural pass produced NO verdict (UNCHECKED, not clean)
   aliases,       // OSV alias ids for the advisory (a MAL- often also has a GHSA-)
+  // --- incident context, from the public supplychainattack.org catalog -------
+  // Attached AFTER the last artifact validation by
+  // supply_chain_common.intel.enrich_findings, so these are deliberately NOT on
+  // the DIRTY->CLEAN artifact allowlist: the analyzer may never supply them.
+  // All NULL when the intel volume was never synced. NULL means "not in the
+  // catalog OR never synced", never "this package is safe".
+  incident_id,            // e.g. SCA-0001
+  incident_url,           // link to the incident write-up
+  incident_summary,       // free text, THIRD-PARTY and attacker-influenceable
+  incident_blast_radius,  // e.g. "3,000 downloads"
+  incident_remediation,   // list of steps, capped at 20
+  incident_status,        // e.g. confirmed
+  incident_feed_revised,  // feed revision that produced this enrichment
   user_id, project_id,
   first_seen, last_seen
 })
 ```
 
 Uniqueness: `(finding_id, user_id, project_id)` (tenant-scoped).
+The incident text never sets `verdict` and never sets `title`: the match is
+name-only (weaker evidence than an OSV verdict), and `title` is the graph
+viewer's node name, guarded at 120 chars.
+
+A Scan Timeline snapshot serializes all node properties with no allowlist, so
+these ride along and restoring an old version restores the enrichment as it was
+at snapshot time. That is correct and intended: `incident_feed_revised` is what
+makes a restored snapshot interpretable.
 Only OSV `MAL-` ids produce `verdict=malicious`; `CVE-`/`GHSA-` are kept in raw
 JSON only, never written as malicious.
 

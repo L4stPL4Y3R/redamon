@@ -65,6 +65,11 @@ export async function GET(request: NextRequest) {
       egress,
       body,
       enabled: b(s?.captureProxyEnabled),
+      // A1: the ignore list for the supply-chain incident match. The Python
+      // ingest worker cannot SELECT it (its role is INSERT-only on one table),
+      // so it rides this config the way the egress policy already does. Empty
+      // means "use the shipped provider list" on both sides.
+      sca_intel_ignore_suffixes: s?.scaIntelIgnoreSuffixes ?? '',
       source: s ? 'db' : 'default-block',
     })
   } catch {

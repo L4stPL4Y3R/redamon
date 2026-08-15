@@ -39,6 +39,60 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Graph properties carrying THIRD-PARTY free text: incident write-ups from the
+# supplychainattack.org catalog, attached to findings by the supply-chain
+# enrichment step. Anyone can get an advisory published, so this text is
+# attacker-influenceable and it reaches the agent verbatim through query_graph.
+_UNTRUSTED_GRAPH_TEXT_KEYS = (
+    "incident_summary", "incident_remediation", "incident_blast_radius",
+    "incident_title", "sca_summary", "sca_remediation", "sca_blast_radius",
+)
+
+# Labels whose nodes carry that prose as ordinary properties, so `RETURN mf` or
+# `RETURN tp` hands the whole thing over without naming a single property.
+_UNTRUSTED_GRAPH_LABELS = ("malpackagefinding", "threatpulse")
+
+
+def _wrap_graph_result(result, cypher: str | None = None) -> str:
+    """Return graph results, boundary-wrapped when they carry untrusted prose.
+
+    Wrapping is CONDITIONAL rather than unconditional so the ordinary graph
+    answer keeps its current shape (the agent's prompts and a number of tests
+    depend on it), while the one class of graph data that is genuinely
+    third-party free text gets the same containment tool output already gets.
+    Containment in code, not in prompt wording.
+
+    The decision is made from the CYPHER, never from the result text. Deciding
+    from the result was bypassable by one keyword: `RETURN mf.incident_summary
+    AS s` produces rows keyed `s`, so no property name appeared anywhere in the
+    text and the untrusted paragraph reached the model unwrapped. The alias is
+    chosen by the model, so anything that had already influenced it could turn
+    the containment off. In the cypher the property name is always present.
+
+    Fails CLOSED: unknown provenance (no cypher) wraps.
+    """
+    try:
+        text = str(result)
+    except Exception:
+        logger.warning("graph result is not stringifiable; returning a placeholder")
+        return "<unrenderable graph result>"
+
+    if cypher is not None:
+        lowered = cypher.lower()
+        if not any(key in lowered for key in _UNTRUSTED_GRAPH_TEXT_KEYS):
+            # A RETURN of a whole node hands back every property it has, which
+            # for these labels includes the untrusted prose.
+            if not any(label in lowered for label in _UNTRUSTED_GRAPH_LABELS):
+                return text
+
+    try:
+        from prompt_safety import wrap_untrusted
+
+        return wrap_untrusted(text, label="GRAPH_DATA")
+    except Exception:  # never fail a query over the wrapper
+        logger.warning("prompt_safety unavailable; returning graph result unwrapped")
+        return text
+
 # =============================================================================
 # CONTEXT VARIABLES (re-exported from agent_context)
 # =============================================================================
@@ -676,7 +730,9 @@ Cypher Query:"""
                         if not result:
                             return "No results found"
 
-                        return str(result)
+                        # The FILTERED cypher: what actually ran, so an aliased
+                        # incident column cannot hide from the wrapper.
+                        return _wrap_graph_result(result, filtered_cypher)
 
                     except CypherGenerationTimeout as e:
                         # Terminal: the remaining attempts would each burn the

@@ -8,7 +8,11 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(cd "$HERE/../.." && pwd)"
+# Repo root. THREE levels up since 6.9.0 moved guinea_pigs/ under testing/;
+# it was two, and the stale value silently mounted EMPTY auto-created dirs
+# (Docker treats a missing bind source as "create it"), so the harness died
+# with ModuleNotFoundError and left root-owned litter in testing/.
+ROOT="$(cd "$HERE/../../.." && pwd)"
 TARGET="${SC_TARGET_URL:-http://192.88.99.10}"
 WORK="$HERE/.dryrun"
 HTTPX_IMAGE="${HTTPX_DOCKER_IMAGE:-projectdiscovery/httpx:latest}"
@@ -52,7 +56,7 @@ echo "[*] running js_recon + supply_chain_recon in redamon-recon..."
 # they do not, docker silently creates an empty dir and the analyzer reports
 # "cannot read job spec".
 DEEP_ENV=(-e DOCKER_HOST=unix:///var/run/broker/docker.sock
-          -e SUPPLY_CHAIN_COMMON_HOST_PATH="$ROOT/supply_chain_common"
+          -e SUPPLY_CHAIN_COMMON_HOST_PATH="$ROOT/scanners/supply_chain_common"
           -v redamon_broker_socket:/var/run/broker
           -v /tmp/redamon:/tmp/redamon)
 if [ "${SC_DEEP:-0}" = "1" ]; then
@@ -70,10 +74,12 @@ docker run --rm --network host \
   -e PYTHONPATH=/app \
   -v "$ROOT/recon":/app/recon:ro \
   -v "$ROOT/graph_db":/app/graph_db:ro \
-  -v "$ROOT/supply_chain_common":/app/supply_chain_common:ro \
+  -v "$ROOT/scanners/supply_chain_common":/app/supply_chain_common:ro \
   -v "$HERE/dry_run_harvest.py":/app/dry_run_harvest.py:ro \
   -v "$WORK":/work:rw \
   -v redamon-osv-db:/osv-db:ro \
+  -e SCA_INTEL_PATH=/sca-intel \
+  -v redamon-sca-intel:/sca-intel:ro \
   --entrypoint python3 \
   redamon-recon:latest /app/dry_run_harvest.py
 

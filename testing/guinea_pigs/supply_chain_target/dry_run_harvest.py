@@ -121,6 +121,9 @@ def main():
         TARGET + "/assets/inlinemap.js",
         TARGET + "/assets/multiline.js",
         TARGET + "/assets/badmap.js",
+        # A2 fixture: the bundle whose CALL SHAPES yield the IOC hosts as
+        # endpoints, which js_recon turns into external_domains.
+        TARGET + "/assets/vendor-telemetry.js",
     ]
     discovered = _apply_katana_exclusions(candidates)
 

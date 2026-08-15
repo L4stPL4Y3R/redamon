@@ -7,7 +7,8 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(cd "$HERE/../.." && pwd)"
+# Three levels up since 6.9.0 moved guinea_pigs/ under testing/ (see run_dry_run.sh).
+ROOT="$(cd "$HERE/../../.." && pwd)"
 
 if [ $# -lt 2 ]; then
   echo "usage: $0 <USER_ID> <PROJECT_ID> [--deep]" >&2

@@ -549,6 +549,23 @@ services:
       OSV_DB_ECOSYSTEMS: ${OSV_DB_ECOSYSTEMS:-npm,PyPI,Go,Maven,crates.io,Packagist,RubyGems,NuGet}
       OSV_DB_TTL_SECONDS: ${OSV_DB_TTL_SECONDS:-86400}
       OSV_DB_REFRESH_TIMEOUT: ${OSV_DB_REFRESH_TIMEOUT:-900}
+      # Supply-chain incident intel (supplychainattack.org): same lazy-on-scan
+      # auto-refresh contract as the OSV DB above, and the SAME env_file caveat -
+      # without these lines a .env entry is silently inert and the intel would
+      # never refresh. Set SCA_INTEL_AUTO_REFRESH=false for an air-gapped deploy.
+      SCA_INTEL_AUTO_REFRESH: ${SCA_INTEL_AUTO_REFRESH:-true}
+      SCA_INTEL_TTL_SECONDS: ${SCA_INTEL_TTL_SECONDS:-86400}
+      # Retry floor after a FAILED or REJECTED fetch. The envelope contract keeps
+      # the previous files on rejection, so manifest.json never advances and a
+      # TTL-only check would re-fetch on every single scan spawn while the feed
+      # stays broken.
+      SCA_INTEL_RETRY_SECONDS: ${SCA_INTEL_RETRY_SECONDS:-3600}
+      # 120s, not the OSV path's 900s: the feed is ~5 MB, so a bigger ceiling
+      # would only ever mean a hung fetch sitting on the scan-spawn path.
+      SCA_INTEL_REFRESH_TIMEOUT: ${SCA_INTEL_REFRESH_TIMEOUT:-120}
+      # Unlike the OSV DB this MAY bootstrap a cold volume on the scan path: the
+      # OSV cold guard exists only because its first download is ~208 MB.
+      SCA_INTEL_BOOTSTRAP_ON_SCAN: ${SCA_INTEL_BOOTSTRAP_ON_SCAN:-true}
       # Supply-chain DIRTY analyzer caps. Same env_file caveat again: these are
       # documented in .env.example and read by container_manager.py, but without
       # these lines .env was silently inert and the knobs did nothing. ALL pass
@@ -987,6 +1004,11 @@ services:
       # route maps it, inside this service's 1g mem_limit. Wired here because the
       # webapp has NO env_file, so a value set only in .env would be inert.
       REDAMON_REDZONE_ROW_CAP: ${REDAMON_REDZONE_ROW_CAP:-}
+      # A1 (supply-chain incident match) on the TypeScript ingest path. Same
+      # env_file caveat as every knob above: the webapp has NO env_file.
+      SCA_INTEL_PATH: /sca-intel
+      SCA_INTEL_MATCH_ENABLED: ${SCA_INTEL_MATCH_ENABLED:-true}
+      CAPTURE_IOC_IGNORE_SUFFIXES: ${CAPTURE_IOC_IGNORE_SUFFIXES:-}
       # S11: login lockout / backoff thresholds. SAFE DEFAULTS so an unset value
       # fails safe to a real limit, never to "no limit".
       LOGIN_MAX_ATTEMPTS: ${LOGIN_MAX_ATTEMPTS:-5}
@@ -1041,6 +1063,11 @@ services:
       # AI Attack Surface native reports (garak/pyrit/giskard/promptfoo) for the
       # transcript drill-down (§9c). Read-only; served via a path-validated route.
       - ./scanners/ai_attack_surface_scan/output:/data/ai-attack-output:ro
+      # A1: the webapp is the SECOND writer of captured_http_transactions (the
+      # direct recon/agent ingest route), so it needs the same incident catalog
+      # the Python spool worker reads, or only half the captured traffic would
+      # ever be flagged. Read-only.
+      - sca_intel:/sca-intel:ro
       - report_data:/data/reports
       - js_recon_uploads:/data/js-recon-uploads
       # Supply-chain SBOM/lockfile uploads: webapp writes, the scan reads (ro).
@@ -1142,12 +1169,29 @@ services:
       # Tag-verification keys: source=recon -> SCANNER_API_KEY, source=agent -> INTERNAL_API_KEY.
       SCANNER_API_KEY: "${SCANNER_API_KEY:-}"
       INTERNAL_API_KEY: "${INTERNAL_API_KEY:-}"
+      # A1 (supply-chain incident match). PYTHONPATH so the bind-mounted
+      # supply_chain_common is importable; the ignore list suppresses the
+      # operator's own OAST callbacks; the kill switch is deliberately not in
+      # the UI.
+      PYTHONPATH: "/app"
+      SCA_INTEL_PATH: /sca-intel
+      SCA_INTEL_MATCH_ENABLED: "${SCA_INTEL_MATCH_ENABLED:-true}"
+      CAPTURE_IOC_IGNORE_SUFFIXES: "${CAPTURE_IOC_IGNORE_SUFFIXES:-}"
     # Trusted plane: needs Postgres. NO pentest-net -> no target egress at all.
     networks:
       - redamon
     volumes:
       - capture_spool:/spool
       - capture_bodies:/bodies
+      # A1: incident catalog, READ-ONLY. This worker is the one that flags a
+      # captured request to a known-bad host. It is a set lookup: no network, no
+      # extra credential, and the INSERT-only Postgres role is unchanged.
+      - sca_intel:/sca-intel:ro
+      # supply_chain_common is NOT baked into this image (only the capture files
+      # are COPYed), and the matcher lives there. Without this mount the lookup
+      # degrades to "no match" on every request, which is indistinguishable from
+      # a clean run.
+      - ./scanners/supply_chain_common:/app/supply_chain_common:ro
     read_only: true
     tmpfs:
       - /tmp
@@ -1271,6 +1315,14 @@ volumes:
   # referenced by the docker-broker volume allowlist and container_manager.py.
   osv_db:
     name: redamon-osv-db
+  # Supply-chain incident intel derived from the supplychainattack.org catalog
+  # (attacker domains, bad package names, typosquat pairs + a manifest recording
+  # the feed revision). Populated by `redamon.sh sca-intel-sync` and refreshed
+  # TTL-guarded on the scan-spawn path by the orchestrator. Mounted READ-ONLY
+  # everywhere; the sync sidecar is the only writer, and it is deliberately NOT
+  # on the broker's ALLOWED_RW_VOLUMES so a spawned scanner cannot poison it.
+  sca_intel:
+    name: redamon-sca-intel
   # Operator-uploaded SBOMs/lockfiles for L1 supply-chain scans. Shared between
   # the webapp (writes) and the spawned scan container (reads, read-only).
   supply_chain_uploads:

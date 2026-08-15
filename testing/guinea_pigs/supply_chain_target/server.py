@@ -138,6 +138,12 @@ INDEX_HTML = """<!DOCTYPE html>
 <script src="/assets/inlinemap.js"></script>    <!-- //# sourceMappingURL=data:...base64 -->
 <script src="/assets/multiline.js"></script>    <!-- /*# sourceMappingURL=... */ -->
 <script src="/assets/badmap.js"></script>       <!-- malformed map -> must be ignored -->
+
+<!-- FEATURE A2 (malicious-host correlation). The IOC hosts are referenced as
+     STRINGS INSIDE this bundle, never as <script src>, so js_recon mines them
+     into external_domains without ever fetching them. Every host is under
+     .test (RFC 6761: guaranteed not to resolve), so nothing leaves the box. -->
+<script src="/assets/vendor-telemetry.js"></script>
 </head>
 <body>
 <h1>RedAmon Supply-Chain Target</h1>
@@ -179,8 +185,16 @@ APP_SOURCES = [
     # preferring dedup: this versionless sighting must LOSE to axios@1.14.1.
     "webpack:///./node_modules/axios/lib/core/Axios.js",
 
-    # Another plain package, sanity volume.
+    # Another plain package, sanity volume. ALSO a fixture-catalog hit
+    # (npm/is-odd -> GP-PKG-ISODD): versionless and OSV-clean, so the only way
+    # it can carry a finding is the catalog direct-hit in typosquat detection.
     "webpack:///./node_modules/is-odd/index.js",
+
+    # FEATURE D, fuzzy branch: one edit from "lodash" without being it, and the
+    # fixture catalog also labels it a typosquat of lodash (GP-TYPO-001). The
+    # catalog hit is what fires with the toggle OFF; the edit-distance branch
+    # would find it too once supplyChainTyposquatEnabled is on.
+    "webpack:///./node_modules/lodahs/index.js",
 
     # --- hostile names: every one must be dropped by sanitize_name ---
     "webpack:///./node_modules/../../etc/passwd",        # '..' traversal
@@ -269,6 +283,34 @@ def _stub(label):
 #                     shows up, retire.js changed behaviour and the "retire is
 #                     not an inventory source" note in retire_runner is stale.
 # --------------------------------------------------------------------------
+# FEATURE A2 surface. Four hosts, each proving a different matcher branch:
+#   cdn.gp-skimmer.test        exact domain hit           -> GP-HOST-001
+#   a.gp-wildcard.test         wildcard suffix hit        -> GP-HOST-003
+#   gp-wildcard.test           the apex itself: NO hit (suffix is ".gp-wildcard.test")
+#   cdn.gp-clean.test          not in the catalog: NO hit (negative control)
+# telemetry.gp-exfil.test carries a javascript: URL in the catalog, so it also
+# proves the render sites refuse a hostile link.
+VENDOR_TELEMETRY_JS = """\
+/* vendor telemetry shim - fixture for supply-chain host correlation.
+   Each URL sits inside a CALL SHAPE js_recon's endpoint extractor recognises
+   (_REST_PATTERNS: fetch(...), axios.get(...), ...). An object-literal value
+   like `cdn: "https://..."` is NOT extracted - the first draft of this fixture
+   used exactly that and produced zero endpoints, which is why the correlation
+   silently reported checked=1 matched=0. */
+function boot() {
+  // exact domain hit -> GP-HOST-001
+  axios.get("https://cdn.gp-skimmer.test/lib/analytics.min.js");
+  // exact domain hit, and its catalog record carries a javascript: URL
+  fetch("https://telemetry.gp-exfil.test/collect", {method: "POST"});
+  // wildcard suffix hit (.gp-wildcard.test) -> GP-HOST-003
+  fetch("https://a.gp-wildcard.test/edge/loader.js");
+  // NEGATIVE CONTROL: the apex itself must NOT match a ".gp-wildcard.test" suffix
+  fetch("https://gp-wildcard.test/not-a-match");
+  // NEGATIVE CONTROL: absent from the catalog entirely
+  fetch("https://cdn.gp-clean.test/vendor/ok.js");
+}
+"""
+
 RETIRE_BANNERS = {
     # `Handlebars.VERSION = "(version)";`
     "tpl-engine": '/* template engine */\nvar Handlebars={};\n'
@@ -333,6 +375,10 @@ ROUTES = {
     "/assets/util-belt.js": ("application/javascript", RETIRE_BANNERS["util-belt"]),
     "/assets/bind-lib.js": ("application/javascript", RETIRE_BANNERS["bind-lib"]),
     "/assets/fresh-lib.js": ("application/javascript", RETIRE_BANNERS["fresh-lib"]),
+
+    # FEATURE A2: URLs mined out of JS content by js_recon -> external_domains
+    # -> sca_intel_correlate matches them against the fixture catalog.
+    "/assets/vendor-telemetry.js": ("application/javascript", VENDOR_TELEMETRY_JS),
 
     # Source-map discovery variants.
     "/assets/hdrmap.js": ("application/javascript",

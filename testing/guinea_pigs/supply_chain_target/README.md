@@ -155,6 +155,60 @@ Expected: `packages=111 malicious=1 vulnerable=31 suspicious=8` and
 | enrich vs duplicate | re-scan keeps `first_seen`, advances `last_seen` |
 | tenant isolation (S10) | another `project_id` sees 0 packages |
 
+## Supply-chain incident intel (6.10.0)
+
+Four features ride on the offline incident catalog, and all four are exercised
+here: **B** (incident context on existing findings), **A2** (malicious-host
+correlation), **A1** (captured traffic), **D** (typosquat detection).
+
+They need a catalog with known contents, so this guinea pig ships its **own**:
+
+```bash
+./load_fixture_intel.sh            # install it
+./load_fixture_intel.sh --restore  # put the real one back
+```
+
+**Why a fixture rather than the live feed.** The real catalog changes daily, so
+an expectation written against it rots, and a red assertion would not tell you
+whether the code broke or the publisher edited an incident. It also means no
+test here ever references genuinely attacker-controlled infrastructure: every
+fixture host is under `.test` (RFC 6761 — guaranteed never to resolve), plus the
+guinea pig's own address.
+
+| Fixture record | Fires | Proves |
+|---|---|---|
+| `npm/axios` | B | enriches the **existing** OSV `MAL-2026-2307` finding without touching its verdict |
+| `npm/is-odd` | D + B | versionless and OSV-clean, so the catalog direct-hit is the only thing that can flag it |
+| `lodahs → lodash` | D | the typosquat-pair branch. Deliberately **absent** from `packages.json`, so it gets no incident context — B has nothing to join on |
+| `cdn.gp-skimmer.test` | A2 | exact domain match |
+| `a.gp-wildcard.test` | A2 | wildcard suffix match |
+| `gp-wildcard.test` | A2 | **negative**: the apex is not under `.gp-wildcard.test` |
+| `cdn.gp-clean.test` | A2 | **negative**: absent from the catalog |
+| `telemetry.gp-exfil.test` | A2 | its record carries a `javascript:` URL, so the **render sites** must refuse it |
+| IP `192.88.99.10` | A1 | flags captured requests to the target by resolved IP |
+
+The A2 hosts live in `/assets/vendor-telemetry.js`, inside **call shapes**
+(`fetch(...)`, `axios.get(...)`). That matters: js_recon's endpoint extractor
+only matches those patterns, so an object-literal value like `cdn: "https://…"`
+yields nothing. The first draft of this fixture used exactly that and silently
+reported `checked=1 matched=0`.
+
+Observed on a real run with the fixture loaded:
+
+```
+typosquat: checked=123 catalog=3 fuzzy=0 (fuzzy_enabled=False)
+host correlation: checked=6 matched=3
+```
+
+> **The orchestrator will overwrite the fixture.** It refreshes this volume on
+> the scan-spawn path. The fixture manifest is written with a current mtime so
+> the TTL check skips the refresh for 24h, but for a long session pin it:
+> `SCA_INTEL_AUTO_REFRESH=false docker compose up -d recon-orchestrator`.
+
+**To test C7** (a missing catalog must never read as a clean result), run
+*without* the fixture: the artifact must carry three `sca-intel: … did not run`
+errors and still complete the scan.
+
 ## Running it
 
 ```bash
@@ -162,6 +216,9 @@ Expected: `packages=111 malicious=1 vulnerable=31 suspicious=8` and
 cd testing/guinea_pigs/supply_chain_target
 docker compose up -d --build
 curl -s http://192.88.99.10/robots.txt
+
+# 1b. Install the fixture catalog (for the intel features)
+./load_fixture_intel.sh
 
 # 2. Fast inner loop: run the REAL harvest chain, no app needed (~30 s)
 ./run_dry_run.sh

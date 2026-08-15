@@ -63,6 +63,61 @@ def _finding_title(finding, advisory):
     return "finding"
 
 
+# Incident context (B): the seven properties the supplychainattack.org catalog
+# contributes to a finding that ALREADY EXISTS. They are attached upstream by
+# supply_chain_common.intel.enrich_findings, which runs after the last artifact
+# validation, so this layer only reads optional keys and never requires them.
+#
+# graph_db must NOT import supply_chain_common: graph_db is COPY-baked into the
+# agent image while supply_chain_common is bind-mounted at scan spawn and is
+# absent there. The field list is therefore duplicated, and a test asserts the
+# two never drift.
+_INCIDENT_PROPS = ("incident_id", "incident_url", "incident_summary",
+                   "incident_blast_radius", "incident_remediation",
+                   "incident_status", "incident_feed_revised")
+
+
+# Which tool produced a `suspicious` finding. This used to be hardcoded to
+# "guarddog" for every one of them, which was true when GuardDog was the only
+# producer and became wrong the moment typosquat detection started writing here:
+# a typosquat finding reached the graph claiming GuardDog found it, and the SCA
+# table (which reads source_tool to word the verdict) then labelled it a
+# behavioural hit. Anything unrecognised still maps to guarddog so existing rows
+# and existing rules keep their meaning.
+_SUSPICIOUS_TOOL_BY_RULE = {
+    "typosquat": "typosquat",
+}
+
+
+def _suspicious_tool(finding):
+    rule = (finding.get("rule") or "").strip().lower()
+    return _SUSPICIOUS_TOOL_BY_RULE.get(rule, "guarddog")
+
+
+def _incident_params(finding):
+    """Cypher params for the incident properties; None when never enriched.
+
+    A remediation list is capped and stringified here as well as upstream: this
+    mixin is also reachable from an artifact that came off disk (a re-import, a
+    restored snapshot), where the upstream cap cannot be assumed.
+    """
+    params = {}
+    for prop in _INCIDENT_PROPS:
+        value = finding.get(prop)
+        if prop == "incident_remediation":
+            if isinstance(value, list):
+                value = [str(v) for v in value[:20]]
+            elif value:
+                value = [str(value)]
+            else:
+                value = None
+        elif value is not None and not isinstance(value, str):
+            value = str(value)
+        # "" reads as "present but empty" in the UI; absent is the honest state.
+        params[prop] = value or None
+    return params
+
+
 # The Vulnerability node's severity enum is critical|high|medium|low|info -
 # there is no "unknown". An ungraded advisory lands at info so it does not
 # inflate the alert stream.
@@ -148,12 +203,12 @@ class SupplyChainMixin:
                  "relationships_created": 0, "errors": []}
 
         packages = data.get("packages") or []
-        # Map both malicious (OSV MAL-) and suspicious (GuardDog) into findings.
+        # Map malicious (OSV MAL-) and suspicious findings into one list.
         findings = []
         for m in data.get("malicious") or []:
             findings.append(("malicious", "osv", m.get("advisory_id"), m))
         for s in data.get("suspicious") or []:
-            findings.append(("suspicious", "guarddog", s.get("rule"), s))
+            findings.append(("suspicious", _suspicious_tool(s), s.get("rule"), s))
 
         with self.driver.session() as session:
             for pkg in packages:
@@ -248,7 +303,14 @@ class SupplyChainMixin:
                             mf.advisory_id = $advisory, mf.severity = $severity,
                             mf.confidence = $confidence, mf.title = $title,
                             mf.detail = $detail, mf.soft_error = $soft_error,
-                            mf.aliases = $aliases, mf.last_seen = datetime()
+                            mf.aliases = $aliases, mf.last_seen = datetime(),
+                            mf.incident_id = $incident_id,
+                            mf.incident_url = $incident_url,
+                            mf.incident_summary = $incident_summary,
+                            mf.incident_blast_radius = $incident_blast_radius,
+                            mf.incident_remediation = $incident_remediation,
+                            mf.incident_status = $incident_status,
+                            mf.incident_feed_revised = $incident_feed_revised
                         WITH mf
                         MERGE (p:Package {purl: $purl, user_id: $uid, project_id: $pid})
                         ON CREATE SET p.first_seen = datetime(), p.name = $pname,
@@ -273,6 +335,14 @@ class SupplyChainMixin:
                         # None, not "": an absent detail should be an absent
                         # property, not an empty string that reads as present.
                         detail=f.get("detail") or f.get("message") or None,
+                        # Incident context (B). Optional keys: the enrichment
+                        # step is a local dictionary join that may not have run
+                        # (never-synced volume, air-gapped deploy), so these are
+                        # read with .get and land as None rather than failing the
+                        # write. NOTE these deliberately do NOT touch `title` -
+                        # that is the graph viewer's node name, guarded at 120
+                        # chars, and incident titles would blow past it.
+                        **_incident_params(f),
                     )
                     if verdict == "malicious":
                         stats["malicious_merged"] += 1
@@ -454,6 +524,117 @@ class SupplyChainMixin:
                         "BaseURL", "url", url, purls, user_id, project_id)
                 except Exception as exc:
                     stats["errors"].append("depends_on {}: {}".format(url, exc))
+
+        # A2: malicious-host correlations, written in the same pass.
+        try:
+            istats = self.update_graph_from_sca_intel(
+                block.get("intel_correlation"), user_id, project_id)
+            stats["intel_pulses_merged"] = istats.get("pulses_merged", 0)
+            stats["relationships_created"] += istats.get("relationships_created", 0)
+            stats["errors"].extend(istats.get("errors", []))
+        except Exception as exc:
+            stats["errors"].append("sca intel correlation: {}".format(exc))
+        return stats
+
+    def update_graph_from_sca_intel(self, correlation, user_id, project_id):
+        """MERGE a ThreatPulse per matched incident + CONTACTS_MALICIOUS_HOST.
+
+        The BaseURL is MATCHed FIRST and the pulse MERGEd after it. Cypher runs
+        left to right, so ordering it the other way created the ThreatPulse and
+        only then discovered there was nothing to attach it to - leaving an
+        orphan node that renders as a floating node in the graph view, counts
+        against the 20,000-node read cap, and is never cleaned up. With the match
+        first, no anchor means no row to carry forward and nothing is written.
+
+        REUSES ThreatPulse rather than adding a label: RedAmon already models
+        "a named threat report listing indicators, attached to a discovered
+        asset" (OTX enrichment writes exactly that). The 20,000-node graph read
+        cap is another reason not to add a per-finding node here.
+
+        The EDGE is deliberately NOT `APPEARS_IN_PULSE`. That edge means "this
+        asset of mine is named in the report", which is false here: the attacker
+        host is a third party the target CONTACTS, not the target's own domain.
+        Reusing it would inject these into the Red Zone Domain/IP arms and the
+        report's OTX section, where they would read as "your host is a known
+        threat indicator".
+
+        `adversary` is left UNSET: the feed has no threat-actor field (0 of
+        3,595 incidents), and both the Red Zone route and the report collect
+        pulse.adversary into an adversary list, so a fabricated value would
+        propagate into a headline.
+        """
+        stats = {"pulses_merged": 0, "relationships_created": 0, "errors": []}
+        correlations = ((correlation or {}).get("correlations") or [])
+        if not correlations:
+            return stats
+
+        with self.driver.session() as session:
+            for hit in correlations:
+                inc = hit.get("incident") or {}
+                incident_id = inc.get("incident_id")
+                base_url = hit.get("base_url")
+                if not incident_id or not base_url:
+                    continue
+                try:
+                    res = session.run(
+                        """
+                        MATCH (u:BaseURL {url: $base_url, user_id: $uid, project_id: $pid})
+                        WITH u
+                        MERGE (tp:ThreatPulse {pulse_id: $pulse_id, user_id: $uid, project_id: $pid})
+                        ON CREATE SET tp.created_at = datetime()
+                        SET tp.name         = $name,
+                            tp.tags         = $tags,
+                            tp.author_name  = 'supplychainattack.org',
+                            tp.modified     = $modified,
+                            tp.sca_incident_id   = $incident_id,
+                            tp.sca_incident_url  = $url,
+                            tp.sca_status        = $status,
+                            tp.sca_summary       = $summary,
+                            tp.sca_blast_radius  = $blast_radius,
+                            tp.sca_remediation   = $remediation,
+                            tp.sca_feed_revised  = $feed_revised,
+                            tp.updated_at   = datetime()
+                        WITH u, tp
+                        MERGE (u)-[c:CONTACTS_MALICIOUS_HOST {matched_host: $matched_host}]->(tp)
+                        SET c.evidence     = $evidence,
+                            c.source_url   = $source_url,
+                            c.updated_at   = datetime()
+                        RETURN count(c) AS linked
+                        """,
+                        pulse_id="sca-{}".format(incident_id),
+                        uid=user_id, pid=project_id,
+                        incident_id=incident_id,
+                        name=inc.get("title") or incident_id,
+                        tags=[str(t) for t in (inc.get("attack_vectors") or [])][:20],
+                        modified=inc.get("last_updated") or "",
+                        url=inc.get("url") or "",
+                        status=inc.get("status") or "",
+                        summary=inc.get("summary") or "",
+                        blast_radius=inc.get("blast_radius") or "",
+                        remediation=[str(r) for r in (inc.get("remediation") or [])][:20],
+                        feed_revised=inc.get("feed_revised") or "",
+                        base_url=base_url,
+                        # The attacker host lives on the RELATIONSHIP, and it is
+                        # part of that relationship's IDENTITY. One incident
+                        # commonly lists several attacker domains, and a target
+                        # can contact more than one: keyed on the two nodes
+                        # alone, the second host MERGEd the SAME edge and
+                        # overwrote the first, so the table showed one contacted
+                        # host and silently lost the rest of the evidence.
+                        # Merging it as a NODE is still forbidden - that would
+                        # put a host the target does not own into its attack
+                        # surface.
+                        matched_host=hit.get("matched_host") or "",
+                        evidence=hit.get("evidence") or "graph-host-match",
+                        source_url=hit.get("source_url") or "",
+                    )
+                    row = res.single()
+                    if row and row.get("linked"):
+                        stats["pulses_merged"] += 1
+                        stats["relationships_created"] += 1
+                except Exception as exc:
+                    stats["errors"].append(
+                        "sca intel {}: {}".format(incident_id, exc))
         return stats
 
     def _anchor_packages_to(self, anchor_label, anchor_key, anchor_value,

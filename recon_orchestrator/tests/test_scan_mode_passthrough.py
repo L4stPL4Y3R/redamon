@@ -55,6 +55,8 @@ def _spawn(scan_mode):
     # The recon spawn mounts the offline OSV database read-only for L2
     # supply-chain recon, so the volume name is now part of the spawn path.
     mgr.supply_chain_osv_db_volume = "redamon-osv-db"
+    # ...and the supply-chain incident intel beside it (A2/B/D read it).
+    mgr.sca_intel_volume = "redamon-sca-intel"
     mgr.recon_image = "redamon-recon:latest"
     mgr.running_states = {}
     mgr.partial_recon_states = {}
@@ -78,6 +80,14 @@ def _spawn(scan_mode):
         return None
 
     mgr.ensure_osv_db_fresh_async = _osv_fresh
+
+    # Same reasoning for the sca-intel refresh that runs beside it: this test is
+    # about scan-mode passthrough, and the real refresh wants constructor state
+    # __new__ never built.
+    async def _sca_intel_fresh(*a, **kw):
+        return None
+
+    mgr.ensure_sca_intel_fresh_async = _sca_intel_fresh
     mgr._get_container_name = lambda pid: f"redamon-recon-{pid}"
     mgr._scanner_env = lambda: {}
     mgr._scanner_hardening = lambda drop_caps=True: {}

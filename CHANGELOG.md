@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.10.0] - 2026-08-15
+
+### Added
+
+- **Supply-chain incident intel (supplychainattack.org).** A second offline dataset beside the OSV database, carrying the attacker domains, the remediation text and the typosquat labels OSV does not have. Populated by `./redamon.sh sca-intel-sync` and refreshed TTL-guarded on the scan-spawn path like the OSV DB, with a retry floor so a broken feed is not re-fetched on every scan; a fetch failure is always best-effort and never blocks the scan that triggered it. Four consumers: **incident context** (summary, remediation, blast radius, status, feed revision) attached to findings that already exist; **malicious-host correlation** from a discovered `BaseURL` to a `ThreatPulse` over a new `CONTACTS_MALICIOUS_HOST` edge; an **`ioc` flag on captured traffic** to a host a published incident names, set identically by both ingest writers; and **typosquat detection** over harvested package names.
+
+  It never changes a verdict - only an OSV `MAL-` id makes a package malicious, and a catalog match is name-only - and never creates a node for the attacker host, which is a third party the target contacts rather than part of its attack surface, so it lives on the relationship. A missing or never-synced catalog is recorded as "did not run", never as a clean result. Two project toggles (Detect malicious hosts, default on; Detect typosquatting, default off) plus a per-user ignore list so an operator's own OAST callbacks are not reported as the target contacting attacker infrastructure.
+
+### Fixed
+
+- **The Supply-Chain SCA table labelled every non-malicious finding a GuardDog hit.** The verdict wording was hardcoded for any `verdict != 'malicious'`, so a finding from any other tool was attributed to GuardDog; it is now a function of `source_tool`. The graph writer had the same bug one layer down, stamping `source_tool: 'guarddog'` on every suspicious finding regardless of which tool produced it.
+
 ## [6.9.1] - 2026-08-15
 
 ### Fixed

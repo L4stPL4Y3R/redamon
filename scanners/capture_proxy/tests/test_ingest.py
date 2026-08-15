@@ -7,6 +7,7 @@ Run: python3 -m unittest capture_proxy.tests.test_ingest
 from __future__ import annotations
 
 import json
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -106,3 +107,55 @@ class TestClampAndShape(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestEveryImportedModuleIsBakedIntoTheImage(unittest.TestCase):
+    """The image bakes an explicit COPY list, not the whole directory.
+
+    `ingest_worker.py` imports its siblings at module level, so a new sibling
+    that is not on that list turns into `ModuleNotFoundError` the moment the
+    container starts - and only in a REBUILT image, never in the tests, which
+    put this directory on sys.path themselves. That is exactly how ioc_match.py
+    shipped unbaked: every test passed and traffic-ingest would have crash-looped.
+    """
+
+    _HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    def _dockerfile(self):
+        with open(os.path.join(self._HERE, "Dockerfile")) as fh:
+            return fh.read()
+
+    def _local_imports_of(self, filename):
+        """Sibling modules imported by `filename` (same directory, .py present)."""
+        import ast
+
+        path = os.path.join(self._HERE, filename)
+        with open(path) as fh:
+            tree = ast.parse(fh.read(), filename)
+        names = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                names.add(node.module.split(".")[0])
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    names.add(alias.name.split(".")[0])
+        return {n for n in names
+                if os.path.isfile(os.path.join(self._HERE, n + ".py"))}
+
+    def test_ingest_worker_siblings_are_copied(self):
+        dockerfile = self._dockerfile()
+        missing = [m for m in sorted(self._local_imports_of("ingest_worker.py"))
+                   if "capture_proxy/{}.py".format(m) not in dockerfile]
+        self.assertEqual(
+            missing, [],
+            "imported by ingest_worker.py but never COPYed into the image: "
+            "{} - traffic-ingest will crash on startup".format(missing))
+
+    def test_capture_addon_siblings_are_copied(self):
+        dockerfile = self._dockerfile()
+        missing = [m for m in sorted(self._local_imports_of("capture_addon.py"))
+                   if "capture_proxy/{}.py".format(m) not in dockerfile]
+        self.assertEqual(
+            missing, [],
+            "imported by capture_addon.py but never COPYed into the image: "
+            "{} - the proxy will crash on startup".format(missing))

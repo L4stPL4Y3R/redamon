@@ -34,6 +34,7 @@ import uuid
 from typing import Any, Dict, Optional
 
 from capture_lib import ensure_dir_writable
+from ioc_match import match_transaction
 from redamon_ctx import verify_tag
 
 # Header/param names whose values are masked when redaction is on. A salted hash
@@ -99,6 +100,15 @@ def build_row(payload: Dict[str, Any], rec: Dict[str, Any], redact: bool) -> Dic
         redacted = bool(redacted_fields)
 
     scheme = (rec.get("scheme") or "http").lower()
+
+    # A1: flag a request to a host a published supply-chain incident names. A
+    # local set lookup, no network, no new credential; a missing catalog yields
+    # (None, None) rather than failing the row. The TypeScript ingest route sets
+    # the same two columns for the same input - a parity test asserts it.
+    host = rec.get("host") or ""
+    target_ip = rec.get("targetIp")
+    ioc_incident_id, ioc_incident_url = match_transaction(host, target_ip)
+
     return {
         "id": uuid.uuid4().hex,
         "project_id": payload["project_id"],
@@ -155,6 +165,9 @@ def build_row(payload: Dict[str, Any], rec: Dict[str, Any], redact: bool) -> Dic
         "cookie_flag_issues": json.dumps(rec.get("cookieFlagIssues")) if rec.get("cookieFlagIssues") is not None else None,
 
         "started_at": rec.get("startedAt"),
+
+        "ioc_incident_id": ioc_incident_id,
+        "ioc_incident_url": ioc_incident_url,
     }
 
 

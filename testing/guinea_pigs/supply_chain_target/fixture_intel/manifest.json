@@ -1,0 +1,17 @@
+{
+  "feed_url": "fixture://guinea-pig/supply_chain_target",
+  "revised": "2026-08-15-FIXTURE",
+  "fetched_at": 1786000000,
+  "count_reported": 4,
+  "count_ingested": 4,
+  "stats": {
+    "incidents": 4,
+    "incidents_dropped": 0,
+    "domains": 2, "domains_unique": 2, "domains_dropped": 0,
+    "ips": 1, "ips_unique": 1, "ips_dropped": 0,
+    "packages": 2, "packages_unique": 2, "packages_dropped": 0,
+    "typosquats": 1, "typosquats_unique": 1,
+    "wildcards": 1, "wildcards_unique": 1, "wildcards_dropped_public_apex": 0,
+    "indicator_collisions": 0
+  }
+}

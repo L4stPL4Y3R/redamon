@@ -188,9 +188,66 @@ export async function GET(request: NextRequest) {
       malwareCount: toNum(r.get('malwareCount')),
     })
 
+    // BaseURL-side hits: supply-chain incident correlation (A2). A different
+    // claim from the two arms above, and the edge type is what keeps them
+    // apart: APPEARS_IN_PULSE means "this asset of mine is named in the report",
+    // CONTACTS_MALICIOUS_HOST means "my target reached out to a third-party host
+    // that a published incident names".
+    const contactResult = await session.run(
+      `MATCH (u:BaseURL {project_id: $pid})-[c:CONTACTS_MALICIOUS_HOST]->(tp:ThreatPulse)
+       RETURN 'BaseURL'                    AS assetType,
+              u.url                        AS asset,
+              c.matched_host               AS contactedHost,
+              c.evidence                   AS contactEvidence,
+              tp.name                      AS incidentTitle,
+              tp.sca_incident_id           AS incidentId,
+              tp.sca_incident_url          AS incidentUrl,
+              tp.sca_status                AS incidentStatus,
+              tp.sca_summary               AS incidentSummary,
+              tp.sca_feed_revised          AS incidentFeedRevised,
+              coalesce(tp.tags, [])        AS incidentVectors
+       ORDER BY u.url, c.matched_host
+       LIMIT ${rowCap()}`,
+      { pid: projectId }
+    )
+
+    // Same row shape as the other two arms with the VT/OTX/CriminalIP columns
+    // null, so the table renders one uniform grid and the per-column filter
+    // engine sees every key.
+    const mapContactRow = (r: any) => ({
+      assetType: r.get('assetType') as string,
+      asset: (r.get('asset') as string) || '',
+      vtMaliciousCount: null, vtSuspiciousCount: null, vtReputation: null,
+      vtTags: [] as string[], vtLastAnalysisDate: null, vtJarm: null,
+      otxPulseCount: 0, otxUrlCount: null,
+      otxAdversaries: [] as string[], otxMalwareFamilies: [] as string[],
+      otxTlp: null, otxAttackIds: [] as string[],
+      criminalipRiskGrade: null, criminalipAbuseCount: null,
+      criminalipCurrentService: null, criminalipScoreInbound: null,
+      criminalipIsTor: null, criminalipIsProxy: null, criminalipIsVpn: null,
+      criminalipIsDarkweb: null, criminalipIsHosting: null,
+      criminalipIsScanner: null, criminalipCountry: null,
+      subdomains: [] as string[],
+      pulseNames: [(r.get('incidentTitle') as string) || ''].filter(Boolean),
+      // Left empty on purpose: the incident feed carries no threat-actor field,
+      // and this column feeds an adversary roll-up elsewhere.
+      pulseAdversaries: [] as string[],
+      pulseCount: 1,
+      malwareHashes: [] as string[], malwareCount: 0,
+      contactedHost: (r.get('contactedHost') as string) || null,
+      contactEvidence: (r.get('contactEvidence') as string) || null,
+      incidentId: (r.get('incidentId') as string) || null,
+      incidentUrl: (r.get('incidentUrl') as string) || null,
+      incidentStatus: (r.get('incidentStatus') as string) || null,
+      incidentSummary: (r.get('incidentSummary') as string) || null,
+      incidentFeedRevised: (r.get('incidentFeedRevised') as string) || null,
+      incidentVectors: (r.get('incidentVectors') as string[]) || [],
+    })
+
     const rows = [
       ...domainResult.records.map(mapDomainRow),
       ...ipResult.records.map(mapIpRow),
+      ...contactResult.records.map(mapContactRow),
     ].sort((a, b) => {
       if (a.pulseCount !== b.pulseCount) return b.pulseCount - a.pulseCount
       return (b.vtMaliciousCount || 0) - (a.vtMaliciousCount || 0)
@@ -202,6 +259,7 @@ export async function GET(request: NextRequest) {
         totalRows: rows.length,
         domainCount: domainResult.records.length,
         ipCount: ipResult.records.length,
+        contactCount: contactResult.records.length,
       },
     })
   } catch (error) {

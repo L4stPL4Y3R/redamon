@@ -8,6 +8,7 @@ import { useAuth } from '@/providers/AuthProvider'
 import { Drawer, useToast, useAlertModal, WikiInfoButton } from '@/components/ui'
 import { TrafficCaptureStatus } from '@/components/traffic/TrafficCaptureStatus'
 import { TrafficMindSettingsModal } from '@/components/traffic/TrafficMindSettingsModal'
+import { isHttpUrl } from '@/lib/url-utils'
 import {
   useTrafficList,
   useTrafficFacets,
@@ -347,6 +348,32 @@ export default function TrafficPage() {
                     {r.reflectedParams && <span className={`${styles.flag} ${styles.flagWarn}`}>reflect</span>}
                     {r.isReplay && <span className={styles.flag}>replay</span>}
                     {!r.inScope && <span className={`${styles.flag} ${styles.flagWarn}`}>oos</span>}
+                    {r.iocIncidentId && (
+                      // The strongest signal this table can carry: the target
+                      // contacted a host named in a published supply-chain
+                      // incident. Links out to the write-up when we have one.
+                      // isHttpUrl, not truthiness: the URL comes from a public
+                      // feed and React renders a `javascript:` href happily.
+                      isHttpUrl(r.iocIncidentUrl) ? (
+                        <a
+                          href={r.iocIncidentUrl!}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={`${styles.flag} ${styles.flagWarn}`}
+                          title={`Supply-chain incident ${r.iocIncidentId} (supplychainattack.org)`}
+                          onClick={e => e.stopPropagation()}
+                        >
+                          ioc
+                        </a>
+                      ) : (
+                        <span
+                          className={`${styles.flag} ${styles.flagWarn}`}
+                          title={`Supply-chain incident ${r.iocIncidentId}`}
+                        >
+                          ioc
+                        </span>
+                      )
+                    )}
                   </span>
                 </td>
                 <td className={styles.detailCell}>

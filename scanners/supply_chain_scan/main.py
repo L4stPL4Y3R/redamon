@@ -150,6 +150,21 @@ def run_supply_chain_scan(project_id: str) -> dict:
             print(f"[!] deep analysis failed: {exc}")
             artifact.setdefault("errors", []).append(f"deep analysis failed: {exc}")
 
+    # Incident context (B). MUST come after the LAST validate_artifact above: the
+    # incident_* properties are deliberately absent from the artifact allowlist,
+    # so enriching before the gate would fail validation. Mirrors L2 exactly -
+    # the two paths have drifted before and share one implementation now.
+    try:
+        from supply_chain_common.intel import enrich_findings, load_intel
+
+        _intel = load_intel()
+        enrich_findings(artifact, _intel)
+        if not _intel.available:
+            print("[!] incident intel unavailable; findings carry no incident context")
+    except Exception as exc:
+        print(f"[!] incident enrichment failed: {exc}")
+        artifact.setdefault("errors", []).append(f"incident enrichment failed: {exc}")
+
     print("\n" + "=" * 70)
     print("                    SCAN SUMMARY")
     print("=" * 70)
