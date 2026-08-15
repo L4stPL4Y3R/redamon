@@ -358,6 +358,12 @@ model Project {
   supplyChainReconEnabled              Boolean @default(false) @map("supply_chain_recon_enabled")
   supplyChainReconEcosystems           String  @default("npm") @map("supply_chain_recon_ecosystems")
   supplyChainReconDeepAnalysisEnabled  Boolean @default(false) @map("supply_chain_recon_deep_analysis_enabled")
+  // Incident-catalog correlation (A2) and typosquat detection (D). Both run
+  // INSIDE the supply-chain recon module, so both are inert unless
+  // supplyChainReconEnabled is on - the UI must render them disabled when it is
+  // off rather than as live checkboxes that do nothing.
+  scaIntelCorrelationEnabled           Boolean @default(true)  @map("sca_intel_correlation_enabled")
+  supplyChainTyposquatEnabled          Boolean @default(false) @map("supply_chain_typosquat_enabled")
 
   // ========== NAABU PORT SCANNER ==========
   naabuEnabled                Boolean  @default(true) @map("naabu_enabled")

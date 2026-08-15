@@ -35,6 +35,8 @@ export function SupplyChainReconSection({ data, updateField, onRun }: SupplyChai
     supplyChainReconEnabled?: boolean
     supplyChainReconEcosystems?: string
     supplyChainReconDeepAnalysisEnabled?: boolean
+    scaIntelCorrelationEnabled?: boolean
+    supplyChainTyposquatEnabled?: boolean
   }
   const enabled = !!d.supplyChainReconEnabled
   // Undefined only on a form that predates the field; "" is a real, empty
@@ -148,6 +150,42 @@ export function SupplyChainReconSection({ data, updateField, onRun }: SupplyChai
                   checked={!!d.supplyChainReconDeepAnalysisEnabled}
                   onChange={(v) => updateField('supplyChainReconDeepAnalysisEnabled' as keyof FormData, v as never)}
                   aria-label="Deep behavioural analysis"
+                />
+              </div>
+
+              <div className={styles.toggleRow}>
+                <div style={{ flex: 1, paddingRight: '12px' }}>
+                  <span className={styles.toggleLabel}>Detect malicious hosts</span>
+                  <p className={styles.toggleDescription}>
+                    Compares the hosts this scan already saw (the target&apos;s URLs and the servers its JavaScript
+                    came from) against a catalog of published supply-chain incidents. Local lookup only: no extra
+                    requests, and nothing is sent anywhere. Populate the catalog with
+                    {' '}<code>./redamon.sh sca-intel-sync</code>.
+                  </p>
+                </div>
+                <Toggle
+                  // Fallback true, matching the Prisma and Python defaults, so a
+                  // project saved before this field existed does not write
+                  // undefined the first time the form is touched.
+                  checked={d.scaIntelCorrelationEnabled ?? true}
+                  onChange={(v) => updateField('scaIntelCorrelationEnabled' as keyof FormData, v as never)}
+                  aria-label="Detect malicious hosts"
+                />
+              </div>
+
+              <div className={styles.toggleRow}>
+                <div style={{ flex: 1, paddingRight: '12px' }}>
+                  <span className={styles.toggleLabel}>Detect typosquatting</span>
+                  <p className={styles.toggleDescription}>
+                    Flags harvested package names that are one or two characters away from a popular package without
+                    being it. Off by default because near-miss matching can produce false positives; the exact-match
+                    check against known-bad names always runs and is unaffected by this switch.
+                  </p>
+                </div>
+                <Toggle
+                  checked={d.supplyChainTyposquatEnabled ?? false}
+                  onChange={(v) => updateField('supplyChainTyposquatEnabled' as keyof FormData, v as never)}
+                  aria-label="Detect typosquatting"
                 />
               </div>
             </div>

@@ -3845,14 +3845,28 @@ exit $RC
         if os.environ.get("SCA_INTEL_AUTO_REFRESH", "true").lower() in ("0", "false", "no"):
             return {"status": "disabled", "detail": "SCA_INTEL_AUTO_REFRESH is off"}
 
-        ttl = int(ttl_seconds or os.environ.get("SCA_INTEL_TTL_SECONDS", 24 * 3600))
-        retry = int(os.environ.get("SCA_INTEL_RETRY_SECONDS", 3600))
+        try:
+            ttl = int(ttl_seconds or os.environ.get("SCA_INTEL_TTL_SECONDS", 24 * 3600))
+            retry = int(os.environ.get("SCA_INTEL_RETRY_SECONDS", 3600))
+        except (TypeError, ValueError):
+            # A malformed knob must not abort the scan that triggered this.
+            logger.warning("[sca-intel] invalid TTL/retry knob; using defaults")
+            ttl, retry = 24 * 3600, 3600
         bootstrap = os.environ.get(
             "SCA_INTEL_BOOTSTRAP_ON_SCAN", "true").lower() not in ("0", "false", "no")
 
         # Separate lock from the OSV one ON PURPOSE: they write different volumes,
         # and sharing a lock would let either refresh silently starve the other.
-        if not self._sca_intel_refresh_lock.acquire(blocking=False):
+        #
+        # Obtained defensively: this method runs ON THE SCAN-SPAWN PATH, so any
+        # exception it raises aborts a scan. A partially-constructed manager (the
+        # test harnesses build one via __new__) must degrade to "no refresh", not
+        # take the scan down with it.
+        lock = getattr(self, "_sca_intel_refresh_lock", None)
+        if lock is None:
+            logger.warning("[sca-intel] refresh skipped: manager has no refresh lock")
+            return {"status": "failed", "detail": "refresh lock unavailable"}
+        if not lock.acquire(blocking=False):
             return {"status": "skipped", "detail": "refresh already in progress"}
 
         container = None

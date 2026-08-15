@@ -207,3 +207,119 @@ class TestIncidentGraphWrite(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _correlation(**over):
+    hit = {
+        "base_url": "https://target.example.com",
+        "matched_host": "cdn.evil.example",
+        "source_url": "https://cdn.evil.example/app.js",
+        "evidence": "graph-host-match",
+        "incident": {
+            "incident_id": "SCA-0001",
+            "url": "https://supplychainattack.org/i/SCA-0001",
+            "title": "Compromised CDN script",
+            "status": "confirmed",
+            "summary": "A CDN-hosted script was replaced with a skimmer.",
+            "blast_radius": "3,000 sites",
+            "remediation": ["Remove the script", "Rotate keys"],
+            "attack_vectors": ["compromised-cdn"],
+            "last_updated": "2026-08-01",
+            "feed_revised": "2026-08-11",
+        },
+    }
+    hit.update(over)
+    return {"correlations": [hit], "checked": 2, "available": True}
+
+
+class TestScaIntelGraphWrite(unittest.TestCase):
+    """A2: ThreatPulse + CONTACTS_MALICIOUS_HOST."""
+
+    def _write(self, correlation):
+        session = FakeSession()
+        stats = Writer(session).update_graph_from_sca_intel(correlation, "u1", "p1")
+        return session, stats
+
+    def _pulse_query(self, session):
+        for query, kwargs in session.queries:
+            if "ThreatPulse" in query:
+                return query, kwargs
+        raise AssertionError("no ThreatPulse MERGE was issued")
+
+    def test_merges_a_threatpulse_with_the_tenant_triple(self):
+        session, stats = self._write(_correlation())
+        query, kwargs = self._pulse_query(session)
+        self.assertIn("user_id: $uid", query)
+        self.assertIn("project_id: $pid", query)
+        self.assertEqual(kwargs["pulse_id"], "sca-SCA-0001")
+
+    def test_edge_is_contacts_malicious_host_not_appears_in_pulse(self):
+        """APPEARS_IN_PULSE means 'my asset is named in the report', which is
+        false here and would leak these into the OTX arms of the Red Zone."""
+        session, _ = self._write(_correlation())
+        query, _ = self._pulse_query(session)
+        self.assertIn("CONTACTS_MALICIOUS_HOST", query)
+        self.assertNotIn("APPEARS_IN_PULSE", query)
+
+    def test_adversary_is_never_set(self):
+        """The feed has no threat-actor field; both the Red Zone route and the
+        report roll pulse.adversary into an adversary list."""
+        session, _ = self._write(_correlation())
+        query, kwargs = self._pulse_query(session)
+        self.assertNotIn("tp.adversary", query)
+        self.assertNotIn("adversary", kwargs)
+
+    def test_base_url_is_matched_never_merged(self):
+        """Inventing a BaseURL would put a target the scan never saw in the graph."""
+        session, _ = self._write(_correlation())
+        query, _ = self._pulse_query(session)
+        self.assertIn("MATCH (u:BaseURL", query)
+        self.assertNotIn("MERGE (u:BaseURL", query)
+
+    def test_attacker_host_is_never_a_node(self):
+        """It is a third party the target contacts, not part of the attack
+        surface. It belongs on the relationship."""
+        session, _ = self._write(_correlation())
+        query, kwargs = self._pulse_query(session)
+        self.assertEqual(kwargs["matched_host"], "cdn.evil.example")
+        for label in ("Domain", "Subdomain", "ExternalDomain", "IP"):
+            self.assertNotIn("MERGE ({}:{}".format(label[0].lower(), label), query)
+        self.assertIn("c.matched_host = $matched_host", query)
+
+    def test_incident_text_lands_on_sca_prefixed_properties(self):
+        session, _ = self._write(_correlation())
+        query, kwargs = self._pulse_query(session)
+        import re
+
+        for prop in ("sca_incident_url", "sca_status", "sca_summary",
+                     "sca_blast_radius", "sca_remediation", "sca_feed_revised"):
+            # Whitespace-insensitive: the Cypher aligns its '=' signs.
+            self.assertRegex(query, r"tp\.{}\s*=".format(re.escape(prop)))
+        self.assertEqual(kwargs["summary"],
+                         "A CDN-hosted script was replaced with a skimmer.")
+
+    def test_evidence_is_carried_on_the_relationship(self):
+        """Traffic purges delete the Postgres rows but not these nodes, so the
+        evidence kind is what keeps a stale finding interpretable."""
+        session, _ = self._write(_correlation())
+        _, kwargs = self._pulse_query(session)
+        self.assertEqual(kwargs["evidence"], "graph-host-match")
+
+    def test_empty_correlation_writes_nothing(self):
+        session, stats = self._write({"correlations": [], "available": True})
+        self.assertEqual(session.queries, [])
+        self.assertEqual(stats["pulses_merged"], 0)
+
+    def test_none_correlation_is_safe(self):
+        session, stats = self._write(None)
+        self.assertEqual(stats["pulses_merged"], 0)
+
+    def test_hit_without_an_incident_id_is_skipped(self):
+        corr = _correlation()
+        corr["correlations"][0]["incident"] = {}
+        session, stats = self._write(corr)
+        self.assertEqual(stats["pulses_merged"], 0)
+
+    def test_hit_without_a_base_url_is_skipped(self):
+        session, stats = self._write(_correlation(base_url=None))
+        self.assertEqual(stats["pulses_merged"], 0)

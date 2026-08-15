@@ -49,6 +49,18 @@ interface ThreatIntelRow {
   pulseCount: number
   malwareHashes: string[]
   malwareCount: number
+  // Supply-chain incident correlation (A2). Present only on BaseURL rows: the
+  // target was observed contacting a third-party host that a published incident
+  // names. Distinct from the OTX arms above, where the asset itself is the
+  // indicator.
+  contactedHost?: string | null
+  contactEvidence?: string | null
+  incidentId?: string | null
+  incidentUrl?: string | null
+  incidentStatus?: string | null
+  incidentSummary?: string | null
+  incidentFeedRevised?: string | null
+  incidentVectors?: string[]
 }
 
 const PAGE_SIZE = 100
@@ -98,6 +110,16 @@ const COLUMNS: RedZoneFilterColumn[] = [
   { key: 'pulseCount', header: 'Pulse Count' },
   { key: 'malwareHashes', header: 'Malware Hashes' },
   { key: 'malwareCount', header: 'Malware Count' },
+  // Supply-chain incident correlation (A2), BaseURL rows only. Declared here so
+  // the per-column filter engine and the CSV export both see them.
+  { key: 'contactedHost', header: 'Contacted Host' },
+  { key: 'contactEvidence', header: 'Contact Evidence' },
+  { key: 'incidentId', header: 'Incident' },
+  { key: 'incidentStatus', header: 'Incident Status' },
+  { key: 'incidentSummary', header: 'Incident Summary' },
+  { key: 'incidentVectors', header: 'Attack Vectors' },
+  { key: 'incidentUrl', header: 'Incident URL' },
+  { key: 'incidentFeedRevised', header: 'Feed Revision' },
 ]
 
 interface Props { projectId: string | null }
@@ -156,6 +178,7 @@ export const ThreatIntelTable = memo(function ThreatIntelTable({ projectId }: Pr
             <th>CrimIP</th>
             <th>Proxy/Tor/VPN</th>
             <th>Tags</th>
+            <th>Contacted host</th>
           </tr>
         </thead>
         <tbody>
@@ -193,6 +216,18 @@ export const ThreatIntelTable = memo(function ThreatIntelTable({ projectId }: Pr
                 </span>
               </td>
               <td><ListCell items={r.vtTags} max={2} /></td>
+              <td>
+                {r.contactedHost ? (
+                  // The host itself is NOT a node in the graph: it is a third
+                  // party the target contacted, carried on the relationship.
+                  <span title={r.incidentSummary || undefined}>
+                    <Mono>{r.contactedHost}</Mono>
+                    {r.incidentUrl
+                      ? <> <ExternalLink href={r.incidentUrl}>{r.incidentId || 'incident'}</ExternalLink></>
+                      : (r.incidentId ? <> <span className={rowStyles.listChip}>{r.incidentId}</span></> : null)}
+                  </span>
+                ) : <span className={rowStyles.nullCell}>-</span>}
+              </td>
             </tr>
           ))}
         </tbody>

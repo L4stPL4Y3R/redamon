@@ -700,9 +700,59 @@ def run_supply_chain_recon(combined_result, settings=None):
         print("[!][SupplyChainRecon] incident enrichment failed: {}".format(exc))
         artifact["errors"].append("incident enrichment failed: {}".format(exc))
 
+    # D: typosquat detection over the harvested names. Runs BEFORE the incident
+    # enrichment below so a typosquat finding can pick up its own incident
+    # context in the same pass. Pure string work, no network.
+    try:
+        from recon.helpers.supply_chain.typosquat import detect_typosquats
+        from supply_chain_common.intel import load_intel as _load_intel
+
+        ts_findings, ts_stats = detect_typosquats(
+            artifact.get("packages") or [],
+            intel=_load_intel(),
+            fuzzy_enabled=bool(settings.get("SUPPLY_CHAIN_TYPOSQUAT_ENABLED")),
+        )
+        if ts_findings:
+            artifact["suspicious"].extend(ts_findings)
+        print("[+][SupplyChainRecon] typosquat: checked={} catalog={} fuzzy={} "
+              "(fuzzy_enabled={})".format(
+                  ts_stats["checked"], ts_stats["catalog_hits"],
+                  ts_stats["fuzzy_hits"], ts_stats["fuzzy_enabled"]))
+        if not ts_stats["catalog_available"]:
+            artifact["errors"].append(
+                "sca-intel: typosquat catalog lookup did not run "
+                "(catalog unavailable)")
+    except Exception as exc:
+        print("[!][SupplyChainRecon] typosquat detection failed: {}".format(exc))
+        artifact["errors"].append("typosquat detection failed: {}".format(exc))
+
+    # A2: malicious-host correlation. Gated by its own setting, and inert anyway
+    # unless the parent Supply-Chain Recon toggle is on, since this runs inside
+    # that module. Reads only nodes/files the pipeline already has.
+    intel_correlation = None
+    if settings.get("SCA_INTEL_CORRELATION_ENABLED", True):
+        try:
+            from recon.main_recon_modules.sca_intel_correlate import correlate_hosts
+
+            intel_correlation = correlate_hosts(combined_result, base_urls)
+            hits = len(intel_correlation["correlations"])
+            if not intel_correlation["available"]:
+                print("[!][SupplyChainRecon] incident catalog unavailable; "
+                      "malicious-host correlation did NOT run")
+                artifact["errors"].append(
+                    "sca-intel: malicious-host correlation did not run "
+                    "(catalog unavailable)")
+            else:
+                print("[+][SupplyChainRecon] host correlation: checked={} matched={}"
+                      .format(intel_correlation["checked"], hits))
+        except Exception as exc:
+            print("[!][SupplyChainRecon] host correlation failed: {}".format(exc))
+            artifact["errors"].append("host correlation failed: {}".format(exc))
+
     combined_result["supply_chain_recon"] = {
         "artifact": artifact,
         "base_urls": base_urls,
+        "intel_correlation": intel_correlation,
         "summary": {
             "packages": len(artifact["packages"]),
             "malicious": len(artifact["malicious"]),

@@ -84,19 +84,32 @@ describe('phase C: shared contract', () => {
 // threatIntel
 // ---------------------------------------------------------------------------
 describe('/api/analytics/redzone/threatIntel', () => {
-  test('runs 2 Cypher queries (Domain-side + IP-side)', async () => {
+  test('runs 3 Cypher queries (Domain-side + IP-side + supply-chain contact)', async () => {
     await threatIntelRoute.GET(makeRequest('p1'))
-    expect(runCalls).toHaveLength(2)
+    expect(runCalls).toHaveLength(3)
     expect(runCalls[0].cypher).toMatch(/MATCH \(d:Domain \{project_id: \$pid\}\)/)
     expect(runCalls[1].cypher).toMatch(/MATCH \(ip:IP \{project_id: \$pid\}\)/)
+    expect(runCalls[2].cypher).toMatch(/MATCH \(u:BaseURL \{project_id: \$pid\}\)/)
   })
 
-  test('both queries traverse APPEARS_IN_PULSE + ASSOCIATED_WITH_MALWARE', async () => {
+  test('the OTX arms traverse APPEARS_IN_PULSE + ASSOCIATED_WITH_MALWARE', async () => {
     await threatIntelRoute.GET(makeRequest('p1'))
-    for (const call of runCalls) {
+    for (const call of runCalls.slice(0, 2)) {
       expect(call.cypher).toMatch(/APPEARS_IN_PULSE.*ThreatPulse/s)
       expect(call.cypher).toMatch(/ASSOCIATED_WITH_MALWARE.*Malware/s)
     }
+  })
+
+  test('the supply-chain arm uses CONTACTS_MALICIOUS_HOST, never APPEARS_IN_PULSE', async () => {
+    // The two edges make DIFFERENT claims. APPEARS_IN_PULSE means "this asset of
+    // mine is named in the report"; CONTACTS_MALICIOUS_HOST means "my target
+    // reached a third-party host a published incident names". Reusing the OTX
+    // edge here would inject supply-chain incidents into the Domain/IP arms
+    // above, where they would read as "your host is a known threat indicator".
+    await threatIntelRoute.GET(makeRequest('p1'))
+    const c = runCalls[2].cypher
+    expect(c).toMatch(/CONTACTS_MALICIOUS_HOST.*ThreatPulse/s)
+    expect(c).not.toMatch(/APPEARS_IN_PULSE/)
   })
 
   test('Domain query filters on any threat signal (VT / OTX / CriminalIP / pulse)', async () => {

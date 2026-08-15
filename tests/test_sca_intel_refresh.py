@@ -242,6 +242,25 @@ class TestScaIntelRefresh(unittest.TestCase):
         self.assertEqual(res["status"], "failed")
         self.assertIn("docker is down", res["detail"])
 
+    def test_missing_lock_attribute_does_not_raise(self):
+        """This method runs ON the scan-spawn path.
+
+        A partially-constructed manager (every harness that builds one via
+        __new__) previously raised AttributeError here, which propagated out of
+        start_recon and took the whole scan down. Degrade, never raise.
+        """
+        m = _mgr()
+        del m._sca_intel_refresh_lock
+        res = m.ensure_sca_intel_fresh()
+        self.assertEqual(res["status"], "failed")
+        self.assertEqual(m.client.containers.calls, [])
+
+    def test_malformed_ttl_knob_does_not_raise(self):
+        os.environ["SCA_INTEL_TTL_SECONDS"] = "not-a-number"
+        m = _mgr(logs=b"__DID_SYNC__")
+        res = m.ensure_sca_intel_fresh()
+        self.assertEqual(res["status"], "synced")
+
     def test_container_is_removed_after_the_run(self):
         m = _mgr(logs=b"__DID_SYNC__")
         m.ensure_sca_intel_fresh()

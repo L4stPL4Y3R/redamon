@@ -470,6 +470,14 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # GuardDog deep analysis (downloads untrusted tarballs). OFF by default
     # (S5.5); dispatch to the DIRTY analyzer is v2.
     'SUPPLY_CHAIN_RECON_DEEP_ANALYSIS_ENABLED': False,
+    # A2: correlate discovered hosts against the supply-chain incident catalog.
+    # ON by default because it is a local set lookup: no network, no new
+    # container, no measurable cost. Inert unless SUPPLY_CHAIN_RECON_ENABLED.
+    'SCA_INTEL_CORRELATION_ENABLED': True,
+    # D: the fuzzy (edit-distance) typosquat check only. The exact-match lookup
+    # always runs - it cannot produce a false positive, since it only reports
+    # names the catalog already names.
+    'SUPPLY_CHAIN_TYPOSQUAT_ENABLED': False,
     # Import-mining budget. These are genuine in-memory accumulators (every JS
     # file read is held while its specifiers are extracted), so they belong to
     # the memory governor's BYTE-BUDGET model - see _GOV_BUDGET_KEYS. They were
@@ -1164,6 +1172,8 @@ def fetch_project_settings(project_id: str, webapp_url: str) -> dict[str, Any]:
     settings['SUPPLY_CHAIN_RECON_ENABLED'] = project.get('supplyChainReconEnabled', DEFAULT_SETTINGS['SUPPLY_CHAIN_RECON_ENABLED'])
     settings['SUPPLY_CHAIN_RECON_ECOSYSTEMS'] = project.get('supplyChainReconEcosystems', DEFAULT_SETTINGS['SUPPLY_CHAIN_RECON_ECOSYSTEMS'])
     settings['SUPPLY_CHAIN_RECON_DEEP_ANALYSIS_ENABLED'] = project.get('supplyChainReconDeepAnalysisEnabled', DEFAULT_SETTINGS['SUPPLY_CHAIN_RECON_DEEP_ANALYSIS_ENABLED'])
+    settings['SCA_INTEL_CORRELATION_ENABLED'] = project.get('scaIntelCorrelationEnabled', DEFAULT_SETTINGS['SCA_INTEL_CORRELATION_ENABLED'])
+    settings['SUPPLY_CHAIN_TYPOSQUAT_ENABLED'] = project.get('supplyChainTyposquatEnabled', DEFAULT_SETTINGS['SUPPLY_CHAIN_TYPOSQUAT_ENABLED'])
     # Not exposed in the UI (internal budgets): env override, else the default.
     # They live in settings so apply_memory_governor can byte-budget them.
     settings['SUPPLY_CHAIN_IMPORT_MAX_FILES'] = _env_int('SUPPLY_CHAIN_IMPORT_MAX_FILES', DEFAULT_SETTINGS['SUPPLY_CHAIN_IMPORT_MAX_FILES'])

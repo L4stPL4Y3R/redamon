@@ -507,6 +507,103 @@ class SupplyChainMixin:
                         "BaseURL", "url", url, purls, user_id, project_id)
                 except Exception as exc:
                     stats["errors"].append("depends_on {}: {}".format(url, exc))
+
+        # A2: malicious-host correlations, written in the same pass.
+        try:
+            istats = self.update_graph_from_sca_intel(
+                block.get("intel_correlation"), user_id, project_id)
+            stats["intel_pulses_merged"] = istats.get("pulses_merged", 0)
+            stats["relationships_created"] += istats.get("relationships_created", 0)
+            stats["errors"].extend(istats.get("errors", []))
+        except Exception as exc:
+            stats["errors"].append("sca intel correlation: {}".format(exc))
+        return stats
+
+    def update_graph_from_sca_intel(self, correlation, user_id, project_id):
+        """MERGE a ThreatPulse per matched incident + CONTACTS_MALICIOUS_HOST.
+
+        REUSES ThreatPulse rather than adding a label: RedAmon already models
+        "a named threat report listing indicators, attached to a discovered
+        asset" (OTX enrichment writes exactly that). The 20,000-node graph read
+        cap is another reason not to add a per-finding node here.
+
+        The EDGE is deliberately NOT `APPEARS_IN_PULSE`. That edge means "this
+        asset of mine is named in the report", which is false here: the attacker
+        host is a third party the target CONTACTS, not the target's own domain.
+        Reusing it would inject these into the Red Zone Domain/IP arms and the
+        report's OTX section, where they would read as "your host is a known
+        threat indicator".
+
+        `adversary` is left UNSET: the feed has no threat-actor field (0 of
+        3,595 incidents), and both the Red Zone route and the report collect
+        pulse.adversary into an adversary list, so a fabricated value would
+        propagate into a headline.
+        """
+        stats = {"pulses_merged": 0, "relationships_created": 0, "errors": []}
+        correlations = ((correlation or {}).get("correlations") or [])
+        if not correlations:
+            return stats
+
+        with self.driver.session() as session:
+            for hit in correlations:
+                inc = hit.get("incident") or {}
+                incident_id = inc.get("incident_id")
+                base_url = hit.get("base_url")
+                if not incident_id or not base_url:
+                    continue
+                try:
+                    res = session.run(
+                        """
+                        MERGE (tp:ThreatPulse {pulse_id: $pulse_id, user_id: $uid, project_id: $pid})
+                        ON CREATE SET tp.created_at = datetime()
+                        SET tp.name         = $name,
+                            tp.tags         = $tags,
+                            tp.author_name  = 'supplychainattack.org',
+                            tp.modified     = $modified,
+                            tp.sca_incident_id   = $incident_id,
+                            tp.sca_incident_url  = $url,
+                            tp.sca_status        = $status,
+                            tp.sca_summary       = $summary,
+                            tp.sca_blast_radius  = $blast_radius,
+                            tp.sca_remediation   = $remediation,
+                            tp.sca_feed_revised  = $feed_revised,
+                            tp.updated_at   = datetime()
+                        WITH tp
+                        MATCH (u:BaseURL {url: $base_url, user_id: $uid, project_id: $pid})
+                        MERGE (u)-[c:CONTACTS_MALICIOUS_HOST]->(tp)
+                        SET c.matched_host = $matched_host,
+                            c.evidence     = $evidence,
+                            c.source_url   = $source_url,
+                            c.updated_at   = datetime()
+                        RETURN count(c) AS linked
+                        """,
+                        pulse_id="sca-{}".format(incident_id),
+                        uid=user_id, pid=project_id,
+                        incident_id=incident_id,
+                        name=inc.get("title") or incident_id,
+                        tags=[str(t) for t in (inc.get("attack_vectors") or [])][:20],
+                        modified=inc.get("last_updated") or "",
+                        url=inc.get("url") or "",
+                        status=inc.get("status") or "",
+                        summary=inc.get("summary") or "",
+                        blast_radius=inc.get("blast_radius") or "",
+                        remediation=[str(r) for r in (inc.get("remediation") or [])][:20],
+                        feed_revised=inc.get("feed_revised") or "",
+                        base_url=base_url,
+                        # The attacker host lives on the RELATIONSHIP. Merging it
+                        # as a node would put a host the target does not own into
+                        # the attack surface.
+                        matched_host=hit.get("matched_host") or "",
+                        evidence=hit.get("evidence") or "graph-host-match",
+                        source_url=hit.get("source_url") or "",
+                    )
+                    row = res.single()
+                    if row and row.get("linked"):
+                        stats["pulses_merged"] += 1
+                        stats["relationships_created"] += 1
+                except Exception as exc:
+                    stats["errors"].append(
+                        "sca intel {}: {}".format(incident_id, exc))
         return stats
 
     def _anchor_packages_to(self, anchor_label, anchor_key, anchor_value,
