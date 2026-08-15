@@ -14,7 +14,8 @@ import re
 
 __all__ = [
     "sanitize_name", "sanitize_version", "sanitize_purl", "sanitize_ecosystem",
-    "sanitize_advisory", "SanitizeError", "MAX_NAME_LEN",
+    "sanitize_advisory", "sanitize_hostname", "SanitizeError", "MAX_NAME_LEN",
+    "MAX_HOSTNAME_LEN",
     "validate_artifact", "ArtifactError", "ARTIFACT_SCHEMA_VERSION",
     "MAX_PACKAGES", "MAX_FINDINGS", "MAX_STRING_LEN",
 ]
@@ -118,6 +119,74 @@ def sanitize_ecosystem(value):
 
 def sanitize_advisory(value):
     return _check_field(value, _ADVISORY_RE, "advisory_id")
+
+
+# Longest legal DNS name. Anything longer is not a hostname.
+MAX_HOSTNAME_LEN = 253
+
+# One DNS label: LDH (letters/digits/hyphen), no leading or trailing hyphen.
+_HOSTNAME_LABEL_RE = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?\Z")
+
+
+def sanitize_hostname(value, *, allow_wildcard=True):
+    """Validate an IOC hostname from the incident feed; raise on anything else.
+
+    The feed's `domains` array is dirty by construction: 13 of 216 entries are
+    prose sentences, some are raw IPs (route those to the IP validator instead),
+    and at least one is slash-joined garbage. This is the charset gate that drops
+    all three classes, and it is deliberately stricter than `sanitize_name` -
+    a hostname has no '@', '/', ':' or '_'.
+
+    Unlike the other sanitizers this one LOWERCASES its result. DNS is
+    case-insensitive and the value is used for set membership, never as a
+    subprocess argument or a filename, so a case-folded compare is the correct
+    behaviour rather than a silent rewrite of an identity.
+
+    `allow_wildcard` permits ONE leading '*.' label. The caller still applies the
+    public-suffix rule (a bare '*.workers.dev' is dropped as too broad).
+    """
+    if not isinstance(value, str):
+        raise SanitizeError(
+            "hostname must be a string, got {}".format(type(value).__name__))
+    host = value.strip().lower()
+    if not host or len(host) > MAX_HOSTNAME_LEN:
+        raise SanitizeError(
+            "hostname length out of range (1..{})".format(MAX_HOSTNAME_LEN))
+    if ".." in host:
+        raise SanitizeError("hostname contains '..'")
+    # A trailing root dot is legal DNS but never appears in an IOC; normalize it
+    # away rather than rejecting the entry.
+    if host.endswith("."):
+        host = host[:-1]
+
+    wildcard = False
+    if host.startswith("*."):
+        if not allow_wildcard:
+            raise SanitizeError("wildcard hostname not allowed here")
+        wildcard = True
+        host_body = host[2:]
+    else:
+        host_body = host
+    if not host_body:
+        raise SanitizeError("hostname is only a wildcard")
+    # A second '*' anywhere means this is not a hostname we can match on.
+    if "*" in host_body:
+        raise SanitizeError("hostname has a non-leading wildcard")
+
+    labels = host_body.split(".")
+    if len(labels) < 2:
+        # Single-label entries ("localhost", or a prose word) are never usable
+        # IOCs and would match far too broadly.
+        raise SanitizeError("hostname must have at least two labels")
+    for label in labels:
+        if not label or len(label) > 63 or not _HOSTNAME_LABEL_RE.match(label):
+            raise SanitizeError("hostname has an invalid label: {!r}".format(label))
+    # A purely numeric last label means this is an IP, not a hostname; the caller
+    # must route it to the IP validator so the private-range drop applies.
+    if labels[-1].isdigit():
+        raise SanitizeError("hostname looks like an IP address")
+
+    return ("*." + host_body) if wildcard else host_body
 
 
 # ---------------------------------------------------------------------------

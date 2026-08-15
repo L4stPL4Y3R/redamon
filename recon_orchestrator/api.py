@@ -399,6 +399,10 @@ async def lifespan(app: FastAPI):
     # /app/graph_db bind. Empty => container_manager falls back to the legacy
     # sibling-derivation guess (and refuses to shadow a baked-in copy with it).
     container_manager.graph_db_host_path = GRAPH_DB_PATH
+    # Host path of the recon dir, used by the sca-intel refresh sidecar to derive
+    # supply_chain_common's host path (it runs off the scan-spawn path and so has
+    # no recon_path argument of its own).
+    container_manager.recon_host_path = RECON_PATH
     reaper = asyncio.create_task(_ai_attack_reaper())
     capture_reconciler = asyncio.create_task(_capture_config_reconcile())
     # Scan Timeline (Section 7.2): the scheduler worker lives here because the

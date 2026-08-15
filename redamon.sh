@@ -2967,6 +2967,39 @@ cmd_supply_chain_sync() {
     fi
 }
 
+cmd_sca_intel_sync() {
+    local analyzer_img="redamon-supply-chain-analyzer:latest"
+    local force=""
+    [[ "${1:-}" == "--force" ]] && force="--force"
+    export_version
+    if ! docker image inspect "$analyzer_img" &>/dev/null; then
+        info "Supply-chain analyzer image not found, building it (first time only)..."
+        if ! compose_build --profile tools build supply-chain-analyzer; then
+            error "Could not build $analyzer_img. Build the tool images first: ./redamon.sh update"
+            exit 1
+        fi
+    fi
+    docker volume inspect redamon-sca-intel &>/dev/null || docker volume create redamon-sca-intel >/dev/null
+    info "Syncing supply-chain incident intel (supplychainattack.org, ~5 MB)."
+    # Same two rules as cmd_supply_chain_sync above:
+    #   --user root       the volume is root-owned and read-only to every scanner
+    #   supply_chain_common bind-mount is MANDATORY - intel_sync.py is our module
+    #                     and is NOT baked into the analyzer image, so without
+    #                     this the run dies with ModuleNotFoundError.
+    if docker run --rm --user root \
+        -v redamon-sca-intel:/sca-intel \
+        -v "$SCRIPT_DIR/scanners/supply_chain_common:/app/supply_chain_common:ro" \
+        -e PYTHONPATH=/app \
+        --entrypoint python3 \
+        "$analyzer_img" \
+        -m supply_chain_common.intel_sync --out /sca-intel $force; then
+        success "Supply-chain incident intel sync complete."
+    else
+        error "Supply-chain incident intel sync failed."
+        exit 1
+    fi
+}
+
 ensure_tool_images() {
     local missing=false
     for img in $TOOL_IMAGES; do
@@ -3669,6 +3702,7 @@ cmd_help() {
     echo -e "  ${GREEN}reset-password${NC}   Reset an existing user's password"
     echo -e "  ${GREEN}kb <command>${NC}     Knowledge Base management (build/update/rebuild/stats)"
     echo -e "  ${GREEN}supply-chain-sync [ecos]${NC}  Populate the offline OSV DB (default: npm; e.g. 'npm PyPI Go')"
+    echo -e "  ${GREEN}sca-intel-sync [--force]${NC}  Populate the supply-chain incident intel (supplychainattack.org)"
     echo -e "  ${GREEN}test [tier]${NC}      Run the test suite: unit (default) | integration | live | all | coverage"
     echo -e "  ${GREEN}help${NC}             Show this help message"
     echo ""
@@ -3929,6 +3963,7 @@ case "${1:-help}" in
     reset-password) cmd_reset_password ;;
     create-admin)   cmd_create_admin ;;
     supply-chain-sync) shift; cmd_supply_chain_sync "$@" ;;
+    sca-intel-sync) shift; cmd_sca_intel_sync "$@" ;;
     test)           shift; cmd_test "${1:-unit}" ;;
     help|--help|-h) cmd_help ;;
     *)

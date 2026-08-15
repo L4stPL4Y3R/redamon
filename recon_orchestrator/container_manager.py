@@ -221,6 +221,11 @@ class ContainerManager:
         # (from the orchestrator's own /app/graph_db mount). Empty means it could
         # not be detected -- see _graph_db_mount for what happens then.
         self.graph_db_host_path = os.environ.get("GRAPH_DB_PATH", "").strip()
+        # Set by api.py after construction, same reason as graph_db_host_path:
+        # the sca-intel refresh sidecar needs supply_chain_common's host path and
+        # has no recon_path in scope (it runs off the scan-spawn path, not inside
+        # one). Derived from this exactly as the three spawn sites derive theirs.
+        self.recon_host_path = os.environ.get("RECON_PATH", "").strip()
         self._log_tasks: dict[str, asyncio.Task] = {}
 
         # Two DEDICATED thread pools, deliberately NOT the default executor.
@@ -287,6 +292,16 @@ class ContainerManager:
         # Serializes OSV DB refreshes (see ensure_osv_db_fresh): concurrent scan
         # starts must not spawn two sidecars writing the same volume.
         self._osv_db_refresh_lock = threading.Lock()
+        # Supply-chain incident intel (supplychainattack.org catalog), refreshed
+        # TTL-guarded on the scan-spawn path like the OSV DB above.
+        self.sca_intel_volume = os.environ.get("SCA_INTEL_VOLUME", "redamon-sca-intel")
+        # 120s, not the OSV path's 900s: this feed is ~5 MB, so a longer ceiling
+        # would only ever mean a hung fetch sitting on the scan-spawn path.
+        self.sca_intel_refresh_timeout = int(
+            os.environ.get("SCA_INTEL_REFRESH_TIMEOUT", "120"))
+        # A SEPARATE lock from the OSV one: different volumes, and a shared lock
+        # would let either refresh silently starve the other.
+        self._sca_intel_refresh_lock = threading.Lock()
 
         # Memory governor (Part 1): reserves each scan job's expected RAM envelope
         # before spawning so concurrent scans can never sum past the host's scan
@@ -805,6 +820,10 @@ class ContainerManager:
         # rather than gating on supplyChainReconEnabled: the check is nearly free
         # and keeps the spawn path decoupled from a webapp settings fetch.
         await self.ensure_osv_db_fresh_async()
+        # Same contract for the incident intel: TTL-guarded, best-effort, and it
+        # can never block the spawn. Kept beside the OSV call so the two cannot
+        # drift apart.
+        await self.ensure_sca_intel_fresh_async()
 
         # Mint a run id for this full-recon scan. Full recon had no run id (unlike
         # partial/ai-attack); the HTTP traffic-capture layer tags every captured
@@ -904,6 +923,9 @@ class ContainerManager:
                     # Supply-Chain recon (L2): shared runners + offline OSV DB.
                     join_host_path(parent_host_path(recon_path), "scanners", "supply_chain_common"): {"bind": "/app/supply_chain_common", "mode": "ro"},
                     self.supply_chain_osv_db_volume: {"bind": "/osv-db", "mode": "ro"},
+                    # Incident intel (A2 correlation, B enrichment, D typosquats).
+                    # READ-ONLY: only the refresh sidecar ever writes it.
+                    self.sca_intel_volume: {"bind": "/sca-intel", "mode": "ro"},
                     # Mount /tmp for Docker-in-Docker temp files (avoids spaces in paths)
                     "/tmp/redamon": {"bind": "/tmp/redamon", "mode": "rw"},
                     # JS Recon shared volumes with webapp
@@ -1778,6 +1800,7 @@ class ContainerManager:
         # best-effort (see ensure_osv_db_fresh).
         if tool_id == "SupplyChainRecon":
             await self.ensure_osv_db_fresh_async()
+            await self.ensure_sca_intel_fresh_async()
 
         state = PartialReconState(
             project_id=project_id,
@@ -1867,6 +1890,8 @@ class ContainerManager:
                     # Supply-Chain recon (L2): shared runners + offline OSV DB.
                     join_host_path(parent_host_path(recon_path), "scanners", "supply_chain_common"): {"bind": "/app/supply_chain_common", "mode": "ro"},
                     self.supply_chain_osv_db_volume: {"bind": "/osv-db", "mode": "ro"},
+                    # Incident intel (partial-recon parity with full recon above).
+                    self.sca_intel_volume: {"bind": "/sca-intel", "mode": "ro"},
                     "/tmp/redamon": {"bind": "/tmp/redamon", "mode": "rw"},
                     # JS Recon shared volumes with webapp (uploaded files + custom patterns)
                     "redamon_js_recon_uploads": {"bind": "/data/js-recon-uploads", "mode": "ro"},
@@ -3796,6 +3821,130 @@ exit $RC
         """Async wrapper: runs the (blocking) refresh off the event loop."""
         return await self._run_blocking(self.ensure_osv_db_fresh, ecosystems)
 
+    def ensure_sca_intel_fresh(self, ttl_seconds=None) -> dict:
+        """Refresh the supply-chain incident intel if it is past its TTL.
+
+        Sibling of `ensure_osv_db_fresh` above, and deliberately built the same
+        way: TTL-guarded, serialized, best-effort, and reporting `synced` versus
+        `skipped` distinctly so a no-op is never logged as a fetch.
+
+        TWO DELIBERATE DIFFERENCES from the OSV refresh, both because this feed is
+        5.3 MB rather than 208 MB:
+
+        1. It MAY bootstrap a cold volume on the scan path. The OSV cold guard
+           exists solely because a 208 MB first download would stall the spawn for
+           minutes; that reasoning does not carry here. Set
+           SCA_INTEL_BOOTSTRAP_ON_SCAN=false to restore strict laziness.
+        2. The timeout ceiling is 120s, not 900s.
+
+        The TTL and retry-floor decisions live in `intel_sync` itself, so the
+        sidecar makes them once and this method does not duplicate the policy.
+
+        Returns {"status": skipped|synced|failed|disabled, "detail": ...}.
+        """
+        if os.environ.get("SCA_INTEL_AUTO_REFRESH", "true").lower() in ("0", "false", "no"):
+            return {"status": "disabled", "detail": "SCA_INTEL_AUTO_REFRESH is off"}
+
+        ttl = int(ttl_seconds or os.environ.get("SCA_INTEL_TTL_SECONDS", 24 * 3600))
+        retry = int(os.environ.get("SCA_INTEL_RETRY_SECONDS", 3600))
+        bootstrap = os.environ.get(
+            "SCA_INTEL_BOOTSTRAP_ON_SCAN", "true").lower() not in ("0", "false", "no")
+
+        # Separate lock from the OSV one ON PURPOSE: they write different volumes,
+        # and sharing a lock would let either refresh silently starve the other.
+        if not self._sca_intel_refresh_lock.acquire(blocking=False):
+            return {"status": "skipped", "detail": "refresh already in progress"}
+
+        container = None
+        try:
+            # supply_chain_common is NOT baked into the analyzer image (only the
+            # entrypoint is COPYed), and intel_sync.py lives there, so this mount
+            # is mandatory - without it the sidecar dies with ModuleNotFoundError
+            # and the intel silently never refreshes. This is the same failure
+            # documented for cmd_supply_chain_sync in redamon.sh.
+            sc_common_host = join_host_path(
+                parent_host_path(self.recon_host_path), "scanners", "supply_chain_common")
+            if not self.recon_host_path:
+                # Without it the bind source would be a bare relative path and
+                # Docker would silently create an EMPTY dir there, which reads as
+                # "no module" rather than as an error. Refuse instead.
+                return {"status": "failed",
+                        "detail": "recon host path unknown; cannot mount supply_chain_common"}
+
+            if not bootstrap and not self._sca_intel_volume_populated():
+                return {"status": "skipped",
+                        "detail": "cold volume, SCA_INTEL_BOOTSTRAP_ON_SCAN is off"}
+
+            container = self.client.containers.run(
+                self.supply_chain_analyzer_image,
+                detach=True,
+                user="root",  # the volume tree is root-owned; the sync is its only writer
+                network_mode="bridge",  # egress to the pinned feed host, nothing else
+                # Safe here (unlike the scan spawns) because this container writes
+                # a NAMED VOLUME, not a host-owned source bind mount: there is no
+                # CAP_DAC_OVERRIDE dependency to strip.
+                cap_drop=["ALL"],
+                mem_limit=self._tool_container_mem_limit("sca_intel_sync") or "512m",
+                pids_limit=256,
+                environment={"PYTHONPATH": "/app", "HOME": "/tmp"},
+                volumes={
+                    self.sca_intel_volume: {"bind": "/sca-intel", "mode": "rw"},
+                    sc_common_host: {"bind": "/app/supply_chain_common", "mode": "ro"},
+                },
+                entrypoint="python3",
+                command=["-m", "supply_chain_common.intel_sync",
+                         "--out", "/sca-intel",
+                         "--ttl-seconds", str(ttl),
+                         "--retry-seconds", str(retry)],
+            )
+            result = container.wait(timeout=self.sca_intel_refresh_timeout)
+            code = result.get("StatusCode", -1) if isinstance(result, dict) else -1
+            logs = ""
+            try:
+                logs = container.logs().decode("utf-8", errors="replace").strip()[-500:]
+            except Exception:
+                pass
+            if code == 0:
+                did_sync = "__DID_SYNC__" in logs
+                detail = logs.replace("__DID_SYNC__", "").strip()
+                if did_sync:
+                    logger.info(f"[sca-intel] refreshed (ttl={ttl}s): {detail}")
+                    return {"status": "synced", "detail": detail}
+                logger.debug(f"[sca-intel] no refresh needed (ttl={ttl}s): {detail}")
+                return {"status": "skipped", "detail": detail}
+            logger.warning(f"[sca-intel] refresh exited {code}: {logs}")
+            return {"status": "failed", "detail": logs}
+        except Exception as e:
+            # Never block a scan on a refresh failure.
+            logger.warning(f"[sca-intel] refresh skipped (non-fatal): {e}")
+            return {"status": "failed", "detail": str(e)}
+        finally:
+            self._sca_intel_refresh_lock.release()
+            if container is not None:
+                try:
+                    container.remove(force=True)
+                except APIError:
+                    pass
+
+    def _sca_intel_volume_populated(self) -> bool:
+        """True if the intel volume already holds a manifest.
+
+        Only consulted when bootstrap-on-scan is disabled; a probe failure is
+        treated as 'populated' so a Docker hiccup cannot permanently wedge the
+        refresh off.
+        """
+        try:
+            self.client.volumes.get(self.sca_intel_volume)
+        except NotFound:
+            return False
+        except Exception:
+            return True
+        return True
+
+    async def ensure_sca_intel_fresh_async(self) -> dict:
+        """Async wrapper: runs the (blocking) refresh off the event loop."""
+        return await self._run_blocking(self.ensure_sca_intel_fresh)
+
     # ------------------------------------------------------------------
     # Supply-Chain scan (L1 "Other Scans") lifecycle - the CLEAN writer.
     # Mirrors the trufflehog lifecycle: a creds-holding container that runs a
@@ -3823,6 +3972,8 @@ exit $RC
         # this is a ~1s no-op when already fresh). Best-effort - never blocks the
         # scan. The scan container mounts the DB read-only and cannot do this itself.
         await self.ensure_osv_db_fresh_async()
+        # Incident intel (B): same TTL-guarded, best-effort contract.
+        await self.ensure_sca_intel_fresh_async()
 
         container_name = self._get_supply_chain_container_name(project_id)
         try:
@@ -3913,6 +4064,8 @@ exit $RC
                     BROKER_SOCKET_VOLUME: {"bind": "/var/run/broker", "mode": "rw"},
                     self.supply_chain_uploads_volume: {"bind": "/data/supply-chain-uploads", "mode": "ro"},
                     self.supply_chain_osv_db_volume: {"bind": "/osv-db", "mode": "ro"},
+                    # Incident intel for B (L1 finding enrichment). Read-only.
+                    self.sca_intel_volume: {"bind": "/sca-intel", "mode": "ro"},
                 },
                 command="python supply_chain_scan/main.py",
             )
