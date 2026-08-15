@@ -3758,6 +3758,7 @@ _test_run_section() {
         -e GITHUB_HUNT_PATH=/repo/scanners/github_secret_hunt \
         -e TRUFFLEHOG_PATH=/repo/scanners/trufflehog_scan \
         -e SUPPLY_CHAIN_PATH=/repo/scanners/supply_chain_scan \
+        -e GRAPH_DB_PATH=/repo/graph_db \
         -e AI_ATTACK_SURFACE_PATH=/repo/scanners/ai_attack_surface_scan \
         -e CUSTOM_TEMPLATES_PATH=/repo/custom_templates \
         -e CODEFIX_WORK_PATH=/repo/scanners/codefix_sandbox \

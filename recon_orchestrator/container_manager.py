@@ -217,6 +217,10 @@ class ContainerManager:
         # Set by api.py after construction: the on-demand Ollama judge manager
         # (Step 1). The AI attack lifecycle ref-counts a judge lease through it.
         self.local_llm_manager = None
+        # Set by api.py after construction: the AUTO-DETECTED host path of graph_db
+        # (from the orchestrator's own /app/graph_db mount). Empty means it could
+        # not be detected -- see _graph_db_mount for what happens then.
+        self.graph_db_host_path = os.environ.get("GRAPH_DB_PATH", "").strip()
         self._log_tasks: dict[str, asyncio.Task] = {}
 
         # Two DEDICATED thread pools, deliberately NOT the default executor.
@@ -598,6 +602,74 @@ class ContainerManager:
             kw["cap_drop"] = ["ALL"]
         return kw
 
+    def _graph_db_mount(self, derived: str, *, baked_into_image: bool) -> dict:
+        """The ``/app/graph_db`` bind for a spawned scan container.
+
+        Returns a volumes fragment to splat (``**``) into the mount dict - possibly
+        EMPTY, which deliberately leaves the image's own copy of graph_db in place.
+
+        Prefers ``self.graph_db_host_path``: the host path Docker itself reports for
+        the orchestrator's ``/app/graph_db`` mount (resolved by api.py, GRAPH_DB_PATH
+        env as override). ``derived`` is the legacy sibling-of-a-sibling GUESS
+        (``sibling_host_path(recon_path, "graph_db")`` and friends) and is only a
+        last resort, because the guess is wrong on any host where Docker reports a
+        rewritten bind ``Source`` - Docker Desktop on Windows/WSL2 - and a wrong bind
+        source is NOT an error to Docker: it silently auto-creates an empty
+        root-owned directory and mounts that. The empty dir then shadows the good
+        graph_db baked into the scan image, and the scan dies with
+
+            ImportError: cannot import name 'Neo4jClient' from 'graph_db'
+            (unknown location)
+
+        ("unknown location" = Python found the directory but no ``__init__.py``, i.e.
+        an empty namespace package). Full recon wraps its graph imports in
+        try/except so it merely stops writing to Neo4j in silence; partial recon has
+        no such net and hard-crashes. See issue #169.
+
+        So when the image ALREADY bakes graph_db (recon, gvm, github-hunt,
+        trufflehog), an unverifiable guess is strictly worse than not mounting at
+        all: skip it and let the baked copy serve, at the cost of graph_db source
+        hot-reload until the operator adds the compose mount. Only an image that
+        does NOT bake it (supply-chain) has to gamble on the guess.
+        """
+        # getattr: api.py sets this AFTER construction, and the helpers are also
+        # exercised on instances built without __init__.
+        source = (getattr(self, "graph_db_host_path", "") or "").strip()
+        if source:
+            return {source: {"bind": "/app/graph_db", "mode": "ro"}}
+
+        if baked_into_image:
+            logger.warning(
+                "graph_db host path not auto-detected; SKIPPING the /app/graph_db bind "
+                "and using the copy baked into the scan image. Mounting the derived "
+                "guess (%s) risks binding an empty auto-created dir over it. Add "
+                "'./graph_db:/app/graph_db:ro' to the recon-orchestrator volumes and "
+                "recreate it (or set GRAPH_DB_PATH) to restore graph_db hot-reload.",
+                derived,
+            )
+            return {}
+
+        derived = (derived or "").strip()
+        if not derived:
+            # No detected path and nothing to fall back to. An empty mount KEY would
+            # make docker-py send a malformed bind, so bind nothing at all.
+            logger.error(
+                "graph_db host path is neither auto-detected nor derivable; the spawned "
+                "container will have no /app/graph_db. Set GRAPH_DB_PATH or add "
+                "'./graph_db:/app/graph_db:ro' to the recon-orchestrator volumes."
+            )
+            return {}
+
+        logger.warning(
+            "graph_db host path not auto-detected; falling back to the derived guess "
+            "(%s) because this image does not bake graph_db. If the scan fails with "
+            "\"cannot import name 'Neo4jClient' from 'graph_db' (unknown location)\", "
+            "that guess is wrong on this host: add './graph_db:/app/graph_db:ro' to "
+            "the recon-orchestrator volumes and recreate it (or set GRAPH_DB_PATH).",
+            derived,
+        )
+        return {derived: {"bind": "/app/graph_db", "mode": "ro"}}
+
     def reconcile_reservations(self) -> int:
         """Release reservations for scans that are no longer active. Call
         periodically (reaper) so nothing leaks even if a spawn/terminal path is
@@ -828,7 +900,7 @@ class ContainerManager:
                     # Note: rw needed because output/data are subdirectories
                     f"{recon_path}": {"bind": "/app/recon", "mode": "rw"},
                     # Mount graph_db module
-                    sibling_host_path(recon_path, "graph_db"): {"bind": "/app/graph_db", "mode": "ro"},
+                    **self._graph_db_mount(sibling_host_path(recon_path, "graph_db"), baked_into_image=True),
                     # Supply-Chain recon (L2): shared runners + offline OSV DB.
                     join_host_path(parent_host_path(recon_path), "scanners", "supply_chain_common"): {"bind": "/app/supply_chain_common", "mode": "ro"},
                     self.supply_chain_osv_db_volume: {"bind": "/osv-db", "mode": "ro"},
@@ -1791,7 +1863,7 @@ class ContainerManager:
                     # privileged/arbitrary container; the broker rejects those.
                     BROKER_SOCKET_VOLUME: {"bind": "/var/run/broker", "mode": "rw"},
                     f"{recon_path}": {"bind": "/app/recon", "mode": "rw"},
-                    sibling_host_path(recon_path, "graph_db"): {"bind": "/app/graph_db", "mode": "ro"},
+                    **self._graph_db_mount(sibling_host_path(recon_path, "graph_db"), baked_into_image=True),
                     # Supply-Chain recon (L2): shared runners + offline OSV DB.
                     join_host_path(parent_host_path(recon_path), "scanners", "supply_chain_common"): {"bind": "/app/supply_chain_common", "mode": "ro"},
                     self.supply_chain_osv_db_volume: {"bind": "/osv-db", "mode": "ro"},
@@ -2587,7 +2659,7 @@ class ContainerManager:
                     # GVM scan output (read-write, for saving results)
                     f"{gvm_scan_path}/output": {"bind": "/app/gvm_scan/output", "mode": "rw"},
                     # Mount graph_db module for Neo4j updates
-                    sibling_host_path(recon_path, "graph_db"): {"bind": "/app/graph_db", "mode": "ro"},
+                    **self._graph_db_mount(sibling_host_path(recon_path, "graph_db"), baked_into_image=True),
                     # Supply-Chain recon (L2): shared runners + offline OSV DB.
                     join_host_path(parent_host_path(recon_path), "scanners", "supply_chain_common"): {"bind": "/app/supply_chain_common", "mode": "ro"},
                     self.supply_chain_osv_db_volume: {"bind": "/osv-db", "mode": "ro"},
@@ -3000,7 +3072,7 @@ class ContainerManager:
                     # Mount github_secret_hunt source for development (no rebuild needed)
                     f"{github_hunt_path}": {"bind": "/app/github_secret_hunt", "mode": "rw"},
                     # Mount graph_db module for Neo4j integration
-                    sibling_host_path(parent_host_path(github_hunt_path), "graph_db"): {"bind": "/app/graph_db", "mode": "ro"},
+                    **self._graph_db_mount(sibling_host_path(parent_host_path(github_hunt_path), "graph_db"), baked_into_image=True),
                 },
                 command="python github_secret_hunt/main.py",
             )
@@ -3830,7 +3902,7 @@ exit $RC
                     "/tmp/redamon": {"bind": "/tmp/redamon", "mode": "rw"},
                     f"{supply_chain_path}/output": {"bind": "/app/supply_chain_scan/output", "mode": "rw"},
                     f"{supply_chain_path}": {"bind": "/app/supply_chain_scan", "mode": "rw"},
-                    sibling_host_path(parent_host_path(supply_chain_path), "graph_db"): {"bind": "/app/graph_db", "mode": "ro"},
+                    **self._graph_db_mount(sibling_host_path(parent_host_path(supply_chain_path), "graph_db"), baked_into_image=False),
                     sibling_host_path(supply_chain_path, "supply_chain_common"): {"bind": "/app/supply_chain_common", "mode": "ro"},
                     # Deep analysis (GuardDog) dispatches a job to the DIRTY
                     # analyzer. Same posture the recon container already has:
@@ -4057,7 +4129,7 @@ exit $RC
                     # Mount trufflehog_scan source for development (no rebuild needed)
                     f"{trufflehog_path}": {"bind": "/app/trufflehog_scan", "mode": "rw"},
                     # Mount graph_db module for Neo4j integration
-                    sibling_host_path(parent_host_path(trufflehog_path), "graph_db"): {"bind": "/app/graph_db", "mode": "ro"},
+                    **self._graph_db_mount(sibling_host_path(parent_host_path(trufflehog_path), "graph_db"), baked_into_image=True),
                 },
                 command="python trufflehog_scan/main.py",
             )

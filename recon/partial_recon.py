@@ -110,6 +110,13 @@ def main():
     config = load_config()
     tool_id = config.get("tool_id", "")
 
+    # Every partial-recon tool reads its inputs from the graph and writes results
+    # back, so a broken /app/graph_db bind mount is fatal. Fail here with one
+    # actionable line instead of deep inside a tool with a bare
+    # "cannot import name 'Neo4jClient' from 'graph_db' (unknown location)".
+    from recon.graph_db_preflight import require_graph_db
+    require_graph_db("Partial Recon")
+
     # HTTP traffic capture (Phase 1): configure capture-proxy routing for partial
     # recon too (each partial job is a fresh process, so it must configure itself).
     try:

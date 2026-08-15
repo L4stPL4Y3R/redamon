@@ -52,6 +52,15 @@ SUBDOMAIN_LIST = _settings['SUBDOMAIN_LIST']
 USE_BRUTEFORCE_FOR_SUBDOMAINS = _settings['USE_BRUTEFORCE_FOR_SUBDOMAINS']
 SCAN_MODULES = _settings['SCAN_MODULES']
 UPDATE_GRAPH_DB = _settings['UPDATE_GRAPH_DB']
+# Every graph write below is wrapped in try/except (a scan must not die because
+# Neo4j blipped), which also means a BROKEN /app/graph_db bind mount degrades
+# silently: the pipeline finishes "green" having written nothing. Probe once, up
+# front, so that condition is visible in the log instead of inferred from an
+# empty graph. Non-fatal by design - the recon results themselves are still
+# produced and written to disk. See recon/graph_db_preflight.py (issue #169).
+if UPDATE_GRAPH_DB:
+    from recon.graph_db_preflight import warn_if_graph_db_unusable
+    warn_if_graph_db_unusable("Pipeline")
 USER_ID = _settings['USER_ID']
 PROJECT_ID = _settings['PROJECT_ID']
 VERIFY_DOMAIN_OWNERSHIP = _settings['VERIFY_DOMAIN_OWNERSHIP']

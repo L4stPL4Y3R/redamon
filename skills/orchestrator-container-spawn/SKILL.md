@@ -61,6 +61,24 @@ For the no-`env_file` knob rule, see the recon_orchestrator
   nonexistent `scanners/graph_db`; Docker silently binds an empty root-owned dir
   there and graph writes / imports fail with no error. The build context climbs
   two parents: `parent_host_path(parent_host_path(scanner_path))`.
+- **NEVER bind `/app/graph_db` directly at a spawn site. Always route it through
+  `self._graph_db_mount(<derived>, baked_into_image=...)`**
+  ([container_manager.py:605](../../recon_orchestrator/container_manager.py#L605)).
+  Deriving graph_db's host path is a LAST RESORT, not the mechanism: the real
+  path is auto-detected from the orchestrator's own `./graph_db:/app/graph_db:ro`
+  mount (`GRAPH_DB_PATH`, resolved in `api.py` exactly like `RECON_PATH`). The
+  derivation is only right when Docker reports the literal repo path - Docker
+  Desktop on Windows/WSL2 reports rewritten bind `Source` strings whose sibling
+  is nowhere, Docker auto-creates that path EMPTY, and the empty dir shadows the
+  graph_db baked into the scan image. Every spawned scan then dies with
+  `cannot import name 'Neo4jClient' from 'graph_db' (unknown location)`
+  (issue #169). `baked_into_image=True` for recon / gvm / github-hunt /
+  trufflehog (they COPY graph_db, so no mount beats a wrong mount);
+  `False` only for supply-chain, which does not bake it.
+- **ALWAYS resolve a new host source path with `_get_host_path()` + a compose
+  mount, not by string surgery on another path.** If a spawn needs host dir `X`,
+  mount `X` into the orchestrator so Docker itself reports its source. A missing
+  bind source is not an error to Docker; it silently becomes an empty directory.
 
 ---
 
