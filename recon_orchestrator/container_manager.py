@@ -1322,6 +1322,33 @@ class ContainerManager:
             return default
         return "true" if bool(value) else "false"
 
+    def _ingest_volumes(self, spool_vols: dict) -> dict:
+        """Mounts for the traffic-ingest worker, incident catalog included.
+
+        The catalog is mounted READ-ONLY; only the sync sidecar writes it.
+        `supply_chain_common` carries the matcher and is NOT baked into the
+        capture image, so it must be bind-mounted the same way every other
+        consumer mounts it.
+
+        Both are added only when their source is known. A missing bind source is
+        not an error to Docker - it silently creates an EMPTY directory - and an
+        empty supply_chain_common would make every lookup return "no match",
+        which is indistinguishable from a clean run. Better to skip the mount and
+        let the worker record the catalog as unavailable (it logs that once).
+        """
+        vols = dict(spool_vols)
+        vols[self.sca_intel_volume] = {"bind": "/sca-intel", "mode": "ro"}
+        if self.recon_host_path:
+            sc_common = join_host_path(
+                parent_host_path(self.recon_host_path), "scanners", "supply_chain_common")
+            vols[sc_common] = {"bind": "/app/supply_chain_common", "mode": "ro"}
+        else:
+            logger.warning(
+                "[capture] recon host path unknown; traffic-ingest starts WITHOUT "
+                "supply_chain_common, so captured requests will not be matched "
+                "against the supply-chain incident catalog")
+        return vols
+
     async def start_capture_proxy(self, config: dict | None = None) -> dict:
         """Start (idempotently reconcile) the capture proxy + ingest pair.
 
@@ -1401,8 +1428,20 @@ class ContainerManager:
                 # Tag-verification keys: source=recon -> scanner, source=agent -> internal.
                 "SCANNER_API_KEY": os.environ.get("SCANNER_API_KEY", ""),
                 "INTERNAL_API_KEY": os.environ.get("INTERNAL_API_KEY", ""),
+                # A1 (supply-chain incident match). These MUST be here and not
+                # only in docker-compose.yml: in normal operation this pair is
+                # spawned by THIS method (the Global Settings toggle calls it),
+                # so the compose service definitions are used only by a manual
+                # `docker compose --profile capture up`. A knob set only in
+                # compose is invisible to the container users actually run, and
+                # the match would silently return "no match" on every request.
+                "PYTHONPATH": "/app",
+                "SCA_INTEL_PATH": "/sca-intel",
+                "SCA_INTEL_MATCH_ENABLED": os.environ.get("SCA_INTEL_MATCH_ENABLED", "true"),
+                "CAPTURE_IOC_IGNORE_SUFFIXES": getattr(
+                    self, "sca_intel_ignore_suffixes", "") or "",
             },
-            volumes=spool_vols,
+            volumes=self._ingest_volumes(spool_vols),
             cap_drop=["ALL"],
             read_only=True,
             tmpfs={"/tmp": "size=64m,exec"},

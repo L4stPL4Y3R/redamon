@@ -339,3 +339,46 @@ class TestIgnoreListForwarding(unittest.TestCase):
         import inspect
         src = inspect.getsource(cm_mod)
         self.assertIn('getattr(self, "sca_intel_ignore_suffixes", "")', src)
+
+
+class TestIngestSpawnMounts(unittest.TestCase):
+    """BLOCKING GAP regression: the capture pair is ORCHESTRATOR-spawned.
+
+    In normal operation the Global Settings toggle calls start_capture_proxy,
+    which builds its own container spec here. The docker-compose.yml service
+    definitions are used only by a manual `docker compose --profile capture up`.
+    So a mount or env added only to compose is invisible to the container users
+    actually run - traffic-ingest would start without the incident catalog and
+    return "no match" for every captured request, silently.
+    """
+
+    def test_ingest_mounts_the_intel_volume_read_only(self):
+        m = _mgr()
+        vols = m._ingest_volumes({"redamon_capture_spool": {"bind": "/spool", "mode": "rw"}})
+        self.assertEqual(vols["redamon-sca-intel"], {"bind": "/sca-intel", "mode": "ro"})
+
+    def test_ingest_mounts_supply_chain_common(self):
+        m = _mgr()
+        vols = m._ingest_volumes({})
+        binds = {v["bind"]: k for k, v in vols.items()}
+        self.assertIn("/app/supply_chain_common", binds)
+        self.assertTrue(binds["/app/supply_chain_common"].endswith(
+            "scanners/supply_chain_common"))
+
+    def test_spool_mounts_are_preserved(self):
+        m = _mgr()
+        spool = {"redamon_capture_spool": {"bind": "/spool", "mode": "rw"},
+                 "redamon_capture_bodies": {"bind": "/bodies", "mode": "rw"}}
+        vols = m._ingest_volumes(spool)
+        for k, v in spool.items():
+            self.assertEqual(vols[k], v)
+
+    def test_unknown_recon_path_skips_the_mount_rather_than_binding_empty(self):
+        """Docker turns a missing bind source into an EMPTY dir, and an empty
+        supply_chain_common reads as 'no match' on every request."""
+        m = _mgr()
+        m.recon_host_path = ""
+        vols = m._ingest_volumes({})
+        self.assertNotIn("/app/supply_chain_common", {v["bind"] for v in vols.values()})
+        # The catalog volume is still mounted; only the matcher module is absent.
+        self.assertIn("redamon-sca-intel", vols)
