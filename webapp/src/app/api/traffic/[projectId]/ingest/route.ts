@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { isInternalRequest, isScannerRequest } from '@/lib/session'
+import { iocColumns } from '@/lib/scaIntel'
 import type { Prisma } from '@prisma/client'
 
 // POST /api/traffic/[projectId]/ingest
@@ -145,6 +146,12 @@ export async function POST(
       const reqBody = capBody(t.reqBody)
       const respBody = capBody(t.respBody)
 
+      // A1: the SECOND writer of this table. The Python spool worker sets the
+      // same two columns for the same input; if only one path did, an operator
+      // would see some requests flagged and conclude the rest were checked and
+      // cleared. Local set lookup, no network, never throws.
+      const ioc = iocColumns(host, asString(t.targetIp))
+
       data.push({
         projectId,
         userId: project.userId,
@@ -195,6 +202,9 @@ export async function POST(
           : undefined,
 
         startedAt: asDate(t.startedAt),
+
+        iocIncidentId: ioc.iocIncidentId,
+        iocIncidentUrl: ioc.iocIncidentUrl,
       })
     }
 

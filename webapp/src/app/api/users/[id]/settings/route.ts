@@ -110,6 +110,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         captureEgressBlockReserved: true,
         captureEgressBlockMulticast: true,
         captureEgressBlockUnspecified: true,
+        // Must match the Prisma @default and DEFAULT_CAPTURE, or a user who has
+        // never saved settings sees a different list from the one both matchers
+        // actually apply.
+        scaIntelIgnoreSuffixes: 'oastify.com,oast.fun,mburpcollab.com,canarytokens.com,pipedream.net',
         rotationConfigs,
       })
     }
@@ -262,6 +266,18 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     // bad key/value can never reach the proxy env; unknown pairs are dropped.
     if ('captureProxyBodyRules' in body) {
       captureData.captureProxyBodyRules = sanitizeBodyRules(body.captureProxyBodyRules)
+    }
+    // Incident-match ignore list (A1). Sanitized to hostname-ish tokens because
+    // it is forwarded to a spawned container as env: a comma-separated list is
+    // the only shape either matcher understands, and anything else is dropped
+    // rather than passed through.
+    if ('scaIntelIgnoreSuffixes' in body) {
+      captureData.scaIntelIgnoreSuffixes = String(body.scaIntelIgnoreSuffixes ?? '')
+        .split(/[,\s]+/)
+        .map(s => s.trim().toLowerCase().replace(/^\.+/, ''))
+        .filter(s => s && s.length <= 253 && /^[a-z0-9.-]+$/.test(s))
+        .slice(0, 50)
+        .join(',')
     }
     const captureEnabledProvided = 'captureProxyEnabled' in body
     const captureDesiredEnabled = captureEnabledProvided

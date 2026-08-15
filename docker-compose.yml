@@ -1004,6 +1004,11 @@ services:
       # route maps it, inside this service's 1g mem_limit. Wired here because the
       # webapp has NO env_file, so a value set only in .env would be inert.
       REDAMON_REDZONE_ROW_CAP: ${REDAMON_REDZONE_ROW_CAP:-}
+      # A1 (supply-chain incident match) on the TypeScript ingest path. Same
+      # env_file caveat as every knob above: the webapp has NO env_file.
+      SCA_INTEL_PATH: /sca-intel
+      SCA_INTEL_MATCH_ENABLED: ${SCA_INTEL_MATCH_ENABLED:-true}
+      CAPTURE_IOC_IGNORE_SUFFIXES: ${CAPTURE_IOC_IGNORE_SUFFIXES:-}
       # S11: login lockout / backoff thresholds. SAFE DEFAULTS so an unset value
       # fails safe to a real limit, never to "no limit".
       LOGIN_MAX_ATTEMPTS: ${LOGIN_MAX_ATTEMPTS:-5}
@@ -1058,6 +1063,11 @@ services:
       # AI Attack Surface native reports (garak/pyrit/giskard/promptfoo) for the
       # transcript drill-down (§9c). Read-only; served via a path-validated route.
       - ./scanners/ai_attack_surface_scan/output:/data/ai-attack-output:ro
+      # A1: the webapp is the SECOND writer of captured_http_transactions (the
+      # direct recon/agent ingest route), so it needs the same incident catalog
+      # the Python spool worker reads, or only half the captured traffic would
+      # ever be flagged. Read-only.
+      - sca_intel:/sca-intel:ro
       - report_data:/data/reports
       - js_recon_uploads:/data/js-recon-uploads
       # Supply-chain SBOM/lockfile uploads: webapp writes, the scan reads (ro).
@@ -1159,12 +1169,29 @@ services:
       # Tag-verification keys: source=recon -> SCANNER_API_KEY, source=agent -> INTERNAL_API_KEY.
       SCANNER_API_KEY: "${SCANNER_API_KEY:-}"
       INTERNAL_API_KEY: "${INTERNAL_API_KEY:-}"
+      # A1 (supply-chain incident match). PYTHONPATH so the bind-mounted
+      # supply_chain_common is importable; the ignore list suppresses the
+      # operator's own OAST callbacks; the kill switch is deliberately not in
+      # the UI.
+      PYTHONPATH: "/app"
+      SCA_INTEL_PATH: /sca-intel
+      SCA_INTEL_MATCH_ENABLED: "${SCA_INTEL_MATCH_ENABLED:-true}"
+      CAPTURE_IOC_IGNORE_SUFFIXES: "${CAPTURE_IOC_IGNORE_SUFFIXES:-}"
     # Trusted plane: needs Postgres. NO pentest-net -> no target egress at all.
     networks:
       - redamon
     volumes:
       - capture_spool:/spool
       - capture_bodies:/bodies
+      # A1: incident catalog, READ-ONLY. This worker is the one that flags a
+      # captured request to a known-bad host. It is a set lookup: no network, no
+      # extra credential, and the INSERT-only Postgres role is unchanged.
+      - sca_intel:/sca-intel:ro
+      # supply_chain_common is NOT baked into this image (only the capture files
+      # are COPYed), and the matcher lives there. Without this mount the lookup
+      # degrades to "no match" on every request, which is indistinguishable from
+      # a clean run.
+      - ./scanners/supply_chain_common:/app/supply_chain_common:ro
     read_only: true
     tmpfs:
       - /tmp

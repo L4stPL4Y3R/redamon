@@ -37,6 +37,9 @@ export interface CaptureSettings {
   captureEgressBlockReserved: boolean
   captureEgressBlockMulticast: boolean
   captureEgressBlockUnspecified: boolean
+  // Comma-separated hosts excluded from the supply-chain incident match (A1).
+  // Read by both ingest paths; empty falls back to the shipped provider list.
+  scaIntelIgnoreSuffixes: string
 }
 
 export const DEFAULT_CAPTURE: CaptureSettings = {
@@ -48,6 +51,7 @@ export const DEFAULT_CAPTURE: CaptureSettings = {
   captureEgressBlockUnresolvable: true, captureEgressBlockPrivate: true, captureEgressBlockLoopback: true,
   captureEgressBlockLinkLocal: true, captureEgressBlockCgnat: true, captureEgressBlockReserved: true,
   captureEgressBlockMulticast: true, captureEgressBlockUnspecified: true,
+  scaIntelIgnoreSuffixes: 'oastify.com,oast.fun,mburpcollab.com,canarytokens.com,pipedream.net',
 }
 
 // The canonical field set to diff over. Derived from DEFAULT_CAPTURE so a new
@@ -84,6 +88,12 @@ export function pickCapture(d: Record<string, unknown>): CaptureSettings {
     captureEgressBlockReserved: b(d.captureEgressBlockReserved, true),
     captureEgressBlockMulticast: b(d.captureEgressBlockMulticast, true),
     captureEgressBlockUnspecified: b(d.captureEgressBlockUnspecified, true),
+    // An empty string is a MEANINGFUL value here (the operator cleared the list),
+    // so `??` rather than `||`: falling back on empty would silently re-apply
+    // the shipped defaults and keep suppressing hosts they asked to see.
+    scaIntelIgnoreSuffixes: typeof d.scaIntelIgnoreSuffixes === 'string'
+      ? d.scaIntelIgnoreSuffixes
+      : DEFAULT_CAPTURE.scaIntelIgnoreSuffixes,
   }
 }
 

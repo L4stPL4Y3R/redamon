@@ -347,6 +347,30 @@ export default function TrafficPage() {
                     {r.reflectedParams && <span className={`${styles.flag} ${styles.flagWarn}`}>reflect</span>}
                     {r.isReplay && <span className={styles.flag}>replay</span>}
                     {!r.inScope && <span className={`${styles.flag} ${styles.flagWarn}`}>oos</span>}
+                    {r.iocIncidentId && (
+                      // The strongest signal this table can carry: the target
+                      // contacted a host named in a published supply-chain
+                      // incident. Links out to the write-up when we have one.
+                      r.iocIncidentUrl ? (
+                        <a
+                          href={r.iocIncidentUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={`${styles.flag} ${styles.flagWarn}`}
+                          title={`Supply-chain incident ${r.iocIncidentId} (supplychainattack.org)`}
+                          onClick={e => e.stopPropagation()}
+                        >
+                          ioc
+                        </a>
+                      ) : (
+                        <span
+                          className={`${styles.flag} ${styles.flagWarn}`}
+                          title={`Supply-chain incident ${r.iocIncidentId}`}
+                        >
+                          ioc
+                        </span>
+                      )
+                    )}
                   </span>
                 </td>
                 <td className={styles.detailCell}>

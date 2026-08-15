@@ -31,6 +31,10 @@ const LIST_SELECT = {
   reflectedParams: true,
   blocked: true,
   inScope: true,
+  // A1: set by both ingest paths when the request's host or resolved IP appears
+  // in the supply-chain incident catalog. Null means "no match OR never synced".
+  iocIncidentId: true,
+  iocIncidentUrl: true,
 } satisfies Prisma.CapturedHttpTransactionSelect
 
 // Whitelisted sortable columns (prevents arbitrary orderBy injection).

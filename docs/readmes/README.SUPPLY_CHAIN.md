@@ -203,6 +203,110 @@ All four are wired explicitly in `docker-compose.yml` (the orchestrator has **no
 
 ---
 
+## Threat-intel enrichment (the incident catalog)
+
+A second offline dataset, independent of the OSV DB: the
+[supplychainattack.org](https://supplychainattack.org) incident catalog, holding
+the attacker domains, the remediation text and the typosquat labels that OSV does
+not carry. It lives in the `redamon-sca-intel` volume, mounted **read-only**
+everywhere, and is written only by the sync.
+
+```bash
+./redamon.sh sca-intel-sync            # ~5 MB; also refreshed automatically, below
+./redamon.sh sca-intel-sync --force    # ignore the TTL and the retry floor
+```
+
+The sync fetches the feed host-pinned, byte-capped and envelope-validated, then
+normalizes it into three small lookup files plus a `manifest.json` recording the
+feed revision. **A rejected envelope leaves the previous files in place**: a bad
+day at the publisher must never truncate good data to empty.
+
+Every value passes a charset gate and a rejected value is **dropped and counted**,
+never silently vanished, because the sync report is read as coverage:
+
+| Class | Handling |
+|---|---|
+| prose sentences in the `domains` array | dropped by the hostname gate, counted |
+| raw IPs in the `domains` array | routed to the IP validator instead |
+| non-globally-routable IPs | dropped (`is_global`; note `is_private` does **not** cover CGNAT) |
+| bare wildcards on public hosting apexes (`*.workers.dev`) | **dropped**: that is all of Cloudflare Workers |
+| a specific host or a deeper wildcard under one | **kept**: it names one attacker deployment |
+| OAST providers (`oastify.com`, ...) | **kept** (they are real IOCs), suppressed at match time |
+
+### Automatic refresh (lazy-on-scan)
+
+Same mechanism as the OSV DB above, on the same three spawn paths (full recon,
+partial recon for `SupplyChainRecon`, and the L1 scan), TTL-guarded and
+best-effort: a refresh failure is logged and the scan proceeds.
+
+Two deliberate differences from the OSV refresh, both because this feed is 5 MB
+rather than 208 MB:
+
+- it **may bootstrap a cold volume** on the scan path (the OSV cold guard exists
+  only to avoid a multi-minute stall on the first spawn);
+- the sidecar ceiling is 120s, not 900s.
+
+There is also a **retry floor** the OSV path has no need for. The envelope
+contract keeps the previous files on rejection, so `manifest.json` never advances
+while the feed is broken, and a TTL-only check would re-fetch on every single scan
+spawn. A separate attempt marker bounds that to one attempt per hour.
+
+| Knob (orchestrator env) | Default | Meaning |
+|---|---|---|
+| `SCA_INTEL_AUTO_REFRESH` | `true` | `false` for a strictly air-gapped deploy |
+| `SCA_INTEL_TTL_SECONDS` | `86400` | freshness window (24h) |
+| `SCA_INTEL_RETRY_SECONDS` | `3600` | retry floor after a failed or rejected fetch |
+| `SCA_INTEL_REFRESH_TIMEOUT` | `120` | hard ceiling on the sidecar |
+| `SCA_INTEL_BOOTSTRAP_ON_SCAN` | `true` | allow cold population on the scan path |
+| `SCA_INTEL_MATCH_ENABLED` | `true` | kill switch for the traffic match (A1), not in the UI |
+
+### What it feeds
+
+| | What it adds | Where it shows |
+|---|---|---|
+| **Incident context** | 7 `incident_*` properties on findings that **already exist** | SCA table, Verdicts sheet (expandable row) |
+| **Malicious hosts (recon)** | `ThreatPulse` + `CONTACTS_MALICIOUS_HOST` from a `BaseURL` | Threat Intel table + the graph |
+| **Malicious hosts (traffic)** | 2 columns on the captured request | Traffic page, `ioc` flag |
+| **Typosquats** | `MalPackageFinding` with `source_tool: typosquat` | SCA table, Verdicts sheet |
+
+Three things this deliberately does **not** do:
+
+- **It never changes a verdict.** Only an OSV `MAL-` id makes a package
+  malicious; a catalog match is name-only and therefore weaker evidence.
+- **It never invents a node for the attacker host.** That host is a third party
+  the target contacts, not part of the target's attack surface, so it lives on
+  the relationship. The `BaseURL` is MATCHed, never MERGEd.
+- **It never reuses `APPEARS_IN_PULSE`.** That edge means "this asset of mine is
+  named in the report", which is false here, and reusing it would inject these
+  findings into the Red Zone's OTX arms and the report's OTX section.
+
+### Scope, stated precisely
+
+Of the 364 incidents carrying attacker domains, roughly 74 are browser-side
+(compromised script, CDN hijack, skimmer) and ~89 are install-time (a
+`postinstall` calling home during `npm install`). RedAmon observes browser traffic
+and the JS recon downloads, so it catches the **browser-side class**. Do not
+describe this as detecting supply-chain attacks in general.
+
+Also note ~98% of the catalog's package IOCs originate from the GitHub Advisory
+Database and are therefore already in the offline OSV DB. The value here is the
+domains, the remediation text and the typosquat labels, not the package list.
+
+### Staleness is recorded, not prevented
+
+`incident_feed_revised` on every enriched finding and `manifest.json` in the
+volume let an operator reconstruct which feed revision produced any enrichment.
+A **Scan Timeline snapshot serializes all node properties with no allowlist**, so
+these ride along and restoring an old version restores the enrichment as it was
+at snapshot time. That is intended: the feed revision is what makes a restored
+snapshot interpretable.
+
+There is no UI indicator of intel age. An air-gapped deploy, a host whose feed has
+been failing for a month, and a freshly synced one look identical from inside the
+product. The same gap applies to the OSV DB and the GuardDog rule set.
+
+---
+
 ## The shared engine (`supply_chain_common`)
 
 A top-level Python package, mounted read-only into the recon / scan / analyzer

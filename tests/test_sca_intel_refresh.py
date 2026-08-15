@@ -311,3 +311,31 @@ class TestScaIntelRefresh(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestIgnoreListForwarding(unittest.TestCase):
+    """A2 reads the ignore list from env inside the recon container.
+
+    The recon container cannot query the DB, so the orchestrator forwards it at
+    spawn the way it forwards the egress policy to the proxy. If this is not
+    wired, an operator's own OAST callbacks get flagged as the target contacting
+    attacker infrastructure - on every engagement.
+    """
+
+    def test_recon_spawn_env_includes_the_ignore_list(self):
+        import inspect
+
+        src = inspect.getsource(cm_mod)
+        self.assertEqual(
+            src.count('"CAPTURE_IOC_IGNORE_SUFFIXES": getattr(self, "sca_intel_ignore_suffixes"'),
+            2,
+            "both recon spawn sites (full + partial) must forward the ignore list")
+
+    def test_manager_has_a_default_ignore_list_attribute(self):
+        m = _mgr()
+        self.assertEqual(getattr(m, "sca_intel_ignore_suffixes", None), None)
+        # ...and the spawn sites use getattr with a fallback, so a manager that
+        # predates the reconciler's first tick still spawns.
+        import inspect
+        src = inspect.getsource(cm_mod)
+        self.assertIn('getattr(self, "sca_intel_ignore_suffixes", "")', src)

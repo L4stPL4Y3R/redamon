@@ -367,6 +367,14 @@ async def _capture_config_reconcile():
         try:
             cfg = await asyncio.to_thread(_fetch_capture_config, url, key)
             if cfg is not None:
+                # A2 rides this same fetch: the recon container needs the
+                # operator's incident-match ignore list, and this loop is already
+                # the one place that reads it from the DB. Stashed on the manager
+                # and injected at spawn, exactly like the egress policy reaches
+                # the proxy. Empty = "use the shipped provider list".
+                if container_manager is not None:
+                    container_manager.sca_intel_ignore_suffixes = str(
+                        cfg.get("sca_intel_ignore_suffixes") or "")
                 payload = json.dumps(cfg, separators=(",", ":"), sort_keys=True)
                 # Rewrite when the DB payload changed OR the file went missing out of
                 # band (deleted volume, fresh mount) — the latter keeps the proxy from

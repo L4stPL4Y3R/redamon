@@ -302,6 +302,11 @@ class ContainerManager:
         # A SEPARATE lock from the OSV one: different volumes, and a shared lock
         # would let either refresh silently starve the other.
         self._sca_intel_refresh_lock = threading.Lock()
+        # Operator's incident-match ignore list (their own OAST providers).
+        # Refreshed by api.py's capture-config reconciler and injected into the
+        # recon spawn; empty means "use the shipped provider list".
+        self.sca_intel_ignore_suffixes = os.environ.get(
+            "CAPTURE_IOC_IGNORE_SUFFIXES", "").strip()
 
         # Memory governor (Part 1): reserves each scan job's expected RAM envelope
         # before spawning so concurrent scans can never sum past the host's scan
@@ -906,6 +911,10 @@ class ContainerManager:
                     # the default) makes the broker reject the spawn with
                     # "bind mount not allowed" and the whole retire.js pass dies.
                     "SUPPLY_CHAIN_COMMON_HOST_PATH": join_host_path(parent_host_path(recon_path), "scanners", "supply_chain_common"),
+                    # A2: the operator's incident-match ignore list (their own
+                    # OAST providers). Sourced from the DB by api.py's
+                    # capture-config reconciler; empty = shipped defaults.
+                    "CAPTURE_IOC_IGNORE_SUFFIXES": getattr(self, "sca_intel_ignore_suffixes", "") or "",
                     # Operator overrides for the dirty analyzer L2 spawns itself.
                     **self._analyzer_env(),
                 },
@@ -1876,6 +1885,10 @@ class ContainerManager:
                     # the default) makes the broker reject the spawn with
                     # "bind mount not allowed" and the whole retire.js pass dies.
                     "SUPPLY_CHAIN_COMMON_HOST_PATH": join_host_path(parent_host_path(recon_path), "scanners", "supply_chain_common"),
+                    # A2: the operator's incident-match ignore list (their own
+                    # OAST providers). Sourced from the DB by api.py's
+                    # capture-config reconciler; empty = shipped defaults.
+                    "CAPTURE_IOC_IGNORE_SUFFIXES": getattr(self, "sca_intel_ignore_suffixes", "") or "",
                     # Operator overrides for the dirty analyzer L2 spawns itself.
                     **self._analyzer_env(),
                 },

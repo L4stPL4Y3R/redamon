@@ -239,6 +239,19 @@ export function TrafficMindSettingsModal({ isOpen, onClose, userId }: {
                 <input type="number" className="textInput" value={s.captureProxyRetentionDays}
                   onChange={(e) => setField('captureProxyRetentionDays', parseInt(e.target.value) || 14)} />
               </label>
+              <label style={label13}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  Hosts to ignore for incident matching
+                  <Tooltip
+                    content="Captured requests are compared against a catalog of published supply-chain incidents. That catalog legitimately lists OAST / interaction-server providers as indicators, so without this list your own Burp Collaborator callbacks would be flagged on every engagement. Comma-separated; clearing it restores the shipped defaults."
+                    position="top" maxWidth={460}>
+                    <Info size={13} style={{ color: 'var(--text-tertiary)', cursor: 'help' }} />
+                  </Tooltip>
+                </span>
+                <input type="text" className="textInput" value={s.scaIntelIgnoreSuffixes}
+                  placeholder="oastify.com,oast.fun,..."
+                  onChange={(e) => setField('scaIntelIgnoreSuffixes', e.target.value)} />
+              </label>
               <div style={row13}>
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                   Store bodies

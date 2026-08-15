@@ -183,6 +183,14 @@ model UserSettings {
   captureEgressBlockMulticast     Boolean @default(true) @map("capture_egress_block_multicast")
   captureEgressBlockUnspecified   Boolean @default(true) @map("capture_egress_block_unspecified")
 
+  // Hosts to EXCLUDE from the supply-chain incident match (A1/A2). The catalog
+  // legitimately lists OAST/interaction-server providers as IOCs, so without
+  // this an operator running Burp Collaborator flags their own callbacks on
+  // every engagement. Per-USER, not per-project: an operator's OAST provider is
+  // a property of their tooling. Comma-separated; empty means "use the shipped
+  // default list" (the 5 providers the feed actually contains).
+  scaIntelIgnoreSuffixes String @default("oastify.com,oast.fun,mburpcollab.com,canarytokens.com,pipedream.net") @map("sca_intel_ignore_suffixes")
+
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
@@ -1428,6 +1436,13 @@ model CapturedHttpTransaction {
   labels    Json?   @map("labels")
   findingId String? @map("finding_id")
 
+  // Supply-chain incident match (A1). Set by BOTH ingest paths (the Python
+  // spool worker and the TypeScript route) when the request's host or resolved
+  // IP appears in the supplychainattack.org catalog. Null is the normal state
+  // and means "no match OR the catalog was never synced" - never "clean".
+  iocIncidentId  String? @map("ioc_incident_id")
+  iocIncidentUrl String? @map("ioc_incident_url")
+
   startedAt DateTime @map("started_at")
   createdAt DateTime @default(now()) @map("created_at")
 
@@ -1441,6 +1456,9 @@ model CapturedHttpTransaction {
   @@index([projectId, statusCode])
   @@index([projectId, isReplay])
   @@index([projectId, inScope])
+  // "Show me every request to a known-bad host" is the whole point of A1, and
+  // the traffic table is one of the largest in the schema.
+  @@index([projectId, iocIncidentId])
   @@map("captured_http_transactions")
 }
 
