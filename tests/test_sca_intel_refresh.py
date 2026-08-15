@@ -382,3 +382,18 @@ class TestIngestSpawnMounts(unittest.TestCase):
         self.assertNotIn("/app/supply_chain_common", {v["bind"] for v in vols.values()})
         # The catalog volume is still mounted; only the matcher module is absent.
         self.assertIn("redamon-sca-intel", vols)
+
+    def test_ingest_volumes_never_raises_on_a_partial_manager(self):
+        """start_capture_proxy serves the Global Settings toggle.
+
+        Raising here fails the whole toggle rather than degrading the catalog
+        match, so a manager missing the attributes must still produce a usable
+        volume map. The full gate caught this: test_capture_proxy_env builds a
+        manager via __new__ and all six of its tests errored.
+        """
+        m = _mgr()
+        del m.sca_intel_volume
+        del m.recon_host_path
+        vols = m._ingest_volumes({"spool": {"bind": "/spool", "mode": "rw"}})
+        self.assertIn("spool", vols)
+        self.assertIn("redamon-sca-intel", vols)   # falls back to the default name

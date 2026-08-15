@@ -1337,10 +1337,17 @@ class ContainerManager:
         let the worker record the catalog as unavailable (it logs that once).
         """
         vols = dict(spool_vols)
-        vols[self.sca_intel_volume] = {"bind": "/sca-intel", "mode": "ro"}
-        if self.recon_host_path:
+        # getattr, not attribute access: this runs inside start_capture_proxy,
+        # which serves the Global Settings toggle. Raising here would fail the
+        # whole toggle rather than degrade the catalog match, and a
+        # partially-constructed manager (every harness that builds one via
+        # __new__) would do exactly that.
+        intel_volume = getattr(self, "sca_intel_volume", "") or "redamon-sca-intel"
+        recon_path = getattr(self, "recon_host_path", "")
+        vols[intel_volume] = {"bind": "/sca-intel", "mode": "ro"}
+        if recon_path:
             sc_common = join_host_path(
-                parent_host_path(self.recon_host_path), "scanners", "supply_chain_common")
+                parent_host_path(recon_path), "scanners", "supply_chain_common")
             vols[sc_common] = {"bind": "/app/supply_chain_common", "mode": "ro"}
         else:
             logger.warning(
