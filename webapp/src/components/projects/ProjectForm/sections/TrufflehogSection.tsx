@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useId, useState } from 'react'
 import { ChevronDown, Plus, Search, Trash2, AlertTriangle, List, X, Check } from 'lucide-react'
 import { Toggle, WikiInfoButton } from '@/components/ui'
 import type { Project } from '@prisma/client'
@@ -9,6 +9,7 @@ import Link from 'next/link'
 import { SETTINGS_KEYS_HREF } from '@/lib/settingsLinks'
 import { CredentialShortcut } from '@/components/settings/CredentialShortcut'
 import { useCredentialKeys, type CredentialKeysApi } from '@/hooks/useCredentialKeys'
+import { SCAN_TARGET_FOLDERS } from '@/lib/trufflehogSources'
 import {
   TRUFFLEHOG_DETECTOR_COUNT,
   filterDetectors,
@@ -525,6 +526,7 @@ function ProfileEditor({
   if (!src) return null
 
   const errors = validateTrufflehogConfig(profile.source, config)
+  const localFolder = (SCAN_TARGET_FOLDERS as Record<string, string>)[profile.source]
   // The server computed this when the profiles were listed, so it still names a
   // key that has since been set from the shortcut below. Re-filter against live
   // state or the card keeps saying "missing" until the whole form reloads.
@@ -581,6 +583,17 @@ function ProfileEditor({
       {expanded && (
         <div className={styles.sourceCardBody}>
           <p className={styles.fieldHint}>{src.description}</p>
+
+          {/* The one thing an operator cannot discover from the fields: WHICH
+              folder on the host these local targets are read from. */}
+          {localFolder && (
+            <p className={styles.localTargetNote}>
+              Local target, no network needed. Put the files in{' '}
+              <code>{localFolder}</code> on the machine running RedAmon, then name
+              them below. The folder is mounted read-only into the scan; a name
+              with a slash or <code>..</code> in it is refused.
+            </p>
+          )}
 
           {missing.length > 0 && (
             <p className={styles.sectionRequirement}>
@@ -639,6 +652,9 @@ function FieldInput({
   disabled: boolean
   onChange: (value: unknown) => void
 }) {
+  // Without this the label is a bare sibling of its control: unreachable for a
+  // screen reader, and for anything that addresses a field by its name.
+  const inputId = useId()
   const asText = String(value ?? '')
   const asCsv = Array.isArray(value) ? value.join(', ') : asText
 
@@ -656,12 +672,13 @@ function FieldInput({
 
   return (
     <div className={styles.fieldGroup} style={{ opacity: disabled ? 0.5 : 1 }}>
-      <label className={styles.fieldLabel}>
+      <label className={styles.fieldLabel} htmlFor={inputId}>
         {field.label}{field.required ? ' *' : ''}
       </label>
 
       {field.type === 'select' ? (
         <select
+          id={inputId}
           className="textInput"
           value={asText}
           disabled={disabled}
@@ -674,6 +691,7 @@ function FieldInput({
         </select>
       ) : field.type === 'pathfile' || field.type === 'textarea' ? (
         <textarea
+          id={inputId}
           className="textInput"
           rows={3}
           value={asText}
@@ -682,6 +700,7 @@ function FieldInput({
         />
       ) : field.type === 'number' ? (
         <input
+          id={inputId}
           type="number"
           className="textInput"
           value={asText}
@@ -690,6 +709,7 @@ function FieldInput({
         />
       ) : (
         <input
+          id={inputId}
           type="text"
           className="textInput"
           value={asCsv}

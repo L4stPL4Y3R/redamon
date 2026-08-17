@@ -9,6 +9,7 @@
  */
 import { describe, test, expect } from 'vitest'
 import {
+  isValidScanTargetName,
   TRUFFLEHOG_SOURCES,
   TRUFFLEHOG_SOURCE_IDS,
   TRUFFLEHOG_CREDENTIAL_FIELDS,
@@ -63,7 +64,7 @@ describe('validateTrufflehogConfig', () => {
       huggingface: { models: ['acme/m'] },
       s3: { buckets: ['b'] },
       gcs: { projectId: 'p' },
-      filesystem: { scanRoot: 'recon_output' },
+      filesystem: {},
       jenkins: { url: 'https://ci.example.com' },
       elasticsearch: { nodes: ['es:9200'] },
       postman: { workspaceIds: ['w'] },
@@ -117,9 +118,22 @@ describe('validateTrufflehogConfig', () => {
     })).toEqual([])
   })
 
-  test('the filesystem scan root must be allowlisted', () => {
-    expect(validateTrufflehogConfig('filesystem', { scanRoot: '/etc' }))
-      .toContainEqual(expect.stringContaining('not an allowed scan root'))
+  test('filesystem takes no target, so there is nothing to get wrong', () => {
+    expect(validateTrufflehogConfig('filesystem', {})).toEqual([])
+  })
+
+  test('a local git repo name may not escape its folder', () => {
+    for (const bad of ['../work/job.json', '/work/job.json', 'a/b', '..', '.']) {
+      expect(isValidScanTargetName(bad), bad).toBe(false)
+      expect(validateTrufflehogConfig('git', { localRepo: bad }), bad).not.toEqual([])
+    }
+    expect(isValidScanTargetName('myrepo.git')).toBe(true)
+    expect(validateTrufflehogConfig('git', { localRepo: 'myrepo.git' })).toEqual([])
+  })
+
+  test('git takes a URI or a local repo, never both and never neither', () => {
+    expect(validateTrufflehogConfig('git', { uri: 'https://x/y.git', localRepo: 'z' })).not.toEqual([])
+    expect(validateTrufflehogConfig('git', {})).not.toEqual([])
   })
 
   test('huggingface sweep mode needs an org or a user', () => {

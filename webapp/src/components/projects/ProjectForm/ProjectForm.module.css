@@ -1390,3 +1390,22 @@
   flex-direction: column;
   gap: var(--space-3);
 }
+
+/* Tells the operator which host folder a local scan target is read from - the
+   one fact the source's own fields cannot show. */
+.localTargetNote {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  background: var(--status-info-bg, rgba(59, 130, 246, 0.08));
+  border: 1px solid var(--status-info-border, rgba(59, 130, 246, 0.25));
+  border-radius: 6px;
+}
+
+.localTargetNote code {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  color: var(--text-primary);
+}

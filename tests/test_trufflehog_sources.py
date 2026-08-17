@@ -95,11 +95,44 @@ class TestArgvPerSource(unittest.TestCase):
         positionals = [a for a in argv[2:] if not a.startswith("-")]
         self.assertEqual(positionals, ["https://github.com/acme/api.git"])
 
-    def test_filesystem_scan_root_resolves_through_the_allowlist(self):
-        argv = self.build("filesystem", {"scanRoot": "recon_output"})
-        self.assertIn(reg.FILESYSTEM_ROOTS["recon_output"], argv)
-        # The raw UI value must never be the path passed to the binary.
-        self.assertNotIn("recon_output", argv)
+    def test_filesystem_always_scans_the_fixed_target_folder(self):
+        """It takes no target field, so there is no path to type."""
+        argv = self.build("filesystem", {})
+        self.assertIn(reg.SCAN_TARGET_DIRS["filesystem"], argv)
+        self.assertEqual([], reg.validate_config("filesystem", {}))
+
+    def test_a_local_git_repo_is_composed_never_typed(self):
+        argv = self.build("git", {"localRepo": "myrepo.git"})
+        self.assertIn("file:///scan-targets/git/myrepo.git", argv)
+
+    def test_a_traversing_local_name_never_reaches_argv(self):
+        """The scan container holds this source's credential in /work/job.json.
+        A composed path is the whole reason a free-text file:// target - which
+        would read that token back out as a finding - is not offered."""
+        for bad in ("../work/job.json", "/work/job.json", "a/b", "..", "."):
+            self.assertFalse(reg.is_valid_scan_target_name(bad), bad)
+            self.assertEqual("", reg.scan_target_path("git", bad), bad)
+            self.assertNotEqual([], reg.validate_config("git", {"localRepo": bad}), bad)
+            argv = self.build("git", {"localRepo": bad})
+            self.assertNotIn("job.json", " ".join(argv), bad)
+
+    def test_a_local_docker_tarball_is_composed_never_typed(self):
+        argv = self.build("docker", {"localImages": ["img.tar"]})
+        self.assertIn("--image=file:///scan-targets/docker/img.tar", argv)
+        self.assertNotIn("--image=file:///scan-targets/docker/../x",
+                         self.build("docker", {"localImages": ["../x"]}))
+
+    def test_git_takes_one_target_or_the_other(self):
+        both = reg.validate_config("git", {"uri": "https://x/y.git", "localRepo": "z"})
+        self.assertNotEqual([], both)
+        self.assertEqual([], reg.validate_config("git", {"localRepo": "z"}))
+        self.assertEqual([], reg.validate_config("git", {"uri": "https://x/y.git"}))
+        self.assertNotEqual([], reg.validate_config("git", {}))
+
+    def test_a_local_target_presents_no_host_to_the_egress_guard(self):
+        """file:// has no host, so the guard is a natural no-op rather than
+        something a local fixture has to be excused from."""
+        self.assertEqual([], reg.egress_hosts("git", {"localRepo": "myrepo.git"}))
 
     def test_credential_only_sources_need_no_target_fields(self):
         for source_id in ("circleci", "travisci"):

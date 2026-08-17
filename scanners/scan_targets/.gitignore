@@ -1,0 +1,9 @@
+# Fixtures are local test material and frequently contain secret-SHAPED strings.
+# Nothing under the target folders is tracked; the folders themselves are, so a
+# fresh clone has somewhere to put files.
+filesystem/*
+git/*
+docker/*
+!filesystem/.gitkeep
+!git/.gitkeep
+!docker/.gitkeep

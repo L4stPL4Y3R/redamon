@@ -121,12 +121,28 @@ class TestSourceParity(unittest.TestCase):
         self.assertEqual(reg.SOURCES["docker"].field("excludePaths").type, "csv")
         self.assertIn("{ key: 'excludePaths', type: 'csv'", self.blocks["docker"])
 
-    def test_filesystem_roots_match(self):
+    def test_scan_target_folders_match(self):
+        """Both sides tell the operator which folder to drop a fixture in. A
+        drift here sends them to a directory that is not mounted."""
         text = ts_source()
-        block = text[text.index("TRUFFLEHOG_FILESYSTEM_ROOTS = ["):]
-        block = block[:block.index("]")]
-        ts_roots = re.findall(r"\{ value: '(\w+)'", block)
-        self.assertEqual(sorted(ts_roots), sorted(reg.FILESYSTEM_ROOTS))
+        block = text[text.index("export const SCAN_TARGET_FOLDERS = {"):]
+        block = block[:block.index("} as const")]
+        ts = dict(re.findall(r"(\w+): 'scanners/scan_targets/(\w+)/'", block))
+        self.assertEqual(sorted(ts), sorted(reg.SCAN_TARGET_DIRS))
+        for source_id, folder in ts.items():
+            self.assertTrue(
+                reg.SCAN_TARGET_DIRS[source_id].endswith(f"/{folder}"),
+                f"{source_id}: TS says scan_targets/{folder}, "
+                f"python mounts {reg.SCAN_TARGET_DIRS[source_id]}")
+
+    def test_the_local_name_rule_matches(self):
+        """The regex is the guard against a composed path escaping its folder,
+        so a laxer copy on either side is a real hole."""
+        text = ts_source()
+        match = re.search(r"const SCAN_TARGET_NAME_RE = /(.+?)/\n", text)
+        self.assertIsNotNone(match, "SCAN_TARGET_NAME_RE not found in TS")
+        self.assertEqual(match.group(1), reg.SCAN_TARGET_NAME_RE.pattern
+                         .replace("\\A", "^").replace("\\Z", "$"))
 
     def test_client_only_fields_match(self):
         """A field marked client-side is never passed to the binary. Marked on

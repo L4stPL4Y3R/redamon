@@ -156,7 +156,10 @@ SOURCES: dict[str, Source] = {
         asset_label="TrufflehogRepository", asset_kind="repository",
         credentials=(CRED_GIT_USER, CRED_GIT_TOKEN),
         fields=(
-            Field("uri", "text", "", required=True, label="Repository URI"),
+            Field("uri", "text", "", label="Repository URI"),
+            # A folder name under scan_targets/git, composed into a file:// URI
+            # server-side. Never the path itself.
+            Field("localRepo", "text", "", label="Local repository"),
             Field("branch", "text", "--branch"),
             Field("sinceCommit", "text", "--since-commit"),
             Field("maxDepth", "number", "--max-depth"),
@@ -222,6 +225,9 @@ SOURCES: dict[str, Source] = {
         credentials=(CRED_DOCKER,),
         fields=(
             Field("images", "multi", "--image"),
+            # File names under scan_targets/docker, composed into file:// image
+            # refs server-side. Never the path itself.
+            Field("localImages", "multi", "--image"),
             Field("namespace", "text", "--namespace"),
             # csv here, NOT pathfile — see the module docstring.
             Field("excludePaths", "csv", "--exclude-paths"),
@@ -291,10 +297,10 @@ SOURCES: dict[str, Source] = {
         id="filesystem", label="Filesystem", subcommand="filesystem",
         asset_label="TrufflehogEndpoint", asset_kind="endpoint",
         fields=(
-            # A select over RedAmon-owned artifact roots, never a free-text host
-            # path: a typed path plus a credential-bearing container is a file
-            # disclosure primitive (A.10).
-            Field("scanRoot", "select", "", required=True),
+            # No target field on purpose. This source always scans
+            # SCAN_TARGET_DIRS["filesystem"], so there is no path to type and
+            # nothing to validate — a typed path plus a credential-bearing
+            # container is a file disclosure primitive (A.10).
             Field("includePaths", "pathfile", "--include-paths"),
             Field("excludePaths", "pathfile", "--exclude-paths"),
             Field("maxSymlinkDepth", "number", "--max-symlink-depth"),
@@ -355,11 +361,41 @@ SOURCE_IDS: tuple[str, ...] = tuple(SOURCES)
 
 #: Allowlisted filesystem scan roots (A.10). Keyed by the UI value; the value is
 #: the container-side mount the orchestrator attaches read-only.
-FILESYSTEM_ROOTS: dict[str, str] = {
-    "recon_output": "/scan-roots/recon_output",
-    "capture_spool": "/scan-roots/capture_spool",
-    "supply_chain_uploads": "/scan-roots/supply_chain_uploads",
+# The one place a source may read from disk. Mounted read-only by the
+# orchestrator from scanners/scan_targets/; see that folder's README.
+#
+# A local path is never operator-typed. The scan container carries this source's
+# credential in /work/job.json, so a free-text file:// target would read that
+# token and report it back as a finding — defeating the point of giving the
+# container exactly one secret. The operator names a folder or a file, the
+# server composes the path, and SCAN_TARGET_NAME_RE keeps it to one segment.
+SCAN_TARGETS_MOUNT = "/scan-targets"
+
+SCAN_TARGET_DIRS: dict[str, str] = {
+    "filesystem": f"{SCAN_TARGETS_MOUNT}/filesystem",
+    "git": f"{SCAN_TARGETS_MOUNT}/git",
+    "docker": f"{SCAN_TARGETS_MOUNT}/docker",
 }
+
+# One path segment: no separator, no traversal, no leading dot-dot. Anchored, so
+# a newline cannot smuggle a second line past it.
+SCAN_TARGET_NAME_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+
+
+def is_valid_scan_target_name(name: str) -> bool:
+    """True if `name` may be composed into a /scan-targets path."""
+    name = (name or "").strip()
+    if not name or name == "." or ".." in name:
+        return False
+    return bool(SCAN_TARGET_NAME_RE.match(name))
+
+
+def scan_target_path(source_id: str, name: str) -> str:
+    """Container-side path for a named fixture, or '' if the name is not safe."""
+    base = SCAN_TARGET_DIRS.get(source_id, "")
+    if not base or not is_valid_scan_target_name(name):
+        return ""
+    return f"{base}/{name.strip()}"
 
 
 def get_source(source_id: str) -> Source:
@@ -492,13 +528,36 @@ def validate_config(source_id: str, config: dict) -> list[str]:
         if not _text(cfg.get("projectId")) and not _as_bool(cfg.get("withoutAuth")):
             errors.append("GCS: set a Project ID or enable 'Without auth'")
 
-    if src.id == "filesystem":
-        root = _text(cfg.get("scanRoot"))
-        if root and root not in FILESYSTEM_ROOTS:
+    # The filesystem source takes no target, so there is nothing to validate.
+
+    if src.id == "git":
+        uri = _text(cfg.get("uri"))
+        local = _text(cfg.get("localRepo"))
+        if not uri and not local:
             errors.append(
-                f"Filesystem: '{root}' is not an allowed scan root "
-                f"(pick one of {', '.join(sorted(FILESYSTEM_ROOTS))})"
+                "Git: set a Repository URI, or a Local repository placed in "
+                "scanners/scan_targets/git/"
             )
+        if uri and local:
+            errors.append(
+                "Git: 'Repository URI' and 'Local repository' are mutually "
+                "exclusive — a run scans one repository"
+            )
+        if local and not is_valid_scan_target_name(local):
+            errors.append(
+                f"Git: '{local}' is not a valid local repository name. Use the "
+                "folder name only, as it appears in scanners/scan_targets/git/ "
+                "(letters, digits, dot, dash, underscore; no slashes)"
+            )
+
+    if src.id == "docker":
+        for name in _as_list(cfg.get("localImages")):
+            if not is_valid_scan_target_name(name):
+                errors.append(
+                    f"Docker: '{name}' is not a valid local image name. Use the "
+                    "file name only, as it appears in "
+                    "scanners/scan_targets/docker/ (no slashes)"
+                )
 
     if src.id == "elasticsearch":
         cloud_id = _text(cfg.get("cloudId"))
@@ -672,6 +731,9 @@ def describe_target(source_id: str, config: dict) -> str:
     src = get_source(source_id)
     cfg = config or {}
     if src.id == "git":
+        local = _text(cfg.get("localRepo"))
+        if local:
+            return f"local:{local}"
         return _redact_uri(_text(cfg.get("uri")))
     if src.id == "github":
         return ", ".join(_as_list(cfg.get("orgs")) + _as_list(cfg.get("repos")))
@@ -681,7 +743,9 @@ def describe_target(source_id: str, config: dict) -> str:
         parts = _as_list(cfg.get("repos")) + [f"group:{g}" for g in _as_list(cfg.get("groupIds"))]
         return ", ".join(parts) or _text(cfg.get("endpoint")) or "gitlab.com (all visible)"
     if src.id == "docker":
-        return ", ".join(_as_list(cfg.get("images"))) or _text(cfg.get("namespace"))
+        local = [f"local:{n}" for n in _as_list(cfg.get("localImages"))]
+        return (", ".join(_as_list(cfg.get("images")) + local)
+                or _text(cfg.get("namespace")))
     if src.id == "huggingface":
         parts = (_as_list(cfg.get("orgs")) + _as_list(cfg.get("users"))
                  + _as_list(cfg.get("models")) + _as_list(cfg.get("spaces"))
@@ -692,7 +756,9 @@ def describe_target(source_id: str, config: dict) -> str:
     if src.id == "gcs":
         return _text(cfg.get("projectId")) or "public buckets"
     if src.id == "filesystem":
-        return _text(cfg.get("scanRoot"))
+        # No target field: the descriptor names the fixed folder so an audit row
+        # still says what was scanned.
+        return "scan_targets/filesystem"
     if src.id == "jenkins":
         return _text(cfg.get("url"))
     if src.id == "elasticsearch":
@@ -850,6 +916,14 @@ def build_source_args(
 
         if f.type == "multi":
             for item in _as_list(raw):
+                if f.key == "localImages":
+                    path = scan_target_path(src.id, item)
+                    # A name that fails validation is DROPPED, not passed
+                    # through: validate() already refused the start, and a
+                    # fallthrough here would hand the binary a typed path.
+                    if path:
+                        args.append(f"{f.flag}=file://{path}")
+                    continue
                 args.append(f"{f.flag}={item}")
             continue
 
@@ -873,6 +947,10 @@ def build_source_args(
             continue
         args.append(f"{f.flag}={value}")
 
+    # The filesystem source has no target field; its root is fixed.
+    if src.id == "filesystem":
+        positional.append(SCAN_TARGET_DIRS["filesystem"])
+
     args.extend(src.fixed_args)
     args.extend(_credential_args(src, cfg, env))
     args.extend(positional)
@@ -884,8 +962,11 @@ def _resolve_positional(src: Source, f: Field, value: str, env) -> str:
     the filesystem scan root (which resolves through the allowlist)."""
     if src.id == "git" and f.key == "uri":
         return _compose_git_uri(value, env)
-    if src.id == "filesystem" and f.key == "scanRoot":
-        return FILESYSTEM_ROOTS.get(value, value)
+    if src.id == "git" and f.key == "localRepo":
+        # Composed, never typed. An invalid name yields "", which validate()
+        # has already refused; returning the raw value would be the file
+        # disclosure this design exists to prevent.
+        return f"file://{scan_target_path(src.id, value)}"
     return value
 
 

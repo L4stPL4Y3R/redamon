@@ -323,11 +323,13 @@ class ContainerManager:
         # Overwritten by api.py from the orchestrator's OWN detected mounts (the
         # repo's rule for host paths); the env vars are only the fallback for a
         # non-compose run. Absent => that root is not offered to the scan.
-        self.trufflehog_scan_roots = {
-            "recon_output": os.environ.get("RECON_OUTPUT_PATH", "").strip(),
-            "capture_spool": os.environ.get("CAPTURE_SPOOL_PATH", "").strip(),
-            "supply_chain_uploads": os.environ.get("SUPPLY_CHAIN_UPLOADS_PATH", "").strip(),
-        }
+        # Host path of scanners/scan_targets — the ONLY directory a scan
+        # container may read from disk. Overwritten by api.py from the
+        # orchestrator's OWN detected mounts (the repo's rule for host paths);
+        # this env var is the fallback for a non-compose run. Empty => no mount,
+        # and the scan finds an empty directory rather than a guessed one.
+        self.trufflehog_scan_targets = os.environ.get(
+            "TRUFFLEHOG_SCAN_TARGETS_PATH", "").strip()
         # Injected by api.py when a scope/ROE loader is configured; see
         # _trufflehog_scope_check. None => no scope declared, same as other scans.
         self.trufflehog_scope_checker = None
@@ -3525,6 +3527,57 @@ class ContainerManager:
         Compose binds this dir into the webapp read-only for the JSON download."""
         return Path("/app/trufflehog_scan/output") / self._trufflehog_output_name(project_id, source)
 
+    def _trufflehog_git_config_mount(self, run_dir: Path, scan_target_mounts: dict) -> dict:
+        """A system gitconfig that lets the scan read a locally-supplied repo.
+
+        git refuses a repository it does not own ("detected dubious ownership")
+        and the clone fails outright — the fixture belongs to whoever created it
+        on the host, the container runs as an unprivileged uid, and the two never
+        match. The failure is silent in the worst way: the wrapper still writes an
+        artifact, so it reads as a clean scan of a clean repo.
+
+        It has to be a config FILE. git honours `safe.directory` only from
+        protected configuration, deliberately, so that an untrusted repository
+        cannot inject it — which rules out `-c` and the GIT_CONFIG_* env vars.
+
+        Written into the run's own scratch dir and mounted read-only, so it lives
+        and dies with the run rather than being baked into the image. Only for
+        runs that actually carry the scan-targets tree; that tree is read-only and
+        is the only repository this container can reach.
+        """
+        if not scan_target_mounts:
+            return {}
+        try:
+            cfg = run_dir / "gitconfig"
+            cfg.write_text("[safe]\n\tdirectory = *\n")
+        except OSError as e:
+            logger.warning(f"[trufflehog] could not write gitconfig: {e}")
+            return {}
+        return {str(cfg): {"bind": "/etc/gitconfig", "mode": "ro"}}
+
+    def _trufflehog_artifact_error(self, project_id: str, source: str) -> str:
+        """The scan's own verdict from its artifact, or "" if it succeeded.
+
+        The wrapper exits 0 whenever it managed to WRITE a result, including a
+        result that records a failed scan, so the container exit code cannot tell
+        a clean target from a target that was never reached. Unreadable or
+        missing is treated as success: this decides whether to flip a run to
+        ERROR, and a parse problem here must not invent a failure that the scan
+        did not report.
+        """
+        try:
+            run_dir = self._trufflehog_run_dir(project_id, source)
+            out = run_dir / "out.json"
+            if not out.exists():
+                return ""
+            data = json.loads(out.read_text())
+        except Exception:
+            return ""
+        if not isinstance(data, dict) or data.get("status") != "error":
+            return ""
+        err = str(data.get("error") or "").strip()
+        return err or "The scan reported an error and produced no findings"
+
     def _publish_trufflehog_output(self, project_id: str, source: str) -> Optional[Path]:
         """Copy a finished run's findings from the scratch dir to the shared
         output dir, and return the published path.
@@ -3644,7 +3697,19 @@ class ContainerManager:
                     elif container.status != "running":
                         exit_code = container.attrs.get("State", {}).get("ExitCode", -1)
                         if exit_code == 0:
-                            state.status = TrufflehogStatus.COMPLETED
+                            # A zero exit only means the WRAPPER finished. It
+                            # writes an artifact and exits cleanly even when the
+                            # scan itself failed — a clone that never happened
+                            # then reads as a completed run with no findings,
+                            # which is indistinguishable from a clean target.
+                            # The artifact carries the scan's own verdict.
+                            scan_error = self._trufflehog_artifact_error(
+                                state.project_id, state.source)
+                            if scan_error:
+                                state.status = TrufflehogStatus.ERROR
+                                state.error = scan_error
+                            else:
+                                state.status = TrufflehogStatus.COMPLETED
                             state.completed_at = datetime.now(timezone.utc)
                         else:
                             state.status = TrufflehogStatus.ERROR
@@ -4725,6 +4790,9 @@ exit $RC
 
             self._ensure_trufflehog_network()
 
+            scan_target_mounts = self._trufflehog_scan_root_mounts(source, config)
+            git_config_mount = self._trufflehog_git_config_mount(run_dir, scan_target_mounts)
+
             container = self.client.containers.run(
                 self.trufflehog_image,
                 name=container_name,
@@ -4752,7 +4820,8 @@ exit $RC
                     # Source read-only, so a compromised scan cannot rewrite the
                     # scanner and persist into every future run.
                     f"{trufflehog_path}": {"bind": "/app/trufflehog_scan", "mode": "ro"},
-                    **self._trufflehog_scan_root_mounts(source, config),
+                    **scan_target_mounts,
+                    **git_config_mount,
                 },
                 command="python trufflehog_scan/main.py",
             )
@@ -4800,13 +4869,15 @@ exit $RC
         not mounted, and the scan then finds an empty directory rather than
         silently reading something else.
         """
-        if source != "filesystem":
+        if source not in th_sources.SCAN_TARGET_DIRS:
             return {}
-        root = str((config or {}).get("scanRoot") or "").strip()
-        host_path = self.trufflehog_scan_roots.get(root, "")
-        if not root or not host_path:
+        host_path = self.trufflehog_scan_targets
+        if not host_path:
             return {}
-        return {host_path: {"bind": th_sources.FILESYSTEM_ROOTS[root], "mode": "ro"}}
+        # The whole tree, read-only, at one fixed point. Read-only matters: it is
+        # the difference between a scan reading a fixture and a compromised scan
+        # rewriting the fixture every later run will read.
+        return {host_path: {"bind": th_sources.SCAN_TARGETS_MOUNT, "mode": "ro"}}
 
     def _ingest_trufflehog(self, state: TrufflehogState) -> None:
         """Read a finished run's findings JSON and write it to the graph.
@@ -4846,8 +4917,14 @@ exit $RC
         except ImportError:
             logger.warning("[trufflehog] graph_db unavailable; skipping ingest")
             return
+        # NEO4J_URI in this service's environment is NOT the orchestrator's own
+        # connection: it is forwarded verbatim to spawned recon containers, which
+        # run on the HOST network and so correctly say localhost. This process is
+        # on the compose network, where the same string reaches nothing.
+        neo4j_uri = (os.environ.get("ORCHESTRATOR_NEO4J_URI", "").strip()
+                     or "bolt://neo4j:7687")
         try:
-            with Neo4jClient() as client:
+            with Neo4jClient(uri=neo4j_uri) as client:
                 if not client.verify_connection():
                     logger.warning("[trufflehog] Neo4j unreachable; skipping ingest")
                     return

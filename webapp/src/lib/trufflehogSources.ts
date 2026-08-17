@@ -76,13 +76,26 @@ const CRED = {
   gitToken: { settingsKey: 'trufflehogGitToken', label: 'TruffleHog Git Token', optional: true },
 } as const
 
-/** Allowlisted filesystem scan roots. Never a free-text host path: a typed path
- *  plus a scan container is a file-disclosure primitive. */
-export const TRUFFLEHOG_FILESYSTEM_ROOTS = [
-  { value: 'recon_output', label: 'Recon output' },
-  { value: 'capture_spool', label: 'Capture proxy spool' },
-  { value: 'supply_chain_uploads', label: 'Supply-chain uploads' },
-]
+/**
+ * Where local scan fixtures live, mirroring SCAN_TARGET_DIRS in
+ * scanners/trufflehog_scan/sources.py. Shown to the operator so they know which
+ * folder to drop a file in; the container-side path is composed server-side and
+ * is never typed here.
+ */
+export const SCAN_TARGET_FOLDERS = {
+  filesystem: 'scanners/scan_targets/filesystem/',
+  git: 'scanners/scan_targets/git/',
+  docker: 'scanners/scan_targets/docker/',
+} as const
+
+/** One path segment. Kept identical to SCAN_TARGET_NAME_RE on the Python side. */
+const SCAN_TARGET_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
+
+export function isValidScanTargetName(name: string): boolean {
+  const n = (name ?? '').trim()
+  if (!n || n === '.' || n.includes('..')) return false
+  return SCAN_TARGET_NAME_RE.test(n)
+}
 
 export const TRUFFLEHOG_SOURCES: Record<string, TrufflehogSource> = {
   git: {
@@ -90,11 +103,12 @@ export const TRUFFLEHOG_SOURCES: Record<string, TrufflehogSource> = {
     description: 'Any Git host over https://, ssh:// or file://.',
     credentials: [CRED.gitUser, CRED.gitToken],
     fields: [
-      { key: 'uri', type: 'text', label: 'Repository URI', required: true, hint: 'https://, ssh:// or file://' },
+      { key: 'uri', type: 'text', label: 'Repository URI', hint: 'https:// or ssh://. Leave empty when using a local repository below' },
+      { key: 'localRepo', type: 'text', label: 'Local repository', hint: `Folder name inside ${SCAN_TARGET_FOLDERS.git} — e.g. clone with: git clone --mirror <url> myrepo.git, then type myrepo.git. Needs no network` },
       { key: 'branch', type: 'text', label: 'Branch', hint: 'Default: all branches' },
       { key: 'sinceCommit', type: 'text', label: 'Since commit', hint: 'Scan forward from this SHA' },
       { key: 'maxDepth', type: 'number', label: 'Max commit depth' },
-      { key: 'bare', type: 'toggle', label: 'Bare repository' },
+      { key: 'bare', type: 'toggle', label: 'Bare repository', hint: 'Required for a --mirror/--bare clone; without it the scan fails with "failed to stat .git"' },
       { key: 'includePaths', type: 'pathfile', label: 'Include paths', hint: 'One regex per line' },
       { key: 'excludePaths', type: 'pathfile', label: 'Exclude paths', hint: 'One regex per line' },
       { key: 'excludeGlobs', type: 'csv', label: 'Exclude globs', hint: 'Filters at git-log level; faster than exclude paths' },
@@ -154,6 +168,7 @@ export const TRUFFLEHOG_SOURCES: Record<string, TrufflehogSource> = {
     credentials: [CRED.docker],
     fields: [
       { key: 'images', type: 'multi', label: 'Images', hint: 'nginx:1.25, ghcr.io/org/app@sha256:... — bare references only' },
+      { key: 'localImages', type: 'multi', label: 'Local image tarballs', hint: `File names inside ${SCAN_TARGET_FOLDERS.docker} — create with: docker save myimage:latest -o myimage.tar. Needs no network` },
       { key: 'namespace', type: 'text', label: 'Namespace', hint: 'acme; include the host for other registries, e.g. ghcr.io/acme' },
       // csv here, a file everywhere else — the same flag name takes incompatible input per source.
       { key: 'excludePaths', type: 'csv', label: 'Exclude paths', hint: 'Comma-separated, e.g. /usr/share,/var/lib/apt' },
@@ -224,10 +239,9 @@ export const TRUFFLEHOG_SOURCES: Record<string, TrufflehogSource> = {
   },
   filesystem: {
     id: 'filesystem', label: 'Filesystem', assetLabel: 'TrufflehogEndpoint', assetKind: 'endpoint',
-    description: 'Scans a RedAmon-owned artifact directory. No credential, and no free-text paths.',
+    description: `Always scans ${SCAN_TARGET_FOLDERS.filesystem} — put the files to scan in that folder. No target to type, and no credential.`,
     credentials: [],
     fields: [
-      { key: 'scanRoot', type: 'select', label: 'Scan root', required: true, options: TRUFFLEHOG_FILESYSTEM_ROOTS },
       { key: 'includePaths', type: 'pathfile', label: 'Include paths' },
       { key: 'excludePaths', type: 'pathfile', label: 'Exclude paths' },
       { key: 'maxSymlinkDepth', type: 'number', label: 'Max symlink depth' },
@@ -379,9 +393,26 @@ export function validateTrufflehogConfig(sourceId: string, config: Record<string
         errors.push("GCS: set a Project ID or enable 'Without auth'")
       }
       break
-    case 'filesystem':
-      if (asText(cfg.scanRoot) && !TRUFFLEHOG_FILESYSTEM_ROOTS.some(r => r.value === cfg.scanRoot)) {
-        errors.push(`Filesystem: '${asText(cfg.scanRoot)}' is not an allowed scan root`)
+    // filesystem takes no target, so there is nothing to validate.
+    case 'git': {
+      const uri = asText(cfg.uri)
+      const local = asText(cfg.localRepo)
+      if (!uri && !local) {
+        errors.push(`Git: set a Repository URI, or a Local repository placed in ${SCAN_TARGET_FOLDERS.git}`)
+      }
+      if (uri && local) {
+        errors.push("Git: 'Repository URI' and 'Local repository' are mutually exclusive — a run scans one repository")
+      }
+      if (local && !isValidScanTargetName(local)) {
+        errors.push(`Git: '${local}' is not a valid local repository name. Use the folder name only, as it appears in ${SCAN_TARGET_FOLDERS.git} (no slashes)`)
+      }
+      break
+    }
+    case 'docker':
+      for (const name of asList(cfg.localImages)) {
+        if (!isValidScanTargetName(name)) {
+          errors.push(`Docker: '${name}' is not a valid local image name. Use the file name only, as it appears in ${SCAN_TARGET_FOLDERS.docker} (no slashes)`)
+        }
       }
       break
     case 'elasticsearch':
@@ -463,17 +494,20 @@ export const TRUFFLEHOG_CREDENTIAL_FIELDS: string[] = Array.from(
 export function describeTrufflehogTarget(sourceId: string, config: Record<string, unknown>): string {
   const cfg = config || {}
   switch (getTrufflehogSource(sourceId)?.id) {
-    case 'git': return asText(cfg.uri).replace(/\/\/[^/@]+@/, '//')
+    case 'git': return asText(cfg.localRepo)
+      ? `local:${asText(cfg.localRepo)}`
+      : asText(cfg.uri).replace(/\/\/[^/@]+@/, '//')
     case 'github': return [...asList(cfg.orgs), ...asList(cfg.repos)].join(', ')
     case 'github_experimental': return asText(cfg.repo)
     case 'gitlab': return [...asList(cfg.repos), ...asList(cfg.groupIds).map(g => `group:${g}`)].join(', ')
       || asText(cfg.endpoint) || 'gitlab.com (all visible)'
-    case 'docker': return asList(cfg.images).join(', ') || asText(cfg.namespace)
+    case 'docker': return [...asList(cfg.images), ...asList(cfg.localImages).map(n => `local:${n}`)]
+      .join(', ') || asText(cfg.namespace)
     case 'huggingface': return [...asList(cfg.orgs), ...asList(cfg.users), ...asList(cfg.models),
       ...asList(cfg.spaces), ...asList(cfg.datasets), ...asList(cfg.buckets)].join(', ')
     case 's3': return asList(cfg.buckets).join(', ') || 'all reachable buckets'
     case 'gcs': return asText(cfg.projectId) || 'public buckets'
-    case 'filesystem': return asText(cfg.scanRoot)
+    case 'filesystem': return 'scan_targets/filesystem'
     case 'jenkins': return asText(cfg.url)
     case 'elasticsearch': return asList(cfg.nodes).join(', ') || asText(cfg.cloudId)
     case 'postman': return [...asList(cfg.workspaceIds), ...asList(cfg.collectionIds),
