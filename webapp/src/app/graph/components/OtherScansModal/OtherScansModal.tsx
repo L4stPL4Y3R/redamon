@@ -4,6 +4,8 @@ import { useRef, useState } from 'react'
 import { Play, Pause, Square, Terminal, Download, Loader2, Github, Search, AlertTriangle, PackageSearch, Settings } from 'lucide-react'
 import Link from 'next/link'
 import { SETTINGS_KEYS_HREF } from '@/lib/settingsLinks'
+import { CredentialShortcut } from '@/components/settings/CredentialShortcut'
+import { useCredentialKeys } from '@/hooks/useCredentialKeys'
 import { TRUFFLEHOG_SOURCES } from '@/lib/trufflehogSources'
 import type { TrufflehogProfileSummary } from '@/hooks/useTrufflehogRuns'
 import { projectSettingsHref } from '@/lib/projectSettingsLinks'
@@ -149,6 +151,12 @@ export function OtherScansModal({
   const [orgBatch, setOrgBatch] = useState<OrgBatchState | null>(null)
   const supplyChainRef = useRef<SupplyChainInputHandle>(null)
 
+  // The keys the scan cards below can set in place. `hasGithubToken` is resolved
+  // by the page that owns this modal and does not change when a key is saved
+  // here, so the live value is OR-ed in to release the Start button at once.
+  const credentialKeys = useCredentialKeys()
+  const githubTokenSet = hasGithubToken || credentialKeys.isSet('githubAccessToken')
+
   // Supply Chain derived state
   const isSCBusy = supplyChainStatus === 'running' || supplyChainStatus === 'starting' || supplyChainStatus === 'pausing'
   const isSCStopping = supplyChainStatus === 'stopping'
@@ -184,32 +192,16 @@ export function OtherScansModal({
           <p className={styles.cardDescription}>
             Search GitHub repositories for exposed secrets, API keys, and credentials related to your target domain.
           </p>
-          {!hasGithubToken && (
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              padding: '8px 12px',
-              background: 'rgba(245, 158, 11, 0.1)',
-              border: '1px solid rgba(245, 158, 11, 0.3)',
-              borderRadius: '6px',
-            }}>
-              <AlertTriangle size={14} style={{ color: '#f59e0b', flexShrink: 0 }} />
-              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                GitHub Access Token required.{' '}
-                <Link href={SETTINGS_KEYS_HREF} style={{ color: 'var(--accent-primary)', fontWeight: 500 }}>
-                  Global Settings
-                </Link>
-              </span>
-            </div>
+          {!githubTokenSet && (
+            <CredentialShortcut settingsKey="githubAccessToken" keys={credentialKeys} compact />
           )}
           <div className={styles.cardActions}>
             {isGHPaused ? (
               <button
                 className={styles.resumeButton}
                 onClick={onResumeGithubHunt}
-                disabled={!hasGithubToken || scanBlocked}
-                title={scanBlocked ? blockedTitle : !hasGithubToken ? 'GitHub token required' : 'Resume GitHub Hunt'}
+                disabled={!githubTokenSet || scanBlocked}
+                title={scanBlocked ? blockedTitle : !githubTokenSet ? 'GitHub token required' : 'Resume GitHub Hunt'}
               >
                 <Play size={12} />
                 <span>Resume</span>
@@ -218,8 +210,8 @@ export function OtherScansModal({
               <button
                 className={styles.startButton}
                 onClick={onStartGithubHunt}
-                disabled={!hasGithubToken || isGHRunning || (!hasReconData && !isGHPaused) || scanBlocked}
-                title={scanBlocked ? blockedTitle : !hasGithubToken ? 'GitHub token required' : !hasReconData ? 'Run recon first' : isGHRunning ? 'In progress...' : 'Start GitHub Hunt'}
+                disabled={!githubTokenSet || isGHRunning || (!hasReconData && !isGHPaused) || scanBlocked}
+                title={scanBlocked ? blockedTitle : !githubTokenSet ? 'GitHub token required' : !hasReconData ? 'Run recon first' : isGHRunning ? 'In progress...' : 'Start GitHub Hunt'}
               >
                 {isGHRunning ? (
                   <Loader2 size={12} className={styles.spinner} />
@@ -320,7 +312,8 @@ export function OtherScansModal({
               const busy = status === 'running' || status === 'starting'
               const stopping = status === 'stopping'
               const active = busy || stopping
-              const missing = profile.missingCredentials ?? []
+              const missing = (profile.missingCredentials ?? [])
+                .filter(m => !credentialKeys.isSet(m.settingsKey))
               const invalid = (profile.validationErrors ?? []).length > 0
               // Fails closed in the UI too, and the start route re-checks: a key
               // cleared after this rendered must not produce an opaque failure.
@@ -330,7 +323,8 @@ export function OtherScansModal({
                 : scanBlocked ? blockedTitle : ''
 
               return (
-                <div key={profile.id} className={styles.cardActions} style={{ alignItems: 'center' }}>
+                <div key={profile.id}>
+                <div className={styles.cardActions} style={{ alignItems: 'center' }}>
                   <span style={{ minWidth: '150px', fontSize: '13px', fontWeight: 500 }}>
                     {TRUFFLEHOG_SOURCES[profile.source]?.label ?? profile.source}
                     {run?.target && (
@@ -381,6 +375,22 @@ export function OtherScansModal({
                       </Link>
                     </span>
                   )}
+                </div>
+
+                {/* Only the keys that actually block THIS source, so a row that
+                    can start stays a single line. */}
+                {missing.length > 0 && (
+                  <div className={styles.credentialStack}>
+                    {missing.map(m => (
+                      <CredentialShortcut
+                        key={m.settingsKey}
+                        settingsKey={m.settingsKey}
+                        keys={credentialKeys}
+                        compact
+                      />
+                    ))}
+                  </div>
+                )}
                 </div>
               )
             })

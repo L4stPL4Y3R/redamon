@@ -7,6 +7,8 @@ import { parseGithubRepo, isValidGitRef } from '@/lib/validation/supplyChainInpu
 import { parseOwnerTarget, hostHint, GITHUB_DOT_COM } from '@/lib/github/ownerTarget'
 import { SETTINGS_KEYS_HREF } from '@/lib/settingsLinks'
 import { useToast } from '@/components/ui'
+import { CredentialShortcut } from '@/components/settings/CredentialShortcut'
+import { useCredentialKeys } from '@/hooks/useCredentialKeys'
 import { useAlertModal } from '@/components/ui/AlertModal/AlertModal'
 import styles from './OtherScansModal.module.css'
 
@@ -89,6 +91,7 @@ export default function SupplyChainInput({
   ref,
 }: Props) {
   const [source, setSource] = useState<SupplyChainSource>('upload')
+  const credentialKeys = useCredentialKeys()
   const [file, setFile] = useState<UploadedFile | null>(null)
   const [repoUrl, setRepoUrl] = useState('')
   const [repoRef, setRepoRef] = useState('')
@@ -464,6 +467,17 @@ export default function SupplyChainInput({
             </p>
           </>
         )}
+        {/* An upload needs no credential; an org or repo target may. Optional
+            throughout: a public repo clones anonymously, and the GHE pair only
+            matters when the target names that host. */}
+        {source !== 'upload' && (
+          <div className={styles.credentialStack}>
+            <CredentialShortcut settingsKey="githubAccessToken" keys={credentialKeys} optional compact />
+            <CredentialShortcut settingsKey="githubEnterpriseHost" keys={credentialKeys} optional compact />
+            <CredentialShortcut settingsKey="githubEnterpriseToken" keys={credentialKeys} optional compact />
+          </div>
+        )}
+
         {error && <p className={styles.inlineError}>{error}</p>}
       </div>
     </div>

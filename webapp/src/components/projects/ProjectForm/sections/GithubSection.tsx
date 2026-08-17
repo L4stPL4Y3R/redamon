@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { ChevronDown, Github, AlertTriangle } from 'lucide-react'
+import { ChevronDown, Github } from 'lucide-react'
 import { Toggle, WikiInfoButton } from '@/components/ui'
 import type { Project } from '@prisma/client'
 import styles from '../ProjectForm.module.css'
@@ -9,6 +9,8 @@ import { NodeInfoTooltip } from '../NodeInfoTooltip'
 import { TimeEstimate } from '../TimeEstimate'
 import Link from 'next/link'
 import { SETTINGS_KEYS_HREF } from '@/lib/settingsLinks'
+import { CredentialShortcut } from '@/components/settings/CredentialShortcut'
+import { useCredentialKeys } from '@/hooks/useCredentialKeys'
 
 type FormData = Omit<Project, 'id' | 'userId' | 'createdAt' | 'updatedAt' | 'user'>
 
@@ -20,6 +22,12 @@ interface GithubSectionProps {
 
 export function GithubSection({ data, updateField, hasGithubToken = false }: GithubSectionProps) {
   const [isOpen, setIsOpen] = useState(true)
+  const keys = useCredentialKeys()
+
+  // The prop is resolved server-side when the form loads, so it stays false
+  // after an inline save; OR-ing in the live value unlocks the fields below
+  // straight away instead of needing a reload.
+  const tokenSet = hasGithubToken || keys.isSet('githubAccessToken')
 
   return (
     // id: scroll target for the Other Scans card's settings link. Keep it in
@@ -56,26 +64,12 @@ export function GithubSection({ data, updateField, hasGithubToken = false }: Git
             (a personal account is read through its public profile).
           </p>
 
-          {!hasGithubToken && (
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              padding: '10px 14px',
-              background: 'rgba(245, 158, 11, 0.1)',
-              border: '1px solid rgba(245, 158, 11, 0.3)',
-              borderRadius: '8px',
-              marginBottom: '12px',
-            }}>
-              <AlertTriangle size={16} style={{ color: '#f59e0b', flexShrink: 0 }} />
-              <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-                GitHub Access Token required.{' '}
-                <Link href={SETTINGS_KEYS_HREF} style={{ color: 'var(--accent-primary)', fontWeight: 500 }}>
-                  Configure it in Global Settings
-                </Link>
-              </span>
-            </div>
-          )}
+          {/* Set the token here rather than losing a half-filled form to a trip
+              to /settings. It is a user-level key shared by every project, which
+              is what the shortcut's own badge says. */}
+          <div style={{ marginBottom: '12px' }}>
+            <CredentialShortcut settingsKey="githubAccessToken" keys={keys} />
+          </div>
 
           <div className={styles.fieldGroup}>
             <label className={styles.fieldLabel}>Target Organization</label>
@@ -85,7 +79,7 @@ export function GithubSection({ data, updateField, hasGithubToken = false }: Git
               value={data.githubTargetOrg}
               onChange={(e) => updateField('githubTargetOrg', e.target.value)}
               placeholder="organization-name"
-              disabled={!hasGithubToken}
+              disabled={!tokenSet}
             />
           </div>
 
@@ -97,14 +91,14 @@ export function GithubSection({ data, updateField, hasGithubToken = false }: Git
               value={data.githubTargetRepos}
               onChange={(e) => updateField('githubTargetRepos', e.target.value)}
               placeholder="repo1, repo2, repo3"
-              disabled={!hasGithubToken}
+              disabled={!tokenSet}
             />
             <span className={styles.fieldHint}>
               Comma-separated list. Leave empty to scan all repositories.
             </span>
           </div>
 
-          {hasGithubToken && (
+          {tokenSet && (
             <>
               <div className={styles.subSection}>
                 <h3 className={styles.subSectionTitle}>Scan Options</h3>

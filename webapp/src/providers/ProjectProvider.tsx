@@ -207,3 +207,14 @@ export function useProject() {
   }
   return context
 }
+
+/**
+ * The context if there is one, null otherwise.
+ *
+ * For widgets that are merely NICER with a user in scope and must not take the
+ * tree down without one - an inline credential shortcut degrades to a disabled
+ * box, where `useProject()` would throw and blank the whole page it sits in.
+ */
+export function useOptionalProject() {
+  return useContext(ProjectContext)
+}

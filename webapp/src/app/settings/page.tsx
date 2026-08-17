@@ -6,6 +6,9 @@ import { Plus, Pencil, Trash2, Loader2, Eye, EyeOff, Upload, Download, Swords, R
 import { useProject } from '@/providers/ProjectProvider'
 import { useAuth } from '@/providers/AuthProvider'
 import { useVersionCheck } from '@/hooks/useVersionCheck'
+// Shared with the inline shortcuts the scan sections render, so a key cannot be
+// described one way here and another way on the card that asks for it.
+import { TRUFFLEHOG_KEY_FIELDS } from '@/lib/credentialFields'
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard'
 import { LlmProviderForm } from '@/components/settings/LlmProviderForm'
 import McpServersTab from '@/components/settings/mcp/McpServersTab'
@@ -2299,94 +2302,6 @@ function SystemSection() {
  * The `hint` wording matches the start gate exactly, so the settings page and
  * the scan card can never disagree about whether a key is required.
  */
-const TRUFFLEHOG_KEY_FIELDS: {
-  name: string
-  label: string
-  source: string
-  hint: string
-  signupUrl?: string
-}[] = [
-  {
-    name: 'trufflehogGithubToken', label: 'TruffleHog GitHub Token', source: 'github',
-    signupUrl: 'https://github.com/settings/tokens',
-    hint: 'Mandatory for the GitHub and GitHub-deleted-commits sources — even for public repos, because unauthenticated GitHub allows only 60 requests/hour, which this scan exhausts immediately. Use repo scope for private repositories.',
-  },
-  {
-    name: 'trufflehogGitlabToken', label: 'TruffleHog GitLab Token', source: 'gitlab',
-    signupUrl: 'https://gitlab.com/-/user_settings/personal_access_tokens',
-    hint: 'Mandatory for the GitLab source. With no repository or group set, it scans every project the token can reach.',
-  },
-  {
-    name: 'trufflehogPostmanToken', label: 'TruffleHog Postman Token', source: 'postman',
-    hint: 'Mandatory for the Postman source.',
-  },
-  {
-    name: 'trufflehogCircleciToken', label: 'TruffleHog CircleCI Token', source: 'circleci',
-    hint: 'Mandatory for the CircleCI source; the token defines the scan scope.',
-  },
-  {
-    name: 'trufflehogTravisciToken', label: 'TruffleHog Travis CI Token', source: 'travisci',
-    hint: 'Mandatory for the Travis CI source; the token defines the scan scope.',
-  },
-  {
-    name: 'trufflehogDockerToken', label: 'TruffleHog Docker Token', source: 'docker',
-    signupUrl: 'https://app.docker.com/settings/personal-access-tokens',
-    hint: 'Optional for a single public image. Mandatory for a namespace scan: Docker Hub allows only 10 anonymous pulls/hour per IP, which a namespace scan exhausts at once. Used as both the bearer and the registry token.',
-  },
-  {
-    name: 'trufflehogAwsAccessKeyId', label: 'TruffleHog AWS Access Key ID', source: 's3',
-    hint: "Mandatory for the S3 source unless 'Use cloud environment IAM' is enabled on the scan.",
-  },
-  {
-    name: 'trufflehogAwsSecretKey', label: 'TruffleHog AWS Secret Key', source: 's3',
-    hint: "Mandatory for the S3 source unless 'Use cloud environment IAM' is enabled on the scan.",
-  },
-  {
-    name: 'trufflehogAwsSessionToken', label: 'TruffleHog AWS Session Token', source: 's3',
-    hint: 'Optional. Only for temporary (STS) credentials.',
-  },
-  {
-    name: 'trufflehogGcpServiceAccount', label: 'TruffleHog GCP Service Account (JSON)', source: 'gcs',
-    hint: "Mandatory for the GCS source unless 'Without auth' (public buckets) is enabled. Paste the service-account JSON.",
-  },
-  {
-    name: 'trufflehogHuggingfaceToken', label: 'TruffleHog Hugging Face Token', source: 'huggingface',
-    signupUrl: 'https://huggingface.co/settings/tokens',
-    hint: 'Optional. Public models, spaces and datasets scan without it; set it for private or gated assets, or for higher rate limits.',
-  },
-  {
-    name: 'trufflehogJenkinsUsername', label: 'TruffleHog Jenkins Username', source: 'jenkins',
-    hint: 'Optional. An exposed, unauthenticated Jenkins scans without it (and is itself a finding). Set both username and password for an instance behind a login.',
-  },
-  {
-    name: 'trufflehogJenkinsPassword', label: 'TruffleHog Jenkins Password', source: 'jenkins',
-    hint: 'Optional. Pairs with the Jenkins username above.',
-  },
-  {
-    name: 'trufflehogElasticUsername', label: 'TruffleHog Elasticsearch Username', source: 'elasticsearch',
-    hint: 'Optional. An exposed cluster scans without it. If secured, provide exactly ONE of: username+password, API key, or service token.',
-  },
-  {
-    name: 'trufflehogElasticPassword', label: 'TruffleHog Elasticsearch Password', source: 'elasticsearch',
-    hint: 'Optional. Pairs with the Elasticsearch username above.',
-  },
-  {
-    name: 'trufflehogElasticApiKey', label: 'TruffleHog Elasticsearch API Key', source: 'elasticsearch',
-    hint: 'Optional. Use INSTEAD of username+password or a service token, not alongside them.',
-  },
-  {
-    name: 'trufflehogElasticServiceToken', label: 'TruffleHog Elasticsearch Service Token', source: 'elasticsearch',
-    hint: 'Optional. Use INSTEAD of username+password or an API key, not alongside them.',
-  },
-  {
-    name: 'trufflehogGitUsername', label: 'TruffleHog Git Username', source: 'git',
-    hint: 'Optional. Public Git URLs clone anonymously. Set both username and token only to reach a private repository over HTTPS.',
-  },
-  {
-    name: 'trufflehogGitToken', label: 'TruffleHog Git Token', source: 'git',
-    hint: 'Optional. Pairs with the Git username above.',
-  },
-]
 
 /** A header that opens a group of related keys. The `id` is the deep-link anchor
  *  the scan card points at when it says which key to set. */
