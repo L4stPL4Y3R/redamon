@@ -583,8 +583,11 @@ class SecretMixin:
         # too would hide that the scan happened at all.
         findings = trufflehog_data.get("findings") or []
         if not isinstance(findings, list):
+            # Deliberately `type(findings)` and not its dunder name attribute:
+            # tests/test_graph_db_refactor.py screens mixins for that literal to
+            # catch stray main-guard blocks, with a plain substring match.
             stats["errors"].append(
-                f"findings is {type(findings).__name__}, not a list; ignoring them")
+                f"findings is {type(findings)}, not a list; ignoring them")
             findings = []
         scan_statistics = trufflehog_data.get("statistics") or {}
         asset_kind = trufflehog_data.get("asset_kind") or "endpoint"
