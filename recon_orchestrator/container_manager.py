@@ -4654,9 +4654,15 @@ exit $RC
 
             state.container_id = container.id
             state.status = TrufflehogStatus.RUNNING
+            # Auditability (12.9): who scanned WHAT with WHICH key. The credential
+            # FIELD NAMES only — never a value — so an operator can reconstruct a
+            # run from the logs without the log becoming a secret store.
+            used_keys = sorted(c.settings_key for c in src.credentials
+                               if str(secrets.get(c.settings_key) or "").strip())
             logger.info(
                 f"Started TruffleHog {source} container {container.id} for project {project_id} "
-                f"(target: {target})"
+                f"(user: {user_id}, target: {target}, "
+                f"credentials: {', '.join(used_keys) if used_keys else 'none'})"
             )
 
         except Exception as e:

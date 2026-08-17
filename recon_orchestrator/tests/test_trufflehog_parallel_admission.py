@@ -407,3 +407,17 @@ class TestDirtyContainerShape(unittest.TestCase):
         m = make_manager()
         m.trufflehog_scan_roots = {"recon_output": "/host/recon/output"}
         self.assertEqual(m._trufflehog_scan_root_mounts("docker", {"scanRoot": "recon_output"}), {})
+
+
+class TestAuditability(unittest.TestCase):
+    """12.9: reconstructing who scanned which target with which key — from the
+    log alone, and without the log ever holding a secret."""
+
+    def test_the_start_log_names_the_credential_field_never_its_value(self):
+        import inspect
+        src = inspect.getsource(cm_mod.ContainerManager.start_trufflehog)
+        self.assertIn("c.settings_key", src)
+        # The VALUE must never be interpolated into a log line.
+        self.assertNotIn("secrets.get(c.settings_key)}", src)
+        self.assertIn("target: {target}", src)
+        self.assertIn("user: {user_id}", src)

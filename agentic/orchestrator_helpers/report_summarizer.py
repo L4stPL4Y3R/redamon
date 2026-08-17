@@ -292,12 +292,25 @@ def _condense_for_llm(data: dict) -> dict:
         "portsOpen": ports_detail,
         "securityHeaders": security_headers,
         "parameterAnalysis": param_analysis,
-        # TruffleHog
+        # TruffleHog. `liveFindings` is the number that matters: a credential
+        # the owning API CONFIRMED works. The raw `verified` bool conflates
+        # "checked and dead" with "never checked", so the agent gets
+        # validationStatus and reasons from that instead.
         "trufflehogTotalFindings": trufflehog.get("totalFindings", 0),
         "trufflehogVerifiedFindings": trufflehog.get("verifiedFindings", 0),
-        "trufflehogRepositories": trufflehog.get("repositories", 0),
+        "trufflehogLiveFindings": trufflehog.get("liveFindings", 0),
+        "trufflehogAssets": trufflehog.get("repositories", 0),
+        # One row per scanned source; several run in parallel per project.
+        "trufflehogSources": trufflehog.get("sources", []),
         "trufflehogFindings": [
-            {"detectorName": f.get("detectorName"), "verified": f.get("verified"), "repository": f.get("repository"), "file": f.get("file")}
+            {
+                "detectorName": f.get("detectorName"),
+                "validationStatus": f.get("validationStatus"),
+                "source": f.get("source"),
+                "asset": f.get("asset") or f.get("repository"),
+                "location": f.get("location") or f.get("file"),
+                "findingKind": f.get("findingKind"),
+            }
             for f in trufflehog.get("findings", [])[:20]
         ],
         # Secrets (generic)
