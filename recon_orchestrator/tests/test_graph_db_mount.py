@@ -108,14 +108,30 @@ class TestEveryScanSpawnUsesTheHelper(unittest.TestCase):
             "empty dir over the image's graph_db (issue #169)",
         )
 
-    def test_all_six_spawn_sites_route_through_the_helper(self):
-        # recon, partial-recon, gvm, github-hunt, supply-chain, trufflehog
-        self.assertEqual(self._source().count("self._graph_db_mount("), 6)
+    def test_all_graph_writing_spawn_sites_route_through_the_helper(self):
+        # recon, partial-recon, gvm, github-hunt, supply-chain.
+        # TruffleHog is deliberately NOT here: its container is the dirty half of
+        # the dirty/clean split and holds no Neo4j credentials, so it has no
+        # graph_db to mount. The orchestrator ingests its findings afterwards.
+        self.assertEqual(self._source().count("self._graph_db_mount("), 5)
 
     def test_only_supply_chain_may_use_the_unverified_guess(self):
         src = self._source()
         self.assertEqual(src.count("baked_into_image=False"), 1)
-        self.assertEqual(src.count("baked_into_image=True"), 5)
+        self.assertEqual(src.count("baked_into_image=True"), 4)
+
+    def test_trufflehog_spawn_carries_no_neo4j_credentials(self):
+        """The regression that matters more than the mount: a TruffleHog
+        container parses attacker-controlled bytes (a malicious image layer, a
+        hostile repo). If NEO4J_* ever reappears in its environment, a parser
+        exploit reaches cross-tenant graph read/write."""
+        src = self._source()
+        start = src.index("    async def start_trufflehog(")
+        end = src.index("\n    def _trufflehog_credential_env(", start)
+        spawn = src[start:end]
+        for forbidden in ("NEO4J_URI", "NEO4J_PASSWORD", "_scanner_env(", "network_mode=\"host\""):
+            self.assertNotIn(forbidden, spawn,
+                             f"{forbidden} must not be in the TruffleHog spawn")
 
 
 class TestDerivationStillCorrectWhereItIsUsed(unittest.TestCase):

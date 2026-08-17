@@ -29,6 +29,10 @@ COPY scanners/capture_proxy/redamon_ctx.py \
 # Bundle the hard-guardrail so the proxy can enforce it WITHOUT any secret or
 # network access (static domain blocklist). Kept in sync with the other copies.
 COPY recon_orchestrator/hard_guardrail.py /app/hard_guardrail.py
+# The resolved-IP denylist is shared verbatim with the orchestrator's own egress
+# guards (TruffleHog start). Copied from the canonical file rather than
+# duplicated in this tree, so the two can never drift apart.
+COPY recon_orchestrator/ip_denylist.py /app/ip_denylist.py
 
 # Pre-create the mount points owned by the runtime user. Docker copies this
 # ownership onto an EMPTY named volume on first mount, so the non-root process

@@ -38,13 +38,31 @@ export const SCAN_JOB_ENVELOPE_BYTES: Record<string, number> = {
   gvm: 2684354560,
   github_hunt: 805306368,
   trufflehog: 805306368,
+  // Source-qualified, mirroring the orchestrator: docker and huggingface
+  // decompress remote blobs and peak well above the git-based sources.
+  'trufflehog:docker': 1610612736,
+  'trufflehog:huggingface': 1610612736,
+  'trufflehog:s3': 1207959552,
+  'trufflehog:gcs': 1207959552,
   supply_chain: 1879048192,
   supply_chain_repo: 1879048192,
   _default: 2147483648,
 }
 
 export function envelopeForKind(kind: string): number {
-  return SCAN_JOB_ENVELOPE_BYTES[kind] ?? SCAN_JOB_ENVELOPE_BYTES._default
+  const exact = SCAN_JOB_ENVELOPE_BYTES[kind]
+  if (exact !== undefined) return exact
+  // A qualified kind ('trufflehog:github') with no entry of its own falls back
+  // to its BASE kind, not to _default — mirroring scan_job_envelope() in
+  // resource_governor.py. Without this, a source we deliberately left on the
+  // family envelope would be estimated at the 2 GB unknown-type figure here and
+  // at 768 MB by the ledger, and the queue would order jobs by a number the
+  // admission gate disagrees with.
+  if (kind.includes(':')) {
+    const base = SCAN_JOB_ENVELOPE_BYTES[kind.split(':')[0]]
+    if (base !== undefined) return base
+  }
+  return SCAN_JOB_ENVELOPE_BYTES._default
 }
 
 /**

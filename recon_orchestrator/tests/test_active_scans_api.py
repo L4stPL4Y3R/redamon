@@ -73,7 +73,8 @@ class TestActiveScans(unittest.TestCase):
         self.cm.running_states = {"p1": state("p1", "running")}
         self.cm.gvm_states = {"p1": state("p1", "running")}
         self.cm.github_hunt_states = {"p2": state("p2", "starting")}
-        self.cm.trufflehog_states = {"p2": state("p2", "running")}
+        # Run-keyed: {project_id: {source: state}}.
+        self.cm.trufflehog_states = {"p2": {"docker": state("p2", "running")}}
         self.cm.supply_chain_states = {"p3": state("p3", "paused")}
         self.cm.partial_recon_states = {
             "p1": {"r1": state("p1", "running", tool_id="katana")}
