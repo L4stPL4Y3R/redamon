@@ -76,6 +76,11 @@ class TrufflehogRunner:
         self._start_time = ""
         self._start_epoch = time.time()
         self._exit_codes: list[int] = []
+        # TruffleHog reports a failed scan as a JSON record on STDOUT, in the
+        # same stream as the findings. Parsed and dropped, it left an errored run
+        # with no reason attached — and the container is auto-removed, so the log
+        # is gone too. Kept here and published on the artifact.
+        self._scan_errors: list[str] = []
 
     # -- command construction -------------------------------------------------
 
@@ -262,6 +267,9 @@ class TrufflehogRunner:
                 continue
             if not isinstance(result, dict):
                 continue
+            if result.get("level") == "error":
+                self._record_scan_error(result)
+                continue
             finding = self._parse_finding(result)
             if finding:
                 self.findings.append(finding)
@@ -277,11 +285,47 @@ class TrufflehogRunner:
         stderr_output = process.stderr.read()
         if stderr_output:
             for err_line in stderr_output.strip().split("\n"):
-                if err_line.strip():
-                    self._log(f"[~] {err_line.strip()}")
+                err_line = err_line.strip()
+                if not err_line:
+                    continue
+                # TruffleHog logs structured records here, error ones included.
+                # Parsed, they give the operator a sentence; unparsed they give a
+                # JSON blob, and dropped they give nothing at all.
+                record = None
+                if err_line.startswith("{"):
+                    try:
+                        record = json.loads(err_line)
+                    except json.JSONDecodeError:
+                        record = None
+                if isinstance(record, dict) and record.get("level") == "error":
+                    self._record_scan_error(record)
+                    continue
+                self._log(f"[~] {err_line}")
 
         if process.returncode != 0:
             self._log(f"[!] TruffleHog exited with code {process.returncode}")
+            if not self._scan_errors and stderr_output:
+                # Nothing structured anywhere: keep the tail of stderr so the run
+                # still says something more useful than "it failed".
+                tail = stderr_output.strip().splitlines()[-1][:400]
+                self._scan_errors.append(reg.redact(tail, self.env))
+
+    def _record_scan_error(self, record: dict) -> None:
+        """Keep a TruffleHog error record, redacted, for the artifact.
+
+        Redaction matters more here than in a finding: the message frequently
+        quotes the target, and for git that is a URI the credential was spliced
+        into.
+        """
+        msg = str(record.get("msg") or "").strip()
+        err = str(record.get("error") or "").strip()
+        text = f"{msg}: {err}" if msg and err else (err or msg)
+        if not text:
+            return
+        text = reg.redact(text, self.env)[:600]
+        if text not in self._scan_errors:
+            self._scan_errors.append(text)
+        self._log(f"[!] {text}")
 
     def _save_incremental(self) -> None:
         """Atomic temp-file rename, so the orchestrator never reads a half file."""
@@ -307,6 +351,9 @@ class TrufflehogRunner:
             "scan_end_time": datetime.now().isoformat(),
             "duration_seconds": round(time.time() - self._start_epoch, 2),
             "status": status,
+            # Present only on a failure, so a consumer can treat its presence as
+            # the signal. The orchestrator reads it to explain an errored run.
+            **({"error": "; ".join(self._scan_errors)} if self._scan_errors else {}),
             "statistics": dict(self.stats),
             "findings": self.findings,
         }

@@ -5,3 +5,9 @@ docker>=7.0.0
 sse-starlette>=2.0.0
 python-dotenv>=1.0.0
 python-multipart>=0.0.6
+
+# The clean half of the TruffleHog dirty/clean split: the scan container holds
+# no Neo4j credentials, so the orchestrator performs the graph write. Without
+# the driver the import fails and ingest is skipped silently - a finished scan
+# with a perfect artifact and an empty graph.
+neo4j>=5.0.0
