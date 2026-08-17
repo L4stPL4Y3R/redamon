@@ -142,9 +142,12 @@ export interface SupplyChainState {
   container_id?: string | null
 }
 
+// Kept in step with TRUFFLEHOG_PHASE_PATTERNS in container_manager.py. The
+// scanner reads a job file rather than fetching settings, and it scans far more
+// than repositories, so the old labels described neither.
 export const TRUFFLEHOG_PHASES = [
-  'Loading Settings',
-  'Scanning Repositories',
+  'Preparing',
+  'Scanning',
   'Complete',
 ] as const
 

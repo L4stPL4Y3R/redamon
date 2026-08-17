@@ -179,11 +179,13 @@ GITHUB_HUNT_PHASE_PATTERNS = [
     (r"SCAN SUMMARY|Final results saved|Scan complete", "Complete", 3),
 ]
 
-# TruffleHog Secret Scanner phase patterns to detect from logs
+# TruffleHog Secret Scanner phase patterns to detect from logs. Matched against
+# what scanners/trufflehog_scan actually prints — the container reads a job file
+# now, so there is no settings-loading phase to report.
 TRUFFLEHOG_PHASE_PATTERNS = [
-    (r"TruffleHog Secret Scanner|Loading.*settings|Initializing TruffleHog", "Loading Settings", 1),
-    (r"Scanning repositor|Scanning organization|Running:.*trufflehog", "Scanning Repositories", 2),
-    (r"SCAN SUMMARY|Final results saved|Scan complete", "Complete", 3),
+    (r"TruffleHog Secret Scanner|\[\*\] Source:", "Preparing", 1),
+    (r"\[\*\] Running: trufflehog|\[\+\] Found:", "Scanning", 2),
+    (r"SCAN SUMMARY|Results saved to", "Complete", 3),
 ]
 
 # AI Attack Surface phase patterns. Match ONLY the explicit [Phase N] markers

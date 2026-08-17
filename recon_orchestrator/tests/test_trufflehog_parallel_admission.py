@@ -465,3 +465,30 @@ class TestIngestRetry(unittest.TestCase):
         m._ingest_trufflehog = lambda st: calls.append(st.source)
         m._get_trufflehog_status_sync("p1", "docker")
         self.assertEqual(calls, ["docker"])
+
+
+class TestLogPhaseParsing(unittest.TestCase):
+    """The phase labels drive the logs drawer's progress bar. They are matched
+    against the scanner's real output, which changed with the job-file rewrite."""
+
+    def _phase(self, line):
+        m = make_manager()
+        event = m._parse_trufflehog_log_line(line, None, None)
+        return event.phase, event.phase_number
+
+    def test_the_real_start_line_opens_the_first_phase(self):
+        self.assertEqual(self._phase("[*] Source: Docker registry (docker)"), ("Preparing", 1))
+
+    def test_the_real_command_line_opens_the_scanning_phase(self):
+        self.assertEqual(
+            self._phase("[*] Running: trufflehog docker --image=nginx:1.25 --json"),
+            ("Scanning", 2),
+        )
+
+    def test_a_finding_line_keeps_the_scanning_phase(self):
+        self.assertEqual(self._phase("[+] Found: AWS [validated] in /app/.env (acme/app)"),
+                         ("Scanning", 2))
+
+    def test_the_real_completion_line_closes_the_run(self):
+        self.assertEqual(self._phase("[+] Results saved to /work/out.json (status=completed)"),
+                         ("Complete", 3))
