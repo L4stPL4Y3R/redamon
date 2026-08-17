@@ -42,7 +42,13 @@ vi.mock('@/lib/audit', () => ({ writeAudit: vi.fn() }))
 vi.mock('@/lib/activationLock', () => ({
   isActivationInProgress: (...a: unknown[]) => mockIsActivating(...a),
 }))
-vi.mock('@/lib/graphWriters', () => ({ describeScanWriters: (...a: unknown[]) => mockBusy(...a) }))
+vi.mock('@/lib/graphWriters', () => ({
+  describeScanWriters: (...a: unknown[]) => mockBusy(...a),
+  // The save path now blocks on the secondary writers too: TruffleHog and the
+  // other finding scanners stream into the LIVE graph, so a snapshot taken
+  // mid-write captures a partial subgraph.
+  describeSecondaryScanWriters: async () => null,
+}))
 vi.mock('@/lib/scanSnapshot', async orig => ({
   ...(await orig<typeof import('@/lib/scanSnapshot')>()),
   captureGraphSnapshot: (...a: unknown[]) => mockCapture(...a),

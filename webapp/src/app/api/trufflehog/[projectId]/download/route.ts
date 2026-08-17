@@ -1,15 +1,40 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { guardProject } from '@/lib/access'
 import prisma from '@/lib/prisma'
-import { readFile } from 'fs/promises'
-import { existsSync } from 'fs'
+import { readFile, readdir } from 'fs/promises'
 import path from 'path'
 
 // Path to TruffleHog output directory (mounted volume or local path)
-const TRUFFLEHOG_OUTPUT_PATH = process.env.TRUFFLEHOG_OUTPUT_PATH || '/home/samuele/Progetti didattici/RedAmon/trufflehog_scan/output'
+const TRUFFLEHOG_OUTPUT_PATH = process.env.TRUFFLEHOG_OUTPUT_PATH || '/data/trufflehog-output'
 
 interface RouteParams {
   params: Promise<{ projectId: string }>
+}
+
+/** Filenames the orchestrator writes: one per (project, source). Kept in sync
+ *  with `_trufflehog_output_name` in container_manager.py. */
+function outputPrefix(projectId: string): string {
+  return `trufflehog_${projectId.replace(/[^a-zA-Z0-9_.-]/g, '_')}_`
+}
+
+/**
+ * Every source's findings file for a project.
+ *
+ * Sources run independently, so there is one artifact per source rather than one
+ * per project. Returning only the newest would silently hide the other runs, and
+ * that is exactly what the operator downloads this to check.
+ */
+async function findRunFiles(projectId: string): Promise<string[]> {
+  const prefix = outputPrefix(projectId)
+  try {
+    const entries = await readdir(TRUFFLEHOG_OUTPUT_PATH)
+    return entries
+      .filter(name => name.startsWith(prefix) && name.endsWith('.json'))
+      .sort()
+      .map(name => path.join(TRUFFLEHOG_OUTPUT_PATH, name))
+  } catch {
+    return []
+  }
 }
 
 export async function GET(request: NextRequest, { params }: RouteParams) {
@@ -18,78 +43,64 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const __denied = await guardProject(projectId)
     if (__denied) return __denied
 
-    // Verify project exists
     const project = await prisma.project.findUnique({
       where: { id: projectId },
-      select: { id: true, name: true }
+      select: { id: true, name: true },
     })
-
     if (!project) {
-      return NextResponse.json(
-        { error: 'Project not found' },
-        { status: 404 }
-      )
+      return NextResponse.json({ error: 'Project not found' }, { status: 404 })
     }
 
-    // Construct the JSON file path using projectId
-    const jsonFileName = `trufflehog_${projectId}.json`
-    const jsonFilePath = path.join(TRUFFLEHOG_OUTPUT_PATH, jsonFileName)
-
-    // Check if file exists
-    if (!existsSync(jsonFilePath)) {
+    const files = await findRunFiles(projectId)
+    if (files.length === 0) {
       return NextResponse.json(
         { error: 'TruffleHog data not found. Run a TruffleHog scan first.' },
-        { status: 404 }
+        { status: 404 },
       )
     }
 
-    // Read the file
-    const fileContent = await readFile(jsonFilePath, 'utf-8')
+    const runs = []
+    for (const file of files) {
+      try {
+        runs.push(JSON.parse(await readFile(file, 'utf-8')))
+      } catch {
+        // One unreadable artifact must not lose the other sources' results.
+      }
+    }
 
-    // Return as downloadable JSON
-    return new NextResponse(fileContent, {
+    const body = JSON.stringify({
+      project_id: projectId,
+      project_name: project.name,
+      runs,
+      total_findings: runs.reduce((n, r) => n + (r?.findings?.length ?? 0), 0),
+    }, null, 2)
+
+    return new NextResponse(body, {
       status: 200,
       headers: {
         'Content-Type': 'application/json',
-        'Content-Disposition': `attachment; filename="${jsonFileName}"`,
+        'Content-Disposition': `attachment; filename="trufflehog_${projectId}.json"`,
         'Cache-Control': 'no-cache',
       },
     })
-
   } catch (error) {
     console.error('Error downloading TruffleHog data:', error)
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Internal server error' },
-      { status: 500 }
+      { status: 500 },
     )
   }
 }
 
-// Also support HEAD request to check if data exists
+/** HEAD drives the Download button's enabled state. */
 export async function HEAD(request: NextRequest, { params }: RouteParams) {
   try {
     const { projectId } = await params
     const __denied = await guardProject(projectId)
     if (__denied) return __denied
 
-    // Verify project exists
-    const project = await prisma.project.findUnique({
-      where: { id: projectId },
-      select: { id: true }
-    })
-
-    if (!project) {
-      return new NextResponse(null, { status: 404 })
-    }
-
-    const jsonFilePath = path.join(TRUFFLEHOG_OUTPUT_PATH, `trufflehog_${projectId}.json`)
-
-    if (!existsSync(jsonFilePath)) {
-      return new NextResponse(null, { status: 404 })
-    }
-
-    return new NextResponse(null, { status: 200 })
-
+    const files = await findRunFiles(projectId)
+    return new NextResponse(null, { status: files.length > 0 ? 200 : 404 })
   } catch {
     return new NextResponse(null, { status: 500 })
   }

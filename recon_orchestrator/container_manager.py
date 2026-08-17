@@ -10,6 +10,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 import os
 import re
+import shutil
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -3484,14 +3485,55 @@ class ContainerManager:
         return f"redamon-trufflehog-{safe_id}-{safe_source}"
 
     def _trufflehog_run_dir(self, project_id: str, source: str) -> Path:
-        """Per-run scratch dir on the host: the job file in, the findings out.
+        """Per-run scratch dir on the host: the job file in, the scan's working
+        files (regex path-files, the GCP service-account blob) alongside.
 
-        This is the ENTIRE contract across the dirty/clean boundary. The scan
-        container gets this one directory rw and nothing else writable.
+        Together with the output dir this is the ENTIRE contract across the
+        dirty/clean boundary. The scan container gets these two directories rw
+        and nothing else writable.
         """
         safe_id = re.sub(r'[^a-zA-Z0-9_.-]', '_', project_id)
         safe_source = re.sub(r'[^a-zA-Z0-9_.-]', '_', source or "unknown")
         return Path(f"/tmp/redamon/trufflehog_{safe_id}_{safe_source}")
+
+    @staticmethod
+    def _trufflehog_output_name(project_id: str, source: str) -> str:
+        """Findings filename, per project AND source. The webapp's download route
+        globs these, so the shape is part of that contract."""
+        safe_id = re.sub(r'[^a-zA-Z0-9_.-]', '_', project_id)
+        safe_source = re.sub(r'[^a-zA-Z0-9_.-]', '_', source or "unknown")
+        return f"trufflehog_{safe_id}_{safe_source}.json"
+
+    def _trufflehog_output_path(self, project_id: str, source: str) -> Path:
+        """Where the published findings live, as the ORCHESTRATOR sees them.
+        Compose binds this dir into the webapp read-only for the JSON download."""
+        return Path("/app/trufflehog_scan/output") / self._trufflehog_output_name(project_id, source)
+
+    def _publish_trufflehog_output(self, project_id: str, source: str) -> Optional[Path]:
+        """Copy a finished run's findings from the scratch dir to the shared
+        output dir, and return the published path.
+
+        Done by the orchestrator, not the container: the scan runs as a non-root
+        uid with every capability dropped and cannot write the host-owned output
+        directory — which is precisely why it is not mounted into it.
+
+        Returns None when the run wrote nothing (a container that died before its
+        first write); the caller then has nothing to ingest.
+        """
+        src = self._trufflehog_run_dir(project_id, source) / "out.json"
+        if not src.exists():
+            return None
+        dest = self._trufflehog_output_path(project_id, source)
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src, dest)
+            os.chmod(dest, 0o644)
+            return dest
+        except OSError as e:
+            logger.warning(f"[trufflehog] could not publish {source} findings: {e}")
+            # Fall back to the scratch copy so ingest still runs; only the
+            # operator-facing download is lost.
+            return src
 
     def _ensure_trufflehog_network(self) -> None:
         """Create the TruffleHog scan network if missing.
@@ -4548,6 +4590,12 @@ exit $RC
                 "config": config,
                 "common": common,
                 "run_dir": "/work",
+                # Into the run dir, NOT the shared output dir. The container
+                # runs as a non-root uid with cap_drop=ALL, so it cannot write a
+                # host-owned directory; and giving a container that parses
+                # attacker-controlled bytes rw access to a dir the webapp serves
+                # is a bad trade for saving one copy. _publish_trufflehog_output
+                # moves the artifact once the run is over.
                 "output_file": "/work/out.json",
             }
             (run_dir / "job.json").write_text(json.dumps(job))
@@ -4684,8 +4732,8 @@ exit $RC
         """
         if state.ingested or not state.source:
             return
-        out_path = self._trufflehog_run_dir(state.project_id, state.source) / "out.json"
-        if not out_path.exists():
+        out_path = self._publish_trufflehog_output(state.project_id, state.source)
+        if out_path is None or not out_path.exists():
             return
         try:
             data = json.loads(out_path.read_text())

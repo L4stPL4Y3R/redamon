@@ -310,3 +310,100 @@ class TestScopeCheck(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDirtyContainerShape(unittest.TestCase):
+    """12.3: what the scan container may and may not reach.
+
+    The source-text assertions are deliberate: the spawn kwargs are what a future
+    reviewer is most likely to "clean up", and every one of them was chosen
+    against a specific failure.
+    """
+
+    def _spawn_source(self) -> str:
+        import inspect
+        src = inspect.getsource(cm_mod.ContainerManager)
+        start = src.index("    async def start_trufflehog(")
+        return src[start:src.index("\n    def _trufflehog_credential_env(", start)]
+
+    def test_no_host_networking(self):
+        # On host networking a target of 127.0.0.1:7687 resolves straight into
+        # RedAmon's own Neo4j.
+        spawn = self._spawn_source()
+        self.assertNotIn('network_mode="host"', spawn)
+        self.assertIn("network=self.trufflehog_network", spawn)
+
+    def test_capabilities_dropped_and_root_filesystem_read_only(self):
+        spawn = self._spawn_source()
+        self.assertIn('cap_drop=["ALL"]', spawn)
+        self.assertIn("read_only=True", spawn)
+        self.assertIn("tmpfs=", spawn)
+
+    def test_the_source_tree_is_mounted_read_only(self):
+        # rw would let a compromised scan rewrite the scanner and persist into
+        # every future run.
+        spawn = self._spawn_source()
+        self.assertIn('"/app/trufflehog_scan", "mode": "ro"', spawn.replace('"bind": ', ''))
+
+    def test_no_secret_beyond_the_one_source_credential(self):
+        spawn = self._spawn_source()
+        for forbidden in ("NEO4J_URI", "NEO4J_USER", "NEO4J_PASSWORD",
+                          "_scanner_env(", "WEBAPP_API_URL", "INTERNAL_API_KEY"):
+            self.assertNotIn(forbidden, spawn, f"{forbidden} must not reach the scan container")
+        self.assertIn("_trufflehog_credential_env(src, secrets)", spawn)
+
+    def test_cap_drop_is_safe_here_because_nothing_host_owned_is_written(self):
+        """cap_drop=ALL broke recon precisely because that container writes a
+        host-owned bind mount as root. This one writes ONLY its own scratch dir
+        (chmod 0o777 by the orchestrator); the findings are published to the
+        shared output dir by the orchestrator afterwards."""
+        spawn = self._spawn_source()
+        self.assertIn('"output_file": "/work/out.json"', spawn)
+        # The shared output dir must NOT be mounted into the container.
+        self.assertNotIn('"/out"', spawn)
+        self.assertIn("os.chmod(run_dir, 0o777)", spawn)
+
+    def test_only_this_sources_credentials_are_injected(self):
+        m = make_manager()
+        github = cm_mod.th_sources.get_source("github")
+        env = m._trufflehog_credential_env(github, {
+            "trufflehogGithubToken": "ghp_x",
+            "trufflehogAwsSecretKey": "aws_should_not_travel",
+        })
+        self.assertEqual(env, {"GITHUB_TOKEN": "ghp_x"})
+
+    def test_credential_env_names_are_the_ones_trufflehog_documents(self):
+        # The binary reads these itself, which is how the token stays out of argv.
+        m = make_manager()
+        es = cm_mod.th_sources.get_source("elasticsearch")
+        env = m._trufflehog_credential_env(es, {
+            "trufflehogElasticApiKey": "k", "trufflehogElasticUsername": "u",
+        })
+        self.assertEqual(sorted(env), ["ELASTICSEARCH_API_KEY", "ELASTICSEARCH_USERNAME"])
+
+    def test_blank_credentials_are_not_injected(self):
+        m = make_manager()
+        github = cm_mod.th_sources.get_source("github")
+        self.assertEqual(m._trufflehog_credential_env(github, {"trufflehogGithubToken": "  "}), {})
+
+    def test_filesystem_scan_roots_are_server_resolved(self):
+        m = make_manager()
+        m.trufflehog_scan_roots = {"recon_output": "/host/recon/output"}
+        mounts = m._trufflehog_scan_root_mounts("filesystem", {"scanRoot": "recon_output"})
+        self.assertEqual(mounts, {"/host/recon/output": {"bind": "/scan-roots/recon_output", "mode": "ro"}})
+
+    def test_an_unconfigured_scan_root_is_simply_not_mounted(self):
+        # Better an empty dir than a guessed host path.
+        m = make_manager()
+        m.trufflehog_scan_roots = {}
+        self.assertEqual(m._trufflehog_scan_root_mounts("filesystem", {"scanRoot": "recon_output"}), {})
+
+    def test_an_operator_typed_path_is_never_mounted(self):
+        m = make_manager()
+        m.trufflehog_scan_roots = {"recon_output": "/host/recon/output"}
+        self.assertEqual(m._trufflehog_scan_root_mounts("filesystem", {"scanRoot": "/etc"}), {})
+
+    def test_other_sources_get_no_scan_root_mount(self):
+        m = make_manager()
+        m.trufflehog_scan_roots = {"recon_output": "/host/recon/output"}
+        self.assertEqual(m._trufflehog_scan_root_mounts("docker", {"scanRoot": "recon_output"}), {})

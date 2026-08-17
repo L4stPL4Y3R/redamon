@@ -18,7 +18,7 @@ import { redactSecret } from './redact'
 import rowStyles from './RedZoneTableRow.module.css'
 
 interface SecretRow {
-  origin: 'Secret' | 'JsReconFinding' | string
+  origin: 'Secret' | 'JsReconFinding' | 'TrufflehogFinding' | string
   id: string
   secretType: string
   valueSample: string | null
@@ -35,6 +35,10 @@ interface SecretRow {
   baseUrl: string | null
   subdomain: string | null
   jsFileUrl: string | null
+  /** TruffleHog rows only: which of the 14 sources found it, and where. */
+  trufflehogSource: string | null
+  asset: string | null
+  location: string | null
 }
 
 const PAGE_SIZE = 100
@@ -42,15 +46,28 @@ const PAGE_SIZE = 100
 const VALIDATION_CLASS: Record<string, string> = {
   validated:        rowStyles.sevCritical,
   format_validated: rowStyles.sevMedium,
+  // The verify call itself failed. NOT proof the credential is dead, so it must
+  // not share the muted styling of a checked-and-dead one.
+  verify_error:     rowStyles.sevMedium,
   unvalidated:      rowStyles.sevInfo,
+  // Verification was switched off: nobody looked. Kept distinct from
+  // `unvalidated` because collapsing them would overstate the assurance.
+  unverified:       rowStyles.sevInfo,
   skipped:          rowStyles.sevInfo,
   invalid:          rowStyles.sevLow,
+}
+
+const VALIDATION_LABEL: Record<string, string> = {
+  validated: 'LIVE',
+  unvalidated: 'not live',
+  verify_error: 'verify error',
+  unverified: 'not checked',
 }
 
 function ValidationChip({ status }: { status: string | null }) {
   if (!status) return <span className={rowStyles.nullCell}>-</span>
   const cls = VALIDATION_CLASS[status] || rowStyles.sevInfo
-  const label = status === 'validated' ? 'LIVE' : status.replace('_', ' ')
+  const label = VALIDATION_LABEL[status] ?? status.replace('_', ' ')
   return <span className={`${rowStyles.sevBadge} ${cls}`}>{label}</span>
 }
 
@@ -58,6 +75,11 @@ function ValidationChip({ status }: { status: string | null }) {
  *  literal per render would re-profile every row. */
 const COLUMNS: RedZoneFilterColumn[] = [
   { key: 'origin', header: 'Origin' },
+  // TruffleHog scans 14 sources in parallel; without a per-source filter the
+  // rows from a namespace-wide Docker scan bury everything else.
+  { key: 'trufflehogSource', header: 'Source' },
+  { key: 'asset', header: 'Asset' },
+  { key: 'location', header: 'Location' },
   { key: 'secretType', header: 'Type' },
   { key: 'keyType', header: 'Category' },
   { key: 'valueSample', header: 'Redacted Sample' },
@@ -127,6 +149,9 @@ export const SecretsTable = memo(function SecretsTable({ projectId }: Props) {
             <th>Sev</th>
             <th>Validation</th>
             <th>Origin</th>
+            <th>Source</th>
+            <th>Asset</th>
+            <th>Location</th>
             <th>Source URL</th>
             <th>Subdomain</th>
           </tr>
@@ -142,6 +167,11 @@ export const SecretsTable = memo(function SecretsTable({ projectId }: Props) {
               <td><SeverityBadge severity={normalizeSeverity(r.severity)} /></td>
               <td><ValidationChip status={r.validationStatus} /></td>
               <td><span className={rowStyles.listChip}>{r.origin}</span></td>
+              <td>{r.trufflehogSource
+                ? <span className={rowStyles.listChip}>{r.trufflehogSource}</span>
+                : <span className={rowStyles.nullCell}>-</span>}</td>
+              <td><Truncated text={r.asset} max={180} /></td>
+              <td><Truncated text={r.location} max={180} /></td>
               <td><UrlCell url={r.sourceUrl} max={260} /></td>
               <td>{r.subdomain ? <HostCell host={r.subdomain} /> : <Truncated text={r.subdomain} max={180} />}</td>
             </tr>
