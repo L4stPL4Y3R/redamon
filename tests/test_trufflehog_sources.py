@@ -367,9 +367,13 @@ class TestValidation(unittest.TestCase):
         ok = {"images": ["ghcr.io/acme/app:1.2", "nginx@sha256:" + "a" * 64]}
         self.assertEqual(reg.validate_config("docker", ok), [])
 
-    def test_filesystem_root_must_be_allowlisted(self):
-        errors = reg.validate_config("filesystem", {"scanRoot": "/etc"})
-        self.assertTrue(any("not an allowed scan root" in e for e in errors))
+    def test_filesystem_has_no_target_to_get_wrong(self):
+        """The root is fixed, so a stray key cannot redirect the scan."""
+        self.assertEqual(reg.validate_config("filesystem", {}), [])
+        self.assertEqual(reg.validate_config("filesystem", {"scanRoot": "/etc"}), [])
+        argv = reg.build_source_args("filesystem", {"scanRoot": "/etc"}, Path("/tmp"), env={})
+        self.assertIn(reg.SCAN_TARGET_DIRS["filesystem"], argv)
+        self.assertNotIn("/etc", argv)
 
     def test_huggingface_sweep_mode_needs_an_org_or_user(self):
         self.assertTrue(reg.validate_config("huggingface", {"mode": "sweep"}))

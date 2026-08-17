@@ -388,27 +388,53 @@ class TestDirtyContainerShape(unittest.TestCase):
         github = cm_mod.th_sources.get_source("github")
         self.assertEqual(m._trufflehog_credential_env(github, {"trufflehogGithubToken": "  "}), {})
 
-    def test_filesystem_scan_roots_are_server_resolved(self):
+    def test_the_scan_targets_host_path_is_server_resolved(self):
+        """The mount comes from the orchestrator's OWN detected mount, never
+        from anything the operator typed."""
         m = make_manager()
-        m.trufflehog_scan_roots = {"recon_output": "/host/recon/output"}
-        mounts = m._trufflehog_scan_root_mounts("filesystem", {"scanRoot": "recon_output"})
-        self.assertEqual(mounts, {"/host/recon/output": {"bind": "/scan-roots/recon_output", "mode": "ro"}})
+        m.trufflehog_scan_targets = "/host/scanners/scan_targets"
+        mounts = m._trufflehog_scan_root_mounts("filesystem", {})
+        self.assertEqual(
+            mounts,
+            {"/host/scanners/scan_targets": {"bind": "/scan-targets", "mode": "ro"}})
 
-    def test_an_unconfigured_scan_root_is_simply_not_mounted(self):
-        # Better an empty dir than a guessed host path.
+    def test_the_tree_is_mounted_read_only(self):
+        """Writable, a compromised scan could rewrite a fixture that every later
+        run then reads."""
         m = make_manager()
-        m.trufflehog_scan_roots = {}
-        self.assertEqual(m._trufflehog_scan_root_mounts("filesystem", {"scanRoot": "recon_output"}), {})
+        m.trufflehog_scan_targets = "/host/scanners/scan_targets"
+        for source in ("filesystem", "git", "docker"):
+            mount = m._trufflehog_scan_root_mounts(source, {})
+            self.assertEqual(list(mount.values())[0]["mode"], "ro", source)
 
-    def test_an_operator_typed_path_is_never_mounted(self):
+    def test_an_unresolved_scan_targets_path_is_simply_not_mounted(self):
+        """Docker turns a bind source it cannot find into an EMPTY directory, so
+        a guessed path would make the scan silently find nothing."""
         m = make_manager()
-        m.trufflehog_scan_roots = {"recon_output": "/host/recon/output"}
-        self.assertEqual(m._trufflehog_scan_root_mounts("filesystem", {"scanRoot": "/etc"}), {})
+        m.trufflehog_scan_targets = ""
+        self.assertEqual(m._trufflehog_scan_root_mounts("filesystem", {}), {})
+        self.assertEqual(m._trufflehog_scan_root_mounts("git", {"localRepo": "r"}), {})
 
-    def test_other_sources_get_no_scan_root_mount(self):
+    def test_config_cannot_influence_what_is_mounted(self):
+        """The whole tree is mounted at a fixed point and the fixture is selected
+        by NAME inside it, so no config value can redirect the mount."""
         m = make_manager()
-        m.trufflehog_scan_roots = {"recon_output": "/host/recon/output"}
-        self.assertEqual(m._trufflehog_scan_root_mounts("docker", {"scanRoot": "recon_output"}), {})
+        m.trufflehog_scan_targets = "/host/scanners/scan_targets"
+        for cfg in ({"scanRoot": "/etc"}, {"localRepo": "../../work/job.json"},
+                    {"localRepo": "/etc/shadow"}):
+            mounts = m._trufflehog_scan_root_mounts("git", cfg)
+            self.assertEqual(
+                mounts,
+                {"/host/scanners/scan_targets": {"bind": "/scan-targets", "mode": "ro"}},
+                cfg)
+
+    def test_only_the_disk_reading_sources_get_the_mount(self):
+        """A source that cannot read a local target has no reason to see the
+        tree at all."""
+        m = make_manager()
+        m.trufflehog_scan_targets = "/host/scanners/scan_targets"
+        for source in ("github", "gitlab", "s3", "elasticsearch", "huggingface"):
+            self.assertEqual(m._trufflehog_scan_root_mounts(source, {}), {}, source)
 
 
 class TestAuditability(unittest.TestCase):
