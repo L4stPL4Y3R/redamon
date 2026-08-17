@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { guardProject } from '@/lib/access'
 import prisma from '@/lib/prisma'
 import { Prisma } from '@prisma/client'
-import { getTrufflehogSource } from '@/lib/trufflehogSources'
-import { rejectSecretFields } from '../route'
+import { getTrufflehogSource, rejectTrufflehogSecretFields } from '@/lib/trufflehogSources'
 
 interface RouteParams {
   params: Promise<{ projectId: string; profileId: string }>
@@ -29,7 +28,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     if (typeof body.label === 'string') data.label = body.label.slice(0, 200)
     if (body.config && typeof body.config === 'object') {
       const config = body.config as Record<string, unknown>
-      const rejected = rejectSecretFields(profile.source, config)
+      const rejected = rejectTrufflehogSecretFields(profile.source, config)
       if (rejected) return NextResponse.json({ error: rejected }, { status: 400 })
       data.config = config as Prisma.InputJsonValue
     }

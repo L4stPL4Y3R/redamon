@@ -349,6 +349,47 @@ describe('/api/analytics/redzone/secrets', () => {
     expect(body.rows.map((r: { id: string }) => r.id)).toEqual(['errored', 'dead', 'never'])
   })
 
+  test('N+1 guard: exactly two queries regardless of how many rows come back', async () => {
+    // Both traversals are set-based. A per-row lookup creeping in (to resolve an
+    // asset name, say) would show up here as query count scaling with rows.
+    runReturnFor = [
+      { match: /MATCH \(s:Secret/, rows: Array.from({ length: 50 }, (_, i) => ({
+        id: `s${i}`, secretType: 'API Key', validationStatus: 'unvalidated', origin: 'Secret',
+      })) },
+      { match: /TrufflehogFinding/, rows: Array.from({ length: 50 }, (_, i) => ({
+        id: `tf${i}`, secretType: 'AWS', validationStatus: 'validated', trufflehogSource: 'docker',
+      })) },
+    ]
+    const body = await (await secretsRoute.GET(makeRequest('p1'))).json()
+    expect(body.rows).toHaveLength(100)
+    expect(runCalls).toHaveLength(2)
+  })
+
+  test('every query is scoped to the requested project', async () => {
+    await secretsRoute.GET(makeRequest('p1'))
+    for (const call of runCalls) {
+      expect(call.params.pid).toBe('p1')
+      expect(call.cypher).toContain('project_id: $pid')
+    }
+  })
+
+  test('a TruffleHog row with no asset or location does not break the response', async () => {
+    runReturnFor = [
+      { match: /MATCH \(s:Secret/, rows: [] },
+      // The driver projects every RETURN column, so an absent value arrives as
+      // null rather than missing; the fixture mirrors that.
+      { match: /TrufflehogFinding/, rows: [{
+        id: 'tf1', secretType: 'AWS', validationStatus: null, trufflehogSource: null,
+        asset: null, location: null, findingKind: null, valueSample: null, sourceUrl: null,
+      }] },
+    ]
+    const body = await (await secretsRoute.GET(makeRequest('p1'))).json()
+    expect(body.rows).toHaveLength(1)
+    expect(body.rows[0].asset).toBeNull()
+    expect(body.rows[0].origin).toBe('TrufflehogFinding')
+    expect(body.rows[0].severity).toBe('medium')
+  })
+
   test('a build-history finding shows a name, not a path that does not exist', async () => {
     runReturnFor = [
       { match: /MATCH \(s:Secret/, rows: [] },

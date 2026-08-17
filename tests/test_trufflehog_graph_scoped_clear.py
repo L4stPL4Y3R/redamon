@@ -292,3 +292,80 @@ class TestStableIds(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestBackwardCompatibility(unittest.TestCase):
+    """Old rows and old artifacts must keep working: the graph holds nodes
+    written before this change, and an out.json from a previous release can be
+    re-ingested after an upgrade."""
+
+    def test_a_pre_migration_finding_without_validation_status_is_derived(self):
+        c = FakeClient()
+        c.update_graph_from_trufflehog(scan_payload("github", "repository", [{
+            # exactly the old finding shape: no source, no validation_status,
+            # no finding_kind, and the pre-rename repository/file keys.
+            "detector_name": "AWS", "verified": True,
+            "repository": "acme/api", "file": "app.py", "line": 3,
+        }]), "u1", "p1")
+        node = c.findings()[0]
+        self.assertEqual(node["validation_status"], "validated")
+        self.assertEqual(node["finding_kind"], "secret")
+        self.assertEqual(node["asset"], "acme/api")
+        self.assertEqual(node["location"], "app.py")
+
+    def test_a_payload_without_statistics_still_writes_a_scan_node(self):
+        c = FakeClient()
+        stats = c.update_graph_from_trufflehog(
+            {"source": "docker", "asset_kind": "image", "target": "x", "findings": []},
+            "u1", "p1")
+        self.assertEqual(stats["scan_created"], 1)
+        self.assertEqual(c.nodes_of("TrufflehogScan")[0]["total_findings"], 0)
+
+    def test_ingesting_the_same_payload_twice_is_idempotent(self):
+        # The status sweep can retry an ingest; a second pass must leave the
+        # same node set, not duplicates.
+        c = FakeClient()
+        payload = scan_payload("docker", "image", [finding("acme/app", "/app/.env")])
+        first = c.update_graph_from_trufflehog(payload, "u1", "p1")
+        before = {k: dict(v) for k, v in c.store["nodes"].items()}
+        second = c.update_graph_from_trufflehog(payload, "u1", "p1")
+        self.assertEqual(first["findings_created"], second["findings_created"])
+        self.assertEqual(set(before), set(c.store["nodes"]))
+
+
+class TestBoundaryAndBadInput(unittest.TestCase):
+    def test_a_finding_with_unicode_survives_the_write(self):
+        c = FakeClient()
+        c.update_graph_from_trufflehog(
+            scan_payload("docker", "image",
+                         [finding("acmé/app:1.0-🐷", "/app/ünïcode.env")]), "u1", "p1")
+        node = c.findings()[0]
+        self.assertEqual(node["asset"], "acmé/app:1.0-🐷")
+        self.assertEqual(node["location"], "/app/ünïcode.env")
+
+    def test_an_empty_findings_list_still_records_the_run(self):
+        c = FakeClient()
+        c.update_graph_from_trufflehog(scan_payload("s3", "bucket", []), "u1", "p1")
+        self.assertEqual(len(c.nodes_of("TrufflehogScan")), 1)
+        self.assertEqual(c.findings(), [])
+
+    def test_a_very_long_asset_name_is_not_truncated_into_a_collision(self):
+        c = FakeClient()
+        a, b = "x" * 4000, "x" * 4000 + "y"
+        c.update_graph_from_trufflehog(
+            scan_payload("docker", "image", [finding(a, "/1"), finding(b, "/2")]), "u1", "p1")
+        self.assertEqual(len(c.nodes_of("TrufflehogImage")), 2)
+
+    def test_null_versus_missing_fields_behave_the_same(self):
+        c = FakeClient()
+        explicit_null = dict(finding("a"), link=None, commit=None, timestamp=None)
+        c.update_graph_from_trufflehog(
+            scan_payload("docker", "image", [explicit_null]), "u1", "p1")
+        self.assertEqual(len(c.findings()), 1)
+
+    def test_a_findings_value_that_is_not_a_list_does_not_crash_the_ingest(self):
+        c = FakeClient()
+        stats = c.update_graph_from_trufflehog(
+            {"source": "docker", "asset_kind": "image", "target": "x", "findings": None},
+            "u1", "p1")
+        self.assertEqual(stats["findings_created"], 0)

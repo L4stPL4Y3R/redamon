@@ -577,8 +577,16 @@ class SecretMixin:
             return stats
 
         target = trufflehog_data.get("target") or ""
-        findings = trufflehog_data.get("findings", [])
-        scan_statistics = trufflehog_data.get("statistics", {})
+        # `or []` rather than a .get default: a truncated or hand-edited artifact
+        # can carry an explicit null, and the key being PRESENT means the default
+        # never applies. The scan node is still written — losing the run record
+        # too would hide that the scan happened at all.
+        findings = trufflehog_data.get("findings") or []
+        if not isinstance(findings, list):
+            stats["errors"].append(
+                f"findings is {type(findings).__name__}, not a list; ignoring them")
+            findings = []
+        scan_statistics = trufflehog_data.get("statistics") or {}
         asset_kind = trufflehog_data.get("asset_kind") or "endpoint"
         asset_label = self.TRUFFLEHOG_ASSET_LABELS.get(
             asset_kind, "TrufflehogEndpoint")

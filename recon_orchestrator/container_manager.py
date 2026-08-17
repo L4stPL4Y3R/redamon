@@ -3537,6 +3537,22 @@ class ContainerManager:
             # operator-facing download is lost.
             return src
 
+    def _drop_trufflehog_run(self, project_id: str, source: str,
+                             expected: Optional[TrufflehogState] = None) -> None:
+        """Release a run slot, and prune the project entry when it empties.
+
+        `expected` guards against dropping a DIFFERENT run that claimed the slot
+        in the meantime — only the caller's own claim is removed.
+        """
+        runs = self.trufflehog_states.get(project_id)
+        if not runs:
+            return
+        if expected is not None and runs.get(source) is not expected:
+            return
+        runs.pop(source, None)
+        if not runs:
+            self.trufflehog_states.pop(project_id, None)
+
     def _ensure_trufflehog_network(self) -> None:
         """Create the TruffleHog scan network if missing.
 
@@ -4552,25 +4568,26 @@ exit $RC
         self._trufflehog_egress_check(source, config)
         self._trufflehog_scope_check(project_id, source, config)
 
+        # Refresh from Docker first, so an orphan container from a crashed
+        # orchestrator is seen (this awaits, so it cannot be the claim itself).
         current_state = await self.get_trufflehog_status(project_id, source)
-        if current_state.status in (TrufflehogStatus.RUNNING, TrufflehogStatus.STARTING,
-                                    TrufflehogStatus.PAUSED):
+
+        # --- CLAIM THE RUN SLOT SYNCHRONOUSLY -------------------------------
+        # No `await` between the check and the assignment, so the whole block is
+        # atomic with respect to the event loop. With an await in between, two
+        # concurrent starts for the SAME source (a double-clicked button, or the
+        # queue dispatcher racing a manual start) would both pass the check, and
+        # the second would force-remove the first's container while the first's
+        # state object — and therefore its reservation key — was overwritten.
+        target = th_sources.describe_target(source, config)
+        runs = self.trufflehog_states.setdefault(project_id, {})
+        claimed = runs.get(source)
+        blocking = claimed.status if claimed else current_state.status
+        if blocking in (TrufflehogStatus.RUNNING, TrufflehogStatus.STARTING,
+                        TrufflehogStatus.PAUSED):
             raise ValueError(
                 f"A {src.label} scan is already running for project {project_id}"
             )
-
-        # Memory admission on the source-qualified kind; the reconcile key in
-        # _active_scan_keys is built the same way or the reaper frees this.
-        await self._admit_scan(self._trufflehog_kind(source), project_id, source, user_id=user_id)
-
-        container_name = self._get_trufflehog_container_name(project_id, source)
-        try:
-            self.client.containers.get(container_name).remove(force=True)
-            logger.info(f"Removed old TruffleHog container {container_name}")
-        except NotFound:
-            pass
-
-        target = th_sources.describe_target(source, config)
         state = TrufflehogState(
             project_id=project_id,
             user_id=user_id,
@@ -4580,7 +4597,32 @@ exit $RC
             status=TrufflehogStatus.STARTING,
             started_at=datetime.now(timezone.utc),
         )
-        self.trufflehog_states.setdefault(project_id, {})[source] = state
+        runs[source] = state
+        # --- end of the atomic region ---------------------------------------
+
+        try:
+            # Memory admission on the source-qualified kind; the reconcile key in
+            # _active_scan_keys is built the same way or the reaper frees this.
+            await self._admit_scan(self._trufflehog_kind(source), project_id, source,
+                                   user_id=user_id)
+        except Exception:
+            # Release the slot: a rejected admission must not leave a phantom
+            # STARTING run that blocks every later start of this source.
+            self._drop_trufflehog_run(project_id, source, state)
+            raise
+
+        container_name = self._get_trufflehog_container_name(project_id, source)
+        try:
+            self.client.containers.get(container_name).remove(force=True)
+            logger.info(f"Removed old TruffleHog container {container_name}")
+        except NotFound:
+            pass
+
+        # Resolved once, and kept for the error path: `state.error` is returned
+        # by the status API and rendered in the UI, and these values are NOT in
+        # the orchestrator's own environment, so redacting against os.environ
+        # alone would not catch a token echoed back in an exception message.
+        credential_env = self._trufflehog_credential_env(src, secrets)
 
         try:
             # Reap a previous crashed run's partial nodes for THIS source only.
@@ -4650,7 +4692,7 @@ exit $RC
                     # ONLY this source's credentials. No NEO4J_*, no scanner API
                     # key, no webapp URL: a full RCE in here finds nothing but
                     # the key the operator already pointed at the target.
-                    **self._trufflehog_credential_env(src, secrets),
+                    **credential_env,
                 },
                 volumes={
                     str(run_dir): {"bind": "/work", "mode": "rw"},
@@ -4677,7 +4719,7 @@ exit $RC
 
         except Exception as e:
             state.status = TrufflehogStatus.ERROR
-            state.error = th_sources.redact(str(e), dict(os.environ))
+            state.error = th_sources.redact(str(e), {**os.environ, **credential_env})
             logger.error(f"Failed to start TruffleHog {source} for {project_id}: {e}")
 
         return state
@@ -4748,6 +4790,14 @@ exit $RC
         """
         if state.ingested or not state.source:
             return
+        if not state.user_id:
+            # Writing with an empty tenant key produces nodes no scoped read can
+            # ever see and no scoped clear can ever remove. Refuse before doing
+            # any work, so a tenant-less run cannot even publish an artifact.
+            logger.error(
+                f"[trufflehog] refusing to ingest {state.source} for {state.project_id}: "
+                "the run carries no user_id")
+            return
         out_path = self._publish_trufflehog_output(state.project_id, state.source)
         if out_path is None or not out_path.exists():
             return
@@ -4808,10 +4858,7 @@ exit $RC
         # is still a result, and the incremental save means the file is valid.
         await asyncio.to_thread(self._ingest_trufflehog, state)
 
-        runs = self.trufflehog_states.get(project_id, {})
-        runs.pop(source, None)
-        if not runs:
-            self.trufflehog_states.pop(project_id, None)
+        self._drop_trufflehog_run(project_id, source, state)
 
         return state
 

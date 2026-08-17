@@ -411,3 +411,56 @@ class TestEgressHosts(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestF2ElasticCloudIdEgress(unittest.TestCase):
+    """F2: a Cloud ID hides its host in base64, so a config carrying only a cloud
+    id presented NO host to the resolved-IP guard and reached whatever it decoded
+    to — including an RFC1918 address, which the bridge network can route."""
+
+    def cloud_id(self, host: str, name: str = "prod") -> str:
+        import base64
+        return f"{name}:" + base64.b64encode(f"{host}$es_uuid$kb_uuid".encode()).decode()
+
+    def test_f2_the_cloud_id_host_reaches_the_egress_guard(self):
+        cid = self.cloud_id("10.0.0.5:9243")
+        self.assertEqual(reg.egress_hosts("elasticsearch", {"cloudId": cid}), ["10.0.0.5"])
+
+    def test_f2_a_public_cloud_id_host_is_extracted_too(self):
+        cid = self.cloud_id("es.example.com:9243")
+        self.assertEqual(reg.egress_hosts("elasticsearch", {"cloudId": cid}), ["es.example.com"])
+
+    def test_f2_nodes_and_cloud_id_are_both_checked(self):
+        cid = self.cloud_id("10.0.0.5:9243")
+        hosts = reg.egress_hosts("elasticsearch", {"nodes": ["es.example.com:9200"], "cloudId": cid})
+        self.assertIn("es.example.com", hosts)
+        self.assertIn("10.0.0.5", hosts)
+
+    def test_f2_an_undecodable_cloud_id_is_refused_not_silently_skipped(self):
+        # Fail closed: no decodable host means nothing to resolve, so the guard
+        # would be skipped entirely while Elastic still tried to connect.
+        errors = reg.validate_config("elasticsearch", {"cloudId": "not-base64!!"})
+        self.assertTrue(any("Cloud ID" in e for e in errors))
+
+    def test_f2_decode_handles_missing_padding_and_junk(self):
+        self.assertEqual(reg.decode_cloud_id_host(""), "")
+        self.assertEqual(reg.decode_cloud_id_host("no-colon"), "")
+        self.assertEqual(reg.decode_cloud_id_host("name:"), "")
+        self.assertEqual(reg.decode_cloud_id_host(None), "")
+        # Elastic omits '=' padding; the decoder must restore it.
+        import base64
+        raw = base64.b64encode(b"h.example.com:9243$a$b").decode().rstrip("=")
+        self.assertEqual(reg.decode_cloud_id_host(f"n:{raw}"), "h.example.com:9243")
+
+
+class TestF6ShortCredentialRedaction(unittest.TestCase):
+    """F6: the redaction floor was 6 characters, so a short token survived."""
+
+    def test_f6_a_short_credential_is_still_redacted(self):
+        env = {"GITHUB_TOKEN": "abcd"}
+        self.assertEqual(reg.redact("token=abcd here", env), "token=*** here")
+
+    def test_f6_a_one_char_value_does_not_blank_unrelated_text(self):
+        # The floor exists so a 1-2 char value cannot shred every log line.
+        env = {"GITHUB_TOKEN": "a"}
+        self.assertEqual(reg.redact("a normal sentence", env), "a normal sentence")

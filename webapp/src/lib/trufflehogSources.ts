@@ -470,3 +470,34 @@ export function describeTrufflehogTarget(sourceId: string, config: Record<string
     default: return getTrufflehogSource(sourceId)?.label ?? sourceId
   }
 }
+
+/**
+ * Reject anything in a profile config that is not a declared field, or that is
+ * named like a credential.
+ *
+ * A profile row is exported verbatim into project.json inside the downloadable
+ * export zip, so a token stored in `config` would leave with the export. The
+ * write is refused rather than silently stripped, so a client sending one finds
+ * out instead of believing it was saved.
+ */
+export function rejectTrufflehogSecretFields(
+  sourceId: string,
+  config: Record<string, unknown>,
+): string | null {
+  const src = getTrufflehogSource(sourceId)
+  const known = new Set((src?.fields ?? []).map(f => f.key))
+  for (const key of Object.keys(config)) {
+    // The credential check runs FIRST. No registry field is named like a
+    // credential (the parity test enforces that), so the unknown-field branch
+    // would otherwise swallow every such key behind a message that does not
+    // tell the operator where the value actually belongs.
+    if (/(?:token|password|secret|apikey|api_key)$/i.test(key)) {
+      return `'${key}' looks like a credential. TruffleHog credentials live in `
+        + 'Global Settings > API Keys, never in a scan profile.'
+    }
+    if (!known.has(key)) {
+      return `'${key}' is not a field of the ${src?.label ?? sourceId} source`
+    }
+  }
+  return null
+}

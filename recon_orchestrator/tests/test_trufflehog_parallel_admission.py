@@ -492,3 +492,162 @@ class TestLogPhaseParsing(unittest.TestCase):
     def test_the_real_completion_line_closes_the_run(self):
         self.assertEqual(self._phase("[+] Results saved to /work/out.json (status=completed)"),
                          ("Complete", 3))
+
+
+# ===========================================================================
+# Regression tests for the bugs found in the hardening review. Named after the
+# bug so a reappearance is unambiguous.
+# ===========================================================================
+
+class TestF1ConcurrentStartsOfTheSameSource(unittest.TestCase):
+    """F1: the duplicate check and the state claim were separated by two awaits,
+    so two concurrent starts for one source both passed and the second
+    force-removed the first's container while overwriting its state — orphaning
+    the first run's reservation key."""
+
+    def _manager(self, gate):
+        """A manager whose admission blocks on `gate`, so the first start is
+        still IN FLIGHT when the second one runs its duplicate check. Without
+        holding it there the first start would finish (or fail) first, and the
+        interleaving the bug needs would never occur."""
+        m = make_manager()
+        self._egress = patch.object(cm_mod, "classify_host", return_value=(True, "1.2.3.4", "ok"))
+        self._egress.start()
+        self.addCleanup(self._egress.stop)
+
+        async def gated_admit(*a, **kw):
+            await gate.wait()
+            return "key"
+        m._admit_scan = gated_admit
+        # Stop before the container spawn; the claim is what is under test.
+        m.client.containers.get.side_effect = cm_mod.NotFound("none")
+        m.client.images.get.side_effect = RuntimeError("stop here")
+        return m
+
+    def _start(self, m):
+        return m.start_trufflehog(
+            project_id="p1", user_id="u1", trufflehog_path="/app/trufflehog_scan",
+            source="docker", config={"images": ["nginx:1.25"]}, common={}, secrets={},
+        )
+
+    def _race(self, m, gate):
+        """Start A, let it reach the gate, then run B to completion."""
+        async def scenario():
+            task_a = asyncio.create_task(self._start(m))
+            for _ in range(20):          # let A reach the blocked admission
+                await asyncio.sleep(0)
+            try:
+                await asyncio.wait_for(self._start(m), timeout=2)
+                b_error = None
+            except Exception as exc:
+                b_error = exc
+            gate.set()
+            await asyncio.gather(task_a, return_exceptions=True)
+            return b_error
+
+        return asyncio.get_event_loop().run_until_complete(scenario())
+
+    def test_f1_only_one_of_two_concurrent_starts_claims_the_source(self):
+        gate = asyncio.Event()
+        m = self._manager(gate)
+        b_error = self._race(m, gate)
+        self.assertIsInstance(b_error, ValueError, "the second concurrent start was admitted")
+        self.assertIn("already running", str(b_error))
+
+    def test_f1_the_first_runs_state_object_is_never_replaced(self):
+        # The overwritten state was the real damage: _active_scan_keys rebuilds
+        # the reservation key from the state object, so a clobbered one leaks.
+        gate = asyncio.Event()
+        m = self._manager(gate)
+
+        async def scenario():
+            task_a = asyncio.create_task(self._start(m))
+            for _ in range(20):
+                await asyncio.sleep(0)
+            claimed = m.trufflehog_states["p1"]["docker"]
+            try:
+                await asyncio.wait_for(self._start(m), timeout=2)
+            except (ValueError, asyncio.TimeoutError):
+                pass
+            still = m.trufflehog_states["p1"]["docker"]
+            gate.set()
+            await asyncio.gather(task_a, return_exceptions=True)
+            return claimed, still
+
+        claimed, still = asyncio.get_event_loop().run_until_complete(scenario())
+        self.assertIs(claimed, still, "the second start replaced the first run's state")
+
+    def test_f1_a_second_start_is_allowed_once_the_first_has_finished(self):
+        # The guard must block CONCURRENT starts, not permanently wedge a source.
+        m = make_manager()
+        done = running("p1", "docker")
+        done.status = TrufflehogStatus.COMPLETED
+        m.trufflehog_states = {"p1": {"docker": done}}
+        with patch.object(cm_mod, "classify_host", return_value=(True, "1.2.3.4", "ok")):
+            m._admit_scan = MagicMock(side_effect=RuntimeError("reached admission"))
+            m.client.containers.get.side_effect = cm_mod.NotFound("none")
+            with self.assertRaises(RuntimeError):
+                run(self._start(m))
+
+    def test_f1_a_rejected_admission_releases_the_slot(self):
+        # A phantom STARTING run would block every later start of this source.
+        m = make_manager()
+        with patch.object(cm_mod, "classify_host", return_value=(True, "1.2.3.4", "ok")):
+            async def deny(*a, **kw):
+                raise cm_mod.AdmissionError(MagicMock(limit_type="ram", detail="full"))
+            m._admit_scan = deny
+            with self.assertRaises(cm_mod.AdmissionError):
+                run(self._start(m))
+        self.assertEqual(m.trufflehog_states.get("p1", {}), {})
+
+    def test_f1_a_stop_only_drops_its_own_claim(self):
+        # The guarded drop: a stop must not remove a NEWER run that took the slot.
+        m = make_manager()
+        old_state = running("p1", "docker")
+        newer = running("p1", "docker")
+        m.trufflehog_states = {"p1": {"docker": newer}}
+        m._drop_trufflehog_run("p1", "docker", old_state)
+        self.assertIs(m.trufflehog_states["p1"]["docker"], newer)
+        m._drop_trufflehog_run("p1", "docker", newer)
+        self.assertEqual(m.trufflehog_states, {})
+
+
+class TestF5IngestRefusesATenantlessRun(unittest.TestCase):
+    """F5: ingesting with an empty user_id writes nodes no scoped read can see
+    and no scoped clear can remove."""
+
+    def test_f5_ingest_refuses_an_empty_user_id(self):
+        m = make_manager()
+        state = running("p1", "docker")
+        state.user_id = ""
+        state.status = TrufflehogStatus.COMPLETED
+        published = []
+        m._publish_trufflehog_output = lambda p, s: published.append((p, s))
+        m._ingest_trufflehog(state)
+        self.assertEqual(published, [], "ingest proceeded without a tenant key")
+        self.assertFalse(state.ingested)
+
+
+class TestF9ErrorPathRedaction(unittest.TestCase):
+    """F9: state.error is returned by the status API and rendered in the UI. It
+    was redacted against os.environ, which never holds the injected credential."""
+
+    def test_f9_a_credential_echoed_in_an_exception_is_redacted(self):
+        m = make_manager()
+        secret = "ghp_thisisaverysecrettoken"
+        with patch.object(cm_mod, "classify_host", return_value=(True, "1.2.3.4", "ok")):
+            async def admit(*a, **kw):
+                return "key"
+            m._admit_scan = admit
+            m.client.containers.get.side_effect = cm_mod.NotFound("none")
+            # An SDK error whose message echoes the request env.
+            m.client.images.get.side_effect = RuntimeError(
+                f"invalid kwargs: environment={{'GITHUB_TOKEN': '{secret}'}}")
+            state = run(m.start_trufflehog(
+                project_id="p1", user_id="u1", trufflehog_path="/app/trufflehog_scan",
+                source="github", config={"orgs": ["acme"]}, common={},
+                secrets={"trufflehogGithubToken": secret},
+            ))
+        self.assertEqual(state.status, TrufflehogStatus.ERROR)
+        self.assertNotIn(secret, state.error or "")
+        self.assertIn("***", state.error or "")

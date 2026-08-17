@@ -3,6 +3,7 @@ import { guardProject } from '@/lib/access'
 import prisma from '@/lib/prisma'
 import { readFile, readdir } from 'fs/promises'
 import path from 'path'
+import { TRUFFLEHOG_SOURCE_IDS } from '@/lib/trufflehogSources'
 
 // Path to TruffleHog output directory (mounted volume or local path)
 const TRUFFLEHOG_OUTPUT_PATH = process.env.TRUFFLEHOG_OUTPUT_PATH || '/data/trufflehog-output'
@@ -18,6 +19,20 @@ function outputPrefix(projectId: string): string {
 }
 
 /**
+ * The exact filenames this project owns.
+ *
+ * A bare `startsWith(prefix)` also matches another project whose id begins with
+ * this one plus an underscore — `trufflehog_projA_` matches
+ * `trufflehog_projA_x_github.json`. Fixed-length cuids make that unreachable
+ * today, but it is one id-format change away from serving another project's
+ * findings, so the suffix is matched against the known source ids instead.
+ */
+function ownedFilenames(projectId: string): Set<string> {
+  const prefix = outputPrefix(projectId)
+  return new Set(TRUFFLEHOG_SOURCE_IDS.map(source => `${prefix}${source}.json`))
+}
+
+/**
  * Every source's findings file for a project.
  *
  * Sources run independently, so there is one artifact per source rather than one
@@ -25,11 +40,11 @@ function outputPrefix(projectId: string): string {
  * that is exactly what the operator downloads this to check.
  */
 async function findRunFiles(projectId: string): Promise<string[]> {
-  const prefix = outputPrefix(projectId)
+  const owned = ownedFilenames(projectId)
   try {
     const entries = await readdir(TRUFFLEHOG_OUTPUT_PATH)
     return entries
-      .filter(name => name.startsWith(prefix) && name.endsWith('.json'))
+      .filter(name => owned.has(name))
       .sort()
       .map(name => path.join(TRUFFLEHOG_OUTPUT_PATH, name))
   } catch {

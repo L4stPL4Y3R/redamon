@@ -4,6 +4,7 @@ import prisma from '@/lib/prisma'
 import { Prisma } from '@prisma/client'
 import {
   getTrufflehogSource,
+  rejectTrufflehogSecretFields,
   resolveMissingCredentials,
   validateTrufflehogConfig,
   TRUFFLEHOG_CREDENTIAL_FIELDS,
@@ -83,7 +84,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     }
 
     const config = (body.config ?? {}) as Record<string, unknown>
-    const rejected = rejectSecretFields(src.id, config)
+    const rejected = rejectTrufflehogSecretFields(src.id, config)
     if (rejected) return NextResponse.json({ error: rejected }, { status: 400 })
 
     const existing = await prisma.trufflehogScanProfile.findUnique({
@@ -97,15 +98,28 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       )
     }
 
-    const profile = await prisma.trufflehogScanProfile.create({
-      data: {
-        projectId,
-        source: src.id,
-        label: String(body.label ?? '').slice(0, 200),
-        config: config as Prisma.InputJsonValue,
-      },
-    })
-    return NextResponse.json({ profile }, { status: 201 })
+    try {
+      const profile = await prisma.trufflehogScanProfile.create({
+        data: {
+          projectId,
+          source: src.id,
+          label: String(body.label ?? '').slice(0, 200),
+          config: config as Prisma.InputJsonValue,
+        },
+      })
+      return NextResponse.json({ profile }, { status: 201 })
+    } catch (e) {
+      // The check above is not atomic with the insert. A double-submitted form
+      // loses that race and hits the unique (projectId, source) index; report
+      // the same 409 the check would have, not a 500.
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        return NextResponse.json(
+          { error: `A ${src.label} profile already exists for this project` },
+          { status: 409 },
+        )
+      }
+      throw e
+    }
   } catch (error) {
     console.error('Error creating TruffleHog profile:', error)
     return NextResponse.json(
@@ -113,24 +127,4 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       { status: 500 },
     )
   }
-}
-
-/**
- * A profile row is exported verbatim into project.json, so a token stored in
- * `config` would leave with the export zip. Refuse the write rather than
- * silently stripping it, so a client sending one finds out.
- */
-export function rejectSecretFields(sourceId: string, config: Record<string, unknown>): string | null {
-  const src = getTrufflehogSource(sourceId)
-  const known = new Set((src?.fields ?? []).map(f => f.key))
-  for (const key of Object.keys(config)) {
-    if (!known.has(key)) {
-      return `'${key}' is not a field of the ${src?.label ?? sourceId} source`
-    }
-    if (/(?:token|password|secret|apikey|api_key)$/i.test(key)) {
-      return `'${key}' looks like a credential. TruffleHog credentials live in `
-        + 'Global Settings > API Keys, never in a scan profile.'
-    }
-  }
-  return null
 }

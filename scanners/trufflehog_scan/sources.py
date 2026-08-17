@@ -26,6 +26,8 @@ Three rules the registry exists to enforce:
 
 from __future__ import annotations
 
+import base64
+import binascii
 import os
 import re
 import shlex
@@ -432,9 +434,6 @@ def validate_config(source_id: str, config: dict) -> list[str]:
         if f.required and not _text(cfg.get(f.key)) and not _as_list(cfg.get(f.key)):
             errors.append(f"{src.label}: '{f.key}' is required")
 
-    if source_id in ("github", "github_experimental"):
-        pass  # required-ness handled by the field flags above
-
     if src.id == "github":
         if not _as_list(cfg.get("repos")) and not _as_list(cfg.get("orgs")):
             errors.append("GitHub: set at least one repository or organization")
@@ -444,8 +443,8 @@ def validate_config(source_id: str, config: dict) -> list[str]:
                 if _as_list(cfg.get(key)) or _as_bool(cfg.get(key)):
                     errors.append(f"GitHub: '{key}' only applies to organization scans")
 
-    if src.id == "gitlab":
-        pass  # empty repos+groups is legal (scans everything the token sees)
+    # gitlab is deliberately absent: empty repos + groups is legal there and
+    # scans every project the token can reach (the UI warns about the scope).
 
     if src.id == "docker":
         images = _as_list(cfg.get("images"))
@@ -491,8 +490,16 @@ def validate_config(source_id: str, config: dict) -> list[str]:
             )
 
     if src.id == "elasticsearch":
-        if not _as_list(cfg.get("nodes")) and not _text(cfg.get("cloudId")):
+        cloud_id = _text(cfg.get("cloudId"))
+        if not _as_list(cfg.get("nodes")) and not cloud_id:
             errors.append("Elasticsearch: set at least one node or a Cloud ID")
+        if cloud_id and not decode_cloud_id_host(cloud_id):
+            # Fail closed: an undecodable cloud id presents no host to resolve,
+            # so it would slip past the egress guard while still reaching
+            # whatever Elastic makes of it.
+            errors.append(
+                "Elasticsearch: Cloud ID is not in the expected "
+                "'<name>:<base64>' form, so its host cannot be checked")
 
     if src.id == "postman":
         if not any(_as_list(cfg.get(k)) for k in ("workspaceIds", "collectionIds", "environments")):
@@ -598,6 +605,10 @@ def egress_hosts(source_id: str, config: dict) -> list[str]:
     elif src.id == "elasticsearch":
         for node in _as_list(cfg.get("nodes")):
             add_url(node)
+        # A Cloud ID hides its host in base64, so a config with only a cloud id
+        # would present NO host to resolve and skip the guard entirely — while
+        # still reaching whatever it decodes to.
+        add_url(decode_cloud_id_host(cfg.get("cloudId")))
     elif src.id == "docker":
         # A namespace or image may carry a registry host: ghcr.io/acme/app. Only
         # the first segment of a multi-segment reference can be one — in a bare
@@ -615,6 +626,33 @@ def egress_hosts(source_id: str, config: dict) -> list[str]:
         if h and h not in seen:
             seen.append(h)
     return seen
+
+
+def decode_cloud_id_host(cloud_id) -> str:
+    """The host inside an Elastic Cloud ID, or "" if it does not decode.
+
+    Format is ``<cluster_name>:<base64 of "host$es_uuid$kibana_uuid">``. The host
+    is not visible in the raw value, so the egress guard has to decode it or an
+    operator could point Elasticsearch at an internal address with nothing to
+    resolve. Returns "" rather than raising: a value that does not decode is not
+    a host, and `validate_config` is what rejects a malformed one.
+    """
+    raw = _text(cloud_id)
+    if not raw or ":" not in raw:
+        return ""
+    encoded = raw.split(":", 1)[1].strip()
+    if not encoded:
+        return ""
+    try:
+        # Elastic omits padding; restore it before decoding.
+        padded = encoded + "=" * (-len(encoded) % 4)
+        decoded = base64.b64decode(padded, validate=False).decode("utf-8", "replace")
+    except (ValueError, binascii.Error):
+        return ""
+    host = decoded.split("$", 1)[0].strip()
+    # The host segment may carry a port; add_url handles that, but strip any
+    # stray scheme so the caller sees a bare host[:port].
+    return host
 
 
 def describe_target(source_id: str, config: dict) -> str:
@@ -933,7 +971,9 @@ def redact(text: str, env: Optional[dict] = None) -> str:
     out = text
     for cred in ALL_CREDENTIALS:
         value = _text(env.get(cred.env, ""))
-        if len(value) >= 6:
+        # 4 chars, not 6: a short credential is still a credential. The floor
+        # exists only so a 1-2 char value cannot blank out unrelated text.
+        if len(value) >= 4:
             out = out.replace(value, "***")
     # Any remaining userinfo in a URL (e.g. a token shorter than the threshold).
     out = re.sub(r"(https?://)[^/\s:@]+(:[^/\s@]*)?@", r"\1***@", out)
