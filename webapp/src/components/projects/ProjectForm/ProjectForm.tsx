@@ -10,6 +10,9 @@ import { isHardBlockedDomain } from '@/lib/hard-guardrail'
 import { tabForAnchor } from '@/lib/projectSettingsLinks'
 import { useProject } from '@/providers/ProjectProvider'
 import useReconStatus from '@/hooks/useReconStatus'
+import { useScanControls } from '@/hooks/useScanControls'
+import { ScanActions } from '@/components/scans/ScanActions'
+import { OtherScansModal } from '@/app/graph/components/OtherScansModal/OtherScansModal'
 import { useMultiPartialReconStatus } from '@/hooks/useMultiPartialReconStatus'
 import { useScanStartFailure } from '@/hooks/useScanStartFailure'
 import { useMultiPartialReconSSE } from '@/hooks/useMultiPartialReconSSE'
@@ -307,6 +310,12 @@ export function ProjectForm({
 
   // Track recon status in edit mode to reflect running state on the Start Recon button
   const { state: reconState } = useReconStatus({ projectId: mode === 'edit' ? (projectId ?? null) : null, enabled: mode === 'edit' })
+  // The same scan cluster the graph toolbar shows. Only polls in edit mode with
+  // a saved project: a create form has nothing to scan.
+  const scans = useScanControls({
+    projectId: mode === 'edit' ? projectId : null,
+    enabled: mode === 'edit' && Boolean(projectId),
+  })
   const isReconRunning = reconState?.status === 'running' || reconState?.status === 'starting'
   const isReconPaused = reconState?.status === 'paused'
   const isReconBusy = isReconRunning || isReconPaused
@@ -732,6 +741,8 @@ export function ProjectForm({
                 )}
                 {isReconRunning ? 'Running...' : isReconPaused ? 'Paused' : 'Start Recon Pipeline'}
               </button>
+
+              <ScanActions scans={scans} />
               {/* Partial Recon Badges */}
               {activePartialRecons.length > 0 && (
                 <PartialReconBadges
@@ -1149,6 +1160,34 @@ export function ProjectForm({
           }}
         />
       )}
+
+      {/* The same modal the graph page opens. Log drawers are deliberately not
+          wired: this surface has nowhere to render a live log stream, so those
+          controls stay disabled rather than opening an empty panel. */}
+      <OtherScansModal
+        isOpen={scans.otherScansOpen}
+        onClose={scans.closeOtherScans}
+        projectId={projectId ?? undefined}
+        hasReconData={scans.hasReconData}
+        hasGithubToken={hasGithubToken}
+        githubHuntStatus={scans.githubHunt.state?.status}
+        onStartGithubHunt={() => void scans.githubHunt.startGithubHunt()}
+        onPauseGithubHunt={() => void scans.githubHunt.pauseGithubHunt()}
+        onResumeGithubHunt={() => void scans.githubHunt.resumeGithubHunt()}
+        onStopGithubHunt={() => void scans.githubHunt.stopGithubHunt()}
+        onDownloadGithubHuntJSON={() => projectId && window.open(`/api/github-hunt/${projectId}/download`, '_blank')}
+        trufflehogProfiles={scans.trufflehog.profiles}
+        trufflehogRunsBySource={scans.trufflehog.bySource}
+        onStartTrufflehog={(source) => void scans.trufflehog.startTrufflehog(source)}
+        onStopTrufflehog={(source) => void scans.trufflehog.stopTrufflehog(source)}
+        onDownloadTrufflehogJSON={() => projectId && window.open(`/api/trufflehog/${projectId}/download`, '_blank')}
+        supplyChainStatus={scans.supplyChain.state?.status}
+        onStartSupplyChain={() => void scans.supplyChain.startSupplyChain()}
+        onPauseSupplyChain={() => void scans.supplyChain.pauseSupplyChain()}
+        onResumeSupplyChain={() => void scans.supplyChain.resumeSupplyChain()}
+        onStopSupplyChain={() => void scans.supplyChain.stopSupplyChain()}
+        onDownloadSupplyChainJSON={() => projectId && window.open(`/api/supply-chain/${projectId}/download`, '_blank')}
+      />
     </form>
   )
 }
