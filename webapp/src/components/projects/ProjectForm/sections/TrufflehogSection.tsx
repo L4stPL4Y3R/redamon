@@ -1,12 +1,20 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { ChevronDown, Plus, Search, Trash2, AlertTriangle } from 'lucide-react'
+import { ChevronDown, Plus, Search, Trash2, AlertTriangle, List, X, Check } from 'lucide-react'
 import { Toggle, WikiInfoButton } from '@/components/ui'
 import type { Project } from '@prisma/client'
 import styles from '../ProjectForm.module.css'
 import Link from 'next/link'
 import { SETTINGS_KEYS_HREF } from '@/lib/settingsLinks'
+import { CredentialShortcut } from '@/components/settings/CredentialShortcut'
+import { useCredentialKeys, type CredentialKeysApi } from '@/hooks/useCredentialKeys'
+import {
+  TRUFFLEHOG_DETECTOR_COUNT,
+  filterDetectors,
+  parseDetectorList,
+  unknownDetectors,
+} from '@/lib/trufflehogDetectors'
 import {
   TRUFFLEHOG_SOURCES,
   TRUFFLEHOG_SOURCE_IDS,
@@ -41,6 +49,13 @@ const RESULT_TYPES = [
   { value: 'filtered_unverified', label: 'Filtered unverified' },
 ]
 
+// `min`/`max` on a number input only bind the steppers and native validation;
+// typed digits sail straight past them, so the bound is enforced here too.
+const CONCURRENCY_MIN = 1
+const CONCURRENCY_MAX = 32
+const clampConcurrency = (n: number) =>
+  Math.min(CONCURRENCY_MAX, Math.max(CONCURRENCY_MIN, Math.trunc(n)))
+
 const get = (data: FormData, key: string) => (data as unknown as Record<string, unknown>)[key]
 const setField = (
   updateField: TrufflehogSectionProps['updateField'],
@@ -54,6 +69,13 @@ export function TrufflehogSection({ data, updateField, projectId, mode = 'edit' 
   const [addingSource, setAddingSource] = useState('')
   const [error, setError] = useState('')
   const [expanded, setExpanded] = useState<string | null>(null)
+  // The raw text of the concurrency box while it is being edited. The stored
+  // setting is an Int, so it cannot hold the empty string the user must pass
+  // through to replace the current value; without this the field snaps back on
+  // every clear and can only be appended to. null = not editing, show the value.
+  const [concurrencyText, setConcurrencyText] = useState<string | null>(null)
+  const keys = useCredentialKeys()
+  const [picker, setPicker] = useState<'include' | 'exclude' | null>(null)
 
   const canManageProfiles = mode === 'edit' && Boolean(projectId)
 
@@ -79,6 +101,22 @@ export function TrufflehogSection({ data, updateField, projectId, mode = 'edit' 
 
   const resultTypes = String((get(data, 'trufflehogResultTypes') as string) ?? 'verified,unverified,unknown')
     .split(',').map(s => s.trim()).filter(Boolean)
+
+  const includeRaw = (get(data, 'trufflehogIncludeDetectors') as string) ?? ''
+  const excludeRaw = (get(data, 'trufflehogExcludeDetectors') as string) ?? ''
+  const includeSelected = parseDetectorList(includeRaw)
+  const excludeSelected = parseDetectorList(excludeRaw)
+  // A name TruffleHog does not know is not ignored: the engine refuses to
+  // initialise, so the scan dies at once with an error nobody sees in the UI.
+  const unknownInclude = unknownDetectors(includeRaw)
+  const unknownExclude = unknownDetectors(excludeRaw)
+
+  const toggleDetector = (name: string) => {
+    const field = picker === 'exclude' ? 'trufflehogExcludeDetectors' : 'trufflehogIncludeDetectors'
+    const current = picker === 'exclude' ? excludeSelected : includeSelected
+    const next = current.includes(name) ? current.filter(d => d !== name) : [...current, name]
+    setField(updateField, field, next.join(','))
+  }
 
   const toggleResultType = (value: string) => {
     const next = resultTypes.includes(value)
@@ -154,93 +192,8 @@ export function TrufflehogSection({ data, updateField, projectId, mode = 'edit' 
             runs as its own scan, and several can run at the same time.
           </p>
 
-          {/* ---- The verification switch: always visible, never gated behind a
-                  configured target. Hiding it is why the control could not be
-                  found at all. ---- */}
-          <div className={styles.toggleRow}>
-            <div>
-              <span className={styles.toggleLabel}>Verify secrets against live APIs</span>
-              <p className={styles.toggleDescription}>
-                When on, RedAmon sends found credentials to their owning services to test whether
-                they are live. This is the highest-value result in an authorised engagement, but it
-                is an ACTIVE behaviour. Use the detector exclude list below to skip services you do
-                not want contacted.
-              </p>
-            </div>
-            <Toggle
-              checked={verifies}
-              onChange={(checked) => setField(updateField, 'trufflehogNoVerification', !checked)}
-            />
-          </div>
-
-          <div className={styles.fieldGroup}>
-            <label className={styles.fieldLabel}>Result types</label>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
-              {RESULT_TYPES.map(rt => (
-                <label
-                  key={rt.value}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px',
-                    opacity: verifies ? 1 : 0.5,
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={resultTypes.includes(rt.value)}
-                    disabled={!verifies}
-                    onChange={() => toggleResultType(rt.value)}
-                  />
-                  {rt.label}
-                </label>
-              ))}
-            </div>
-            <span className={styles.fieldHint}>
-              {verifies
-                ? 'Which statuses to report. Orthogonal to the switch above.'
-                : 'Disabled while verification is off — nothing is checked, so every finding is unverified.'}
-            </span>
-          </div>
-
-          <div className={styles.fieldGroup}>
-            <label className={styles.fieldLabel}>Concurrency</label>
-            <input
-              type="number"
-              className="textInput"
-              value={(get(data, 'trufflehogConcurrency') as number) ?? 8}
-              onChange={(e) => setField(updateField, 'trufflehogConcurrency', parseInt(e.target.value) || 8)}
-              min={1}
-              max={32}
-            />
-          </div>
-
-          <div className={styles.fieldGroup}>
-            <label className={styles.fieldLabel}>Include detectors</label>
-            <input
-              type="text"
-              className="textInput"
-              value={(get(data, 'trufflehogIncludeDetectors') as string) ?? ''}
-              onChange={(e) => setField(updateField, 'trufflehogIncludeDetectors', e.target.value)}
-              placeholder="AWS,GitHub,Slack"
-            />
-            <span className={styles.fieldHint}>Comma-separated. Leave empty for all.</span>
-          </div>
-
-          <div className={styles.fieldGroup}>
-            <label className={styles.fieldLabel}>Exclude detectors</label>
-            <input
-              type="text"
-              className="textInput"
-              value={(get(data, 'trufflehogExcludeDetectors') as string) ?? ''}
-              onChange={(e) => setField(updateField, 'trufflehogExcludeDetectors', e.target.value)}
-              placeholder="DetectorName1,DetectorName2"
-            />
-            <span className={styles.fieldHint}>
-              Takes precedence over the include list. This is the blast-radius control for
-              verification: an excluded detector is never contacted.
-            </span>
-          </div>
-
-          {/* ---- Per-source profiles ---- */}
+          {/* ---- Per-source profiles. First: the sources ARE the scan, and
+                  the options below only modulate them. ---- */}
           <h3 className={styles.subSectionTitle ?? styles.fieldLabel}>Sources</h3>
 
           {!canManageProfiles ? (
@@ -274,16 +227,17 @@ export function TrufflehogSection({ data, updateField, projectId, mode = 'edit' 
                   onToggle={() => setExpanded(expanded === profile.id ? null : profile.id)}
                   onSave={config => saveProfile(profile, config)}
                   onDelete={() => deleteProfile(profile)}
+                  keys={keys}
                 />
               ))}
 
               {unconfigured.length > 0 && (
-                <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+                <div className={styles.addSourceRow}>
                   <select
                     className="textInput"
                     value={addingSource}
                     onChange={(e) => setAddingSource(e.target.value)}
-                    style={{ flex: 1 }}
+                    aria-label="Add a source"
                   >
                     <option value="">Add a source…</option>
                     {unconfigured.map(id => (
@@ -292,30 +246,276 @@ export function TrufflehogSection({ data, updateField, projectId, mode = 'edit' 
                   </select>
                   <button
                     type="button"
-                    className="btnSecondary"
+                    className="primaryButton"
                     onClick={addProfile}
                     disabled={!addingSource}
                   >
-                    <Plus size={14} /> Add
+                    <Plus size={14} /> Add source
                   </button>
                 </div>
               )}
             </>
           )}
+
+          <div className={styles.groupHeader}>
+            <h3 className={styles.subSectionTitle ?? styles.fieldLabel}>Shared options</h3>
+            <p className={styles.fieldHint}>Applied to every source above.</p>
+          </div>
+
+          {/* ---- The verification switch: always visible, never gated behind a
+                  configured target. Hiding it is why the control could not be
+                  found at all. ---- */}
+          <div className={styles.toggleRow}>
+            <div>
+              <span className={styles.toggleLabel}>Verify secrets against live APIs</span>
+              <p className={styles.toggleDescription}>
+                When on, RedAmon sends found credentials to their owning services to test whether
+                they are live. This is the highest-value result in an authorised engagement, but it
+                is an ACTIVE behaviour. Use the detector exclude list below to skip services you do
+                not want contacted.
+              </p>
+            </div>
+            <Toggle
+              checked={verifies}
+              onChange={(checked) => setField(updateField, 'trufflehogNoVerification', !checked)}
+            />
+          </div>
+
+          {/* Result types and Concurrency share a row: both are small, and the
+              detector lists below need the full width for pasted names. */}
+          <div className={styles.optionRow}>
+            <div className={styles.fieldGroup} style={{ flex: 1, minWidth: 0 }}>
+              <label className={styles.fieldLabel}>Result types</label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
+                {RESULT_TYPES.map(rt => (
+                  <label
+                    key={rt.value}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px',
+                      opacity: verifies ? 1 : 0.5,
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={resultTypes.includes(rt.value)}
+                      disabled={!verifies}
+                      onChange={() => toggleResultType(rt.value)}
+                    />
+                    {rt.label}
+                  </label>
+                ))}
+              </div>
+              <span className={styles.fieldHint}>
+                {verifies
+                  ? 'Which statuses to report. Orthogonal to the switch above.'
+                  : 'Disabled while verification is off — nothing is checked, so every finding is unverified.'}
+              </span>
+            </div>
+
+            <div className={styles.fieldGroup} style={{ width: '110px', flexShrink: 0 }}>
+              <label className={styles.fieldLabel} htmlFor="trufflehog-concurrency">Concurrency</label>
+              <input
+                id="trufflehog-concurrency"
+                type="number"
+                className="textInput"
+                value={concurrencyText ?? String((get(data, 'trufflehogConcurrency') as number) ?? 8)}
+                onChange={(e) => {
+                  setConcurrencyText(e.target.value)
+                  const n = parseInt(e.target.value, 10)
+                  // An empty or half-typed box keeps the last valid number stored,
+                  // so leaving the form mid-edit can never save a NaN.
+                  if (Number.isFinite(n)) {
+                    setField(updateField, 'trufflehogConcurrency', clampConcurrency(n))
+                  }
+                }}
+                onBlur={() => setConcurrencyText(null)}
+                min={CONCURRENCY_MIN}
+                max={CONCURRENCY_MAX}
+              />
+              <span className={styles.fieldHint}>{CONCURRENCY_MIN}-{CONCURRENCY_MAX}</span>
+            </div>
+          </div>
+
+          <div className={styles.optionRow}>
+            <div className={styles.fieldGroup} style={{ flex: 1, minWidth: 0 }}>
+              <label className={styles.fieldLabel} htmlFor="trufflehog-include-detectors">
+                Include detectors
+              </label>
+              <input
+                id="trufflehog-include-detectors"
+                type="text"
+                className="textInput"
+                value={includeRaw}
+                onChange={(e) => setField(updateField, 'trufflehogIncludeDetectors', e.target.value)}
+                placeholder="AWS,Github,Slack"
+              />
+              <div className={styles.detectorHintRow}>
+                <span className={styles.fieldHint}>Comma-separated. Leave empty for all.</span>
+                <button
+                  type="button"
+                  className={styles.browseButton}
+                  onClick={() => setPicker(picker === 'include' ? null : 'include')}
+                  aria-expanded={picker === 'include'}
+                >
+                  <List size={12} /> Browse all {TRUFFLEHOG_DETECTOR_COUNT}
+                </button>
+              </div>
+              {unknownInclude.length > 0 && (
+                <span className={styles.fieldHint} style={{ color: '#f59e0b' }}>
+                  TruffleHog does not know {unknownInclude.join(', ')} and refuses to start. Check the
+                  spelling in the list; names are case-sensitive.
+                </span>
+              )}
+            </div>
+
+            <div className={styles.fieldGroup} style={{ flex: 1, minWidth: 0 }}>
+              <label className={styles.fieldLabel} htmlFor="trufflehog-exclude-detectors">
+                Exclude detectors
+              </label>
+              <input
+                id="trufflehog-exclude-detectors"
+                type="text"
+                className="textInput"
+                value={excludeRaw}
+                onChange={(e) => setField(updateField, 'trufflehogExcludeDetectors', e.target.value)}
+                placeholder="DetectorName1,DetectorName2"
+              />
+              <div className={styles.detectorHintRow}>
+                <span className={styles.fieldHint}>
+                  Takes precedence over include. An excluded detector is never contacted.
+                </span>
+                <button
+                  type="button"
+                  className={styles.browseButton}
+                  onClick={() => setPicker(picker === 'exclude' ? null : 'exclude')}
+                  aria-expanded={picker === 'exclude'}
+                >
+                  <List size={12} /> Browse all {TRUFFLEHOG_DETECTOR_COUNT}
+                </button>
+              </div>
+              {unknownExclude.length > 0 && (
+                <span className={styles.fieldHint} style={{ color: '#f59e0b' }}>
+                  TruffleHog does not know {unknownExclude.join(', ')} and refuses to start. Check the
+                  spelling in the list; names are case-sensitive.
+                </span>
+              )}
+            </div>
+          </div>
+
+          {picker && (
+            <DetectorPicker
+              target={picker}
+              selected={picker === 'include' ? includeSelected : excludeSelected}
+              onToggle={toggleDetector}
+              onClose={() => setPicker(null)}
+            />
+          )}
+
         </div>
       )}
     </div>
   )
 }
 
+/**
+ * The full detector catalogue, scrollable and filterable.
+ *
+ * It exists because the two detector fields are free text whose only valid
+ * values are 1060 exact, case-sensitive names that appear nowhere in the UI: an
+ * operator had to guess, and a guess makes TruffleHog refuse to start. Clicking
+ * a name writes it into the field, so the names never have to be typed at all.
+ */
+function DetectorPicker({
+  target, selected, onToggle, onClose,
+}: {
+  target: 'include' | 'exclude'
+  selected: string[]
+  onToggle: (name: string) => void
+  onClose: () => void
+}) {
+  const [query, setQuery] = useState('')
+  const [copied, setCopied] = useState(false)
+  const shown = filterDetectors(query)
+  const selectedSet = new Set(selected)
+
+  const copyAll = async () => {
+    try {
+      await navigator.clipboard.writeText(shown.join(','))
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1500)
+    } catch {
+      // Clipboard is permission-gated and absent over plain http; the names are
+      // selectable text either way, so a failure needs no error of its own.
+    }
+  }
+
+  return (
+    <div className={styles.detectorPicker}>
+      <div className={styles.detectorPickerHead}>
+        <strong style={{ fontSize: '13px' }}>
+          Detectors to {target}
+        </strong>
+        <input
+          type="text"
+          className="textInput"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder="Filter, e.g. aws"
+          style={{ flex: 1, minWidth: '120px' }}
+          aria-label="Filter detectors"
+        />
+        <span className={styles.fieldHint} style={{ whiteSpace: 'nowrap' }}>
+          {shown.length} of {TRUFFLEHOG_DETECTOR_COUNT}
+        </span>
+        <button type="button" className={styles.browseButton} onClick={copyAll}>
+          {copied ? <Check size={12} /> : null} {copied ? 'Copied' : 'Copy shown'}
+        </button>
+        <button
+          type="button"
+          className={styles.browseButton}
+          onClick={onClose}
+          aria-label="Close the detector list"
+        >
+          <X size={12} />
+        </button>
+      </div>
+
+      <div className={styles.detectorGrid}>
+        {shown.map(name => {
+          const on = selectedSet.has(name)
+          return (
+            <button
+              key={name}
+              type="button"
+              className={`${styles.detectorChip} ${on ? styles.detectorChipOn : ''}`}
+              onClick={() => onToggle(name)}
+              title={on ? `Remove ${name}` : `Add ${name}`}
+            >
+              {name}
+            </button>
+          )
+        })}
+        {shown.length === 0 && (
+          <span className={styles.fieldHint}>No detector matches that filter.</span>
+        )}
+      </div>
+
+      <span className={styles.fieldHint}>
+        Click a name to add or remove it. Names are case-sensitive, exactly as shown.
+      </span>
+    </div>
+  )
+}
+
 function ProfileEditor({
-  profile, expanded, onToggle, onSave, onDelete,
+  profile, expanded, onToggle, onSave, onDelete, keys,
 }: {
   profile: TrufflehogProfile
   expanded: boolean
   onToggle: () => void
   onSave: (config: Record<string, unknown>) => void
   onDelete: () => void
+  keys: CredentialKeysApi
 }) {
   const src = TRUFFLEHOG_SOURCES[profile.source]
   const [config, setConfig] = useState<Record<string, unknown>>(profile.config ?? {})
@@ -325,7 +525,10 @@ function ProfileEditor({
   if (!src) return null
 
   const errors = validateTrufflehogConfig(profile.source, config)
-  const missing = profile.missingCredentials ?? []
+  // The server computed this when the profiles were listed, so it still names a
+  // key that has since been set from the shortcut below. Re-filter against live
+  // state or the card keeps saying "missing" until the whole form reloads.
+  const missing = (profile.missingCredentials ?? []).filter(m => !keys.isSet(m.settingsKey))
   const sweepMode = String(config.mode ?? 'assets') === 'sweep'
 
   const update = (key: string, value: unknown) => {
@@ -367,7 +570,7 @@ function ProfileEditor({
         </div>
         <button
           type="button"
-          className="btnIcon"
+          className="iconButton"
           onClick={(e) => { e.stopPropagation(); onDelete() }}
           aria-label={`Remove the ${src.label} source`}
         >
@@ -376,17 +579,34 @@ function ProfileEditor({
       </div>
 
       {expanded && (
-        <div style={{ marginTop: '10px' }}>
+        <div className={styles.sourceCardBody}>
           <p className={styles.fieldHint}>{src.description}</p>
 
           {missing.length > 0 && (
             <p className={styles.sectionRequirement}>
-              {src.label} requires {missing.map(m => m.label).join(', ')}. Set it in{' '}
+              {src.label} requires {missing.map(m => m.label).join(', ')}. Set it below, or in{' '}
               <Link href={`${SETTINGS_KEYS_HREF}#trufflehog-keys`} style={{ color: 'var(--accent-primary)', fontWeight: 500 }}>
                 Global Settings &gt; API Keys &gt; TruffleHog
               </Link>
               . Until then this source cannot start.
             </p>
+          )}
+
+          {/* Every credential the source declares, mandatory and optional alike,
+              so a key can be replaced here and not only supplied. They are USER
+              settings shared by every project, which each card's badge says. */}
+          {src.credentials.length > 0 && (
+            <div className={styles.credentialStack}>
+              {src.credentials.map(cred => (
+                <CredentialShortcut
+                  key={cred.settingsKey}
+                  settingsKey={cred.settingsKey}
+                  keys={keys}
+                  optional={cred.optional}
+                  compact
+                />
+              ))}
+            </div>
           )}
 
           {src.fields.map(field => (
