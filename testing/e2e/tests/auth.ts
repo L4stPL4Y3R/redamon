@@ -16,7 +16,10 @@ import type { BrowserContext } from '@playwright/test'
 const AUTH_COOKIE_NAME = 'redamon-auth'
 
 function repoRoot(): string {
-  return join(__dirname, '..', '..')
+  // tests/ -> e2e/ -> testing/ -> repo root. The harness moved under testing/
+  // in the root reorg and this climb was left one level short, so every spec
+  // died in beforeEach looking for testing/.env.
+  return join(__dirname, '..', '..', '..')
 }
 
 export function authSecret(): string {
