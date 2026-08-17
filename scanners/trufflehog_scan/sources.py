@@ -707,7 +707,12 @@ def build_common_flags(common: dict) -> list[str]:
     ``--no-verification`` and drop the result filter entirely.
     """
     common = common or {}
-    flags = ["--json"]
+    # --no-update is NOT optional. TruffleHog self-updates on startup, which
+    # (a) fails outright on the read-only root filesystem the scan container
+    # runs with — "cannot move binary", exit 1, zero findings — and (b) would
+    # silently replace the version the Dockerfile deliberately pins and
+    # checksum-verifies.
+    flags = ["--json", "--no-update"]
 
     skip_verification = _as_bool(common.get("skipVerification"))
     if skip_verification:

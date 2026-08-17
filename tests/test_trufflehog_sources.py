@@ -90,9 +90,10 @@ class TestArgvPerSource(unittest.TestCase):
 
     def test_git_uri_is_positional(self):
         argv = self.build("git", {"uri": "https://github.com/acme/api.git", "branch": "main"})
-        self.assertEqual(argv[-1] if "--json" not in argv[-1:] else argv[3], argv[3])
-        self.assertIn("https://github.com/acme/api.git", argv)
         self.assertIn("--branch=main", argv)
+        # A bare token, not a --flag=, and after the subcommand.
+        positionals = [a for a in argv[2:] if not a.startswith("-")]
+        self.assertEqual(positionals, ["https://github.com/acme/api.git"])
 
     def test_filesystem_scan_root_resolves_through_the_allowlist(self):
         argv = self.build("filesystem", {"scanRoot": "recon_output"})
@@ -239,7 +240,21 @@ class TestCredentialsNeverReachArgv(unittest.TestCase):
 
 class TestCommonFlags(unittest.TestCase):
     def test_defaults_are_minimal(self):
-        self.assertEqual(reg.build_common_flags({}), ["--json"])
+        self.assertEqual(reg.build_common_flags({}), ["--json", "--no-update"])
+
+    def test_the_self_updater_is_always_disabled(self):
+        # TruffleHog self-updates on startup. On the scan container's read-only
+        # root that fails with "cannot move binary" and exit 1 — a scan that
+        # reports zero findings for a reason that has nothing to do with the
+        # target. It would also replace the pinned, checksum-verified binary.
+        for common in ({}, {"skipVerification": True}, {"concurrency": 4}):
+            self.assertIn("--no-update", reg.build_common_flags(common))
+
+    def test_every_built_command_disables_the_updater(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            argv = reg.build_command("github", {"orgs": ["a"]}, {}, Path(tmp), env={})
+        self.assertIn("--no-update", argv)
 
     def test_skip_verification_suppresses_the_result_filter(self):
         # --results=verified with --no-verification returns zero findings and no
