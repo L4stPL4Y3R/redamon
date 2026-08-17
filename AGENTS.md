@@ -38,6 +38,31 @@ When performing these actions, ALWAYS invoke the corresponding skill FIRST:
 
 ---
 
+## CODE COMMENTS
+
+Comment the **why**, not the **what**. Keep them short - a comment earns its
+place by saying something the code cannot.
+
+- **DON'T restate the line below it.** `# CVE Lookup` above `'CVE_LOOKUP_ENABLED'`
+  or `// IncludeSecurity blog` above `{ name: 'IncludeSecurity blog' }` adds
+  nothing. Delete echo comments; let the identifier speak.
+- **DO explain non-obvious intent**: why a value is what it is, a footgun, an
+  ordering constraint, or the provenance of a magic constant (e.g. the source
+  repo + byte size behind a favicon hash). These are the comments worth keeping,
+  even when long.
+- **NO changelog narration.** `# was 900 MB, now 1.75 GB` / `# renamed from X`
+  belongs in the git log. State current behavior; keep the rationale only if it
+  still guides a future edit.
+- **NO commented-out code.** Delete it - git remembers.
+- **Prefer a clearer name or a helper over a comment** when the comment only
+  exists to decode the code. Reach for prose (a docstring / block comment) when
+  the reasoning genuinely needs more than a line.
+
+LLM-facing text is exempt: tool docstrings and prompt strings the agent reads at
+runtime are content, not code comments - size them for the model, not this rule.
+
+---
+
 ## TECH STACK
 
 Polyglot monorepo orchestrated by Docker Compose. Python 3.11 services (the
