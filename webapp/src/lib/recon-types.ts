@@ -103,6 +103,12 @@ export type TrufflehogStatus = 'idle' | 'starting' | 'running' | 'paused' | 'pau
 export interface TrufflehogState {
   project_id: string
   status: TrufflehogStatus
+  /** The source id, which is ALSO the run key: one run per source, any number
+   *  of distinct sources in parallel. */
+  source?: string
+  run_id?: string
+  /** Human descriptor of what this run scans (org, image ref, bucket, URL). */
+  target?: string
   current_phase: string | null
   phase_number: number | null
   total_phases: number
@@ -110,6 +116,15 @@ export interface TrufflehogState {
   completed_at: string | null
   error: string | null
   container_id?: string | null
+  /** Set once the clean ingest step has written the findings to the graph. */
+  ingested?: boolean
+  findings_count?: number
+}
+
+/** The /trufflehog/{projectId}/all payload. */
+export interface TrufflehogListResponse {
+  project_id: string
+  runs: TrufflehogState[]
 }
 
 // Supply-Chain scan (L1 "Other Scans") - same lifecycle shape as trufflehog.

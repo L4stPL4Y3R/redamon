@@ -1349,11 +1349,30 @@ export default function SettingsPage() {
           <div className={styles.emptyState}><Loader2 size={16} className={styles.spin} /> Loading...</div>
         ) : (
           <div className={styles.settingsGrid}>
+            <KeyGroup
+              id="trufflehog-keys"
+              title="TruffleHog Secret Scanner"
+              hint="One key per source. A source whose key is mandatory cannot start until it is set; the scan card says which one is missing. Keys are stored per user and are never included in a project export."
+            />
+            {TRUFFLEHOG_KEY_FIELDS.map(field => (
+              <SecretField
+                key={field.name}
+                label={field.label}
+                hint={field.hint}
+                signupUrl={field.signupUrl}
+                badges={['TruffleHog', field.source]}
+                value={(settings as unknown as Record<string, string>)[field.name] ?? ''}
+                visible={!!visibleFields[field.name]}
+                onToggle={() => toggleFieldVisibility(field.name)}
+                onChange={v => updateSetting(field.name as keyof typeof settings, v)}
+              />
+            ))}
+
             <SecretField
               label="GitHub Access Token"
-              hint="Required for GitHub Secret Hunt and TruffleHog, and for Supply Chain scans of a private repository (public repos clone anonymously). Use repo scope for private repos, or a fine-grained token for specific repos only"
+              hint="Required for GitHub Secret Hunt, and for Supply Chain scans of a private repository (public repos clone anonymously). Use repo scope for private repos, or a fine-grained token for specific repos only. NOT used by TruffleHog — it has its own GitHub token in the TruffleHog section above."
               signupUrl="https://github.com/settings/tokens"
-              badges={['GitHub Secret Hunt', 'TruffleHog', 'Supply Chain']}
+              badges={['GitHub Secret Hunt', 'Supply Chain']}
               value={settings.githubAccessToken}
               visible={!!visibleFields.githubAccessToken}
               onToggle={() => toggleFieldVisibility('githubAccessToken')}
@@ -2272,6 +2291,114 @@ function SystemSection() {
 }
 
 // Badge color mapping
+/**
+ * The TruffleHog key group (Appendix D). Ordered mandatory-always first, then
+ * conditional, then optional, so the keys an operator is most likely to need
+ * before any scan will run are at the top.
+ *
+ * The `hint` wording matches the start gate exactly, so the settings page and
+ * the scan card can never disagree about whether a key is required.
+ */
+const TRUFFLEHOG_KEY_FIELDS: {
+  name: string
+  label: string
+  source: string
+  hint: string
+  signupUrl?: string
+}[] = [
+  {
+    name: 'trufflehogGithubToken', label: 'TruffleHog GitHub Token', source: 'github',
+    signupUrl: 'https://github.com/settings/tokens',
+    hint: 'Mandatory for the GitHub and GitHub-deleted-commits sources — even for public repos, because unauthenticated GitHub allows only 60 requests/hour, which this scan exhausts immediately. Use repo scope for private repositories.',
+  },
+  {
+    name: 'trufflehogGitlabToken', label: 'TruffleHog GitLab Token', source: 'gitlab',
+    signupUrl: 'https://gitlab.com/-/user_settings/personal_access_tokens',
+    hint: 'Mandatory for the GitLab source. With no repository or group set, it scans every project the token can reach.',
+  },
+  {
+    name: 'trufflehogPostmanToken', label: 'TruffleHog Postman Token', source: 'postman',
+    hint: 'Mandatory for the Postman source.',
+  },
+  {
+    name: 'trufflehogCircleciToken', label: 'TruffleHog CircleCI Token', source: 'circleci',
+    hint: 'Mandatory for the CircleCI source; the token defines the scan scope.',
+  },
+  {
+    name: 'trufflehogTravisciToken', label: 'TruffleHog Travis CI Token', source: 'travisci',
+    hint: 'Mandatory for the Travis CI source; the token defines the scan scope.',
+  },
+  {
+    name: 'trufflehogDockerToken', label: 'TruffleHog Docker Token', source: 'docker',
+    signupUrl: 'https://app.docker.com/settings/personal-access-tokens',
+    hint: 'Optional for a single public image. Mandatory for a namespace scan: Docker Hub allows only 10 anonymous pulls/hour per IP, which a namespace scan exhausts at once. Used as both the bearer and the registry token.',
+  },
+  {
+    name: 'trufflehogAwsAccessKeyId', label: 'TruffleHog AWS Access Key ID', source: 's3',
+    hint: "Mandatory for the S3 source unless 'Use cloud environment IAM' is enabled on the scan.",
+  },
+  {
+    name: 'trufflehogAwsSecretKey', label: 'TruffleHog AWS Secret Key', source: 's3',
+    hint: "Mandatory for the S3 source unless 'Use cloud environment IAM' is enabled on the scan.",
+  },
+  {
+    name: 'trufflehogAwsSessionToken', label: 'TruffleHog AWS Session Token', source: 's3',
+    hint: 'Optional. Only for temporary (STS) credentials.',
+  },
+  {
+    name: 'trufflehogGcpServiceAccount', label: 'TruffleHog GCP Service Account (JSON)', source: 'gcs',
+    hint: "Mandatory for the GCS source unless 'Without auth' (public buckets) is enabled. Paste the service-account JSON.",
+  },
+  {
+    name: 'trufflehogHuggingfaceToken', label: 'TruffleHog Hugging Face Token', source: 'huggingface',
+    signupUrl: 'https://huggingface.co/settings/tokens',
+    hint: 'Optional. Public models, spaces and datasets scan without it; set it for private or gated assets, or for higher rate limits.',
+  },
+  {
+    name: 'trufflehogJenkinsUsername', label: 'TruffleHog Jenkins Username', source: 'jenkins',
+    hint: 'Optional. An exposed, unauthenticated Jenkins scans without it (and is itself a finding). Set both username and password for an instance behind a login.',
+  },
+  {
+    name: 'trufflehogJenkinsPassword', label: 'TruffleHog Jenkins Password', source: 'jenkins',
+    hint: 'Optional. Pairs with the Jenkins username above.',
+  },
+  {
+    name: 'trufflehogElasticUsername', label: 'TruffleHog Elasticsearch Username', source: 'elasticsearch',
+    hint: 'Optional. An exposed cluster scans without it. If secured, provide exactly ONE of: username+password, API key, or service token.',
+  },
+  {
+    name: 'trufflehogElasticPassword', label: 'TruffleHog Elasticsearch Password', source: 'elasticsearch',
+    hint: 'Optional. Pairs with the Elasticsearch username above.',
+  },
+  {
+    name: 'trufflehogElasticApiKey', label: 'TruffleHog Elasticsearch API Key', source: 'elasticsearch',
+    hint: 'Optional. Use INSTEAD of username+password or a service token, not alongside them.',
+  },
+  {
+    name: 'trufflehogElasticServiceToken', label: 'TruffleHog Elasticsearch Service Token', source: 'elasticsearch',
+    hint: 'Optional. Use INSTEAD of username+password or an API key, not alongside them.',
+  },
+  {
+    name: 'trufflehogGitUsername', label: 'TruffleHog Git Username', source: 'git',
+    hint: 'Optional. Public Git URLs clone anonymously. Set both username and token only to reach a private repository over HTTPS.',
+  },
+  {
+    name: 'trufflehogGitToken', label: 'TruffleHog Git Token', source: 'git',
+    hint: 'Optional. Pairs with the Git username above.',
+  },
+]
+
+/** A header that opens a group of related keys. The `id` is the deep-link anchor
+ *  the scan card points at when it says which key to set. */
+function KeyGroup({ id, title, hint }: { id: string; title: string; hint: string }) {
+  return (
+    <div id={id} style={{ gridColumn: '1 / -1', marginTop: '8px' }}>
+      <h3 style={{ fontSize: '14px', fontWeight: 600, margin: '0 0 4px' }}>{title}</h3>
+      <p className="formHint" style={{ margin: 0 }}>{hint}</p>
+    </div>
+  )
+}
+
 const BADGE_STYLES: Record<string, React.CSSProperties> = {
   'AI Agent': {
     display: 'inline-block',
@@ -2321,6 +2448,36 @@ const BADGE_STYLES: Record<string, React.CSSProperties> = {
     verticalAlign: 'middle',
     letterSpacing: '0.02em',
   },
+  // 'Supply Chain' was used as a badge without ever being defined here, so it
+  // rendered in the AI-Agent blue fallback. Define every badge you add.
+  'Supply Chain': {
+    display: 'inline-block',
+    fontSize: '10px',
+    fontWeight: 600,
+    padding: '1px 6px',
+    borderRadius: '4px',
+    background: 'rgba(234, 179, 8, 0.12)',
+    color: '#a16207',
+    marginLeft: '6px',
+    verticalAlign: 'middle',
+    letterSpacing: '0.02em',
+  },
+  // Per-source micro-badges: which TruffleHog source each key feeds.
+  ...Object.fromEntries(
+    ['git', 'github', 'gitlab', 'docker', 'huggingface', 's3', 'gcs',
+     'jenkins', 'elasticsearch', 'postman', 'circleci', 'travisci'].map(source => [source, {
+      display: 'inline-block',
+      fontSize: '10px',
+      fontWeight: 500,
+      padding: '1px 6px',
+      borderRadius: '4px',
+      background: 'var(--bg-tertiary)',
+      color: 'var(--text-secondary)',
+      marginLeft: '4px',
+      verticalAlign: 'middle',
+      letterSpacing: '0.02em',
+    } as React.CSSProperties]),
+  ),
 }
 
 // Reusable secret field component

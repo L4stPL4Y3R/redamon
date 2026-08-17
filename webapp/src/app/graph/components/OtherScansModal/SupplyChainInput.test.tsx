@@ -66,6 +66,9 @@ const openOrgMode = async () => {
       hasReconData
       hasGithubToken
       projectId="p1"
+      // TruffleHog renders one row per configured source; give it exactly one so
+      // the Start-button counts below stay about the Supply-Chain card.
+      trufflehogProfiles={[{ id: 'p-docker', source: 'docker', label: '', config: { images: ['nginx:1.25'] } }]}
     />
   )
   await waitFor(() => expect(screen.getByText('GitHub organization')).toBeTruthy())

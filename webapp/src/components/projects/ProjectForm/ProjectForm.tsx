@@ -1007,7 +1007,8 @@ export function ProjectForm({
           <>
             <GvmScanSection data={formData} updateField={updateField} />
             <GithubSection data={formData} updateField={updateField} hasGithubToken={hasGithubToken} />
-            <TrufflehogSection data={formData} updateField={updateField} hasGithubToken={hasGithubToken} />
+            <TrufflehogSection data={formData} updateField={updateField}
+              projectId={projectId ?? null} mode={mode} />
             {/* Supply-Chain (L1) is configured where it is launched: the
                 Supply Chain Scanner card in Other Scans owns its input
                 (uploaded SBOM / lockfile, or a GitHub repository). */}

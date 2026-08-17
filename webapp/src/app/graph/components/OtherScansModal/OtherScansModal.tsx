@@ -4,6 +4,8 @@ import { useRef, useState } from 'react'
 import { Play, Pause, Square, Terminal, Download, Loader2, Github, Search, AlertTriangle, PackageSearch, Settings } from 'lucide-react'
 import Link from 'next/link'
 import { SETTINGS_KEYS_HREF } from '@/lib/settingsLinks'
+import { TRUFFLEHOG_SOURCES } from '@/lib/trufflehogSources'
+import type { TrufflehogProfileSummary } from '@/hooks/useTrufflehogRuns'
 import { projectSettingsHref } from '@/lib/projectSettingsLinks'
 import { Modal, WikiInfoButton } from '@/components/ui'
 import type { GithubHuntStatus, TrufflehogStatus, SupplyChainStatus } from '@/lib/recon-types'
@@ -30,16 +32,20 @@ interface OtherScansModalProps {
   githubHuntStatus?: GithubHuntStatus
   hasGithubHuntData?: boolean
   isGithubHuntLogsOpen?: boolean
-  // TruffleHog
-  onStartTrufflehog?: () => void
-  onPauseTrufflehog?: () => void
-  onResumeTrufflehog?: () => void
-  onStopTrufflehog?: () => void
+  // TruffleHog — run-keyed: one row per configured SOURCE, each with its own
+  // status, Start, Stop and Logs. A single project-level set of controls could
+  // only ever drive one of N parallel runs.
+  onStartTrufflehog?: (source: string) => void
+  onStopTrufflehog?: (source: string) => void
   onDownloadTrufflehogJSON?: () => void
-  onToggleTrufflehogLogs?: () => void
-  trufflehogStatus?: TrufflehogStatus
+  onToggleTrufflehogLogs?: (source: string) => void
+  /** One entry per configured source, from /api/trufflehog/{id}/profiles. */
+  trufflehogProfiles?: TrufflehogProfileSummary[]
+  /** Live run state keyed by source, from /api/trufflehog/{id}/all. */
+  trufflehogRunsBySource?: Record<string, { status: TrufflehogStatus; target?: string } | undefined>
   hasTrufflehogData?: boolean
-  isTrufflehogLogsOpen?: boolean
+  /** Which source's log drawer is open, if any. */
+  openTrufflehogLogsSource?: string | null
 
   // Supply Chain (L1)
   onStartSupplyChain?: () => void
@@ -92,14 +98,13 @@ export function OtherScansModal({
   isGithubHuntLogsOpen = false,
   // TruffleHog
   onStartTrufflehog,
-  onPauseTrufflehog,
-  onResumeTrufflehog,
   onStopTrufflehog,
   onDownloadTrufflehogJSON,
   onToggleTrufflehogLogs,
-  trufflehogStatus = 'idle',
+  trufflehogProfiles = [],
+  trufflehogRunsBySource = {},
   hasTrufflehogData = false,
-  isTrufflehogLogsOpen = false,
+  openTrufflehogLogsSource = null,
 
   // Supply Chain (L1)
   onStartSupplyChain,
@@ -121,13 +126,16 @@ export function OtherScansModal({
   const isGHPaused = githubHuntStatus === 'paused'
   const isGHActive = isGHRunning || isGHPaused
 
-  // TruffleHog derived state
-  const isTHBusy = trufflehogStatus === 'running' || trufflehogStatus === 'starting' || trufflehogStatus === 'pausing'
-  const isTHStopping = trufflehogStatus === 'stopping'
-  const isTHPausing = trufflehogStatus === 'pausing'
-  const isTHRunning = isTHBusy || isTHStopping
-  const isTHPaused = trufflehogStatus === 'paused'
-  const isTHActive = isTHRunning || isTHPaused
+  // TruffleHog derived state: aggregated across every source, used only for the
+  // card-level badge and the Download button (the JSON download is per project).
+  const trufflehogStatuses = trufflehogProfiles
+    .map(p => trufflehogRunsBySource[p.source]?.status ?? 'idle')
+  const isTHActive = trufflehogStatuses.some(
+    st => st === 'running' || st === 'starting' || st === 'stopping')
+  const trufflehogCardStatus: TrufflehogStatus =
+    trufflehogStatuses.find(st => st === 'running' || st === 'starting') ??
+    (trufflehogStatuses.includes('error') ? 'error'
+      : trufflehogStatuses.includes('completed') ? 'completed' : 'idle')
 
   // Whether the SELECTED input source actually has a usable value. Reported by
   // SupplyChainInput, because only it knows which source is active - a
@@ -279,97 +287,106 @@ export function OtherScansModal({
           </div>
         </div>
 
-        {/* TruffleHog Scanner Card */}
+        {/* TruffleHog Scanner Card — one row per configured source */}
         <div className={styles.card}>
           <div className={styles.cardHeader}>
             <Search size={18} className={styles.cardIcon} />
             <h3 className={styles.cardTitle}>TruffleHog Scanner</h3>
             <WikiInfoButton target="Trufflehog" title="TruffleHog Secret Scanning wiki" />
-            <StatusBadge status={trufflehogStatus} />
+            <StatusBadge status={trufflehogCardStatus} />
           </div>
           <p className={styles.cardDescription}>
-            Deep secret scanning with 700+ detectors and optional verification against live APIs.
+            Deep secret scanning with 700+ detectors across git hosts, container registries,
+            Hugging Face, object storage and CI systems. Sources run independently and in parallel.
           </p>
-          {!hasGithubToken && (
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              padding: '8px 12px',
-              background: 'rgba(245, 158, 11, 0.1)',
-              border: '1px solid rgba(245, 158, 11, 0.3)',
-              borderRadius: '6px',
-            }}>
-              <AlertTriangle size={14} style={{ color: '#f59e0b', flexShrink: 0 }} />
-              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                GitHub Access Token required.{' '}
-                <Link href={SETTINGS_KEYS_HREF} style={{ color: 'var(--accent-primary)', fontWeight: 500 }}>
-                  Global Settings
+
+          {trufflehogProfiles.length === 0 ? (
+            <p className={styles.cardDescription} style={{ opacity: 0.75 }}>
+              No sources configured.{' '}
+              {projectId && (
+                <Link
+                  href={projectSettingsHref(projectId, 'trufflehog-scanner')}
+                  style={{ color: 'var(--accent-primary)', fontWeight: 500 }}
+                >
+                  Add one in project settings
                 </Link>
-              </span>
-            </div>
+              )}
+              {' '}to make it startable here.
+            </p>
+          ) : (
+            trufflehogProfiles.map(profile => {
+              const run = trufflehogRunsBySource[profile.source]
+              const status = run?.status ?? 'idle'
+              const busy = status === 'running' || status === 'starting'
+              const stopping = status === 'stopping'
+              const active = busy || stopping
+              const missing = profile.missingCredentials ?? []
+              const invalid = (profile.validationErrors ?? []).length > 0
+              // Fails closed in the UI too, and the start route re-checks: a key
+              // cleared after this rendered must not produce an opaque failure.
+              const blockedReason = missing.length
+                ? `Set ${missing.map(m => m.label).join(', ')} in Global Settings > API Keys`
+                : invalid ? 'This source is not fully configured'
+                : scanBlocked ? blockedTitle : ''
+
+              return (
+                <div key={profile.id} className={styles.cardActions} style={{ alignItems: 'center' }}>
+                  <span style={{ minWidth: '150px', fontSize: '13px', fontWeight: 500 }}>
+                    {TRUFFLEHOG_SOURCES[profile.source]?.label ?? profile.source}
+                    {run?.target && (
+                      <span style={{ display: 'block', fontSize: '11px', opacity: 0.7, fontWeight: 400 }}>
+                        {run.target}
+                      </span>
+                    )}
+                  </span>
+                  <StatusBadge status={status} />
+
+                  <button
+                    className={styles.startButton}
+                    onClick={() => onStartTrufflehog?.(profile.source)}
+                    disabled={active || Boolean(blockedReason)}
+                    title={blockedReason || (active ? 'In progress...' : `Start ${profile.source}`)}
+                  >
+                    {busy ? <Loader2 size={12} className={styles.spinner} /> : <Play size={12} />}
+                    <span>{busy ? 'Running...' : stopping ? 'Stopping...' : 'Start'}</span>
+                  </button>
+
+                  {active && (
+                    <button
+                      className={styles.stopButton}
+                      onClick={() => onStopTrufflehog?.(profile.source)}
+                      disabled={stopping}
+                      title="Stop this source"
+                    >
+                      <Square size={12} />
+                      <span>Stop</span>
+                    </button>
+                  )}
+
+                  <button
+                    className={`${styles.logsButton} ${openTrufflehogLogsSource === profile.source ? styles.logsButtonActive : ''}`}
+                    onClick={() => onToggleTrufflehogLogs?.(profile.source)}
+                    disabled={!active}
+                    title="View Logs"
+                  >
+                    <Terminal size={12} />
+                    <span>Logs</span>
+                  </button>
+
+                  {missing.length > 0 && (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#f59e0b' }}>
+                      <AlertTriangle size={12} />
+                      <Link href={`${SETTINGS_KEYS_HREF}#trufflehog-keys`} style={{ color: 'inherit' }}>
+                        {missing.map(m => m.label).join(', ')} required
+                      </Link>
+                    </span>
+                  )}
+                </div>
+              )
+            })
           )}
+
           <div className={styles.cardActions}>
-            {isTHPaused ? (
-              <button
-                className={styles.resumeButton}
-                onClick={onResumeTrufflehog}
-                disabled={!hasGithubToken || scanBlocked}
-                title={scanBlocked ? blockedTitle : !hasGithubToken ? 'GitHub token required' : 'Resume TruffleHog'}
-              >
-                <Play size={12} />
-                <span>Resume</span>
-              </button>
-            ) : (
-              <button
-                className={styles.startButton}
-                onClick={onStartTrufflehog}
-                disabled={!hasGithubToken || isTHRunning || (!hasReconData && !isTHPaused) || scanBlocked}
-                title={scanBlocked ? blockedTitle : !hasGithubToken ? 'GitHub token required' : !hasReconData ? 'Run recon first' : isTHRunning ? 'In progress...' : 'Start TruffleHog'}
-              >
-                {isTHRunning ? (
-                  <Loader2 size={12} className={styles.spinner} />
-                ) : (
-                  <Play size={12} />
-                )}
-                <span>{isTHPausing ? 'Pausing...' : isTHBusy ? 'Running...' : isTHStopping ? 'Stopping...' : 'Start'}</span>
-              </button>
-            )}
-
-            {isTHBusy && (
-              <button
-                className={styles.pauseButton}
-                onClick={onPauseTrufflehog}
-                disabled={isTHPausing}
-                title="Pause"
-              >
-                {isTHPausing ? <Loader2 size={12} className={styles.spinner} /> : <Pause size={12} />}
-                <span>Pause</span>
-              </button>
-            )}
-
-            {isTHActive && (
-              <button
-                className={styles.stopButton}
-                onClick={onStopTrufflehog}
-                disabled={isTHStopping}
-                title="Stop"
-              >
-                <Square size={12} />
-                <span>Stop</span>
-              </button>
-            )}
-
-            <button
-              className={`${styles.logsButton} ${isTrufflehogLogsOpen ? styles.logsButtonActive : ''}`}
-              onClick={onToggleTrufflehogLogs}
-              disabled={!isTHActive}
-              title="View Logs"
-            >
-              <Terminal size={12} />
-              <span>Logs</span>
-            </button>
-
             <button
               className={styles.downloadButton}
               onClick={onDownloadTrufflehogJSON}
@@ -384,7 +401,7 @@ export function OtherScansModal({
               <Link
                 href={projectSettingsHref(projectId, 'trufflehog-scanner')}
                 className={styles.settingsButton}
-                title="Configure the target org, repos and scan options in project settings"
+                title="Configure which sources to scan and their options in project settings"
                 aria-label="Configure TruffleHog Scanner in project settings"
               >
                 <Settings size={13} />

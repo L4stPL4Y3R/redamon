@@ -5,6 +5,9 @@ import type { ReconLogEvent } from '@/lib/recon-types'
 
 interface UseTrufflehogSSEOptions {
   projectId: string | null
+  /** Which source's container to stream. Logs are per-run since the
+   *  multi-source migration; a project-level stream would mix N containers. */
+  source: string | null
   enabled: boolean
   onLog?: (event: ReconLogEvent) => void
   onPhaseChange?: (phase: string, phaseNumber: number) => void
@@ -23,6 +26,7 @@ interface UseTrufflehogSSEReturn {
 
 export function useTrufflehogSSE({
   projectId,
+  source,
   enabled,
   onLog,
   onPhaseChange,
@@ -47,13 +51,14 @@ export function useTrufflehogSSE({
   }, [])
 
   const connect = useCallback(() => {
-    if (!projectId || !enabled) return
+    if (!projectId || !source || !enabled) return
 
     if (eventSourceRef.current) {
       eventSourceRef.current.close()
     }
 
-    const eventSource = new EventSource(`/api/trufflehog/${projectId}/logs`)
+    const eventSource = new EventSource(
+      `/api/trufflehog/${projectId}/${encodeURIComponent(source)}/logs`)
     eventSourceRef.current = eventSource
 
     eventSource.onopen = () => {
@@ -177,7 +182,7 @@ export function useTrufflehogSSE({
       }
     }
 
-  }, [projectId, enabled, onLog, onPhaseChange, onComplete, onError])
+  }, [projectId, source, enabled, onLog, onPhaseChange, onComplete, onError])
 
   // Clear logs only when switching to a different project
   useEffect(() => {
@@ -185,11 +190,11 @@ export function useTrufflehogSSE({
     setCurrentPhase(null)
     setCurrentPhaseNumber(null)
     reconnectAttempts.current = 0
-  }, [projectId])
+  }, [projectId, source])
 
   // Connect/disconnect when enabled or project changes
   useEffect(() => {
-    if (enabled && projectId) {
+    if (enabled && projectId && source) {
       connect()
     }
 
@@ -203,7 +208,7 @@ export function useTrufflehogSSE({
         reconnectTimeoutRef.current = null
       }
     }
-  }, [enabled, projectId, connect])
+  }, [enabled, projectId, source, connect])
 
   return {
     logs,
