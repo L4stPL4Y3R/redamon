@@ -43,7 +43,16 @@ const MAX_SCANJOBS_PER_TICK = 25
 //   - supply_chain_repo: only ever queue-dispatched, and dispatchStart calls the
 //     orchestrator directly without recordScanStart, so it writes NO ScanJob - its
 //     history lives in the JobQueue, closed by the queue reconcile above.
-const ONE_PER_PROJECT_KINDS = ['full_recon', 'supply_chain', 'gvm', 'github_hunt', 'trufflehog']
+//   - trufflehog: run-keyed since the multi-source migration (one run per SOURCE,
+//     several in parallel). Leaving it here would force-cancel all but the newest
+//     row per (project, kind) — every parallel source but one recorded as canceled
+//     while its container was still running. It gets the run-granular sweep below.
+const ONE_PER_PROJECT_KINDS = ['full_recon', 'supply_chain', 'gvm', 'github_hunt']
+
+// Kinds whose rows are keyed by run id and swept against a /all listing.
+const RUN_KEYED_KINDS: Record<string, string> = {
+  trufflehog: 'trufflehog',
+}
 
 // The orchestrator status path for each swept kind.
 const STATUS_PATH: Record<string, string> = {
@@ -51,7 +60,32 @@ const STATUS_PATH: Record<string, string> = {
   supply_chain: 'supply-chain',
   gvm: 'gvm',
   github_hunt: 'github-hunt',
-  trufflehog: 'trufflehog',
+}
+
+/**
+ * Every run's status for a run-keyed kind, keyed by run id.
+ *
+ * Reads the /all listing rather than a project-level status: with N sources
+ * running in parallel, one status describes one of them and the other N-1 would
+ * be closed from the wrong run's outcome.
+ */
+async function fetchRunStatuses(kind: string, projectId: string): Promise<Map<string, string>> {
+  const out = new Map<string, string>()
+  const seg = RUN_KEYED_KINDS[kind]
+  if (!seg) return out
+  try {
+    const res = await orchestratorFetch(`${RECON_ORCHESTRATOR_URL}/${seg}/${projectId}/all`, { method: 'GET' })
+    if (!res.ok) return out
+    const body = await res.json().catch(() => null)
+    for (const run of (body?.runs ?? []) as { run_id?: unknown; status?: unknown }[]) {
+      if (typeof run?.run_id === 'string' && typeof run?.status === 'string') {
+        out.set(run.run_id, run.status)
+      }
+    }
+  } catch {
+    // Unreadable: the caller records `canceled` rather than leaving rows stuck.
+  }
+  return out
 }
 
 /**
@@ -141,6 +175,40 @@ export async function POST(request: NextRequest) {
       } else {
         outcome = 'canceled' // an older, superseded run for the same project+kind
       }
+      await prisma.scanJob
+        .updateMany({
+          where: { id: s.id, status: 'running' },
+          data: { status: outcome, finishedAt: new Date() },
+        })
+        .then(res => { scansClosed += res.count })
+        .catch(() => {})
+    }
+
+    // Run-granular sweep for the run-keyed kinds. Each stale row is closed from
+    // ITS OWN run's status in the /all listing, so parallel sources do not
+    // cancel one another. A row whose run is absent from the listing is over
+    // (the project is already known idle), only its outcome is unknown.
+    const staleRuns = (await prisma.scanJob.findMany({
+      where: {
+        status: 'running',
+        kind: { in: Object.keys(RUN_KEYED_KINDS) },
+        OR: [{ startedAt: null }, { startedAt: { lte: cutoff } }],
+        ...(activeProjects.length ? { projectId: { notIn: activeProjects } } : {}),
+      },
+      orderBy: [{ projectId: 'asc' }, { kind: 'asc' }],
+      take: MAX_SCANJOBS_PER_TICK,
+      select: { id: true, projectId: true, kind: true, runId: true },
+    })).filter(s => !activeSet.has(s.projectId))
+
+    const runStatusCache = new Map<string, Map<string, string>>()
+    for (const s of staleRuns) {
+      const cacheKey = `${s.projectId}|${s.kind}`
+      if (!runStatusCache.has(cacheKey)) {
+        runStatusCache.set(cacheKey, await fetchRunStatuses(s.kind, s.projectId))
+      }
+      const status = s.runId ? runStatusCache.get(cacheKey)?.get(s.runId) : undefined
+      const outcome = status === 'completed' ? 'completed'
+        : status === 'error' ? 'failed' : 'canceled'
       await prisma.scanJob
         .updateMany({
           where: { id: s.id, status: 'running' },

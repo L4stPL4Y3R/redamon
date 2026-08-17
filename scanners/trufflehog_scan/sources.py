@@ -38,11 +38,12 @@ from urllib.parse import urlsplit, urlunsplit
 # Field / credential vocabulary
 # ---------------------------------------------------------------------------
 
-#: Field types that produce argv. ``client`` fields are consumed by the runner
-#: itself (docker tag/arch expansion) and never reach TruffleHog.
+#: How a field is rendered and how it is turned into argv. The type is the UI
+#: CONTROL, shared with the TS mirror; whether a field reaches TruffleHog at all
+#: is the separate ``client`` flag below.
 FIELD_TYPES = (
     "text", "multi", "csv", "pathfile", "toggle", "number", "select", "bytes",
-    "textarea", "client",
+    "textarea",
 )
 
 
@@ -51,11 +52,15 @@ class Field:
     """One operator-settable input on a source card."""
 
     key: str                    # config key, camelCase — matches the TS mirror
-    type: str
-    flag: str = ""              # "" with type != "client" means positional
+    type: str                   # the UI control; same value in the TS mirror
+    flag: str = ""              # "" on a non-client field means positional
     required: bool = False
     forced: bool = False        # always emitted when the source is used
     label: str = ""
+    #: Consumed by the runner itself and never passed to TruffleHog — the docker
+    #: tag/architecture expansion, which is our work because `remote.Image()`
+    #: resolves a single platform per reference and has no flag for it.
+    client: bool = False
 
     def __post_init__(self) -> None:
         if self.type not in FIELD_TYPES:
@@ -218,9 +223,9 @@ SOURCES: dict[str, Source] = {
             Field("namespace", "text", "--namespace"),
             # csv here, NOT pathfile — see the module docstring.
             Field("excludePaths", "csv", "--exclude-paths"),
-            Field("maxImages", "client"),
-            Field("scanAllTags", "client"),
-            Field("scanAllArchitectures", "client"),
+            Field("maxImages", "number", client=True),
+            Field("scanAllTags", "toggle", client=True),
+            Field("scanAllArchitectures", "toggle", client=True),
             Field("includePrivate", "toggle", "--registry-token"),
         ),
     ),
@@ -229,7 +234,7 @@ SOURCES: dict[str, Source] = {
         asset_label="TrufflehogModel", asset_kind="model",
         credentials=(CRED_HUGGINGFACE,),
         fields=(
-            Field("mode", "select"),          # "assets" | "sweep", client-side only
+            Field("mode", "select", client=True),   # "assets" | "sweep"
             Field("endpoint", "text", "--endpoint"),
             Field("models", "multi", "--model"),
             Field("spaces", "multi", "--space"),
@@ -767,7 +772,7 @@ def build_source_args(
     positional: list[str] = []
 
     for f in src.fields:
-        if f.type == "client":
+        if f.client:
             continue
         raw = cfg.get(f.key)
 
@@ -803,8 +808,6 @@ def build_source_args(
         value = _text(raw)
         if not value:
             continue
-        if f.key == "mode":
-            continue  # huggingface mode is a UI concept, never argv
         if not f.flag:
             positional.append(_resolve_positional(src, f, value, env))
             continue

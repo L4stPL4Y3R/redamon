@@ -75,7 +75,13 @@ export const FINGERPRINT_FIELDS: Record<string, readonly string[]> = {
   partial_recon: ['targetDomain', 'ipMode', 'targetIps', 'scanModules', 'targetGuardrailEnabled', 'stealthMode'],
   gvm: ['targetDomain', 'ipMode', 'targetIps', 'gvmScanConfig', 'gvmScanTargets'],
   github_hunt: ['githubTargetOrg', 'githubTargetRepos', 'githubScanMembers', 'githubScanGists', 'githubScanCommits'],
-  trufflehog: ['trufflehogGithubOrg', 'trufflehogGithubRepos', 'trufflehogOnlyVerified', 'trufflehogNoVerification'],
+  // Only the SHARED options still live on Project; the per-source targets moved
+  // to TrufflehogScanProfile and are folded in by the caller through `extra`
+  // (see resolveTrufflehogFingerprintExtra). Listing the old
+  // trufflehogGithubOrg/Repos columns here would hash a CONSTANT — the fields no
+  // longer exist, settingsFingerprint skips undefined ones, and the C-4
+  // re-confirmation guard would be silently disabled.
+  trufflehog: ['trufflehogNoVerification', 'trufflehogResultTypes', 'trufflehogIncludeDetectors', 'trufflehogExcludeDetectors'],
   supply_chain: ['supplyChainInputMode', 'supplyChainSbomFile', 'supplyChainRepoUrl', 'supplyChainRepoRef', 'supplyChainRepoScope', 'supplyChainDeepAnalysisEnabled'],
   supply_chain_repo: ['supplyChainInputMode', 'supplyChainSbomFile', 'supplyChainRepoUrl', 'supplyChainRepoRef', 'supplyChainRepoScope', 'supplyChainDeepAnalysisEnabled'],
   ai_attack: [],
@@ -108,11 +114,25 @@ function canonicalize(value: unknown): unknown {
  * object carrying the fields (typically a Prisma Project row); unknown/absent
  * fields are simply omitted, so a not-yet-added column never throws.
  */
-export function settingsFingerprint(kind: string, project: Record<string, unknown>): string {
+export function settingsFingerprint(
+  kind: string,
+  project: Record<string, unknown>,
+  /** Extra scan-steering settings that do not live on the Project row. Merged in
+   *  before hashing. TruffleHog needs this: its targets moved to a per-source
+   *  profile, and without them the hash covers only the shared options — so
+   *  re-pointing a Docker scan at a different namespace would not invalidate the
+   *  queued job. */
+  extra?: Record<string, unknown>,
+): string {
   const fields = FINGERPRINT_FIELDS[kind] ?? []
   const subset: Record<string, unknown> = {}
   for (const f of fields) {
     if (project[f] !== undefined) subset[f] = project[f]
+  }
+  if (extra) {
+    for (const [k, v] of Object.entries(extra)) {
+      if (v !== undefined) subset[k] = v
+    }
   }
   const canonical = JSON.stringify({ kind, settings: canonicalize(subset) })
   return createHash('sha256').update(canonical).digest('hex')

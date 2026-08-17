@@ -20,6 +20,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { isInternalRequest } from '@/lib/session'
 import { settingsFingerprint, nextBackoff, CAPACITY_RECHECK_MS } from '@/lib/jobQueue'
+import { resolveTrufflehogFingerprintExtra } from '@/lib/trufflehogStart'
 import { classifyStartFailure, isCapacityWait } from '@/lib/scanStartOutcome'
 import { dispatchStart, stopScan } from '@/lib/startScan'
 
@@ -97,7 +98,12 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     // 4. Settings fingerprint (C-4). A change between enqueue and dispatch means the
     // operator changed where/what this job scans; never silently run the new config.
-    const currentHash = settingsFingerprint(row.kind, project as unknown as Record<string, unknown>)
+    const currentHash = settingsFingerprint(
+      row.kind, project as unknown as Record<string, unknown>,
+      await resolveTrufflehogFingerprintExtra(
+        row.kind, row.projectId, (row.payload ?? {}) as Record<string, unknown>,
+      ),
+    )
     if (currentHash !== row.settingsHash) {
       await prisma.jobQueue.updateMany({
         where: { id, status: 'dispatching' },

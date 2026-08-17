@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { guardProject } from '@/lib/access'
 import { settingsFingerprint } from '@/lib/jobQueue'
+import { resolveTrufflehogFingerprintExtra } from '@/lib/trufflehogStart'
 
 export const runtime = 'nodejs'
 
@@ -42,7 +43,12 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 })
     }
 
-    const settingsHash = settingsFingerprint(row.kind, project as unknown as Record<string, unknown>)
+    const settingsHash = settingsFingerprint(
+      row.kind, project as unknown as Record<string, unknown>,
+      await resolveTrufflehogFingerprintExtra(
+        row.kind, row.projectId, (row.payload ?? {}) as Record<string, unknown>,
+      ),
+    )
     await prisma.jobQueue.update({
       where: { id },
       data: {

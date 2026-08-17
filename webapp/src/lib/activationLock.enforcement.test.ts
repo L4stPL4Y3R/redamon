@@ -39,6 +39,14 @@ vi.mock('@/lib/prisma', () => ({
     project: {
       findUnique: async () => ({ id: 'p1', userId: 'owner', targetDomain: 'x.tld', ipMode: false, targetIps: [] }),
     },
+    // TruffleHog starts from a per-source profile; without one the route 404s
+    // before the lock has anything to say. A valid docker profile keeps the
+    // activation lock the only thing that can refuse the start here.
+    trufflehogScanProfile: {
+      findFirst: async () => ({ id: 'prof1', source: 'docker', config: { images: ['nginx:1.25'] } }),
+      findUnique: async () => ({ id: 'prof1', source: 'docker', config: { images: ['nginx:1.25'] } }),
+    },
+    userSettings: { findUnique: async () => ({}) },
   },
 }))
 vi.mock('@/lib/scanTimeline', async orig => ({
@@ -150,7 +158,9 @@ describe.each([
   { name: 'TruffleHog scan', run: startTrufflehog, path: 'trufflehog' },
 ])('$name start', ({ run, path }) => {
   const req = () => new NextRequest(`http://x/api/${path}/p1/start`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    // TruffleHog is run-keyed: the body names which source to start.
+    body: JSON.stringify(path === 'trufflehog' ? { source: 'docker' } : {}),
   })
 
   test('refused while an activation is swapping the graph', async () => {

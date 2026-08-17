@@ -292,11 +292,15 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     // stopped here; they finish on their own and their orphaned nodes are swept by
     // the graph read-path reconcile. Still strictly better than the prior behavior
     // (which stopped nothing).
-    await Promise.allSettled(
-      ['recon', 'gvm', 'github-hunt', 'trufflehog', 'supply-chain'].map(kind =>
+    await Promise.allSettled([
+      ...['recon', 'gvm', 'github-hunt', 'supply-chain'].map(kind =>
         orchestratorFetch(`${RECON_ORCHESTRATOR_URL}/${kind}/${id}/stop`, { method: 'POST' }),
       ),
-    )
+      // TruffleHog is run-keyed (one run per source, several in parallel), so a
+      // single project-level stop would leave every source but one running with
+      // its project row already gone. stop-all loops the nested state dict.
+      orchestratorFetch(`${RECON_ORCHESTRATOR_URL}/trufflehog/${id}/stop-all`, { method: 'POST' }),
+    ])
 
     // 1. Delete project from PostgreSQL (cascades captured_http_transactions +
     //    job_queue rows)

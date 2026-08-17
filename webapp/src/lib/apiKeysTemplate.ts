@@ -35,6 +35,28 @@ const ALLOWED_KEY_FIELDS = [
   'googleApiCx',
   'onypheApiKey',
   'driftnetApiKey',
+  // TruffleHog Secret Scanner, one key per source. A field missing here is
+  // silently DROPPED on import, so offline key entry would appear to work and
+  // then leave the scan blocked on a key the operator believes they set.
+  'trufflehogGithubToken',
+  'trufflehogGitlabToken',
+  'trufflehogDockerToken',
+  'trufflehogHuggingfaceToken',
+  'trufflehogAwsAccessKeyId',
+  'trufflehogAwsSecretKey',
+  'trufflehogAwsSessionToken',
+  'trufflehogGcpServiceAccount',
+  'trufflehogPostmanToken',
+  'trufflehogJenkinsUsername',
+  'trufflehogJenkinsPassword',
+  'trufflehogElasticUsername',
+  'trufflehogElasticPassword',
+  'trufflehogElasticApiKey',
+  'trufflehogElasticServiceToken',
+  'trufflehogCircleciToken',
+  'trufflehogTravisciToken',
+  'trufflehogGitUsername',
+  'trufflehogGitToken',
 ] as const
 
 const ALLOWED_TUNNEL_FIELDS = [

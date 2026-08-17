@@ -497,7 +497,7 @@ describe('Dynamic TOC Numbering', () => {
         exploits: [],
         githubSecrets: { repos: 1, secrets: 3, sensitiveFiles: 1 },
       },
-      trufflehog: { totalFindings: 2, verifiedFindings: 1, repositories: 1, findings: [] },
+      trufflehog: { totalFindings: 2, verifiedFindings: 1, liveFindings: 1, repositories: 1, sources: [], findings: [] },
       secrets: { total: 5, bySeverity: [], bySource: [], byType: [], findings: [] },
       jsRecon: { totalFindings: 3, bySeverity: [], byType: [], findings: [] },
       otx: { totalPulses: 2, totalMalware: 1, enrichedIps: 0, adversaries: [], pulses: [], malware: [] },
@@ -536,9 +536,11 @@ describe('HTML Escaping / XSS Prevention', () => {
       trufflehog: {
         totalFindings: 1,
         verifiedFindings: 0,
+        liveFindings: 0,
         repositories: 1,
+        sources: [],
         findings: [
-          { detectorName: '<img onerror=alert(1)>', verified: false, redacted: null, repository: null, file: null, commit: null, line: null, link: null },
+          { detectorName: '<img onerror=alert(1)>', verified: false, validationStatus: 'unvalidated', source: 'github', findingKind: 'secret', redacted: null, asset: null, location: null, commit: null, line: null, link: null, repository: null, file: null },
         ],
       },
     })
@@ -601,7 +603,7 @@ describe('Section ID Consistency', () => {
         exploits: [],
         githubSecrets: { repos: 1, secrets: 1, sensitiveFiles: 0 },
       },
-      trufflehog: { totalFindings: 1, verifiedFindings: 0, repositories: 1, findings: [{ detectorName: 'test', verified: false, redacted: null, repository: null, file: null, commit: null, line: null, link: null }] },
+      trufflehog: { totalFindings: 1, verifiedFindings: 0, liveFindings: 0, repositories: 1, sources: [], findings: [{ detectorName: 'test', verified: false, validationStatus: 'unvalidated', source: 'github', findingKind: 'secret', redacted: null, asset: null, location: null, commit: null, line: null, link: null, repository: null, file: null }] },
       secrets: { total: 1, bySeverity: [], bySource: [], byType: [], findings: [{ secretType: 'test', severity: 'high', source: 'test', sourceUrl: null, sample: null, validationStatus: null, confidence: null, keyType: null }] },
       jsRecon: { totalFindings: 1, bySeverity: [], byType: [], findings: [{ findingType: 'test', severity: 'high', confidence: null, title: 'test', detail: null, evidence: null, sourceUrl: null }] },
       otx: { totalPulses: 1, totalMalware: 0, enrichedIps: 0, adversaries: [], pulses: [{ name: 'test', adversary: null, malwareFamilies: [], attackIds: [], tlp: null, targetedCountries: [], ipAddress: null }], malware: [] },
