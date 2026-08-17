@@ -45,10 +45,20 @@ CONSTRAINTS = [
     "CREATE CONSTRAINT malpackagefinding_unique IF NOT EXISTS FOR (mf:MalPackageFinding) REQUIRE (mf.finding_id, mf.user_id, mf.project_id) IS UNIQUE",
     "CREATE CONSTRAINT githubsecret_unique IF NOT EXISTS FOR (gs:GithubSecret) REQUIRE gs.id IS UNIQUE",
     "CREATE CONSTRAINT githubsensitivefile_unique IF NOT EXISTS FOR (gsf:GithubSensitiveFile) REQUIRE gsf.id IS UNIQUE",
-    # TruffleHog Secret Scanner constraints
-    "CREATE CONSTRAINT trufflehogscan_unique IF NOT EXISTS FOR (ts:TrufflehogScan) REQUIRE ts.id IS UNIQUE",
-    "CREATE CONSTRAINT trufflehogrepository_unique IF NOT EXISTS FOR (tr:TrufflehogRepository) REQUIRE tr.id IS UNIQUE",
-    "CREATE CONSTRAINT trufflehogfinding_unique IF NOT EXISTS FOR (tf:TrufflehogFinding) REQUIRE tf.id IS UNIQUE",
+    # TruffleHog Secret Scanner constraints. Tenant-scoped (id, user_id,
+    # project_id), matching the MERGE key: an id-only constraint plus a project
+    # import that re-owns the tenant props WITHOUT rewriting the embedded id left
+    # the two disagreeing about who owns the node.
+    "CREATE CONSTRAINT trufflehogscan_unique IF NOT EXISTS FOR (ts:TrufflehogScan) REQUIRE (ts.id, ts.user_id, ts.project_id) IS UNIQUE",
+    "CREATE CONSTRAINT trufflehogrepository_unique IF NOT EXISTS FOR (tr:TrufflehogRepository) REQUIRE (tr.id, tr.user_id, tr.project_id) IS UNIQUE",
+    "CREATE CONSTRAINT trufflehogfinding_unique IF NOT EXISTS FOR (tf:TrufflehogFinding) REQUIRE (tf.id, tf.user_id, tf.project_id) IS UNIQUE",
+    # Four asset labels for the non-git sources. Grouped by asset SHAPE, not one
+    # per source: the graph renderer draws a node from labels[0] (a single label,
+    # unordered by Neo4j), so a node may carry only one.
+    "CREATE CONSTRAINT trufflehogimage_unique IF NOT EXISTS FOR (ti:TrufflehogImage) REQUIRE (ti.id, ti.user_id, ti.project_id) IS UNIQUE",
+    "CREATE CONSTRAINT trufflehogmodel_unique IF NOT EXISTS FOR (tm:TrufflehogModel) REQUIRE (tm.id, tm.user_id, tm.project_id) IS UNIQUE",
+    "CREATE CONSTRAINT trufflehogbucket_unique IF NOT EXISTS FOR (tb:TrufflehogBucket) REQUIRE (tb.id, tb.user_id, tb.project_id) IS UNIQUE",
+    "CREATE CONSTRAINT trufflehogendpoint_unique IF NOT EXISTS FOR (te:TrufflehogEndpoint) REQUIRE (te.id, te.user_id, te.project_id) IS UNIQUE",
     # JS Recon Scanner constraints
     "CREATE CONSTRAINT jsreconfinding_unique IF NOT EXISTS FOR (jf:JsReconFinding) REQUIRE jf.id IS UNIQUE",
     # Secret constraints
@@ -96,6 +106,10 @@ TENANT_INDEXES = [
     "CREATE INDEX idx_trufflehogscan_tenant IF NOT EXISTS FOR (ts:TrufflehogScan) ON (ts.user_id, ts.project_id)",
     "CREATE INDEX idx_trufflehogrepository_tenant IF NOT EXISTS FOR (tr:TrufflehogRepository) ON (tr.user_id, tr.project_id)",
     "CREATE INDEX idx_trufflehogfinding_tenant IF NOT EXISTS FOR (tf:TrufflehogFinding) ON (tf.user_id, tf.project_id)",
+    "CREATE INDEX idx_trufflehogimage_tenant IF NOT EXISTS FOR (ti:TrufflehogImage) ON (ti.user_id, ti.project_id)",
+    "CREATE INDEX idx_trufflehogmodel_tenant IF NOT EXISTS FOR (tm:TrufflehogModel) ON (tm.user_id, tm.project_id)",
+    "CREATE INDEX idx_trufflehogbucket_tenant IF NOT EXISTS FOR (tb:TrufflehogBucket) ON (tb.user_id, tb.project_id)",
+    "CREATE INDEX idx_trufflehogendpoint_tenant IF NOT EXISTS FOR (te:TrufflehogEndpoint) ON (te.user_id, te.project_id)",
     # JS Recon Scanner tenant indexes
     "CREATE INDEX idx_jsreconfinding_tenant IF NOT EXISTS FOR (jf:JsReconFinding) ON (jf.user_id, jf.project_id)",
     # Secret tenant indexes
@@ -145,9 +159,18 @@ ADDITIONAL_INDEXES = [
     "CREATE INDEX idx_sbomdoc_name IF NOT EXISTS FOR (d:SbomDocument) ON (d.name)",
     "CREATE INDEX idx_githubpath_path IF NOT EXISTS FOR (gp:GithubPath) ON (gp.path)",
     "CREATE INDEX idx_githubsecret_secret_type IF NOT EXISTS FOR (gs:GithubSecret) ON (gs.secret_type)",
-    # TruffleHog functional indexes
+    # TruffleHog functional indexes. The source index carries the scoped clear:
+    # every ingest deletes its own source's subgraph first, and that MATCH runs
+    # on (user_id, project_id, source).
     "CREATE INDEX idx_trufflehogfinding_detector IF NOT EXISTS FOR (tf:TrufflehogFinding) ON (tf.detector_name)",
+    "CREATE INDEX idx_trufflehogfinding_source IF NOT EXISTS FOR (tf:TrufflehogFinding) ON (tf.source)",
+    "CREATE INDEX idx_trufflehogfinding_validation IF NOT EXISTS FOR (tf:TrufflehogFinding) ON (tf.validation_status)",
+    "CREATE INDEX idx_trufflehogscan_source IF NOT EXISTS FOR (ts:TrufflehogScan) ON (ts.source)",
     "CREATE INDEX idx_trufflehogrepository_name IF NOT EXISTS FOR (tr:TrufflehogRepository) ON (tr.name)",
+    "CREATE INDEX idx_trufflehogimage_name IF NOT EXISTS FOR (ti:TrufflehogImage) ON (ti.name)",
+    "CREATE INDEX idx_trufflehogmodel_name IF NOT EXISTS FOR (tm:TrufflehogModel) ON (tm.name)",
+    "CREATE INDEX idx_trufflehogbucket_name IF NOT EXISTS FOR (tb:TrufflehogBucket) ON (tb.name)",
+    "CREATE INDEX idx_trufflehogendpoint_name IF NOT EXISTS FOR (te:TrufflehogEndpoint) ON (te.name)",
     # Secret functional indexes
     "CREATE INDEX idx_secret_type IF NOT EXISTS FOR (s:Secret) ON (s.secret_type)",
     "CREATE INDEX idx_secret_severity IF NOT EXISTS FOR (s:Secret) ON (s.severity)",

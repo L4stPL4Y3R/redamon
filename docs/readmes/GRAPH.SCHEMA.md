@@ -1914,9 +1914,13 @@ RETURN s.name AS host, svc.name AS service, u.url AS url,
 | GithubPath | id, repository, path | ✅ Unique (global), ✅ Tenant index |
 | GithubSecret | id, repository, path, secret_type, sample | ✅ Unique (global), ✅ Tenant index |
 | GithubSensitiveFile | id, repository, path, secret_type | ✅ Unique (global), ✅ Tenant index |
-| TrufflehogScan | id, target, scan_start_time, status, total_findings, verified_findings | ✅ Unique (global), ✅ Tenant index |
-| TrufflehogRepository | id, name | ✅ Unique (global), ✅ Tenant index |
-| TrufflehogFinding | id, detector_name, verified, file, commit, line, repository | ✅ Unique (global), ✅ Tenant index |
+| TrufflehogScan | id, source, target, status, total_findings, validated_findings, assets_scanned | ✅ Unique (tenant), ✅ Tenant index |
+| TrufflehogRepository | id, name, source, asset_kind | ✅ Unique (tenant), ✅ Tenant index |
+| TrufflehogImage | id, name, source, asset_kind | ✅ Unique (tenant), ✅ Tenant index |
+| TrufflehogModel | id, name, source, asset_kind | ✅ Unique (tenant), ✅ Tenant index |
+| TrufflehogBucket | id, name, source, asset_kind | ✅ Unique (tenant), ✅ Tenant index |
+| TrufflehogEndpoint | id, name, source, asset_kind | ✅ Unique (tenant), ✅ Tenant index |
+| TrufflehogFinding | id, source, detector_name, validation_status, finding_kind, asset, location, line | ✅ Unique (tenant), ✅ Tenant index |
 | Secret | id, secret_type, severity, source, source_url, base_url, sample | ✅ Unique (global), ✅ Tenant index |
 | JsReconFinding | id, finding_type, severity, confidence, title, detail, source_url, package_name, package_version | ✅ Unique (global), ✅ Tenant index |
 | Package | purl, ecosystem, name, version, source, source_path, first_seen, last_seen | ✅ Unique (purl, user_id, project_id) |
@@ -2437,12 +2441,23 @@ Findings are deduplicated by `{repository}:{file}:{line}:{detector_name}`.
 
 ### TrufflehogScan (Scan Metadata)
 
+One scan node per **project + source**. The source is part of the id, which is
+what lets a Docker run and a HuggingFace run coexist instead of overwriting each
+other's metadata.
+
 ```cypher
 (:TrufflehogScan {
-    id: "trufflehog-scan-<user_id>-<project_id>",
+    id: "trufflehog-scan-<user_id>-<project_id>-<source>",
     user_id: "samgiam",
     project_id: "first_test",
-    target: "samugit83",
+    source: "docker",                    // git | github | github_experimental | gitlab
+                                         // | docker | huggingface | s3 | gcs | filesystem
+                                         // | jenkins | elasticsearch | postman
+                                         // | circleci | travisci
+    source_label: "Docker registry",
+    run_id: "docker",                    // == source: the run key (one run per source)
+    target: "acme/app:1.0",
+    verification_enabled: true,          // false => every finding is `unverified`
     scan_start_time: "2026-03-20T14:10:04.193830",
     scan_end_time: "2026-03-20T16:35:05.335142",
     duration_seconds: 8701.14,
@@ -2450,104 +2465,163 @@ Findings are deduplicated by `{repository}:{file}:{line}:{detector_name}`.
     total_findings: 47,
     verified_findings: 12,
     unverified_findings: 35,
-    repositories_scanned: 16,
+    validated_findings: 12,              // confirmed live by the owning API
+    assets_scanned: 16,
+    repositories_scanned: 16,            // deprecated alias of assets_scanned
     updated_at: "2026-03-20T16:35:05.335142"
 })
 ```
 
 **Relationship:** `Domain -[:HAS_TRUFFLEHOG_SCAN]-> TrufflehogScan`
 
-### TrufflehogRepository (Scanned Repository)
+### Asset nodes (five labels, not sixteen)
+
+The graph renderer draws a node from `labels[0]` — a **single** label, and Neo4j
+does not guarantee label ordering — so every node carries exactly one. Sixteen
+source-specific labels would be unmaintainable and one generic label would make
+every source the same colour, so assets are grouped by **shape**:
+
+| Label | Sources | `asset_kind` | `name` holds |
+| ----- | ------- | ------------ | ------------ |
+| `TrufflehogRepository` | git, github, github_experimental, gitlab | `repository` | `org/repo` or clone URL |
+| `TrufflehogImage` | docker | `image` | `namespace/image:tag` |
+| `TrufflehogModel` | huggingface | `model` | `user/model` |
+| `TrufflehogBucket` | s3, gcs | `bucket` | bucket name |
+| `TrufflehogEndpoint` | jenkins, elasticsearch, postman, circleci, travisci, filesystem | `endpoint` | URL, node, workspace or scan root |
 
 ```cypher
-(:TrufflehogRepository {
-    id: "trufflehog-repo-<user_id>-<project_id>-<hash>",
-    name: "samugit83/ai-superagent",
+(:TrufflehogImage {
+    id: "trufflehog-asset-<user_id>-<project_id>-<source>-<digest12>",
+    name: "acme/app:1.0",
+    source: "docker",                    // required: the scoped clear matches on it
+    asset_kind: "image",
+    scan_id: "trufflehog-scan-<user_id>-<project_id>-docker",
     user_id: "samgiam",
     project_id: "first_test",
     updated_at: "2026-03-20T16:35:05.335142"
 })
 ```
 
-**Relationship:** `TrufflehogScan -[:HAS_REPOSITORY]-> TrufflehogRepository`
+**Relationship:** `TrufflehogScan -[:HAS_ASSET]-> <asset label>`
 
 ### TrufflehogFinding (Detected Credential Finding)
 
-Leaf node for individual credential findings detected by TruffleHog's detector engine.
+Leaf node for individual credential findings. One label regardless of source: a
+secret is a secret wherever it was found.
 
 ```cypher
 (:TrufflehogFinding {
-    id: "trufflehog-finding-<user_id>-<project_id>-<hash>",
+    id: "trufflehog-finding-<user_id>-<project_id>-<source>-<digest12>",
     user_id: "samgiam",
     project_id: "first_test",
+    source: "docker",
+    scan_id: "trufflehog-scan-<user_id>-<project_id>-docker",
     detector_name: "AWS",
     detector_description: "Amazon Web Services access key",
-    verified: true,
+    verified: true,                      // raw TruffleHog bool
+    validation_status: "validated",      // the load-bearing attribute, see below
+    finding_kind: "secret",              // secret | image_history
     redacted: "AKIA2E0A8F3B1...",
-    file: "deploy/config.yml",
-    commit: "a3b2c1d",
+    asset: "acme/app:1.0",               // generalises `repository`
+    location: "/app/deploy/config.yml",  // generalises `file`: layer path, object key, URL
+    repository: "acme/app:1.0",          // deprecated alias of asset
+    file: "/app/deploy/config.yml",      // deprecated alias of location
+    commit: "a3b2c1d",                   // empty for non-git sources
     line: 42,
-    link: "https://github.com/samugit83/ai-superagent/blob/a3b2c1d/deploy/config.yml#L42",
-    extra_data: "{}",
-    repository: "samugit83/ai-superagent",
+    link: "https://...",
+    extra_data: "{\"Tag\": \"1.0\", \"Layer\": \"sha256:...\"}",
     timestamp: "2026-03-20T14:12:31.917308",
     updated_at: "2026-03-20T14:12:31.917308"
 })
 ```
 
-**Dedup key:** `{repository}:{file}:{line}:{detector_name}`
+**`validation_status`** — the same vocabulary the `:Secret` nodes use, so the
+`ValidationChip` and `VALIDATION_RANK` are reused verbatim:
 
-**Relationship:** `TrufflehogRepository -[:HAS_FINDING]-> TrufflehogFinding`
+| Value | Meaning |
+| ----- | ------- |
+| `validated` | the owning API confirmed the credential is LIVE |
+| `unvalidated` | verification ran and the API said it is not live |
+| `verify_error` | the verify call itself failed — **not** proof it is dead |
+| `unverified` | verification was switched off — never checked, **not** safe |
+
+`unvalidated` and `unverified` must never be collapsed: one means "checked,
+dead", the other "we never looked", and a pentest report cannot treat them alike.
+
+**`finding_kind`** — `image_history` marks a secret found in a Docker image's
+build history (`RUN`/`ENV` directives), whose `location` is the synthetic path
+`image-metadata:history:{index}:created-by` rather than a real file.
+
+**Dedup key:** `{source}:{asset}:{location}:{line}:{detector_name}` — source-scoped,
+so the same secret found by two sources stays two findings.
+
+**Node ids** use a stable `sha1(...)[:12]` digest, never Python's builtin
+`hash()`, which is randomised per process (PYTHONHASHSEED) and gave the same
+asset a different id on every run.
+
+**Relationship:** `<asset label> -[:HAS_FINDING]-> TrufflehogFinding`
 
 ### Full Chain
 
 ```
-Domain -[:HAS_TRUFFLEHOG_SCAN]-> TrufflehogScan
-    -[:HAS_REPOSITORY]-> TrufflehogRepository
+Domain -[:HAS_TRUFFLEHOG_SCAN]-> TrufflehogScan          (one per project+source)
+    -[:HAS_ASSET]-> TrufflehogRepository|Image|Model|Bucket|Endpoint
         -[:HAS_FINDING]-> TrufflehogFinding
 ```
+
+### Scoped clearing
+
+`clear_trufflehog_data(user_id, project_id, source=...)` deletes ONLY that
+source's subgraph. Ingest always passes a source; only project deletion passes
+`None`. An unscoped clear at ingest time would mean the Docker scan finishing
+erases every HuggingFace finding — silently.
 
 ### Constraints & Indexes
 
 ```cypher
+-- Tenant-scoped, matching the MERGE key. Applies to all six labels.
 CREATE CONSTRAINT trufflehogscan_unique IF NOT EXISTS
-FOR (ts:TrufflehogScan) REQUIRE ts.id IS UNIQUE;
-
-CREATE CONSTRAINT trufflehogrepo_unique IF NOT EXISTS
-FOR (tr:TrufflehogRepository) REQUIRE tr.id IS UNIQUE;
+FOR (ts:TrufflehogScan) REQUIRE (ts.id, ts.user_id, ts.project_id) IS UNIQUE;
 
 CREATE CONSTRAINT trufflehogfinding_unique IF NOT EXISTS
-FOR (tf:TrufflehogFinding) REQUIRE tf.id IS UNIQUE;
-
-CREATE INDEX idx_trufflehogscan_tenant IF NOT EXISTS
-FOR (ts:TrufflehogScan) ON (ts.user_id, ts.project_id);
-
-CREATE INDEX idx_trufflehogrepo_tenant IF NOT EXISTS
-FOR (tr:TrufflehogRepository) ON (tr.user_id, tr.project_id);
+FOR (tf:TrufflehogFinding) REQUIRE (tf.id, tf.user_id, tf.project_id) IS UNIQUE;
+-- ... plus TrufflehogRepository / Image / Model / Bucket / Endpoint
 
 CREATE INDEX idx_trufflehogfinding_tenant IF NOT EXISTS
 FOR (tf:TrufflehogFinding) ON (tf.user_id, tf.project_id);
+
+-- Carries the scoped clear, which matches on (user_id, project_id, source).
+CREATE INDEX idx_trufflehogfinding_source IF NOT EXISTS
+FOR (tf:TrufflehogFinding) ON (tf.source);
+
+CREATE INDEX idx_trufflehogfinding_validation IF NOT EXISTS
+FOR (tf:TrufflehogFinding) ON (tf.validation_status);
 ```
 
 ### Example Queries
 
 ```cypher
-// Full chain: all TruffleHog findings for a project
+// Full chain: all TruffleHog findings for a project, any source
 MATCH (d:Domain {user_id: $userId, project_id: $projectId})
-      -[:HAS_TRUFFLEHOG_SCAN]->(ts:TrufflehogScan)
-      -[:HAS_REPOSITORY]->(tr:TrufflehogRepository)
-      -[:HAS_FINDING]->(tf:TrufflehogFinding)
-RETURN tr.name AS repository, tf.detector_name AS detector, tf.file AS file, tf.verified AS verified
+      -[:HAS_TRUFFLEHOG_SCAN]->(ts:TrufflehogScan)-[:HAS_ASSET]->(a)-[:HAS_FINDING]->(tf:TrufflehogFinding)
+RETURN ts.source AS source, a.name AS asset, tf.detector_name AS detector,
+       tf.location AS location, tf.validation_status AS validation
 
-// Only verified findings
-MATCH (tf:TrufflehogFinding {user_id: $userId, project_id: $projectId, verified: true})
-RETURN tf.repository, tf.detector_name, tf.file, tf.line, tf.redacted
+// Live credentials only — the ones that need acting on now
+MATCH (tf:TrufflehogFinding {user_id: $userId, project_id: $projectId,
+                             validation_status: 'validated'})
+RETURN tf.source, tf.asset, tf.location, tf.detector_name, tf.redacted
 
-// Count findings per repository
-MATCH (tr:TrufflehogRepository {user_id: $userId, project_id: $projectId})
-      -[:HAS_FINDING]->(tf:TrufflehogFinding)
-WITH tr, count(tf) AS total, sum(CASE WHEN tf.verified THEN 1 ELSE 0 END) AS verified
-RETURN tr.name AS repo, total, verified ORDER BY total DESC
+// Findings per source
+MATCH (tf:TrufflehogFinding {user_id: $userId, project_id: $projectId})
+RETURN tf.source AS source, count(*) AS total,
+       sum(CASE WHEN tf.validation_status = 'validated' THEN 1 ELSE 0 END) AS live
+ORDER BY live DESC
+
+// Secrets baked into a Docker image's build history
+MATCH (tf:TrufflehogFinding {user_id: $userId, project_id: $projectId,
+                             finding_kind: 'image_history'})
+RETURN tf.asset AS image, tf.detector_name AS detector, tf.redacted
 ```
 
 ---

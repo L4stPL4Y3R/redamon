@@ -49,6 +49,10 @@ export const NODE_COLORS: Record<string, string> = {
   // TRUFFLEHOG INTELLIGENCE (Teal-gray family - distinct from GitHub Hunt)
   TrufflehogScan: '#334155',       // Slate-700 - scan container node
   TrufflehogRepository: '#475569', // Slate-600 - repository node
+  TrufflehogImage: '#0e7490',      // Cyan-700 - container images
+  TrufflehogModel: '#7e22ce',      // Purple-700 - AI assets (models/spaces/datasets)
+  TrufflehogBucket: '#a16207',     // Yellow-700 - object storage
+  TrufflehogEndpoint: '#3f6212',   // Lime-800 - service instances and scan roots
   TrufflehogFinding: '#8b5e3c',    // Muted bronze - secret finding (warm, distinct from GithubSecret purple)
 
   // JS RECON SCANNER (Fuchsia - distinct from all other node families)

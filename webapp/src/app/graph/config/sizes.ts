@@ -16,6 +16,10 @@ export const NODE_SIZES: Record<string, number> = {
   GithubSensitiveFile: 1,   // Leaf: sensitive file
   TrufflehogScan: 2.5,       // Prominent scan node (same as GithubHunt)
   TrufflehogRepository: 1.5, // Medium repo nodes
+  TrufflehogImage: 1.5,      // Asset nodes all sit at the repository size
+  TrufflehogModel: 1.5,
+  TrufflehogBucket: 1.5,
+  TrufflehogEndpoint: 1.5,
   TrufflehogFinding: 1,      // Leaf: secret finding
   Secret: 1.2,              // Slightly larger than default leaf nodes
   JsReconFinding: 1,        // Leaf: JS analysis finding

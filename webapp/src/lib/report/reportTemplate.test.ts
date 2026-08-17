@@ -71,7 +71,9 @@ function makeReportData(overrides: Partial<ReportData> = {}): ReportData {
     trufflehog: {
       totalFindings: 0,
       verifiedFindings: 0,
+      liveFindings: 0,
       repositories: 0,
+      sources: [],
       findings: [],
     },
     secrets: {
@@ -201,19 +203,51 @@ describe('Conditional Section Rendering', () => {
       trufflehog: {
         totalFindings: 3,
         verifiedFindings: 1,
+        liveFindings: 1,
         repositories: 2,
+        sources: [
+          { source: 'github', target: 'org', status: 'completed', total: 2, live: 1, assets: 1 },
+          { source: 'docker', target: 'org/app:1.0', status: 'completed', total: 1, live: 0, assets: 1 },
+        ],
         findings: [
-          { detectorName: 'AWS', verified: true, redacted: 'AKIA...', repository: 'org/repo', file: '.env', commit: 'abc123', line: 5, link: null },
-          { detectorName: 'GitHub', verified: false, redacted: 'ghp_...', repository: 'org/repo', file: 'config.js', commit: 'def456', line: 10, link: null },
+          { detectorName: 'AWS', verified: true, validationStatus: 'validated', source: 'github', findingKind: 'secret', redacted: 'AKIA...', asset: 'org/repo', location: '.env', commit: 'abc123', line: 5, link: null, repository: 'org/repo', file: '.env' },
+          { detectorName: 'GitHub', verified: false, validationStatus: 'unvalidated', source: 'github', findingKind: 'secret', redacted: 'ghp_...', asset: 'org/repo', location: 'config.js', commit: 'def456', line: 10, link: null, repository: 'org/repo', file: 'config.js' },
+          { detectorName: 'AWS', verified: false, validationStatus: 'unverified', source: 'docker', findingKind: 'image_history', redacted: 'AKIA2...', asset: 'org/app:1.0', location: 'image-metadata:history:3:created-by', commit: '', line: 0, link: null, repository: 'org/app:1.0', file: 'image-metadata:history:3:created-by' },
         ],
       },
     })
     const html = generateReportHtml(data, null)
     expect(html).toContain('id="trufflehog"')
     expect(html).toContain('TruffleHog Findings')
-    expect(html).toContain('VERIFIED')
     expect(html).toContain('AWS')
     expect(html).toContain('AKIA...')
+    // A credential confirmed live by the owning API, not merely "verified".
+    expect(html).toContain('LIVE')
+    expect(html).toContain('confirmed LIVE by the owning service')
+    // "Never checked" must not read as "not live".
+    expect(html).toContain('Not checked')
+    expect(html).toContain('Not live')
+    // Several sources scan in parallel; the report breaks them out.
+    expect(html).toContain('By source')
+    expect(html).toContain('docker')
+    // A build-history finding has no real file path to show.
+    expect(html).toContain('Dockerfile (build history)')
+  })
+
+  test('TruffleHog live count leads even when `verified` disagrees', () => {
+    // verifiedFindings is the raw TruffleHog bool; liveFindings is the
+    // normalised one. The alert must follow the normalised count.
+    const data = makeReportData({
+      trufflehog: {
+        totalFindings: 1, verifiedFindings: 0, liveFindings: 1, repositories: 1,
+        sources: [],
+        findings: [
+          { detectorName: 'AWS', verified: false, validationStatus: 'validated', source: 's3', findingKind: 'secret', redacted: 'AKIA...', asset: 'bkt', location: 'k', commit: '', line: 0, link: null, repository: 'bkt', file: 'k' },
+        ],
+      },
+    })
+    const html = generateReportHtml(data, null)
+    expect(html).toContain('1 credential(s) confirmed LIVE')
   })
 
   test('Secrets section NOT rendered when total=0', () => {
@@ -443,7 +477,7 @@ describe('Dynamic TOC Numbering', () => {
 
   test('TOC numbers shift when conditional sections are present', () => {
     const data = makeReportData({
-      trufflehog: { totalFindings: 1, verifiedFindings: 0, repositories: 1, findings: [] },
+      trufflehog: { totalFindings: 1, verifiedFindings: 0, liveFindings: 0, repositories: 1, sources: [], findings: [] },
       jsRecon: { totalFindings: 1, bySeverity: [], byType: [], findings: [] },
       otx: { totalPulses: 1, totalMalware: 0, enrichedIps: 0, adversaries: [], pulses: [], malware: [] },
     })

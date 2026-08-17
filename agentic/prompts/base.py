@@ -1887,29 +1887,58 @@ Web cache poisoning properties (source="cache_poisoning"):
 - retry_possible (boolean), phase (string)
 - created_at (datetime)
 
-### TruffleHog Secret Scanner Nodes (Hierarchy: Domain -> TrufflehogScan -> TrufflehogRepository -> TrufflehogFinding)
+### TruffleHog Secret Scanner Nodes (Hierarchy: Domain -> TrufflehogScan -> <asset> -> TrufflehogFinding)
 
-**TrufflehogScan** - Scan metadata for a TruffleHog secret scan run
-- target (string): scan target (e.g. GitHub org name)
+TruffleHog scans 14 different SOURCES (git repos, Docker images, HuggingFace
+models, S3/GCS buckets, Jenkins, Elasticsearch, Postman, CircleCI, TravisCI,
+filesystem). Each source is a SEPARATE scan node and they run in parallel, so a
+project can hold several TrufflehogScan nodes at once. Filter by `source` when
+the user asks about one of them.
+
+**TrufflehogScan** - Scan metadata for ONE source's run
+- source (string): "git", "github", "github_experimental", "gitlab", "docker",
+  "huggingface", "s3", "gcs", "filesystem", "jenkins", "elasticsearch",
+  "postman", "circleci", "travisci"
+- source_label (string): display name, e.g. "Docker registry"
+- target (string): what was scanned (org name, image ref, bucket, URL)
+- verification_enabled (boolean): false means NOTHING was checked against a live API
 - scan_start_time (string), scan_end_time (string): timestamps
 - duration_seconds (float): scan duration
-- status (string): "completed", "failed", "unknown"
+- status (string): "completed", "error", "unknown"
 - total_findings (integer), verified_findings (integer), unverified_findings (integer)
-- repositories_scanned (integer)
+- validated_findings (integer): findings confirmed LIVE by the owning API
+- assets_scanned (integer) — `repositories_scanned` is a deprecated alias
 
-**TrufflehogRepository** - A repository scanned by TruffleHog
-- name (string): repository name (e.g. "org/repo-name")
+**Asset nodes** - one label per asset SHAPE, all with the same properties:
+`TrufflehogRepository` (git/github/gitlab), `TrufflehogImage` (docker),
+`TrufflehogModel` (huggingface), `TrufflehogBucket` (s3/gcs),
+`TrufflehogEndpoint` (jenkins/elasticsearch/postman/circleci/travisci/filesystem)
+- name (string): the human identifier — "org/repo", "ns/image:tag", "user/model",
+  bucket name, or instance URL
+- source (string), asset_kind (string): "repository" | "image" | "model" | "bucket" | "endpoint"
+- scan_id (string): the TrufflehogScan it belongs to
 
-**TrufflehogFinding** - A secret found by TruffleHog in a repository
+**TrufflehogFinding** - A secret found by TruffleHog
+- source (string): which source found it
 - detector_name (string): detector type (e.g. "AWS", "GitHub", "PrivateKey", "Slack")
 - detector_description (string): human-readable detector description
-- verified (boolean): whether the secret was verified as active
+- validation_status (string): THE attribute that matters.
+  * "validated"    = the owning API confirmed the credential is LIVE (act on this)
+  * "unvalidated"  = verification ran, the API said it is not live
+  * "verify_error" = the verify call itself failed — NOT proof it is dead
+  * "unverified"   = verification was switched off — never checked, NOT safe
+  Never treat "unverified" as "not live"; it means nobody looked.
+- verified (boolean): the raw TruffleHog bool; prefer validation_status
+- finding_kind (string): "secret", or "image_history" for a secret baked into a
+  Docker image's build history (RUN/ENV directive), whose location is a synthetic
+  path, not a real file
 - redacted (string): redacted secret value
-- repository (string): repository name where found
-- file (string): file path within the repository
-- commit (string): git commit hash
-- line (integer): line number in file
+- asset (string): the asset it was found in (`repository` is a deprecated alias)
+- location (string): file path, layer path, object key or URL (`file` is a deprecated alias)
+- commit (string): git commit hash — empty for non-git sources
+- line (integer): line number
 - link (string): URL to the finding location
+- extra_data (string): JSON blob of per-source extras (Docker Tag/Layer, HF revision, ...)
 - timestamp (string): commit timestamp
 - extra_data (string): JSON string with additional detector-specific data
 
@@ -2187,8 +2216,9 @@ hostname directly (nuclei vulns aren't linked to Domain/Subdomain via HAS_VULNER
 
 ### TruffleHog Secret Scanner Relationships
 - `(d:Domain)-[:HAS_TRUFFLEHOG_SCAN]->(ts:TrufflehogScan)` - Domain has TruffleHog scan
-- `(ts:TrufflehogScan)-[:HAS_REPOSITORY]->(tr:TrufflehogRepository)` - Scan scanned repository
-- `(tr:TrufflehogRepository)-[:HAS_FINDING]->(tf:TrufflehogFinding)` - Repository has secret finding
+- `(ts:TrufflehogScan)-[:HAS_ASSET]->(a)` - Scan covered this asset (a is one of
+  TrufflehogRepository / TrufflehogImage / TrufflehogModel / TrufflehogBucket / TrufflehogEndpoint)
+- `(a)-[:HAS_FINDING]->(tf:TrufflehogFinding)` - Asset holds this secret finding
 - `(b:BaseURL)-[:DEPENDS_ON]->(p:Package)` - Live target serves this dependency (Supply-Chain Recon)
 - `(gr:GithubRepository)-[:DEPENDS_ON]->(p:Package)` - Repository depends on this package (Supply-Chain scan, repo input)
 - `(d:SbomDocument)-[:DEPENDS_ON]->(p:Package)` - An UPLOADED SBOM/lockfile listed this package (Supply-Chain scan, upload input). `d.name` is the filename
@@ -2363,27 +2393,40 @@ RETURN b.url, count(s) AS secret_count, collect(s.secret_type) AS types
 ORDER BY secret_count DESC
 ```
 
-### TruffleHog Secrets (Secrets Found in Git Repositories)
+### TruffleHog Secrets (14 sources: git, Docker, HuggingFace, S3/GCS, Jenkins, ...)
 ```cypher
-// All TruffleHog findings (verified secrets)
-MATCH (d:Domain)-[:HAS_TRUFFLEHOG_SCAN]->(ts:TrufflehogScan)-[:HAS_REPOSITORY]->(tr:TrufflehogRepository)-[:HAS_FINDING]->(tf:TrufflehogFinding)
-WHERE tf.verified = true
-RETURN tr.name AS repository, tf.detector_name, tf.file, tf.line, tf.redacted
+// LIVE credentials across every source — the highest-value query here
+MATCH (tf:TrufflehogFinding {validation_status: 'validated'})
+RETURN tf.source, tf.asset, tf.location, tf.detector_name, tf.redacted
 LIMIT 500
 
-// TruffleHog scan summary
+// Full chain, any source
+MATCH (d:Domain)-[:HAS_TRUFFLEHOG_SCAN]->(ts:TrufflehogScan)-[:HAS_ASSET]->(a)-[:HAS_FINDING]->(tf:TrufflehogFinding)
+RETURN ts.source AS source, a.name AS asset, tf.detector_name, tf.location, tf.validation_status
+LIMIT 500
+
+// One source only (e.g. the Docker registry scan)
+MATCH (ts:TrufflehogScan {source: 'docker'})-[:HAS_ASSET]->(img:TrufflehogImage)-[:HAS_FINDING]->(tf:TrufflehogFinding)
+RETURN img.name AS image, tf.detector_name, tf.location, tf.validation_status
+
+// Scan summary per source
 MATCH (ts:TrufflehogScan)
-RETURN ts.target, ts.status, ts.total_findings, ts.verified_findings, ts.repositories_scanned
+RETURN ts.source, ts.target, ts.status, ts.total_findings, ts.validated_findings, ts.assets_scanned
 
-// TruffleHog findings grouped by detector type
+// Findings grouped by detector, with the LIVE count
 MATCH (tf:TrufflehogFinding)
-RETURN tf.detector_name, count(tf) AS finding_count, sum(CASE WHEN tf.verified THEN 1 ELSE 0 END) AS verified_count
-ORDER BY finding_count DESC
+RETURN tf.detector_name, count(tf) AS finding_count,
+       sum(CASE WHEN tf.validation_status = 'validated' THEN 1 ELSE 0 END) AS live_count
+ORDER BY live_count DESC, finding_count DESC
 
-// TruffleHog findings in a specific repository
-MATCH (tr:TrufflehogRepository)-[:HAS_FINDING]->(tf:TrufflehogFinding)
-WHERE tr.name CONTAINS "repo-name"
-RETURN tf.detector_name, tf.file, tf.line, tf.verified, tf.redacted
+// Secrets baked into a Docker image's build history (no real file path)
+MATCH (tf:TrufflehogFinding {finding_kind: 'image_history'})
+RETURN tf.asset AS image, tf.detector_name, tf.redacted
+
+// Findings in a specific asset (repo, image, bucket, model, endpoint)
+MATCH (a)-[:HAS_FINDING]->(tf:TrufflehogFinding)
+WHERE a.name CONTAINS "acme"
+RETURN tf.source, tf.detector_name, tf.location, tf.line, tf.validation_status, tf.redacted
 ```
 
 ### JS Recon Findings
