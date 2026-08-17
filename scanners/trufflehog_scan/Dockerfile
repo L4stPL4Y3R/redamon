@@ -1,39 +1,55 @@
 # =============================================================================
 # RedAmon TruffleHog Secret Scanner - Container
 # =============================================================================
-# This container runs TruffleHog deep secret scanning with 700+ detectors
-# and optional credential verification against live APIs.
+# Runs ONE TruffleHog source per container and writes findings to JSON.
+# Holds no Neo4j credentials and makes no call back to the webapp: it is the
+# dirty half of the dirty/clean split, so an exploited target image finds only
+# the one source credential it was already given.
 # =============================================================================
 
-FROM python:3.12-slim
+# Pinned to a specific Debian release, not the floating `slim` alias, so the
+# base cannot change under a container that parses attacker-controlled bytes.
+# Tighten to a @sha256 digest at deploy time if your registry mirror allows it.
+FROM python:3.12-slim-bookworm
 
 LABEL maintainer="RedAmon Project"
 LABEL description="TruffleHog-based secret scanner for RedAmon"
 
-# Set working directory
 WORKDIR /app
 
-# Install git (required by TruffleHog for repo scanning) + TruffleHog Go binary
+# The upstream one-liner (curl install.sh | sh) fetches an unpinned script from
+# a mutable branch and resolves to whatever release is newest. Pin the version
+# and download the release tarball directly; the release page publishes
+# trufflehog_<version>_checksums.txt, which is verified before extraction.
+ARG TRUFFLEHOG_VERSION=3.96.0
+
+# git is required by TruffleHog for repo scanning.
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates git && \
-    curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin && \
+    base="https://github.com/trufflesecurity/trufflehog/releases/download/v${TRUFFLEHOG_VERSION}" && \
+    asset="trufflehog_${TRUFFLEHOG_VERSION}_linux_amd64.tar.gz" && \
+    curl -sSfL -o "/tmp/${asset}" "${base}/${asset}" && \
+    curl -sSfL -o /tmp/checksums.txt "${base}/trufflehog_${TRUFFLEHOG_VERSION}_checksums.txt" && \
+    (cd /tmp && grep " ${asset}\$" checksums.txt | sha256sum -c -) && \
+    tar -xzf "/tmp/${asset}" -C /usr/local/bin trufflehog && \
+    chmod 0755 /usr/local/bin/trufflehog && \
+    rm -f "/tmp/${asset}" /tmp/checksums.txt && \
+    /usr/local/bin/trufflehog --version && \
     apt-get purge -y curl && apt-get autoremove -y && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
-COPY scanners/trufflehog_scan/requirements.txt /tmp/trufflehog_requirements.txt
-RUN pip install --no-cache-dir -r /tmp/trufflehog_requirements.txt
-
-# Copy project files (context is parent directory, so paths are relative to project root)
 COPY scanners/trufflehog_scan/ ./trufflehog_scan/
 
-# Copy graph_db module (for Neo4j integration)
-COPY graph_db/ ./graph_db/
+# The scan runs as a non-root user with a read-only root filesystem; /tmp and
+# the run dir are tmpfs mounts supplied at spawn.
+RUN mkdir -p trufflehog_scan/output && \
+    useradd --uid 10001 --create-home --shell /usr/sbin/nologin trufflehog && \
+    chown -R trufflehog:trufflehog /app
 
-# Create output directories
-RUN mkdir -p trufflehog_scan/output
-
-# Set Python path and ensure unbuffered output for log streaming
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
+# Pinned so the identity digests in findings.py stay reproducible even if a
+# future change reintroduces a builtin hash() anywhere on this path.
+ENV PYTHONHASHSEED=0
 
-# Default command
+USER trufflehog
+
 CMD ["python", "trufflehog_scan/main.py"]
