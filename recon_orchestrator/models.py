@@ -249,6 +249,11 @@ class TrufflehogState(BaseModel):
     container_id: Optional[str] = None
     #: Set once the clean ingest step has written this run's findings to Neo4j.
     ingested: bool = False
+    #: Bounded so a permanently-failing ingest is not retried on every 30 s sweep.
+    ingest_attempts: int = 0
+    #: True once the finished container has been removed — after which there is
+    #: nothing left to ask Docker about this run.
+    container_removed: bool = False
     findings_count: int = 0
 
 

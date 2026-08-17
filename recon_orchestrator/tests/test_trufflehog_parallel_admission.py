@@ -10,8 +10,10 @@ reaper free a live scan's reservation and the governor over-admit into OOM.
 import asyncio
 import os
 import sys
+import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -651,3 +653,156 @@ class TestF9ErrorPathRedaction(unittest.TestCase):
         self.assertEqual(state.status, TrufflehogStatus.ERROR)
         self.assertNotIn(secret, state.error or "")
         self.assertIn("***", state.error or "")
+
+
+# ===========================================================================
+# Regression tests for the failure-mode analysis findings (F1, F2, F3).
+# ===========================================================================
+
+class TestF1StaleArtifactIsNotIngested(unittest.TestCase):
+    """F1: the per-run scratch dir persists across runs. A run that never got
+    far enough to write out.json would publish the PREVIOUS run's file and the
+    graph would show one target's findings under a scan of another."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.m = make_manager()
+        self.run_dir = Path(self._tmp.name) / "run"
+        self.m._trufflehog_run_dir = lambda p, s: self.run_dir
+        self.addCleanup(self._tmp.cleanup)
+        self._egress = patch.object(cm_mod, "classify_host", return_value=(True, "1.2.3.4", "ok"))
+        self._egress.start()
+        self.addCleanup(self._egress.stop)
+
+    def _start_failing(self):
+        async def admit(*a, **kw):
+            return "key"
+        self.m._admit_scan = admit
+        self.m.client.containers.get.side_effect = cm_mod.NotFound("none")
+        # Fail at the spawn, after the run dir has been prepared.
+        self.m.client.images.get.side_effect = RuntimeError("daemon unavailable")
+        return run(self.m.start_trufflehog(
+            project_id="p1", user_id="u1", trufflehog_path="/app/trufflehog_scan",
+            source="docker", config={"images": ["nginx:1.25"]}, common={}, secrets={},
+        ))
+
+    def test_f1_a_previous_runs_artifact_is_removed_at_start(self):
+        self.run_dir.mkdir(parents=True)
+        (self.run_dir / "out.json").write_text('{"source":"docker","findings":[{"x":1}]}')
+        state = self._start_failing()
+        self.assertEqual(state.status, TrufflehogStatus.ERROR)
+        self.assertFalse((self.run_dir / "out.json").exists(),
+                         "the previous run's artifact survived into this run")
+
+    def test_f1_a_failed_run_has_nothing_to_ingest(self):
+        self.run_dir.mkdir(parents=True)
+        (self.run_dir / "out.json").write_text('{"source":"docker","findings":[{"x":1}]}')
+        state = self._start_failing()
+        ingested = []
+        self.m._trufflehog_output_path = lambda p, s: Path(self._tmp.name) / "published.json"
+        with patch.object(cm_mod.ContainerManager, "_publish_trufflehog_output",
+                          side_effect=lambda p, s: ingested.append((p, s))):
+            self.m._ingest_trufflehog(state)
+        # publish is reached (there is no artifact to find), but nothing is written.
+        self.assertFalse(state.ingested)
+
+    def test_f1_a_missing_artifact_is_not_an_error(self):
+        self.run_dir.mkdir(parents=True)
+        self._start_failing()  # no out.json existed to begin with
+        self.assertFalse((self.run_dir / "out.json").exists())
+
+
+class TestF3NoGraphClearBeforeTheSpawn(unittest.TestCase):
+    """F3: clearing up front meant a spawn that failed destroyed the last good
+    results and left nothing in their place."""
+
+    def test_f3_the_start_path_does_not_clear_the_graph(self):
+        import inspect
+        src = inspect.getsource(cm_mod.ContainerManager.start_trufflehog)
+        self.assertNotIn("clear_trufflehog_data", src)
+        self.assertNotIn("_clear_trufflehog_graph", src)
+
+    def test_f3_the_clear_still_happens_at_ingest_time(self):
+        # The scoped clear must not simply have been dropped:
+        # update_graph_from_trufflehog owns it now. Read as text — this suite
+        # runs in the orchestrator image, which has no neo4j driver to import.
+        mixin = (REPO / "graph_db" / "mixins" / "secret_mixin.py").read_text()
+        body = mixin[mixin.index("def update_graph_from_trufflehog"):]
+        self.assertIn("clear_trufflehog_data(user_id, project_id, source=source)", body)
+
+
+class TestF2TerminalRunsDoNotAccumulate(unittest.TestCase):
+    """F2: every finished run was re-inspected on every 30 s sweep, forever, and
+    a permanently-failing ingest retried just as often."""
+
+    def _terminal(self, completed_secs_ago: float, ingested: bool = True):
+        st = running("p1", "docker")
+        st.status = TrufflehogStatus.COMPLETED
+        st.completed_at = datetime.now(timezone.utc) - timedelta(seconds=completed_secs_ago)
+        st.ingested = ingested
+        st.container_removed = True
+        return st
+
+    def test_f2a_a_settled_run_is_never_inspected_again(self):
+        m = make_manager()
+        m.trufflehog_states = {"p1": {"docker": self._terminal(1)}}
+        m.client.containers.get.side_effect = AssertionError("Docker was polled for a settled run")
+        state = m._get_trufflehog_status_sync("p1", "docker")
+        self.assertEqual(state.status, TrufflehogStatus.COMPLETED)
+
+    def test_f2a_a_live_run_is_still_inspected(self):
+        m = make_manager()
+        m.trufflehog_states = {"p1": {"docker": running("p1", "docker")}}
+        m.client.containers.get.return_value = MagicMock(status="running")
+        m._get_trufflehog_status_sync("p1", "docker")
+        self.assertTrue(m.client.containers.get.called)
+
+    def test_f2b_ingest_retries_are_bounded(self):
+        m = make_manager()
+        st = self._terminal(1, ingested=False)
+        st.container_removed = True
+        m.trufflehog_states = {"p1": {"docker": st}}
+        attempts = []
+
+        def fail(state):
+            attempts.append(1)
+            state.ingest_attempts += 1
+        with patch.object(cm_mod.ContainerManager, "_ingest_trufflehog", side_effect=fail):
+            for _ in range(50):
+                m._get_trufflehog_status_sync("p1", "docker")
+        self.assertEqual(len(attempts), cm_mod.MAX_TRUFFLEHOG_INGEST_ATTEMPTS)
+
+    def test_f2b_the_counter_advances_even_when_ingest_returns_early(self):
+        m = make_manager()
+        st = self._terminal(1, ingested=False)
+        st.user_id = ""      # refused by the tenant guard, which returns early
+        m._ingest_trufflehog(st)
+        self.assertEqual(st.ingest_attempts, 1)
+
+    def test_f2c_a_long_finished_run_is_pruned(self):
+        m = make_manager()
+        m.trufflehog_states = {"p1": {"docker": self._terminal(
+            cm_mod.TRUFFLEHOG_TERMINAL_RETENTION_S + 60)}}
+        run(m.get_all_trufflehog_statuses("p1"))
+        self.assertEqual(m.trufflehog_states.get("p1", {}), {})
+
+    def test_f2c_a_recently_finished_run_is_kept_for_the_reconcile(self):
+        # Pruning inside the webapp's 90 s reconcile grace would make a completed
+        # run vanish from /all before its outcome was read, and its history row
+        # would be recorded as `canceled` instead of `completed`.
+        m = make_manager()
+        m.trufflehog_states = {"p1": {"docker": self._terminal(60)}}
+        runs = run(m.get_all_trufflehog_statuses("p1"))
+        self.assertEqual(len(runs), 1)
+        self.assertIn("docker", m.trufflehog_states["p1"])
+
+    def test_f2c_the_retention_window_clears_the_reconcile_grace(self):
+        # 90_000 ms in webapp/src/app/api/internal/job-queue/reconcile/route.ts.
+        self.assertGreater(cm_mod.TRUFFLEHOG_TERMINAL_RETENTION_S, 90)
+
+    def test_f2c_a_live_run_is_never_pruned(self):
+        m = make_manager()
+        m.trufflehog_states = {"p1": {"docker": running("p1", "docker")}}
+        m.client.containers.get.return_value = MagicMock(status="running")
+        run(m.get_all_trufflehog_statuses("p1"))
+        self.assertIn("docker", m.trufflehog_states["p1"])

@@ -2765,6 +2765,15 @@ cmd_update() {
     if echo "$changed_files" | grep -q "^scanners/capture_proxy/"; then
         rebuild_capture=true
     fi
+    # The proxy image also COPYs two files OUT of recon_orchestrator/ at build
+    # time (hard_guardrail.py, ip_denylist.py — the shared hostname and
+    # resolved-IP denylists). Those live outside scanners/capture_proxy/, so a
+    # change to either would otherwise leave the proxy enforcing a stale guard
+    # while the orchestrator enforced the new one. Keep this list in step with
+    # the COPY lines in scanners/capture_proxy/Dockerfile.
+    if echo "$changed_files" | grep -qE "^recon_orchestrator/(hard_guardrail|ip_denylist)\.py$"; then
+        rebuild_capture=true
+    fi
 
     # Remember whether the stack was serving BEFORE anything is touched. `update`
     # only restarts what it rebuilds, so a user who ran `down` first, or who
@@ -3383,9 +3392,13 @@ cmd_purge() {
     # Belt-and-suspenders: explicitly drop the local-LLM models volume in case it
     # was created outside the compose lifecycle (its name is not <project>_-prefixed).
     docker volume rm "$LOCAL_LLM_VOLUME" >/dev/null 2>&1 || true
-    # The CodeFix sandbox network is created at runtime by the orchestrator (no
-    # compose service is attached), so `compose down` never removes it.
+    # Networks created at RUNTIME by the orchestrator (no compose service is
+    # attached to them), so `compose down` never removes them.
     docker network rm redamon-codefix-net >/dev/null 2>&1 || true
+    docker network rm "${TRUFFLEHOG_NETWORK:-redamon-trufflehog-net}" >/dev/null 2>&1 || true
+    # Per-run TruffleHog scratch dirs (job file + findings before publication).
+    # One per project+source, so bounded — but `purge` claims to leave nothing.
+    rm -rf /tmp/redamon/trufflehog_* >/dev/null 2>&1 || true
 
     info "Removing RedAmon images..."
     remove_redamon_images

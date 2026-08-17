@@ -98,10 +98,16 @@ RUN PRISMA_VER=$(node -p "require('/tmp/prisma-pkg.json').version") && \
     npm install --no-save "prisma@${PRISMA_VER}" bcryptjs && \
     npm cache clean --force && rm /tmp/prisma-pkg.json
 
-# Entrypoint: sync schema to PostgreSQL, then start server
-# Entrypoint order matters: `db push` reconciles the schema (and would DROP the
-# FTS objects), so the traffic-FTS apply MUST run immediately after it (§6.3).
-RUN printf '#!/bin/sh\necho "Syncing Prisma schema..."\nnode node_modules/prisma/build/index.js db push --skip-generate --accept-data-loss --schema ./prisma/schema.prisma 2>&1\nnode scripts/apply-ingest-role.mjs 2>&1\nnode scripts/apply-traffic-fts.mjs 2>&1\nexec node server.js\n' > /app/entrypoint.sh \
+# Entrypoint: migrate, sync schema to PostgreSQL, then start server.
+#
+# Order matters in BOTH directions around `db push`:
+#   BEFORE  — the push carries --accept-data-loss and DROPS columns no longer in
+#             schema.prisma. Anything that needs to read a dropped column has to
+#             run first; the TruffleHog profile migration does, and it exits
+#             non-zero on failure so the push never destroys the source data.
+#   AFTER   — the push would also drop the FTS objects and the ingest role, so
+#             those are re-applied immediately afterwards (§6.3).
+RUN printf '#!/bin/sh\nnode scripts/migrate-trufflehog-profiles.mjs 2>&1 || exit 1\necho "Syncing Prisma schema..."\nnode node_modules/prisma/build/index.js db push --skip-generate --accept-data-loss --schema ./prisma/schema.prisma 2>&1\nnode scripts/apply-ingest-role.mjs 2>&1\nnode scripts/apply-traffic-fts.mjs 2>&1\nexec node server.js\n' > /app/entrypoint.sh \
     && chmod +x /app/entrypoint.sh
 
 USER nextjs

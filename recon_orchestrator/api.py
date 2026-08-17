@@ -412,6 +412,19 @@ async def lifespan(app: FastAPI):
     # supply_chain_common's host path (it runs off the scan-spawn path and so has
     # no recon_path argument of its own).
     container_manager.recon_host_path = RECON_PATH
+    # Allowlisted host dirs for the TruffleHog `filesystem` source. Resolved from
+    # the orchestrator's OWN mounts (never a hardcoded or operator-typed path):
+    # compose already binds ./recon/output and the capture_spool volume here, so
+    # Docker reports their host sources and no new env knob is needed. A root
+    # that cannot be resolved is simply not offered — the source then finds an
+    # empty directory rather than a guessed one.
+    container_manager.trufflehog_scan_roots = {
+        "recon_output": _host_mounts.get("/app/recon/output", ""),
+        "capture_spool": _host_mounts.get("/spool", ""),
+        # The uploads volume is not mounted into the orchestrator; the env var is
+        # the documented opt-in for deployments that want this root scannable.
+        "supply_chain_uploads": os.environ.get("SUPPLY_CHAIN_UPLOADS_PATH", "").strip(),
+    }
     reaper = asyncio.create_task(_ai_attack_reaper())
     capture_reconciler = asyncio.create_task(_capture_config_reconcile())
     # Scan Timeline (Section 7.2): the scheduler worker lives here because the
