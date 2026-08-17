@@ -90,7 +90,7 @@ export function ArjunSection({ data, updateField, onRun }: ArjunSectionProps) {
             <>
               <div className={styles.fieldGroup}>
                 <label className={styles.fieldLabel}>HTTP Methods</label>
-                <p className={styles.fieldHint} style={{ marginBottom: '0.5rem' }}>Select which parameter positions to test. Multiple methods run in parallel.</p>
+                <p className={styles.fieldHint}>Select which parameter positions to test. Multiple methods run in parallel.</p>
                 <div className={styles.checkboxGroup}>
                   {METHOD_OPTIONS.map(method => (
                     <label key={method} className="checkboxLabel">

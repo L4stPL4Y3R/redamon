@@ -395,7 +395,6 @@
   font-size: var(--text-sm);
   color: var(--text-secondary);
   line-height: 1.5;
-  margin-bottom: var(--space-2);
 }
 
 /* Always-visible statement that a credential is not optional. The amber alert
@@ -405,7 +404,6 @@
   font-size: var(--text-xs);
   color: var(--text-tertiary);
   line-height: 1.5;
-  margin-bottom: var(--space-2);
 }
 
 .fieldRow {
@@ -509,7 +507,6 @@
   padding: var(--space-3);
   background: var(--bg-tertiary);
   border-radius: var(--radius-default);
-  margin-top: var(--space-2);
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -1262,4 +1259,134 @@
 .fileImportTooltipFooter {
   color: var(--color-gray-400);
   font-size: 10px;
+}
+
+/* A column of inline Global Settings credential shortcuts. Each card carries its
+   own border, so they need separation rather than a container. */
+.credentialStack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+/* Two settings side by side. Collapses on narrow viewports so a small field
+   never squeezes its label into a vertical stack of letters. */
+.optionRow {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.detectorHintRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.browseButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 4px;
+  border: 1px solid var(--border-primary, rgba(255, 255, 255, 0.12));
+  background: transparent;
+  color: var(--accent-primary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.browseButton:hover {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.06));
+}
+
+.detectorPicker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  border: 1px solid var(--border-primary, rgba(255, 255, 255, 0.12));
+  border-radius: 8px;
+  background: var(--bg-tertiary, rgba(255, 255, 255, 0.02));
+}
+
+.detectorPickerHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* The list is over a thousand entries, so it scrolls inside the form rather
+   than making the form itself thousands of pixels tall. */
+.detectorGrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--border-primary, rgba(255, 255, 255, 0.08));
+  border-radius: 6px;
+}
+
+.detectorChip {
+  padding: 2px 7px;
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+  border-radius: 4px;
+  border: 1px solid var(--border-primary, rgba(255, 255, 255, 0.12));
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.detectorChip:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover, rgba(255, 255, 255, 0.06));
+}
+
+.detectorChipOn {
+  border-color: var(--accent-primary);
+  background: var(--accent-primary);
+  color: #fff;
+}
+
+/* A heading and its explanatory line are ONE block. Left as two children of the
+   section they are pushed a full gap apart and read as unrelated. */
+.groupHeader {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+/* The source picker takes half the width; a full-width select next to a short
+   button left the dropdown stretched across the whole form for no reason. */
+.addSourceRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.addSourceRow select {
+  flex: 0 0 50%;
+  max-width: 50%;
+  min-width: 0;
+}
+
+/* A source card's fields are .fieldGroup elements, which supply their own
+   INTERNAL gap only. Stacked in a plain block container they touch: one field's
+   hint sits flush against the next field's label. */
+.sourceCardBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
 }

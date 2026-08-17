@@ -236,7 +236,7 @@ export function KiterunnerSection({ data, updateField, onRun }: KiterunnerSectio
 
               <div className={styles.subSection}>
                 <h3 className={styles.subSectionTitle}>Method Detection</h3>
-                <p className={styles.fieldHint} style={{ marginBottom: '0.5rem' }}>Kiterunner wordlists only contain GET routes. Detect POST/PUT/DELETE methods on found endpoints</p>
+                <p className={styles.fieldHint}>Kiterunner wordlists only contain GET routes. Detect POST/PUT/DELETE methods on found endpoints</p>
                 <div className={styles.toggleRow}>
                   <div>
                     <span className={styles.toggleLabel}>Detect Methods</span>
@@ -251,7 +251,7 @@ export function KiterunnerSection({ data, updateField, onRun }: KiterunnerSectio
 
                 {data.kiterunnerDetectMethods && (
                   <>
-                    <div className={styles.fieldGroup} style={{ marginTop: '0.75rem' }}>
+                    <div className={styles.fieldGroup}>
                       <label className={styles.fieldLabel}>Detection Mode</label>
                       <select
                         className="select"
@@ -263,7 +263,7 @@ export function KiterunnerSection({ data, updateField, onRun }: KiterunnerSectio
                       </select>
                       <span className={styles.fieldHint}>How to discover allowed HTTP methods</span>
                     </div>
-                    <div className={styles.fieldGroup} style={{ marginTop: '0.75rem' }}>
+                    <div className={styles.fieldGroup}>
                       <label className={styles.fieldLabel}>Bruteforce Methods</label>
                       <input
                         type="text"

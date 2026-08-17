@@ -340,3 +340,11 @@
   font-size: var(--text-xs);
   color: var(--status-error);
 }
+
+/* Inline Global Settings credential shortcuts under a scan row. */
+.credentialStack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 6px 0 10px;
+}

@@ -117,7 +117,7 @@ export function AiSurfaceReconSection({ data, updateField, onRun }: AiSurfaceRec
 
               <div className={styles.subSection}>
                 <h3 className={styles.subSectionTitle}>Workloads</h3>
-                <p className={styles.fieldHint} style={{ marginBottom: '0.5rem' }}>
+                <p className={styles.fieldHint}>
                   Each workload defaults on. The master toggle gates the whole pass. Stealth mode keeps the passive workloads on but disables MCP tools/list and the vector-DB read and halves concurrency.
                 </p>
 
