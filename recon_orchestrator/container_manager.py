@@ -3619,6 +3619,14 @@ class ContainerManager:
                         state.status = TrufflehogStatus.ERROR
                         state.error = f"Docker API error: {e}"
 
+            # Retry a terminal run's ingest. The first attempt runs on the poll
+            # that also removes the container, so without this a transient Neo4j
+            # blip would lose the findings for good — the artifact is on disk but
+            # nothing would ever read it again. Idempotent via state.ingested,
+            # and the status sweep polls every run periodically.
+            if state.status in (TrufflehogStatus.COMPLETED, TrufflehogStatus.ERROR) and not state.ingested:
+                self._ingest_trufflehog(state)
+
             return state
 
         # An orphan container from a crashed orchestrator still owns the run key.

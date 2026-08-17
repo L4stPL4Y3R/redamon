@@ -421,3 +421,47 @@ class TestAuditability(unittest.TestCase):
         self.assertNotIn("secrets.get(c.settings_key)}", src)
         self.assertIn("target: {target}", src)
         self.assertIn("user: {user_id}", src)
+
+
+class TestIngestRetry(unittest.TestCase):
+    """The first ingest attempt shares a poll with the container removal, so a
+    failure there must not be the only attempt."""
+
+    def _state(self, status=TrufflehogStatus.COMPLETED, ingested=False):
+        st = running("p1", "docker")
+        st.status = status
+        st.ingested = ingested
+        return st
+
+    def test_a_terminal_un_ingested_run_is_retried_on_the_next_poll(self):
+        m = make_manager()
+        m.trufflehog_states = {"p1": {"docker": self._state()}}
+        m.client.containers.get.side_effect = cm_mod.NotFound("gone")
+        calls = []
+        m._ingest_trufflehog = lambda st: calls.append(st.source)
+        m._get_trufflehog_status_sync("p1", "docker")
+        self.assertEqual(calls, ["docker"])
+
+    def test_an_already_ingested_run_is_not_re_ingested(self):
+        m = make_manager()
+        m.trufflehog_states = {"p1": {"docker": self._state(ingested=True)}}
+        m.client.containers.get.side_effect = cm_mod.NotFound("gone")
+        m._ingest_trufflehog = lambda st: (_ for _ in ()).throw(AssertionError("re-ingested"))
+        m._get_trufflehog_status_sync("p1", "docker")
+
+    def test_a_still_running_run_is_not_ingested(self):
+        m = make_manager()
+        m.trufflehog_states = {"p1": {"docker": self._state(status=TrufflehogStatus.RUNNING)}}
+        m.client.containers.get.return_value = MagicMock(status="running")
+        m._ingest_trufflehog = lambda st: (_ for _ in ()).throw(AssertionError("ingested early"))
+        m._get_trufflehog_status_sync("p1", "docker")
+
+    def test_an_errored_run_is_still_ingested(self):
+        # A scan that failed part-way still wrote whatever it found.
+        m = make_manager()
+        m.trufflehog_states = {"p1": {"docker": self._state(status=TrufflehogStatus.ERROR)}}
+        m.client.containers.get.side_effect = cm_mod.NotFound("gone")
+        calls = []
+        m._ingest_trufflehog = lambda st: calls.append(st.source)
+        m._get_trufflehog_status_sync("p1", "docker")
+        self.assertEqual(calls, ["docker"])
