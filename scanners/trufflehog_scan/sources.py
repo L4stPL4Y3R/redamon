@@ -443,8 +443,19 @@ def validate_config(source_id: str, config: dict) -> list[str]:
                 if _as_list(cfg.get(key)) or _as_bool(cfg.get(key)):
                     errors.append(f"GitHub: '{key}' only applies to organization scans")
 
-    # gitlab is deliberately absent: empty repos + groups is legal there and
-    # scans every project the token can reach (the UI warns about the scope).
+    if src.id == "gitlab":
+        # Empty repos + groups is legal (it scans every project the token can
+        # reach). But a repo that IS given must be a full http(s) URL: verified
+        # against the pinned binary, which answers `org/repo` with
+        # "Gitlab requires http/https repo urls" at INFO level and then scans
+        # nothing for it — a silent miss, not a failure. GitHub accepts the
+        # shorthand, so an operator will reasonably try it here too.
+        for repo in _as_list(cfg.get("repos")):
+            if not repo.startswith(("http://", "https://")):
+                errors.append(
+                    f"GitLab: '{repo}' must be a full URL, e.g. "
+                    f"https://gitlab.com/{repo.strip('/')}.git")
+
 
     if src.id == "docker":
         images = _as_list(cfg.get("images"))
@@ -750,7 +761,13 @@ def build_common_flags(common: dict) -> list[str]:
     # runs with — "cannot move binary", exit 1, zero findings — and (b) would
     # silently replace the version the Dockerfile deliberately pins and
     # checksum-verifies.
-    flags = ["--json", "--no-update"]
+    # --fail-on-scan-errors is NOT optional either. TruffleHog exits 0 even when
+    # the scan wholly failed — a nonexistent path, an unreachable host, a
+    # rejected token all still exit 0 (verified against the pinned binary). The
+    # runner maps "exit 0 and no findings" to `completed`, so without this a scan
+    # that never reached its target would be reported as a clean result: the
+    # operator reads "0 findings" as "no secrets here".
+    flags = ["--json", "--no-update", "--fail-on-scan-errors"]
 
     skip_verification = _as_bool(common.get("skipVerification"))
     if skip_verification:

@@ -58,7 +58,7 @@ describe('validateTrufflehogConfig', () => {
       git: { uri: 'https://example.com/a.git' },
       github: { orgs: ['acme'] },
       github_experimental: { repo: 'acme/api' },
-      gitlab: { repos: ['acme/api'] },
+      gitlab: { repos: ['https://gitlab.com/acme/api.git'] },
       docker: { images: ['nginx:1.25'] },
       huggingface: { models: ['acme/m'] },
       s3: { buckets: ['b'] },

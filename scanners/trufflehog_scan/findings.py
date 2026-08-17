@@ -124,11 +124,30 @@ SOURCE_META_KEYS: dict[str, str] = {
 
 
 def _first(meta: dict, keys: tuple[str, ...]) -> str:
+    """First non-empty value among `keys`, matched case-INSENSITIVELY.
+
+    TruffleHog is not consistent about capitalisation across sources, and it
+    differs from its own Go struct fields: 3.96.0 emits lowercase
+    `image`/`file`/`layer` for Docker where the upstream fields are
+    `Image`/`File`/`Layer` (verified against the pinned binary). An exact-match
+    lookup that guesses wrong yields an EMPTY asset — which drops the graph edge
+    and collapses every dedup key for that source, with no error. Ignoring case
+    makes the whole table immune to that, including for the sources that cannot
+    be exercised without live credentials.
+    """
+    if not meta:
+        return ""
+    lowered = {str(k).lower(): v for k, v in meta.items()}
     for key in keys:
-        value = meta.get(key)
+        value = lowered.get(key.lower())
         if value not in (None, "", 0):
             return str(value)
     return ""
+
+
+def _get(meta: dict, key: str) -> str:
+    """One metadata field, case-insensitively."""
+    return _first(meta, (key,))
 
 
 def extract_source_meta(result: dict, on_unknown=None) -> dict:
@@ -154,24 +173,28 @@ def extract_source_meta(result: dict, on_unknown=None) -> dict:
                 "asset": f"unknown:{raw_key}",
                 "location": _first(meta, ("file", "path", "link")),
                 "commit": "",
-                "line": _int(meta.get("line")),
-                "link": str(meta.get("link") or ""),
-                "email": str(meta.get("email") or ""),
-                "timestamp": str(meta.get("timestamp") or ""),
+                "line": _int(_get(meta, "line")),
+                "link": _get(meta, "link"),
+                "email": _get(meta, "email"),
+                "timestamp": _get(meta, "timestamp"),
                 "meta_key": str(raw_key),
                 "extra": {k: v for k, v in meta.items() if isinstance(v, (str, int, float, bool))},
             }
 
         location = _first(meta, spec.location)
-        extra = {k: meta[k] for k in spec.extra if meta.get(k) not in (None, "", 0)}
+        # Same case-insensitive treatment for the extras, keyed by the name the
+        # spec declares so downstream display stays predictable.
+        lowered = {str(k).lower(): v for k, v in meta.items()}
+        extra = {k: lowered[k.lower()] for k in spec.extra
+                 if lowered.get(k.lower()) not in (None, "", 0)}
         return {
             "asset": _first(meta, spec.asset),
             "location": location,
-            "commit": str(meta.get("commit") or ""),
-            "line": _int(meta.get("line")),
-            "link": str(meta.get("link") or ""),
-            "email": str(meta.get("email") or ""),
-            "timestamp": str(meta.get("timestamp") or ""),
+            "commit": _get(meta, "commit"),
+            "line": _int(_get(meta, "line")),
+            "link": _get(meta, "link"),
+            "email": _get(meta, "email"),
+            "timestamp": _get(meta, "timestamp"),
             "meta_key": str(raw_key),
             "extra": extra,
         }

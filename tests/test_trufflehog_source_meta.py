@@ -275,3 +275,74 @@ class TestNormalise(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRealBinaryOutputShapes(unittest.TestCase):
+    """Shapes captured from the PINNED binary (trufflehog 3.96.0), not inferred.
+
+    The docker block is the reason these exist: the upstream Go struct fields are
+    `Image`/`File`/`Layer`, but 3.96.0 emits them LOWERCASE. An exact-match
+    lookup on the documented capitalisation would have produced an empty asset —
+    which drops the graph edge and collapses the dedup key for every docker
+    finding, with no error anywhere.
+    """
+
+    def test_real_git_metadata_from_3_96_0(self):
+        meta = fnd.extract_source_meta({"SourceMetadata": {"Data": {"Git": {
+            "commit": "207a8d0198b7795967da11124ed8b3356732d73f",
+            "file": "config.env",
+            "email": "Dev <dev@example.test>",
+            "repository": "file:///w/repo",
+            "timestamp": "2026-08-17 12:18:43 +0000",
+            "line": 1,
+            "repository_local_path": "/tmp/trufflehog-77-3142031296",
+        }}}})
+        self.assertEqual(meta["asset"], "file:///w/repo")
+        self.assertEqual(meta["location"], "config.env")
+        self.assertEqual(meta["commit"], "207a8d0198b7795967da11124ed8b3356732d73f")
+        self.assertEqual(meta["line"], 1)
+        self.assertEqual(meta["email"], "Dev <dev@example.test>")
+
+    def test_real_docker_metadata_is_lowercase_in_3_96_0(self):
+        meta = fnd.extract_source_meta({"SourceMetadata": {"Data": {"Docker": {
+            "file": "image-metadata:history:2:created-by",
+            "image": "/w/probe.tar",
+            "layer": "sha256:5c4b4e76e94f35ce46133a596e2b2590925a4ef372bba23188d5a2c021518a5b",
+        }}}})
+        self.assertEqual(meta["asset"], "/w/probe.tar")
+        self.assertEqual(meta["location"], "image-metadata:history:2:created-by")
+        self.assertEqual(meta["extra"]["Layer"], meta["extra"].get("Layer"))
+        self.assertTrue(any("sha256:" in str(v) for v in meta["extra"].values()))
+
+    def test_the_documented_capitalisation_also_still_works(self):
+        # Whichever way a future release spells them.
+        meta = fnd.extract_source_meta({"SourceMetadata": {"Data": {"Docker": {
+            "File": "/app/.env", "Image": "acme/app", "Tag": "1.0", "Layer": "sha256:abc",
+        }}}})
+        self.assertEqual(meta["asset"], "acme/app")
+        self.assertEqual(meta["location"], "/app/.env")
+
+    def test_a_real_history_path_is_classified_as_image_history(self):
+        # Verified against the binary: a secret in a RUN directive reports this path.
+        self.assertEqual(fnd.finding_kind("image-metadata:history:2:created-by"),
+                         fnd.KIND_IMAGE_HISTORY)
+
+    def test_verification_error_field_name_matches_the_binary(self):
+        # Captured from a real run with verification on and no network.
+        result = {"Verified": False, "VerificationError":
+                  "lookup sts.us-east-1.amazonaws.com: network is unreachable"}
+        self.assertEqual(fnd.validation_status(result), fnd.VERIFY_ERROR)
+
+    def test_raw_secret_fields_the_binary_emits_are_never_carried_forward(self):
+        # 3.96.0 emits Raw, RawV2 AND SecretParts; all three hold the real secret.
+        finding = fnd.normalise({
+            "DetectorName": "AWS", "Verified": False, "Redacted": "AKIA****",
+            "Raw": "AKIA7QF2ML9XKPD3WR5T",
+            "RawV2": "AKIA7QF2ML9XKPD3WR5T:SECRETVALUE",
+            "SecretParts": {"access_key_id": "AKIA7QF2ML9XKPD3WR5T",
+                            "secret_access_key": "SECRETVALUE"},
+            "SourceMetadata": {"Data": {"Git": {"repository": "r", "file": "f"}}},
+        }, "git")
+        blob = json.dumps(finding)
+        self.assertNotIn("SECRETVALUE", blob)
+        self.assertNotIn("AKIA7QF2ML9XKPD3WR5T", blob)

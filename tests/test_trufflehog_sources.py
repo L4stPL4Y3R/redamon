@@ -112,7 +112,7 @@ class TestArgvPerSource(unittest.TestCase):
             "git": {"uri": "https://example.com/a.git"},
             "github": {"orgs": ["acme"]},
             "github_experimental": {"repo": "acme/api"},
-            "gitlab": {"repos": ["acme/api"]},
+            "gitlab": {"repos": ["https://gitlab.com/acme/api.git"]},
             "docker": {"images": ["nginx:1.25"]},
             "huggingface": {"models": ["acme/m"]},
             "s3": {"buckets": ["b"]},
@@ -240,7 +240,16 @@ class TestCredentialsNeverReachArgv(unittest.TestCase):
 
 class TestCommonFlags(unittest.TestCase):
     def test_defaults_are_minimal(self):
-        self.assertEqual(reg.build_common_flags({}), ["--json", "--no-update"])
+        self.assertEqual(reg.build_common_flags({}),
+                         ["--json", "--no-update", "--fail-on-scan-errors"])
+
+    def test_scan_errors_are_made_fatal(self):
+        # Verified against the pinned binary: without this flag trufflehog exits
+        # 0 for a nonexistent path, an unreachable host and a rejected token
+        # alike, so a scan that never reached its target would be recorded as
+        # `completed` with 0 findings — read by the operator as "no secrets".
+        for common in ({}, {"skipVerification": True}, {"concurrency": 4}):
+            self.assertIn("--fail-on-scan-errors", reg.build_common_flags(common))
 
     def test_the_self_updater_is_always_disabled(self):
         # TruffleHog self-updates on startup. On the scan container's read-only
@@ -464,3 +473,26 @@ class TestF6ShortCredentialRedaction(unittest.TestCase):
         # The floor exists so a 1-2 char value cannot shred every log line.
         env = {"GITHUB_TOKEN": "a"}
         self.assertEqual(reg.redact("a normal sentence", env), "a normal sentence")
+
+
+class TestBinaryVerifiedConstraints(unittest.TestCase):
+    """Constraints proven against the pinned trufflehog 3.96.0 binary."""
+
+    def test_gitlab_shorthand_repo_is_refused(self):
+        # The binary logs "Gitlab requires http/https repo urls" at INFO and then
+        # scans nothing for that repo — a silent miss, so refuse it up front.
+        errors = reg.validate_config("gitlab", {"repos": ["acme/api"]})
+        self.assertTrue(any("full URL" in e for e in errors))
+        self.assertTrue(any("https://gitlab.com/acme/api.git" in e for e in errors))
+
+    def test_gitlab_full_url_is_accepted(self):
+        self.assertEqual(
+            reg.validate_config("gitlab", {"repos": ["https://gitlab.com/acme/api.git"]}), [])
+
+    def test_gitlab_with_no_repos_is_still_legal(self):
+        # Empty scans every project the token can reach; that is a real mode.
+        self.assertEqual(reg.validate_config("gitlab", {}), [])
+
+    def test_github_shorthand_stays_allowed(self):
+        # GitHub resolves org/repo through its API; only GitLab is strict.
+        self.assertEqual(reg.validate_config("github", {"repos": ["acme/api"]}), [])

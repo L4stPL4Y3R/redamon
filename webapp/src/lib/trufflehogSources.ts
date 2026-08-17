@@ -355,6 +355,17 @@ export function validateTrufflehogConfig(sourceId: string, config: Record<string
       }
       break
     }
+    case 'gitlab':
+      // A repo that is given must be a full http(s) URL. The binary answers
+      // `org/repo` with "Gitlab requires http/https repo urls" at INFO level and
+      // then scans nothing for it — a silent miss. GitHub accepts the shorthand,
+      // so operators will reasonably try it here too.
+      for (const repo of asList(cfg.repos)) {
+        if (!/^https?:\/\//.test(repo)) {
+          errors.push(`GitLab: '${repo}' must be a full URL, e.g. https://gitlab.com/${repo.replace(/^\/+|\/+$/g, '')}.git`)
+        }
+      }
+      break
     case 's3':
       if (asList(cfg.buckets).length && asList(cfg.ignoreBuckets).length) {
         errors.push("S3: 'Buckets' and 'Ignore buckets' are mutually exclusive")
