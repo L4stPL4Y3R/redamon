@@ -10,6 +10,18 @@ import { AppLayout } from '@/components/layout'
 import { ThemeDbBridge } from '@/components/ThemeDbBridge'
 import { resolveWsHint } from '@/hooks/agentWsUrl'
 
+// Render every route per REQUEST, not at build time. The head below injects
+// window.__REDAMON_WS__ from process.env, and every page under this layout is a
+// 'use client' shell with no server data - so Next prerendered them all into
+// static .next/server/app/*.html at `next build`, where AGENT_WS_MODE is unset
+// (webapp/Dockerfile passes no such build ARG). The hint was therefore never
+// emitted in a production image, whatever .env said, and the browser fell back
+// to same-origin ws://<host>:3000 - a port that runs no WebSocket server. That
+// is issue #175: the AI Agent, Kali terminal and both cypherfix sockets never
+// reach the agent from any non-localhost browser, with nothing in the agent log.
+// These pages are client shells, so the static cache bought nothing anyway.
+export const dynamic = 'force-dynamic'
+
 export const metadata: Metadata = {
   title: 'RedAmon',
   description: 'Security reconnaissance and vulnerability assessment dashboard',
