@@ -2272,7 +2272,7 @@ scanned each way is one node, not two.
 ### SbomDocument (Uploaded SBOM / lockfile)
 
 The parent of every package read out of a file the operator uploaded in
-**Other Scans -> Supply Chain**. One node per uploaded filename per project.
+**Project Settings -> Other Scans -> Supply Chain Scanner**. One node per uploaded filename per project.
 
 ```cypher
 (:SbomDocument {

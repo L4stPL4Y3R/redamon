@@ -462,6 +462,36 @@
   margin-top: var(--space-0-5);
 }
 
+/* A toggle whose explanation is a paragraph, not a caption: the switch keeps the
+   label's line and the prose gets its own, at half width so it reads as text
+   rather than as a block wedged against the switch. */
+.toggleBlock {
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.toggleBlock:last-child {
+  border-bottom: none;
+}
+
+.toggleBlockHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.toggleDescriptionBelow {
+  max-width: 50%;
+  line-height: 1.6;
+}
+
+@media (max-width: 900px) {
+  .toggleDescriptionBelow {
+    max-width: 100%;
+  }
+}
+
 .toggleRowCompact {
   display: flex;
   align-items: center;
@@ -1408,4 +1438,116 @@
   font-family: var(--font-mono, monospace);
   font-size: 11px;
   color: var(--text-primary);
+}
+
+/* ---------------------------------------------------------------------------
+   Scan-input source picker (Supply Chain Scanner). The scan takes exactly ONE
+   input, so the sources are mutually exclusive and the panel below always
+   reflects the selected one.
+   --------------------------------------------------------------------------- */
+
+.inputSourceToggle {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.inputSourceOption {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.inputSourceOption:hover:not(:disabled) {
+  border-color: var(--accent-primary);
+}
+
+.inputSourceOption:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.inputSourceOptionActive {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: #fff;
+}
+
+.inputPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  margin-bottom: 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+}
+
+.inputRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.activeFile {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.activeFileName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, monospace);
+  color: var(--text-primary);
+}
+
+/* "what you type -> which credential" mapping. The marker is dropped so the
+   rows read as a table of cases rather than a bulleted aside. */
+.inputHintList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-tertiary);
+}
+
+/* A source's fields two per row. The registry hands us up to a dozen small
+   inputs per source and one under the other they pushed the shared options a
+   full screen down. */
+.sourceFieldGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3) 16px;
+  align-items: start;
+}
+
+.sourceFieldGrid > * {
+  min-width: 0;
+}
+
+@media (max-width: 720px) {
+  .sourceFieldGrid {
+    grid-template-columns: 1fr;
+  }
 }

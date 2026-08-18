@@ -9,9 +9,10 @@
  * The Supply-Chain card was added to this modal after these tests were written,
  * so they asserted "exactly 2" Start/Download buttons and that EVERY Start is
  * enabled on a live version. Both stopped holding: there are three cards now,
- * and Supply-Chain has a second, independent gate (an SBOM/lockfile or repo must
- * be chosen first). The gating those tests actually exist to protect is
- * unchanged and is asserted per-card below.
+ * and Supply-Chain has a second, independent gate (its input must be configured
+ * in project settings first). The gating those tests actually exist to protect is
+ * unchanged and is asserted per-card below; the input gate itself lives in
+ * SupplyChainCard.test.tsx.
  */
 import { describe, test, expect, afterEach } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'
@@ -59,7 +60,7 @@ describe('OtherScansModal — past-version / activation gating', () => {
 
   test('on a live version nothing is blocked by the version gate', () => {
     render(<OtherScansModal {...baseProps} viewingPastVersion={false} isActivatingVersion={false} />)
-    // Supply-Chain has a SECOND gate - no SBOM/repo chosen yet - so it stays
+    // Supply-Chain has a SECOND gate - no input configured yet - so it stays
     // disabled here for a reason that has nothing to do with versioning. Its
     // title says which gate is active, so assert on that rather than skipping it.
     for (const b of buttonsByLabel('Start')) {
@@ -180,8 +181,8 @@ describe('OtherScansModal — Secret Multiscanner sources', () => {
         trufflehogProfiles={[]}
       />
     )
-    // (projectId is omitted deliberately: with it, the Supply-Chain input renders
-    // and needs a ToastProvider, which is not what this test is about.)
+    // (projectId is omitted deliberately: with it, the Supply-Chain card reads
+    // the project's configured input, which is not what this test is about.)
     expect(screen.getByText(/No sources configured/)).toBeTruthy()
     // ...and TruffleHog offers no Start at all until a source is added.
     expect(buttonsByLabel('Start').length).toBe(2)

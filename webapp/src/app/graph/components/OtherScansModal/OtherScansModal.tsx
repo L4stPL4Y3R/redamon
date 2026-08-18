@@ -1,6 +1,5 @@
 'use client'
 
-import { useRef, useState } from 'react'
 import { Play, Pause, Square, Terminal, Download, Loader2, Github, Search, AlertTriangle, PackageSearch, Settings } from 'lucide-react'
 import Link from 'next/link'
 import { SETTINGS_KEYS_HREF } from '@/lib/settingsLinks'
@@ -11,7 +10,8 @@ import type { TrufflehogProfileSummary } from '@/hooks/useTrufflehogRuns'
 import { projectSettingsHref } from '@/lib/projectSettingsLinks'
 import { Modal, WikiInfoButton } from '@/components/ui'
 import type { GithubHuntStatus, TrufflehogStatus, SupplyChainStatus } from '@/lib/recon-types'
-import SupplyChainInput, { type OrgBatchState, type SupplyChainInputHandle } from './SupplyChainInput'
+import { useSupplyChainConfig } from './useSupplyChainConfig'
+import { SupplyChainOrgBatchButton } from './SupplyChainOrgBatchButton'
 import styles from './OtherScansModal.module.css'
 
 interface OtherScansModalProps {
@@ -59,8 +59,8 @@ interface OtherScansModalProps {
   supplyChainStatus?: SupplyChainStatus
   hasSupplyChainData?: boolean
   isSupplyChainLogsOpen?: boolean
-  /** Needed to configure the scan input inline (upload / repository). Without
-   *  it the card renders read-only and Start stays disabled. */
+  /** Needed to read the configured scan input and to link into project settings.
+   *  Without it every card renders read-only. */
   projectId?: string
 }
 
@@ -80,6 +80,13 @@ function StatusBadge({ status }: { status: string }) {
     </span>
   )
 }
+
+/** What the Supply-Chain card says it would read, per configured source. */
+const SUPPLY_CHAIN_INPUT_LABEL = {
+  upload: 'SBOM / lockfile',
+  github: 'Repository',
+  org: 'Organization',
+} as const
 
 export function OtherScansModal({
   isOpen,
@@ -139,17 +146,10 @@ export function OtherScansModal({
     (trufflehogStatuses.includes('error') ? 'error'
       : trufflehogStatuses.includes('completed') ? 'completed' : 'idle')
 
-  // Whether the SELECTED input source actually has a usable value. Reported by
-  // SupplyChainInput, because only it knows which source is active - a
-  // configured repository must not make Start clickable while the upload
-  // source is selected, and vice versa.
-  const [scInputReady, setInputReady] = useState(false)
-
-  // Org mode queues N scans instead of starting this project's single one, so
-  // its action replaces Start in the row below rather than sitting beside a
-  // button that can never be enabled. Non-null only while 'org' is selected.
-  const [orgBatch, setOrgBatch] = useState<OrgBatchState | null>(null)
-  const supplyChainRef = useRef<SupplyChainInputHandle>(null)
+  // WHAT the supply-chain scan reads is configured in project settings, so the
+  // card reads the saved project to know whether Start can be enabled at all.
+  // Re-read every time the modal opens: the settings may have changed since.
+  const supplyChain = useSupplyChainConfig(projectId, isOpen)
 
   // The keys the scan cards below can set in place. `hasGithubToken` is resolved
   // by the page that owns this modal and does not change when a key is saved
@@ -172,15 +172,28 @@ export function OtherScansModal({
     ? 'Viewing a saved version - switch back to the active version to run scans'
     : 'A version activation is in progress'
 
+  const supplyChainSettingsLink = projectId && (
+    <Link
+      href={projectSettingsHref(projectId, 'supply-chain-scanner')}
+      style={{ color: 'var(--accent-primary)', fontWeight: 500 }}
+    >
+      Set it in project settings
+    </Link>
+  )
+
   return (
     <Modal
       isOpen={isOpen}
       onClose={onClose}
       title="Other Scans"
       size="large"
+      className={styles.wideModal}
     >
       <div className={styles.content}>
-        <div className={styles.row}>
+        {/* Two columns: the two half-height cards on the left, and the Secret
+            Multiscanner on the right spanning both rows - it lists one row per
+            configured source, so it is the card that actually grows. */}
+        <div className={styles.grid}>
         {/* GitHub Secret Hunt Card */}
         <div className={styles.card}>
           <div className={styles.cardHeader}>
@@ -279,8 +292,8 @@ export function OtherScansModal({
           </div>
         </div>
 
-        {/* Secret Multiscanner Card — one row per configured source */}
-        <div className={styles.card}>
+        {/* Secret Multiscanner Card — one row per configured source, full height */}
+        <div className={`${styles.card} ${styles.cardTall}`}>
           <div className={styles.cardHeader}>
             <Search size={18} className={styles.cardIcon} />
             <h3 className={styles.cardTitle}>Secret Multiscanner</h3>
@@ -292,6 +305,9 @@ export function OtherScansModal({
             Hugging Face, object storage and CI systems. Sources run independently and in parallel.
           </p>
 
+          {/* Scrolls on its own: any number of sources can be added, and the
+              card must not push the modal past the viewport. */}
+          <div className={styles.sourceList}>
           {trufflehogProfiles.length === 0 ? (
             <p className={styles.cardDescription} style={{ opacity: 0.75 }}>
               No sources configured.{' '}
@@ -324,13 +340,15 @@ export function OtherScansModal({
 
               return (
                 <div key={profile.id}>
-                <div className={styles.cardActions} style={{ alignItems: 'center' }}>
-                  <span style={{ minWidth: '150px', fontSize: '13px', fontWeight: 500 }}>
-                    {TRUFFLEHOG_SOURCES[profile.source]?.label ?? profile.source}
+                {/* Status, Start and Logs stay on ONE line with the source name;
+                    the name is what gives way when the card is narrow. */}
+                <div className={styles.sourceRow}>
+                  <span className={styles.sourceName}>
+                    <span className={styles.sourceLabel}>
+                      {TRUFFLEHOG_SOURCES[profile.source]?.label ?? profile.source}
+                    </span>
                     {run?.target && (
-                      <span style={{ display: 'block', fontSize: '11px', opacity: 0.7, fontWeight: 400 }}>
-                        {run.target}
-                      </span>
+                      <span className={styles.sourceTarget} title={run.target}>{run.target}</span>
                     )}
                   </span>
                   <StatusBadge status={status} />
@@ -366,16 +384,16 @@ export function OtherScansModal({
                     <Terminal size={12} />
                     <span>Logs</span>
                   </button>
-
-                  {missing.length > 0 && (
-                    <span style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#f59e0b' }}>
-                      <AlertTriangle size={12} />
-                      <Link href={`${SETTINGS_KEYS_HREF}#trufflehog-keys`} style={{ color: 'inherit' }}>
-                        {missing.map(m => m.label).join(', ')} required
-                      </Link>
-                    </span>
-                  )}
                 </div>
+
+                {missing.length > 0 && (
+                  <span className={styles.missingKeyNote}>
+                    <AlertTriangle size={12} />
+                    <Link href={`${SETTINGS_KEYS_HREF}#trufflehog-keys`} style={{ color: 'inherit' }}>
+                      {missing.map(m => m.label).join(', ')} required
+                    </Link>
+                  </span>
+                )}
 
                 {/* Only the keys that actually block THIS source, so a row that
                     can start stays a single line. */}
@@ -395,6 +413,7 @@ export function OtherScansModal({
               )
             })
           )}
+          </div>
 
           <div className={styles.cardActions}>
             <button
@@ -420,31 +439,32 @@ export function OtherScansModal({
           </div>
         </div>
 
-      </div>
-
-        {/* Supply Chain Scanner (L1) - full-width second row.
-            It carries its own input configuration, so it needs more room than
-            the two hunters above and no longer sends the operator to Project
-            Settings to pick a file. */}
+        {/* Supply Chain Scanner (L1). Like the two hunters above it, this card
+            owns the run controls only: its input (uploaded SBOM / lockfile,
+            repository, or an organization to batch) is configured in project
+            settings, which is what the gear links to. */}
         <div className={styles.card}>
           <div className={styles.cardHeader}>
-            <Search size={18} className={styles.cardIcon} />
+            <PackageSearch size={18} className={styles.cardIcon} />
             <h3 className={styles.cardTitle}>Supply Chain Scanner</h3>
             <WikiInfoButton target="SupplyChainScan" title="Supply-Chain Scanning wiki" />
             <StatusBadge status={supplyChainStatus} />
           </div>
           <p className={styles.cardDescription}>
-            Audit an SBOM / lockfile, or a GitHub repository, against the offline OSV database for known-malicious (MAL) and known-vulnerable packages. The OSV verdict is fully offline.
+            Audit an SBOM / lockfile, or a GitHub repository, against the offline OSV database for
+            known-malicious (MAL) and known-vulnerable packages. The OSV verdict is fully offline.
           </p>
 
-          {projectId && (
-            <SupplyChainInput
-              ref={supplyChainRef}
-              projectId={projectId}
-              disabled={isSCActive}
-              onInputAvailabilityChange={setInputReady}
-              onOrgBatchStateChange={setOrgBatch}
-            />
+          {supplyChain.ready ? (
+            <p className={styles.targetLine}>
+              <span className={styles.targetKind}>{SUPPLY_CHAIN_INPUT_LABEL[supplyChain.source]}</span>
+              <span className={styles.targetValue} title={supplyChain.target}>{supplyChain.target}</span>
+            </p>
+          ) : (
+            <p className={styles.cardDescription} style={{ opacity: 0.75 }}>
+              {supplyChain.loading ? 'Loading the configured input...' : <>No input configured.{' '}
+                {supplyChainSettingsLink} to make it startable here.</>}
+            </p>
           )}
 
           <div className={styles.cardActions}>
@@ -453,18 +473,20 @@ export function OtherScansModal({
                 title={scanBlocked ? blockedTitle : 'Resume Supply-Chain scan'}>
                 <Play size={12} /><span>Resume</span>
               </button>
-            ) : orgBatch ? (
-              <button className={styles.startButton}
-                onClick={() => supplyChainRef.current?.launchOrgBatch()}
-                disabled={!orgBatch.canQueue || orgBatch.busy || isSCActive || scanBlocked}
-                title={scanBlocked ? blockedTitle : !orgBatch.canQueue ? 'Enter an organization or user above first' : 'Queue one scan per repository'}>
-                {orgBatch.busy ? <Loader2 size={12} className={styles.spinner} /> : <PackageSearch size={12} />}
-                <span>{orgBatch.busy ? 'Queuing...' : 'Queue org batch'}</span>
-              </button>
+            ) : supplyChain.source === 'org' && projectId ? (
+              // The org mode queues N scans instead of running this project's
+              // single input, so it replaces Start rather than sitting next to a
+              // button that can never be enabled.
+              <SupplyChainOrgBatchButton
+                projectId={projectId}
+                org={supplyChain.org}
+                disabled={isSCActive || scanBlocked}
+                blockedReason={scanBlocked ? blockedTitle : ''}
+              />
             ) : (
               <button className={styles.startButton} onClick={onStartSupplyChain}
-                disabled={!scInputReady || isSCRunning || scanBlocked}
-                title={scanBlocked ? blockedTitle : !scInputReady ? 'Choose an input above first' : isSCRunning ? 'In progress...' : 'Start Supply-Chain scan'}>
+                disabled={!supplyChain.ready || isSCRunning || scanBlocked}
+                title={scanBlocked ? blockedTitle : !supplyChain.ready ? 'Configure the scan input in project settings first' : isSCRunning ? 'In progress...' : 'Start Supply-Chain scan'}>
                 {isSCRunning ? <Loader2 size={12} className={styles.spinner} /> : <Play size={12} />}
                 <span>{isSCPausing ? 'Pausing...' : isSCBusy ? 'Running...' : isSCStopping ? 'Stopping...' : 'Start'}</span>
               </button>
@@ -488,7 +510,19 @@ export function OtherScansModal({
               title={viewingPastVersion ? 'Download reflects the active version, not this saved view' : hasSupplyChainData ? 'Download JSON' : 'No data available'}>
               <Download size={12} /><span>Download</span>
             </button>
+
+            {projectId && (
+              <Link
+                href={projectSettingsHref(projectId, 'supply-chain-scanner')}
+                className={styles.settingsButton}
+                title="Configure the SBOM / lockfile, repository or organization to scan in project settings"
+                aria-label="Configure Supply Chain Scanner in project settings"
+              >
+                <Settings size={13} />
+              </Link>
+            )}
           </div>
+        </div>
         </div>
       </div>
     </Modal>

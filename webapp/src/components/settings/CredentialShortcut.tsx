@@ -125,7 +125,7 @@ export function CredentialShortcut({
         <Link href={SETTINGS_KEYS_HREF}>All keys in Global Settings</Link>
         {field.signupUrl && (
           <a href={field.signupUrl} target="_blank" rel="noopener noreferrer">
-            Get a token <ExternalLink size={10} style={{ verticalAlign: 'middle' }} />
+            Get a token <ExternalLink size={10} />
           </a>
         )}
       </div>

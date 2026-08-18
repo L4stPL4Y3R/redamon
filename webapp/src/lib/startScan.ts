@@ -110,9 +110,21 @@ export async function dispatchStart(
 
   const project = await prisma.project.findUnique({
     where: { id: projectId },
-    select: { id: true, userId: true },
+    select: { id: true, userId: true, supplyChainInputMode: true },
   })
   if (!project) return { ok: false, status: 404, error: 'Project not found' }
+
+  // 'org' is not an input this scan can read: it means "enumerate the account
+  // and queue one scan per repo", which is a different kind (supply_chain_repo).
+  // Dispatching it anyway would spawn a container that dies looking for an SBOM.
+  if (kind === 'supply_chain' && project.supplyChainInputMode === 'org') {
+    return {
+      ok: false,
+      status: 400,
+      error: 'This project scans a GitHub organization. Queue the org batch from Other Scans '
+        + 'instead, or set an SBOM/repository input in project settings.',
+    }
+  }
 
   let path: string
   let body: Record<string, unknown>

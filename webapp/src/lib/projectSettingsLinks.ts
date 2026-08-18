@@ -20,6 +20,7 @@
 export const PROJECT_SECTION_ANCHORS = {
   'github-secret-hunting': { tab: 'integrations' },
   'trufflehog-scanner': { tab: 'integrations' },
+  'supply-chain-scanner': { tab: 'integrations' },
 } as const
 
 export type ProjectSectionAnchor = keyof typeof PROJECT_SECTION_ANCHORS

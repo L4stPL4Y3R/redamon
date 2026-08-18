@@ -142,7 +142,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     // their global settings, so the allowlist is read from there (never from the
     // request). Only looked up when a supply-chain field is actually being written.
     if ('supplyChainRepoUrl' in updateData || 'supplyChainInputMode' in updateData
-        || 'supplyChainRepoRef' in updateData) {
+        || 'supplyChainRepoRef' in updateData || 'supplyChainOrgName' in updateData) {
       const [{ validateSupplyChainInput }, { allowedGithubHosts }] = await Promise.all([
         import('@/lib/validation/supplyChainInput'),
         import('@/lib/github/ownerTarget'),

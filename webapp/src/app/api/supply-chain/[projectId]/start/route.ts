@@ -39,16 +39,24 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     // Gate on the source the operator actually selected. Checking only the
     // uploaded file would refuse to start a perfectly valid GitHub scan, and
     // checking neither would start a scan with no input at all.
-    if (project.supplyChainInputMode === 'github') {
+    if (project.supplyChainInputMode === 'org') {
+      // Not an input this scan can read: the org mode queues one scan per repo
+      // (supply_chain_repo) instead of running the project's single scan.
+      return NextResponse.json(
+        { error: 'This project scans a GitHub organization. Use "Queue org batch" in Other Scans, '
+          + 'or set an SBOM/repository input in project settings.' },
+        { status: 400 }
+      )
+    } else if (project.supplyChainInputMode === 'github') {
       if (!project.supplyChainRepoUrl) {
         return NextResponse.json(
-          { error: 'No repository set. Enter a GitHub repository in Other Scans -> Supply Chain first.' },
+          { error: 'No repository set. Add a GitHub repository under Project Settings -> Other Scans -> Supply Chain Scanner first.' },
           { status: 400 }
         )
       }
     } else if (!project.supplyChainSbomFile) {
       return NextResponse.json(
-        { error: 'No SBOM/lockfile uploaded. Upload one in Other Scans -> Supply Chain first.' },
+        { error: 'No SBOM/lockfile uploaded. Upload one under Project Settings -> Other Scans -> Supply Chain Scanner first.' },
         { status: 400 }
       )
     }

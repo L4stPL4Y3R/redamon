@@ -266,20 +266,23 @@ export function TrufflehogSection({ data, updateField, projectId, mode = 'edit' 
           {/* ---- The verification switch: always visible, never gated behind a
                   configured target. Hiding it is why the control could not be
                   found at all. ---- */}
-          <div className={styles.toggleRow}>
-            <div>
+          <div className={styles.toggleBlock}>
+            <div className={styles.toggleBlockHead}>
               <span className={styles.toggleLabel}>Verify secrets against live APIs</span>
-              <p className={styles.toggleDescription}>
-                When on, RedAmon sends found credentials to their owning services to test whether
-                they are live. This is the highest-value result in an authorised engagement, but it
-                is an ACTIVE behaviour. Use the detector exclude list below to skip services you do
-                not want contacted.
-              </p>
+              <Toggle
+                checked={verifies}
+                onChange={(checked) => setField(updateField, 'trufflehogNoVerification', !checked)}
+              />
             </div>
-            <Toggle
-              checked={verifies}
-              onChange={(checked) => setField(updateField, 'trufflehogNoVerification', !checked)}
-            />
+            {/* Below the switch, not beside it: this is the one control here
+                whose consequence needs reading, and squeezed into the label
+                column it wrapped into a wall against the toggle. */}
+            <p className={`${styles.toggleDescription} ${styles.toggleDescriptionBelow}`}>
+              When on, RedAmon sends found credentials to their owning services to test whether
+              they are live. This is the highest-value result in an authorised engagement, but it
+              is an ACTIVE behaviour. Use the detector exclude list below to skip services you do
+              not want contacted.
+            </p>
           </div>
 
           {/* Result types and Concurrency share a row: both are small, and the
@@ -622,15 +625,17 @@ function ProfileEditor({
             </div>
           )}
 
-          {src.fields.map(field => (
-            <FieldInput
-              key={field.key}
-              field={field}
-              value={config[field.key]}
-              disabled={isDisabled(field)}
-              onChange={value => update(field.key, value)}
-            />
-          ))}
+          <div className={styles.sourceFieldGrid}>
+            {src.fields.map(field => (
+              <FieldInput
+                key={field.key}
+                field={field}
+                value={config[field.key]}
+                disabled={isDisabled(field)}
+                onChange={value => update(field.key, value)}
+              />
+            ))}
+          </div>
 
           {errors.map(e => (
             <p key={e} className={styles.fieldHint} style={{ color: '#f59e0b' }}>{e}</p>
