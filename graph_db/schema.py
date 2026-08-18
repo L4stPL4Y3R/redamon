@@ -233,40 +233,98 @@ LEGACY_LABEL_RENAMES = [
 LEGACY_REL_RENAMES = [("HAS_TRUFFLEHOG_SCAN", "HAS_MULTISCANNER_SCAN")]
 
 
+# Set once the rename has fully applied. Without it the migration re-scans every
+# label on every Neo4jClient construction - and init_schema runs from
+# BaseMixin.__init__, so that is every scan container spawn and every agent graph
+# call, forever, at a cost that grows with the size of the graph.
+#
+# A global reference node: it describes the DATABASE, not a project, so it
+# carries no tenant key (see the graph-db-writes ruleset).
+MIGRATION_MARKER = "trufflehog-to-multiscanner-v1"
+
+# Relabelling the whole graph in one statement is a single transaction whose size
+# is the caller's data. Batched so a large graph cannot exceed the heap and leave
+# the rest un-migrated - which would be invisible data, not merely stale data.
+MIGRATION_BATCH = 10_000
+
+
+def _migration_applied(session, marker=MIGRATION_MARKER) -> bool:
+    try:
+        row = session.run(
+            "MATCH (m:RedamonSchemaMigration {id: $id}) RETURN count(m) AS c",
+            id=marker).single()
+        return bool(row and row["c"])
+    except Exception:
+        # Unknown state: re-running the migration is idempotent, skipping it is
+        # not recoverable, so fail towards doing the work.
+        return False
+
+
+def _mark_migration_applied(session, marker=MIGRATION_MARKER) -> None:
+    try:
+        session.run(
+            "MERGE (m:RedamonSchemaMigration {id: $id}) "
+            "ON CREATE SET m.applied_at = datetime()", id=marker)
+    except Exception as e:
+        print(f"[!][graph-db] could not record migration marker: {e}")
+
+
+def _run_batched(session, query: str, **params) -> int:
+    """Run `query` (which must carry its own LIMIT and RETURN a count) until it
+    stops matching. Returns the total touched."""
+    total = 0
+    while True:
+        row = session.run(query, **params).single()
+        touched = (row or {}).get("c") or 0
+        total += touched
+        if not touched:
+            return total
+
+
 def migrate_legacy_labels(session):
     """Move pre-rename nodes and relationships onto the current names.
 
-    Idempotent and cheap on the common path: each label is probed with a LIMIT 1
-    scan (a label lookup, not a full scan) and skipped when nothing matches, so
-    an already-migrated database pays seven trivial queries at startup.
+    A rename does not leave old data stale, it leaves it INVISIBLE: every read is
+    by label, so an un-migrated finding disappears from the Red Zone and from
+    every report while still sitting in the database.
 
-    Runs BEFORE the constraints are created. A uniqueness constraint on the new
-    label cannot be satisfied by nodes that still carry the old one, and creating
-    it first would fail on a database that has data to migrate.
+    Guarded by a marker node, so the steady-state cost is ONE lookup rather than
+    a scan per label. The marker is written only after every step succeeded; a
+    partial migration therefore retries on the next construction instead of
+    silently stopping half-way.
+
+    Runs BEFORE the constraints are created: a uniqueness constraint on the new
+    label cannot be satisfied while data still carries the old one.
     """
+    if _migration_applied(session):
+        return
+
+    ok = True
+
     for old, new in LEGACY_LABEL_RENAMES:
         try:
-            probe = session.run(
-                f"MATCH (n:`{old}`) RETURN count(n) AS c LIMIT 1").single()
-            if not probe or not probe["c"]:
-                continue
-            session.run(f"MATCH (n:`{old}`) SET n:`{new}` REMOVE n:`{old}`")
-            print(f"[graph-db] migrated {probe['c']} {old} -> {new}")
+            moved = _run_batched(
+                session,
+                f"MATCH (n:`{old}`) WITH n LIMIT {MIGRATION_BATCH} "
+                f"SET n:`{new}` REMOVE n:`{old}` RETURN count(n) AS c")
+            if moved:
+                print(f"[graph-db] migrated {moved} {old} -> {new}")
         except Exception as e:
             print(f"[!][graph-db] label migration {old} -> {new} failed: {e}")
+            ok = False
 
-    # The node id is the MERGE key, and it carried the old name as a prefix.
-    # Left alone, a re-scan would MERGE on the NEW prefix and create a second
-    # copy of every node beside the migrated one, so the ids move too. `scan_id`
-    # is rewritten as well: it is a foreign key holding the same string.
+    # The node id is the MERGE key and carried the old name as a prefix. Left
+    # alone, the next scan would MERGE on the NEW prefix and create a second copy
+    # of every node beside the migrated one. `scan_id` moves with it, being a
+    # foreign key holding the same string.
     for label in (new for _old, new in LEGACY_LABEL_RENAMES):
         for prop in ("id", "scan_id"):
             try:
-                # Collision guard: if a node ALREADY holds the migrated id,
-                # rewriting would violate the uniqueness constraint and abort the
-                # whole statement, leaving the rest un-migrated. Skip that one and
-                # say so, rather than failing the batch for everyone else.
                 if prop == "id":
+                    # A node may already hold the migrated id (reachable if a
+                    # write lands between the code rename and this migration).
+                    # Rewriting it would violate the uniqueness constraint and
+                    # abort the statement, leaving everything after it undone.
                     stuck = session.run(
                         f"MATCH (n:`{label}`) WHERE n.id STARTS WITH 'trufflehog-' "
                         f"AND EXISTS {{ MATCH (m:`{label}`) "
@@ -275,32 +333,46 @@ def migrate_legacy_labels(session):
                     if stuck and stuck["c"]:
                         print(f"[!][graph-db] {stuck['c']} legacy {label} node(s) "
                               f"already superseded by a migrated copy; left as-is")
-                    session.run(
+                    _run_batched(
+                        session,
                         f"MATCH (n:`{label}`) WHERE n.id STARTS WITH 'trufflehog-' "
                         f"AND NOT EXISTS {{ MATCH (m:`{label}`) "
                         f"WHERE m.id = 'multiscanner-' + substring(n.id, 11) }} "
-                        f"SET n.id = 'multiscanner-' + substring(n.id, 11)")
+                        f"WITH n LIMIT {MIGRATION_BATCH} "
+                        f"SET n.id = 'multiscanner-' + substring(n.id, 11) "
+                        f"RETURN count(n) AS c")
                     continue
-                session.run(
+                _run_batched(
+                    session,
                     f"MATCH (n:`{label}`) WHERE n.{prop} STARTS WITH 'trufflehog-' "
-                    f"SET n.{prop} = 'multiscanner-' + substring(n.{prop}, 11)")
+                    f"WITH n LIMIT {MIGRATION_BATCH} "
+                    f"SET n.{prop} = 'multiscanner-' + substring(n.{prop}, 11) "
+                    f"RETURN count(n) AS c")
             except Exception as e:
                 print(f"[!][graph-db] {label}.{prop} prefix migration failed: {e}")
+                ok = False
 
     # A relationship type cannot be renamed in place; it is recreated and the old
     # one deleted. Properties are carried over so nothing is lost.
     for old, new in LEGACY_REL_RENAMES:
         try:
-            probe = session.run(
-                f"MATCH ()-[r:`{old}`]->() RETURN count(r) AS c LIMIT 1").single()
-            if not probe or not probe["c"]:
-                continue
-            session.run(
-                f"MATCH (a)-[r:`{old}`]->(b) "
-                f"CREATE (a)-[n:`{new}`]->(b) SET n = properties(r) DELETE r")
-            print(f"[graph-db] migrated {probe['c']} {old} -> {new}")
+            moved = _run_batched(
+                session,
+                f"MATCH (a)-[r:`{old}`]->(b) WITH a, r, b LIMIT {MIGRATION_BATCH} "
+                f"CREATE (a)-[n:`{new}`]->(b) SET n = properties(r) "
+                f"DELETE r RETURN count(r) AS c")
+            if moved:
+                print(f"[graph-db] migrated {moved} {old} -> {new}")
         except Exception as e:
             print(f"[!][graph-db] relationship migration {old} -> {new} failed: {e}")
+            ok = False
+
+    if ok:
+        _mark_migration_applied(session)
+    else:
+        print("[!][graph-db] migration incomplete; it will be retried on the "
+              "next connection (no marker written)")
+
 
 def init_schema(session):
     """

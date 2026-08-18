@@ -11,6 +11,7 @@ import asyncio
 import os
 import sys
 import tempfile
+import json
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
@@ -427,6 +428,66 @@ class TestDirtyContainerShape(unittest.TestCase):
                 mounts,
                 {"/host/scanners/scan_targets": {"bind": "/scan-targets", "mode": "ro"}},
                 cfg)
+
+    def test_a_missing_artifact_is_an_error_not_a_clean_scan(self):
+        """Regression: F2 - exit 0 with no result file reported COMPLETED.
+
+        The wrapper writes a result on every path it can reach, failures
+        included. No file at all means it died before it could, and calling that
+        a clean scan is the silent lie this whole check exists to stop: the
+        operator reads "completed, 0 findings" as "no secrets here".
+        """
+        m = make_manager()
+        with tempfile.TemporaryDirectory() as tmp:
+            m._trufflehog_run_dir = lambda p, s: Path(tmp)
+            self.assertTrue(m._trufflehog_artifact_error("p", "git"))
+
+    def test_a_successful_artifact_reports_no_error(self):
+        m = make_manager()
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "out.json").write_text(
+                json.dumps({"status": "completed", "findings": []}))
+            m._trufflehog_run_dir = lambda p, s: Path(tmp)
+            self.assertEqual(m._trufflehog_artifact_error("p", "git"), "")
+
+    def test_an_errored_artifact_surfaces_its_own_reason(self):
+        m = make_manager()
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "out.json").write_text(
+                json.dumps({"status": "error", "error": "failed to stat .git"}))
+            m._trufflehog_run_dir = lambda p, s: Path(tmp)
+            self.assertIn("stat .git", m._trufflehog_artifact_error("p", "git"))
+
+    def test_an_unreadable_artifact_does_not_invent_a_failure(self):
+        """Half-written is indistinguishable from clean; flipping a good scan to
+        ERROR on a parse blip would be its own lie."""
+        m = make_manager()
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "out.json").write_text("{not json")
+            m._trufflehog_run_dir = lambda p, s: Path(tmp)
+            self.assertEqual(m._trufflehog_artifact_error("p", "git"), "")
+
+    def test_the_gitconfig_is_not_inside_the_container_writable_mount(self):
+        """Regression: F5 - the gitconfig sat in run_dir, which is bind-mounted
+        rw at /work, so the read-only bind at /etc/gitconfig promised something
+        it did not deliver."""
+        m = make_manager()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "trufflehog_p_git"
+            run_dir.mkdir()
+            mount = m._trufflehog_git_config_mount(
+                run_dir, {"/host": {"bind": "/scan-targets", "mode": "ro"}})
+            self.assertTrue(mount)
+            host_path = Path(next(iter(mount)))
+            self.assertNotIn(run_dir, host_path.parents,
+                             "gitconfig is inside the rw-mounted run dir")
+            self.assertEqual(next(iter(mount.values()))["mode"], "ro")
+
+    def test_no_gitconfig_without_a_scan_targets_mount(self):
+        """A remote-URI run has no local repo, so it gets no ownership override."""
+        m = make_manager()
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(m._trufflehog_git_config_mount(Path(tmp), {}), {})
 
     def test_only_the_disk_reading_sources_get_the_mount(self):
         """A source that cannot read a local target has no reason to see the

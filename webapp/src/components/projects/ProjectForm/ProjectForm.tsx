@@ -52,6 +52,7 @@ import { SecurityChecksSection } from './sections/SecurityChecksSection'
 import { GithubSection } from './sections/GithubSection'
 import { TrufflehogSection } from './sections/TrufflehogSection'
 import { SupplyChainReconSection } from './sections/SupplyChainReconSection'
+import { SupplyChainScanSection } from './sections/SupplyChainScanSection'
 import { AgentBehaviourSection } from './sections/AgentBehaviourSection'
 import { AttackSkillsSection } from './sections/AttackSkillsSection'
 import { ShodanSection } from './sections/ShodanSection'
@@ -315,6 +316,10 @@ export function ProjectForm({
   const scans = useScanControls({
     projectId: mode === 'edit' ? projectId : null,
     enabled: mode === 'edit' && Boolean(projectId),
+    // Slower than the graph page's default: this surface reports status, it is
+    // not the live view, and matching the default would double the orchestrator
+    // status traffic whenever both are open.
+    pollingInterval: 15_000,
   })
   const isReconRunning = reconState?.status === 'running' || reconState?.status === 'starting'
   const isReconPaused = reconState?.status === 'paused'
@@ -1020,9 +1025,12 @@ export function ProjectForm({
             <GithubSection data={formData} updateField={updateField} hasGithubToken={hasGithubToken} />
             <TrufflehogSection data={formData} updateField={updateField}
               projectId={projectId ?? null} mode={mode} />
-            {/* Supply-Chain (L1) is configured where it is launched: the
-                Supply Chain Scanner card in Other Scans owns its input
-                (uploaded SBOM / lockfile, or a GitHub repository). */}
+            {/* Supply-Chain (L1): its input (uploaded SBOM / lockfile, GitHub
+                repository, or an org to batch) is configured here, next to the
+                other Other-Scans tools. The card in Other Scans owns only the
+                run controls and stays disabled until this is set. */}
+            <SupplyChainScanSection data={formData} updateField={updateField}
+              projectId={projectId ?? null} mode={mode} />
           </>
         )}
 

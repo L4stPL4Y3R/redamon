@@ -26,16 +26,26 @@ import { useSupplyChainStatus } from './useSupplyChainStatus'
 export interface UseScanControlsOptions {
   projectId?: string | null
   enabled?: boolean
+  /**
+   * Poll period in ms. The graph page is the live view and wants the hooks'
+   * default; a secondary surface showing the same four scans only needs to be
+   * roughly current, and polling it at the same rate doubles the status traffic
+   * against the orchestrator for no extra information.
+   */
+  pollingInterval?: number
 }
 
-export function useScanControls({ projectId, enabled = true }: UseScanControlsOptions) {
+export function useScanControls({
+  projectId, enabled = true, pollingInterval,
+}: UseScanControlsOptions) {
   const on = Boolean(projectId) && enabled
   const id = projectId || ''
+  const poll = pollingInterval ? { pollingInterval } : {}
 
-  const gvm = useGvmStatus({ projectId: id, enabled: on })
-  const githubHunt = useGithubHuntStatus({ projectId: id, enabled: on })
-  const trufflehog = useTrufflehogRuns({ projectId: id, enabled: on })
-  const supplyChain = useSupplyChainStatus({ projectId: id, enabled: on })
+  const gvm = useGvmStatus({ projectId: id, enabled: on, ...poll })
+  const githubHunt = useGithubHuntStatus({ projectId: id, enabled: on, ...poll })
+  const trufflehog = useTrufflehogRuns({ projectId: id, enabled: on, ...poll })
+  const supplyChain = useSupplyChainStatus({ projectId: id, enabled: on, ...poll })
 
   const [otherScansOpen, setOtherScansOpen] = useState(false)
   const [hasReconData, setHasReconData] = useState(false)

@@ -169,6 +169,63 @@ class TestRunnerOutput(RunnerTestCase):
         self.assertTrue(data["verification_enabled"])
         self.assertEqual(len(data["findings"]), 1)
 
+    def test_a_scan_error_reaches_the_artifact(self):
+        """The reason for a failure used to be lost entirely: TruffleHog reports
+        it as a structured record on stderr, the runner logged the raw line and
+        dropped it, and the container is auto-removed - so an errored run carried
+        no explanation anywhere."""
+        runner = TrufflehogRunner(self.make_job(), env={})
+        runner._record_scan_error({
+            "level": "error", "msg": "error running scan",
+            "error": "failed to stat .git",
+        })
+        runner._write_final("error")
+        data = json.loads(Path(runner.output_file).read_text())
+        self.assertEqual(data["status"], "error")
+        self.assertIn("failed to stat .git", data["error"])
+
+    def test_error_is_absent_from_a_completed_artifact(self):
+        """Regression: F4 - `error` was emitted whenever any command had failed,
+        including on a run that completed. The orchestrator treats its presence
+        as the failure signal, so a successful multi-command scan would have
+        looked failed."""
+        runner = TrufflehogRunner(self.make_job(), env={})
+        runner._record_scan_error({"level": "error", "error": "one target refused"})
+        runner._write_final("completed")
+        data = json.loads(Path(runner.output_file).read_text())
+        self.assertEqual(data["status"], "completed")
+        self.assertNotIn("error", data)
+
+    def test_a_scan_error_is_redacted_before_it_is_published(self):
+        """The message quotes the target, and for git that is a URI the
+        credential was spliced into."""
+        env = {"GIT_TOKEN": "ghp_supersecrettoken123456"}
+        runner = TrufflehogRunner(self.make_job(source="git", config={"uri": "https://x/y.git"}), env=env)
+        runner._record_scan_error({
+            "level": "error",
+            "error": "could not clone https://u:ghp_supersecrettoken123456@x/y.git",
+        })
+        runner._write_final("error")
+        blob = Path(runner.output_file).read_text()
+        self.assertNotIn("ghp_supersecrettoken123456", blob)
+
+    def test_a_duplicate_error_record_is_kept_once(self):
+        runner = TrufflehogRunner(self.make_job(), env={})
+        for _ in range(3):
+            runner._record_scan_error({"level": "error", "error": "same thing"})
+        runner._write_final("error")
+        data = json.loads(Path(runner.output_file).read_text())
+        self.assertEqual(data["error"].count("same thing"), 1)
+
+    def test_an_empty_error_record_is_ignored(self):
+        """Boundary: a record with neither msg nor error must not produce a
+        blank `error` key, which reads as a failure with no reason."""
+        runner = TrufflehogRunner(self.make_job(), env={})
+        runner._record_scan_error({"level": "error"})
+        runner._write_final("completed")
+        data = json.loads(Path(runner.output_file).read_text())
+        self.assertNotIn("error", data)
+
     def test_envelope_is_written_before_the_first_finding(self):
         # A container killed mid-scan must still leave the ingest step something
         # readable rather than a missing file.

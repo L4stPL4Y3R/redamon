@@ -351,9 +351,12 @@ class TrufflehogRunner:
             "scan_end_time": datetime.now().isoformat(),
             "duration_seconds": round(time.time() - self._start_epoch, 2),
             "status": status,
-            # Present only on a failure, so a consumer can treat its presence as
-            # the signal. The orchestrator reads it to explain an errored run.
-            **({"error": "; ".join(self._scan_errors)} if self._scan_errors else {}),
+            # Present ONLY on a failed run, so a consumer can treat its presence
+            # as the signal. Gated on the status too: a multi-command source can
+            # have one invocation fail and still complete, and emitting `error`
+            # there would make a successful scan look failed.
+            **({"error": "; ".join(self._scan_errors)}
+               if self._scan_errors and status == "error" else {}),
             "statistics": dict(self.stats),
             "findings": self.findings,
         }

@@ -3548,7 +3548,12 @@ class ContainerManager:
         if not scan_target_mounts:
             return {}
         try:
-            cfg = run_dir / "gitconfig"
+            # A SIBLING of the run dir, never inside it: run_dir is bind-mounted
+            # rw at /work, so a gitconfig written there would be rewritable by
+            # the container through that mount and the read-only bind below would
+            # promise something it does not deliver.
+            cfg = run_dir.parent / f"{run_dir.name}.gitconfig"
+            cfg.parent.mkdir(parents=True, exist_ok=True)
             cfg.write_text("[safe]\n\tdirectory = *\n")
         except OSError as e:
             logger.warning(f"[trufflehog] could not write gitconfig: {e}")
@@ -3569,9 +3574,15 @@ class ContainerManager:
             run_dir = self._trufflehog_run_dir(project_id, source)
             out = run_dir / "out.json"
             if not out.exists():
-                return ""
+                # The wrapper writes a result on every path it can reach,
+                # including the ones that record a failure. No file at all means
+                # it died before it could - reporting that as a clean scan is the
+                # exact silent lie this function exists to stop.
+                return "The scan exited without writing a result file"
             data = json.loads(out.read_text())
         except Exception:
+            # Unreadable or half-written: cannot tell a failure from a clean run,
+            # and inventing one would flip a good scan to ERROR.
             return ""
         if not isinstance(data, dict) or data.get("status") != "error":
             return ""
