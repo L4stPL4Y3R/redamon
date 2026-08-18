@@ -64,11 +64,22 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       ;(async () => {
         try {
           if (target) {
-            await fetch('/api/auth/act-as', {
+            const resp = await fetch('/api/auth/act-as', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ targetUserId: target }),
             })
+            // The server refuses to impersonate a user that no longer exists
+            // (404 after a DB reset or a deleted account). Keeping the target
+            // anyway left every user-scoped call pointed at a ghost id: reads
+            // returned an innocuous empty list while the first write died on
+            // the user_id foreign key as an opaque 500. Fall back to the
+            // admin's own id and forget the stale selection.
+            if (!resp.ok) {
+              localStorage.removeItem(STORAGE_KEY_USER)
+              if (!cancelled) setUserIdState(authUser.id)
+              await fetch('/api/auth/act-as', { method: 'DELETE' }).catch(() => {})
+            }
           } else {
             await fetch('/api/auth/act-as', { method: 'DELETE' })
           }
@@ -169,20 +180,28 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     // fetches it triggers already carry the correct impersonation (no race / no
     // transient 404 under enforcement).
     void (async () => {
+      let impersonated = Boolean(id && id !== authUser?.id)
       try {
-        if (id && id !== authUser?.id) {
-          await fetch('/api/auth/act-as', {
+        if (impersonated) {
+          const resp = await fetch('/api/auth/act-as', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ targetUserId: id }),
           })
+          // Same ghost-user guard as the mount-time reconcile: a rejected
+          // target must never become the effective id.
+          if (!resp.ok) {
+            impersonated = false
+            localStorage.removeItem(STORAGE_KEY_USER)
+            await fetch('/api/auth/act-as', { method: 'DELETE' }).catch(() => {})
+          }
         } else {
           await fetch('/api/auth/act-as', { method: 'DELETE' })
         }
       } catch (e) {
         console.error('act-as sync failed', e)
       }
-      setUserIdState(id && id !== authUser?.id ? id : (authUser?.id ?? null))
+      setUserIdState(impersonated ? id : (authUser?.id ?? null))
     })()
   }, [isAdmin, authUser])
 

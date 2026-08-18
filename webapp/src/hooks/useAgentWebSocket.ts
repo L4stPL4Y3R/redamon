@@ -82,6 +82,9 @@ export function useAgentWebSocket({
   const isIntentionalDisconnect = useRef(false)
   const isAuthenticatedRef = useRef(false)
   const pingIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  // Set when the ticket mint came back empty, so the agent's 1008 rejection can
+  // name the actual cause instead of a generic auth error.
+  const ticketMissingRef = useRef(false)
 
   // Get WebSocket URL - auto-detect from browser location so it works on any
   // machine. The chat socket authenticates via the init frame (not a URL ticket).
@@ -101,9 +104,9 @@ export function useAgentWebSocket({
 
   // Send initialization message.
   // STRIDE S6: fetch a short-lived ticket (JWT cookie sent automatically) and
-  // include it so the agent can authenticate the socket. If the mint fails or
-  // returns null (secret unset in dev), we send init without a ticket and the
-  // agent fails open.
+  // include it so the agent can authenticate the socket. A ticketless init is
+  // still sent, but the agent FAILS CLOSED and rejects it with close code 1008
+  // (see handleClose) - it does not fail open, whatever the mint side says.
   const sendInit = useCallback(async () => {
     if (!wsRef.current || isAuthenticatedRef.current) return
 
@@ -119,8 +122,9 @@ export function useAgentWebSocket({
         if (data?.ticket) ticket = data.ticket as string
       }
     } catch {
-      // Non-fatal: proceed without a ticket (agent fail-open when secret unset).
+      // Non-fatal here: the rejection below is what the user is told about.
     }
+    ticketMissingRef.current = !ticket
 
     const initPayload: InitPayload = {
       user_id: userId,
@@ -294,6 +298,22 @@ export function useAgentWebSocket({
     wsRef.current = null
     setStatus(ConnectionStatus.DISCONNECTED)
     onDisconnect?.()
+
+    // 1008 = the agent refused the init frame (ws_ticket verification). It is a
+    // configuration failure, not a blip: retrying just parks the UI on
+    // "Connecting..." forever, which is how a missing AGENT_WS_TICKET_SECRET
+    // reached users as a silent hang. Stop and say what is wrong.
+    if (event.code === 1008) {
+      const authError = new Error(
+        ticketMissingRef.current
+          ? 'Agent WebSocket authentication failed: no session ticket was issued. Run ./redamon.sh update to generate AGENT_WS_TICKET_SECRET, then restart the webapp and agent.'
+          : 'Agent WebSocket authentication failed: the agent rejected the session ticket. Check that AGENT_WS_TICKET_SECRET matches for the webapp and agent containers.'
+      )
+      setStatus(ConnectionStatus.FAILED)
+      setError(authError)
+      onError?.(authError)
+      return
+    }
 
     // Auto-reconnect if not intentional and enabled
     if (!isIntentionalDisconnect.current && enabled && reconnectAttempt < maxReconnectAttempts) {

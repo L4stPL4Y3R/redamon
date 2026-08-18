@@ -105,6 +105,51 @@ describe('ProjectProvider impersonation wiring', () => {
     expect(projIdx).toBeGreaterThan(actAsIdx) // load gated behind reconcile
   })
 
+  // Issue #173: the reconcile only caught a network throw, so a 404 ("User not
+  // found", the DB was reset / the account was deleted) left the ghost id as the
+  // effective user. Reads then returned an empty list and the first WRITE died on
+  // the user_id foreign key as an opaque 500 ("Failed to save provider").
+  test('admin restoring a DELETED target: falls back to own id and forgets it', async () => {
+    localStorage.setItem('redamon-current-user', 'ghost')
+    mockAuth = { user: { id: 'admin' }, isLoading: false, isAdmin: true }
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown, opts?: RequestInit) => {
+      const u = String(url)
+      fetchCalls.push({ url: u, method: opts?.method ?? 'GET', body: opts?.body ? String(opts.body) : '' })
+      if (u.includes('/api/auth/act-as') && opts?.method === 'POST') {
+        return { ok: false, status: 404, json: async () => ({ error: 'User not found' }) } as unknown as Response
+      }
+      return { ok: true, json: async () => ({ id: 'P1' }) } as unknown as Response
+    }))
+
+    render(<ProjectProvider><Consumer /></ProjectProvider>)
+
+    await waitFor(() => expect(screen.getByTestId('userId').textContent).toBe('admin'))
+    expect(localStorage.getItem('redamon-current-user')).toBeNull()
+    expect(actAsCalls().some(c => c.method === 'DELETE')).toBe(true)
+  })
+
+  test('admin switching to a DELETED user: effective id stays own', async () => {
+    mockAuth = { user: { id: 'admin' }, isLoading: false, isAdmin: true }
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown, opts?: RequestInit) => {
+      const u = String(url)
+      fetchCalls.push({ url: u, method: opts?.method ?? 'GET', body: opts?.body ? String(opts.body) : '' })
+      if (u.includes('/api/auth/act-as') && opts?.method === 'POST') {
+        return { ok: false, status: 404, json: async () => ({ error: 'User not found' }) } as unknown as Response
+      }
+      return { ok: true, json: async () => ({ id: 'P1' }) } as unknown as Response
+    }))
+
+    render(<ProjectProvider><Consumer /></ProjectProvider>)
+    await waitFor(() => expect(screen.getByTestId('userId').textContent).toBe('admin'))
+    fireEvent.click(screen.getByTestId('switch'))
+
+    await waitFor(() =>
+      expect(actAsCalls().some(c => c.method === 'POST' && c.body.includes('userX'))).toBe(true),
+    )
+    await waitFor(() => expect(localStorage.getItem('redamon-current-user')).toBeNull())
+    expect(screen.getByTestId('userId').textContent).toBe('admin')
+  })
+
   test('admin switching users: POST act-as then effective id flips to target', async () => {
     mockAuth = { user: { id: 'admin' }, isLoading: false, isAdmin: true }
     render(<ProjectProvider><Consumer /></ProjectProvider>)

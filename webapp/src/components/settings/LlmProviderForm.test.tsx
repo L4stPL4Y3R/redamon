@@ -1,8 +1,8 @@
 /**
  * @vitest-environment jsdom
  */
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
 const toastSuccess = vi.fn()
 const toastError = vi.fn()
@@ -82,5 +82,54 @@ describe('LlmProviderForm Ollama reasoning control', () => {
     expect(body.reasoningEnabled).toBe(true)
     expect(body.reasoningEffort).toBe('medium')
     expect(onSave).toHaveBeenCalled()
+  })
+})
+
+// Issue #173: the save failed with a server-side reason the form threw away,
+// leaving the user with an unactionable "Failed to save provider".
+describe('LlmProviderForm save errors', () => {
+  beforeEach(() => {
+    // Auto-cleanup is off (vitest globals are not enabled), so an earlier
+    // render would leave a second "Update Provider" button in the document.
+    cleanup()
+    vi.restoreAllMocks()
+    toastSuccess.mockReset()
+    toastError.mockReset()
+  })
+  afterEach(cleanup)
+
+  test('surfaces the API error message instead of the blanket one', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: false,
+      status: 404,
+      json: async () => ({ error: 'User not found. Log out and back in.' }),
+    } as Response)
+    const onSave = vi.fn()
+
+    render(
+      <LlmProviderForm userId="ghost" provider={PROVIDER} onSave={onSave} onCancel={vi.fn()} />,
+    )
+    // Save stays disabled until the form is dirty (useDirtyState).
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Enable reasoning effort' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Update Provider' }))
+
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith('User not found. Log out and back in.'))
+    expect(onSave).not.toHaveBeenCalled()
+  })
+
+  test('a non-JSON error body still yields a message with the status code', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: false,
+      status: 502,
+      json: async () => { throw new SyntaxError('Unexpected token <') },
+    } as unknown as Response)
+
+    render(
+      <LlmProviderForm userId="user-1" provider={PROVIDER} onSave={vi.fn()} onCancel={vi.fn()} />,
+    )
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Enable reasoning effort' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Update Provider' }))
+
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith('Failed to save provider (HTTP 502)'))
   })
 })

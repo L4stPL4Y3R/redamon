@@ -44,8 +44,9 @@ export async function verifyToken(token: string): Promise<{ sub: string; role: s
 // Short-lived HS256 ticket that binds an authenticated operator identity to a
 // (projectId, sessionId) so the agent can verify the /ws/agent init frame. Signed
 // with a DEDICATED secret (never AUTH_SECRET) so an agent-side compromise cannot
-// forge login cookies. Returns null when the secret is unset - the agent then
-// fails open (dev), so the WS still connects.
+// forge login cookies. Returns null when the secret is unset, and the agent then
+// REFUSES the socket (it fails closed, see agentic/ws_ticket.py) - a stack whose
+// .env predates this secret must run ./redamon.sh update.
 const WS_TICKET_EXPIRY = '60s'
 
 function getWsTicketSecret(): Uint8Array | null {

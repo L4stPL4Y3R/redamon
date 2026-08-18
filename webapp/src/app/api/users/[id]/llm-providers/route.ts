@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { getSession, isInternalRequest } from '@/lib/session'
 import { isReasoningEffort } from '@/lib/llmReasoning'
+import { requireUserExists, isForeignKeyViolation } from '@/lib/userScopedWrite'
 
 interface RouteParams {
   params: Promise<{ id: string }>
@@ -87,6 +88,11 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       }
     }
 
+    // The admin bypass above lets a caller name any user id; a ghost id must
+    // fail as a readable 404, not as a foreign-key 500 (issue #173).
+    const missing = await requireUserExists(id)
+    if (missing) return missing
+
     const body = await request.json()
 
     const { providerType, name } = body
@@ -146,6 +152,12 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       { status: 201 }
     )
   } catch (error) {
+    if (isForeignKeyViolation(error)) {
+      return NextResponse.json(
+        { error: 'User not found. Your session points at an account that no longer exists - log out and back in.' },
+        { status: 404 }
+      )
+    }
     console.error('Failed to create LLM provider:', error)
     return NextResponse.json(
       { error: 'Failed to create LLM provider' },
