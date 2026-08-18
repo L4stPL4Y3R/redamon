@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import json
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
 # ---------------------------------------------------------------------------
 # Validation status (6.5a Directive 1)
@@ -223,14 +224,43 @@ def finding_kind(location: str) -> str:
     return KIND_IMAGE_HISTORY if str(location or "").startswith(IMAGE_HISTORY_PREFIX) else KIND_SECRET
 
 
+#: The github sources report `repository` in TWO shapes for the same repo: a
+#: clone URL for a finding in a file, and a bare `owner/repo` for one in an issue
+#: or PR comment. Both are the same asset, so passing them through verbatim built
+#: two MultiscannerRepository nodes for one repository - which split that repo's
+#: findings across two nodes and inflated assets_scanned by one per repo whose
+#: comments were scanned.
+_GITHUB_SOURCES = ("github", "github_experimental")
+
+
+def _github_clone_url(asset: str, link: str) -> str:
+    """Canonicalise a github asset to the clone-URL form file findings use.
+
+    The host comes from the finding's own ``link`` rather than a hardcoded
+    github.com: a GitHub Enterprise repository would otherwise be renamed to a
+    github.com one, silently merging two different hosts' repos of the same name.
+    """
+    asset = (asset or "").strip()
+    # Already a URL (a file finding, or a gist, which is gist.github.com).
+    if not asset or "://" in asset:
+        return asset
+    host = urlsplit(link).netloc if link else ""
+    slug = asset.strip("/")
+    if slug.endswith(".git"):
+        slug = slug[:-4]
+    return f"https://{host or 'github.com'}/{slug}.git"
+
+
 def asset_name(source_id: str, meta: dict, config: Optional[dict] = None) -> str:
     """The human identifier for the asset node.
 
     Docker appends the tag so two tags of the same image stay distinguishable
     (TruffleHog reports Image and Tag separately, and each tag can hold different
-    secrets).
+    secrets). GitHub collapses its two spellings of a repository into one.
     """
     asset = meta.get("asset") or ""
+    if source_id in _GITHUB_SOURCES and asset:
+        return _github_clone_url(asset, str(meta.get("link") or ""))
     if source_id == "docker" and asset:
         tag = meta.get("extra", {}).get("Tag") or meta.get("extra", {}).get("tag")
         if tag and ":" not in asset.split("/")[-1] and "@" not in asset:

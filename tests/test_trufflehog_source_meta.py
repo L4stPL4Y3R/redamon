@@ -214,7 +214,10 @@ class TestNormalise(unittest.TestCase):
             "github",
         )
         self.assertEqual(finding["source"], "github")
-        self.assertEqual(finding["asset"], "acme/api")
+        # Canonicalised to the clone-URL form: a github `repository` arrives as a
+        # bare slug from a comment and as a clone URL from a file, and one repo
+        # must be ONE asset. See test_github_comment_asset_matches_the_file_asset.
+        self.assertEqual(finding["asset"], "https://github.com/acme/api.git")
         self.assertEqual(finding["location"], "app.py")
         self.assertEqual(finding["validation_status"], "validated")
         self.assertEqual(finding["finding_kind"], "secret")
@@ -247,6 +250,51 @@ class TestNormalise(unittest.TestCase):
         meta = fnd.extract_source_meta(result("Docker", {"Image": "acme/app:2.0", "Tag": "2.0"}))
         self.assertEqual(fnd.asset_name("docker", meta), "acme/app:2.0")
 
+    def test_github_comment_asset_matches_the_file_asset(self):
+        # THE bug this exists for: TruffleHog reports `repository` as a clone URL
+        # for a finding in a file, but as a bare `owner/repo` for one in an issue
+        # or PR comment. Verbatim, that is two asset nodes for ONE repository -
+        # the repo's findings split across both, and assets_scanned inflated.
+        in_file = fnd.extract_source_meta(result("Github", {
+            "repository": "https://github.com/acme/api.git", "file": "app.py",
+            "link": "https://github.com/acme/api/blob/deadbeef/app.py#L1",
+        }))
+        in_comment = fnd.extract_source_meta(result("Github", {
+            "repository": "acme/api",
+            "link": "https://github.com/acme/api/issues/7#issuecomment-1",
+        }))
+        self.assertEqual(fnd.asset_name("github", in_file),
+                         fnd.asset_name("github", in_comment))
+        self.assertEqual(fnd.asset_name("github", in_comment),
+                         "https://github.com/acme/api.git")
+
+    def test_github_comment_asset_keeps_an_enterprise_host(self):
+        # The host comes from the finding's own link, not a hardcoded
+        # github.com: rewriting a GHE repo as a github.com one would merge two
+        # different hosts' repositories of the same name into one node.
+        meta = fnd.extract_source_meta(result("Github", {
+            "repository": "acme/api",
+            "link": "https://ghe.acme.io/acme/api/pull/3#issuecomment-9",
+        }))
+        self.assertEqual(fnd.asset_name("github", meta),
+                         "https://ghe.acme.io/acme/api.git")
+
+    def test_github_gist_asset_is_left_alone(self):
+        # A gist already arrives as a URL, on a different host, and must not be
+        # rewritten into a repository coordinate.
+        meta = fnd.extract_source_meta(result("Github", {
+            "repository": "https://gist.github.com/abc123.git", "file": "notes.md",
+        }))
+        self.assertEqual(fnd.asset_name("github", meta),
+                         "https://gist.github.com/abc123.git")
+
+    def test_github_experimental_shares_the_normalisation(self):
+        # github-experimental reports under the same `Github` metadata key, so it
+        # would grow the same split.
+        meta = fnd.extract_source_meta(result("Github", {"repository": "acme/api"}))
+        self.assertEqual(fnd.asset_name("github_experimental", meta),
+                         "https://github.com/acme/api.git")
+
     def test_asset_falls_back_to_the_run_target_when_metadata_has_none(self):
         # Filesystem metadata is just file+line. An empty asset drops the graph
         # edge and collapses the dedup key for every finding of the source.
@@ -265,7 +313,9 @@ class TestNormalise(unittest.TestCase):
             result("Github", {"repository": "acme/api", "file": "a.py"}),
             "github", default_asset="acme",
         )
-        self.assertEqual(finding["asset"], "acme/api")
+        # The point of this test is that metadata beats `default_asset`; the
+        # value is the canonical github spelling of that same metadata.
+        self.assertEqual(finding["asset"], "https://github.com/acme/api.git")
 
     def test_verification_disabled_propagates_into_the_finding(self):
         finding = fnd.normalise(result("Github", {"repository": "a"}, Verified=False),

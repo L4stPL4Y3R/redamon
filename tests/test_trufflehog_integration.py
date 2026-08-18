@@ -113,7 +113,11 @@ class TestSingleSourceRoundTrip(PipelineTestCase):
         self.assertEqual(scans[0]["target"], "acme")
 
         repos = self.graph.nodes_of("MultiscannerRepository")
-        self.assertEqual([r["name"] for r in repos], ["acme/api"])
+        # The clone-URL form is canonical for github: TruffleHog reports the same
+        # repository as a bare `owner/repo` from a comment and as a clone URL
+        # from a file, and both must land on ONE asset node. See
+        # tests/test_trufflehog_source_meta.py::test_github_comment_asset_matches_the_file_asset.
+        self.assertEqual([r["name"] for r in repos], ["https://github.com/acme/api.git"])
 
         findings = self.graph.findings()
         self.assertEqual(len(findings), 1)
