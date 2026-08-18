@@ -40,6 +40,8 @@ cleanup() {
     docker compose -p "$PROJECT" -f - --project-directory "$REPO_ROOT" down -v >/dev/null 2>&1 <<< "services: {}"
     docker rm -f "${PROJECT}-pg-1" >/dev/null 2>&1
     docker rm -f "${CONTROL_PROJECT}-pg-1" "${CONTROL_PROJECT}-init-1" >/dev/null 2>&1
+    docker rm -f "redamongvmsocketrec-pg-1" "redamongvmsocketrec-init-1" >/dev/null 2>&1
+    docker volume rm -f "redamongvmsocketrec_sock" "redamongvmsocketrec_data" >/dev/null 2>&1
     docker volume rm -f "${PROJECT}_sock" "${PROJECT}_data" >/dev/null 2>&1
     docker volume rm -f "${CONTROL_PROJECT}_sock" "${CONTROL_PROJECT}_data" >/dev/null 2>&1
 }
@@ -155,6 +157,49 @@ else
     echo "  SKIP  control stack did not start"
 fi
 down "$CONTROL_PROJECT" control
+
+echo "== recovery: \`redamon.sh update\` repairs an ALREADY-broken stack =="
+# The reporter of #174 is not in the "about to break" state, they are in the
+# BROKEN one: socket already deleted, Postgres still running, gvmd crash-looping.
+# `update` force-recreates gvm-postgres (docker-compose.yml changed => rebuild_all),
+# so prove that specific command restores the socket rather than merely preventing
+# the next deletion.
+RECOVER_PROJECT="redamongvmsocketrec"
+down "$RECOVER_PROJECT" control
+if up "$RECOVER_PROJECT" control >/dev/null 2>&1; then
+    REC_C="${RECOVER_PROJECT}-pg-1"
+    # Reproduce the broken state exactly: delete the live socket underneath it.
+    docker exec "$REC_C" rm -f /var/run/postgresql/.s.PGSQL.5432 >/dev/null 2>&1
+    [[ "$(socket_present "$REC_C")" == "gone" ]] \
+        && ok "starting state is broken (socket deleted under a running Postgres)" \
+        || bad "starting state is broken" "$(socket_present "$REC_C")" "gone"
+
+    # This is what cmd_update runs for the GVM stack.
+    compose_yaml plain | docker compose -p "$RECOVER_PROJECT" -f - \
+        --project-directory "$REPO_ROOT" up -d --force-recreate --wait pg >/dev/null 2>&1
+    rc=$?
+
+    [[ $rc -eq 0 ]] \
+        && ok "the recreate completes and Postgres reports healthy" \
+        || bad "the recreate completes and Postgres reports healthy" "exit $rc" "exit 0"
+    [[ "$(socket_present "$REC_C")" == "present" ]] \
+        && ok "the socket is RESTORED by the update path" \
+        || bad "the socket is RESTORED by the update path" "gone" "present"
+    [[ "$(pg_ready "$REC_C")" == "ready" ]] \
+        && ok "Postgres is reachable again (gvmd can reconnect)" \
+        || bad "Postgres is reachable again" "unreachable" "ready"
+
+    # The removed one-shot lingers as an orphan on an existing install; it must
+    # be inert, never restarted by the new compose file.
+    orphan_state="$(docker inspect -f '{{.State.Status}}' "${RECOVER_PROJECT}-init-1" 2>/dev/null || echo absent)"
+    case "$orphan_state" in
+        exited|absent) ok "the removed init container stays inert (state: $orphan_state)" ;;
+        *) bad "the removed init container stays inert" "$orphan_state" "exited or absent" ;;
+    esac
+else
+    echo "  SKIP  recovery stack did not start"
+fi
+down "$RECOVER_PROJECT" control
 
 echo
 echo "RESULT: $PASS passed, $FAIL failed"

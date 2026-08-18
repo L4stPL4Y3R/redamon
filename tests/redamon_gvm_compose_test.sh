@@ -127,6 +127,47 @@ fi
 # dies without retrying takes the scanner out of the stack.
 eq "gvm-ospd is gated on the VT loader completing" "$(run_py ospd-gate)" "service_completed_successfully"
 
+echo "== the removed service leaves no orphan warning behind =="
+
+# Compose keeps a container whose service was deleted and warns about an "orphan"
+# on EVERY `up`. An upgraded install must end up as clean as a fresh one.
+if grep -q '^_REMOVED_CONTAINERS=(redamon-gvm-postgres-init)' "$REPO_ROOT/redamon.sh"; then
+    ok "the obsolete gvm-postgres-init container is listed for removal"
+else
+    bad "the obsolete gvm-postgres-init container is listed for removal" "not listed" "listed"
+fi
+
+# It has to run on every command that can reach `docker compose up`, not just one.
+dispatch="$(grep -E '^\s+install\|update\|up\)' "$REPO_ROOT/redamon.sh" | head -1)"
+case "$dispatch" in
+    *prune_removed_containers*) ok "cleanup runs for install, update and up" ;;
+    *) bad "cleanup runs for install, update and up" "${dispatch:-<no dispatch line>}" "calls prune_removed_containers" ;;
+esac
+
+# Defined ABOVE the BASH_SOURCE guard, or sourcing the script (this suite) cannot
+# see it and neither can any future test.
+if (set -uo pipefail; source "$REPO_ROOT/redamon.sh" >/dev/null 2>&1; declare -f prune_removed_containers >/dev/null); then
+    ok "prune_removed_containers survives sourcing (defined outside the dispatch guard)"
+else
+    bad "prune_removed_containers survives sourcing" "undefined" "defined"
+fi
+
+echo "== the stall-watchdog pin reaches the orchestrator =="
+
+# The orchestrator has NO env_file, so a knob in .env is inert unless compose
+# names it. Empty default => an existing .env needs no edit.
+if grep -qE '^\s+GVM_NO_PROGRESS_TIMEOUT: \$\{GVM_NO_PROGRESS_TIMEOUT:-\}' "$COMPOSE_FILE"; then
+    ok "recon-orchestrator receives GVM_NO_PROGRESS_TIMEOUT with an empty default"
+else
+    bad "recon-orchestrator receives GVM_NO_PROGRESS_TIMEOUT" "absent or non-empty default" "\${GVM_NO_PROGRESS_TIMEOUT:-}"
+fi
+
+if grep -qE '^GVM_NO_PROGRESS_TIMEOUT=$' "$REPO_ROOT/.env.example"; then
+    ok ".env.example documents the knob as an empty placeholder"
+else
+    bad ".env.example documents the knob" "missing" "a bare GVM_NO_PROGRESS_TIMEOUT="
+fi
+
 echo "== the governor's loader count matches the compose file =="
 
 # GVM_DATA_MEM caps N containers from ONE variable, so redamon.sh divides the

@@ -2794,6 +2794,11 @@ class ContainerManager:
                     "NEO4J_PASSWORD": os.environ.get("NEO4J_PASSWORD", ""),
                     **self._scanner_env(),  # S3/E6: scoped scanner token
                     # GVM connection settings
+                    # Operator pin for the stall watchdog. Forwarded ONLY when set,
+                    # so an unset knob reaches the scan as "use the shipped default"
+                    # rather than as an explicit empty value (issue #174).
+                    **({"GVM_NO_PROGRESS_TIMEOUT": os.environ["GVM_NO_PROGRESS_TIMEOUT"]}
+                       if os.environ.get("GVM_NO_PROGRESS_TIMEOUT", "").strip() else {}),
                     "GVM_SOCKET_PATH": os.environ.get("GVM_SOCKET_PATH", "/run/gvmd/gvmd.sock"),
                     "GVM_USERNAME": os.environ.get("GVM_USERNAME", "admin"),
                     "GVM_PASSWORD": os.environ.get("GVM_PASSWORD", "admin"),

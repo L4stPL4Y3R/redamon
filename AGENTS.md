@@ -108,8 +108,11 @@ Prose docs live in `docs/readmes/` (architecture, `README.<SUBSYSTEM>.md`, and
 
 ```bash
 # Build & run the stack (always via Docker; never local npx/node/pip)
-./redamon.sh build            # adaptive, memory-safe image build
-docker compose up -d
+# There is no `build` subcommand: building happens inside install/update, which
+# wrap it in the adaptive, memory-safe batching (compose_build).
+./redamon.sh install          # first run (add --gvm / --kbase)
+./redamon.sh update           # pull + smart-rebuild only what changed
+./redamon.sh up               # start what is already built
 
 # Test - runs each section inside its Docker image, per-file isolated
 ./redamon.sh test unit        # the gate; must be 100% green

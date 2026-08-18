@@ -321,6 +321,54 @@ class FailureStreakTest(unittest.TestCase):
                          "expected the helper definition plus one call per scan phase")
 
 
+class StallWatchdogKnobTest(unittest.TestCase):
+    """The watchdog message tells operators to raise the bound, so it must exist.
+
+    A genuinely slow target (a full IANA port sweep against a filtered host) can
+    sit at 0% past the 30-minute default, and an operator hitting that needs a
+    lever. It is deliberately an env pin, not a project setting: it is a
+    diagnostic bound, and it must be adjustable without a webapp round-trip.
+    """
+
+    def test_the_pin_overrides_the_default(self):
+        with mock.patch.dict("os.environ", {"GVM_NO_PROGRESS_TIMEOUT": "3600"}, clear=False):
+            self.assertEqual(gvm_settings.get_setting("NO_PROGRESS_TIMEOUT"), 3600)
+
+    def test_no_pin_keeps_the_shipped_default(self):
+        env = {k: v for k, v in __import__("os").environ.items()
+               if k != "GVM_NO_PROGRESS_TIMEOUT"}
+        with mock.patch.dict("os.environ", env, clear=True):
+            self.assertEqual(gvm_settings.get_setting("NO_PROGRESS_TIMEOUT"), 1800)
+
+    def test_an_unparseable_pin_never_disables_the_watchdog(self):
+        """A stray export must not silently turn a protection off."""
+        for bad in ("", "   ", "abc", "30m"):
+            with self.subTest(value=bad):
+                with mock.patch.dict("os.environ",
+                                     {"GVM_NO_PROGRESS_TIMEOUT": bad}, clear=False):
+                    self.assertEqual(gvm_settings.get_setting("NO_PROGRESS_TIMEOUT"), 1800)
+
+    def test_the_pin_survives_project_settings_being_loaded(self):
+        """API-sourced settings must not clobber the operator's pin."""
+        project = {"gvmTaskTimeout": 600}
+        with mock.patch.dict("os.environ", {"GVM_NO_PROGRESS_TIMEOUT": "60",
+                                            "WEBAPP_API_URL": "http://webapp:3000"}, clear=False), \
+             mock.patch("requests.get", return_value=_json_response(project)):
+            gvm_settings.reload_settings("proj-knob")
+            self.assertEqual(gvm_settings.get_setting("NO_PROGRESS_TIMEOUT"), 60)
+            self.assertEqual(gvm_settings.get_setting("TASK_TIMEOUT"), 600)
+        gvm_settings.reload_settings()   # do not leak cached state to other tests
+
+    def test_the_message_names_the_real_variable(self):
+        """The error told operators to raise a name nothing ever read."""
+        src = (REPO_ROOT / "scanners/gvm_scan/gvm_scanner.py").read_text()
+        start = src.index("made no progress for")
+        stall_msg = src[start:start + 900]      # the whole raise block, f-strings included
+        self.assertIn("GVM_NO_PROGRESS_TIMEOUT", stall_msg)
+        env_names = set(gvm_settings._ENV_OVERRIDES.values())
+        self.assertIn("GVM_NO_PROGRESS_TIMEOUT", env_names)
+
+
 class ScannerlessStackTest(unittest.TestCase):
     """End to end on the reported symptom, through the real code paths.
 

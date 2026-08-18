@@ -109,8 +109,18 @@ _env_get() {
 # via compose_build():
 #   Layer 1: always build `webapp` on its own first. Once built its layers are
 #            cached, so it never compiles concurrently with another image.
-#   Layer 2: cap COMPOSE_PARALLEL_LIMIT for the remaining images based on the
-#            memory/CPU actually available to the Docker BUILD ENGINE.
+#   Layer 2: build the remaining images in BATCHES sized from the memory/CPU
+#            actually available to the Docker BUILD ENGINE.
+#
+# Layer 2 pages the service list through `docker compose build` N names at a time
+# rather than handing over the whole list with COMPOSE_PARALLEL_LIMIT set. That
+# env var is only a hint: Compose v5 / Docker 29 delegate every build to bake,
+# which hands all targets to buildx in ONE invocation and starts them together.
+# Issue #171 is what that looks like in practice -- a host that logged
+# "parallelism=3" then built 16 images at once, starving pip of bandwidth until it
+# timed out. A batch cannot exceed its own length, so the cap holds regardless of
+# what the builder does with the hint (which is still set, for older Compose).
+# The cost is a barrier between batches; that is the point of the guarantee.
 #
 # Cross-platform: on macOS/Windows the Docker Desktop builder runs inside a Linux
 # VM whose memory is capped independently of host RAM, so reading host RAM would
@@ -1076,6 +1086,24 @@ prune_stale_build_cache() {
     return 0
 }
 
+# Echo the buildable compose targets for a `compose_build`-style arg list, one per
+# line. `build --print` emits bake's own target group, so this is exactly the set
+# of services that have a build section under the active profiles: a service that
+# only pulls an image (neo4j, postgres, the gvm-* data containers) is never handed
+# to `build`. Sorted so batch membership is reproducible run to run. Empty output
+# (no bake support on an older Compose, or a wedged daemon) makes the caller fall
+# back to one unbatched build -- which is also where COMPOSE_PARALLEL_LIMIT still
+# works, so the degradation lands on the path that does not need batching.
+_compose_build_targets() {
+    docker compose "$@" --print 2>/dev/null | awk '
+        /"targets"[[:space:]]*:[[:space:]]*\[/ { inside = 1; next }
+        inside && /\]/                         { exit }
+        inside {
+            gsub(/[",]/, ""); gsub(/^[[:space:]]+|[[:space:]]+$/, "")
+            if ($0 != "") print
+        }' | sort
+}
+
 # Memory-safe replacement for `docker compose ... build ...`. Pass exactly the
 # args that would follow `docker compose`, e.g.:
 #   compose_build --profile tools build
@@ -1085,19 +1113,30 @@ compose_build() {
     detect_build_resources
     local parallel; parallel="$(pick_parallelism)"
 
-    # Find the service names (positional args after the `build` subcommand).
-    local seen_build=false svc has_webapp=false svc_count=0
-    for svc in "$@"; do
+    # Split the arg list into the part before `build` (global flags such as
+    # --profile tools), the build flags, and the service names. Batching has to
+    # rebuild the command line, so the three groups are kept apart rather than
+    # just counted.
+    local -a pre=() flags=() svcs=()
+    local seen_build=false has_webapp=false
+    while [[ $# -gt 0 ]]; do
         if [[ "$seen_build" == false ]]; then
-            if [[ "$svc" == "build" ]]; then seen_build=true; fi
-            continue
+            pre+=("$1")
+            if [[ "$1" == "build" ]]; then seen_build=true; fi
+            shift; continue
         fi
-        case "$svc" in
-            -*) continue ;;   # skip build flags (--no-cache, --pull, ...)
+        case "$1" in
+            # Flags that consume the next token; without this their value would
+            # be mistaken for a service name.
+            --build-arg|--builder|-m|--memory|--provenance|--sbom|--ssh)
+                flags+=("$1"); [[ $# -ge 2 ]] && { flags+=("$2"); shift; }
+                shift; continue ;;
+            -*) flags+=("$1"); shift; continue ;;
+            *)  svcs+=("$1"); [[ "$1" == "webapp" ]] && has_webapp=true
+                shift; continue ;;
         esac
-        svc_count=$(( svc_count + 1 ))
-        if [[ "$svc" == "webapp" ]]; then has_webapp=true; fi
     done
+    local svc_count="${#svcs[@]}"
 
     # A build with no explicit service list builds everything -> webapp included.
     local isolate_webapp=false
@@ -1129,7 +1168,7 @@ compose_build() {
         docker compose build webapp
     fi
 
-    # Layer 2: build the (remaining) images with a capped parallel limit. If
+    # Layer 2: build the (remaining) images, at most $parallel at a time. If
     # webapp was in the set it is now cached, so re-passing it is a no-op.
     #
     # Capture the status instead of letting it propagate directly: Layer 3 has to
@@ -1138,10 +1177,38 @@ compose_build() {
     # invokes compose_build bare still aborts under `set -e`, and one that wraps
     # it in `if ! compose_build ...` (cmd_update's tool build) still sees failure.
     local build_rc=0
-    if [[ -n "$parallel" && "$parallel" -ge 1 ]]; then
-        COMPOSE_PARALLEL_LIMIT="$parallel" docker compose "$@" || build_rc=$?
+    # `${arr[@]+"${arr[@]}"}` throughout: an empty array under `set -u` is an
+    # unbound variable on bash 3.2 (stock macOS), which this script still runs on.
+    local -a base=(${pre[@]+"${pre[@]}"} ${flags[@]+"${flags[@]}"})
+    local -a batch_svcs=(${svcs[@]+"${svcs[@]}"})
+
+    # "Build everything" arrives with no names to page through, so resolve the set
+    # before batching it.
+    if [[ "$svc_count" -eq 0 && "$parallel" -ge 1 ]]; then
+        local target
+        batch_svcs=()
+        while IFS= read -r target; do
+            [[ -n "$target" ]] && batch_svcs+=("$target")
+        done < <(_compose_build_targets "${base[@]}")
+    fi
+
+    if [[ "$parallel" -ge 1 && "${#batch_svcs[@]}" -gt "$parallel" ]]; then
+        local total="${#batch_svcs[@]}" i=0 n=0 batches
+        batches=$(( (total + parallel - 1) / parallel ))
+        while [[ "$i" -lt "$total" ]]; do
+            n=$(( n + 1 ))
+            local -a batch=("${batch_svcs[@]:i:parallel}")
+            info "Build batch ${n}/${batches}: ${batch[*]}"
+            COMPOSE_PARALLEL_LIMIT="$parallel" docker compose "${base[@]}" "${batch[@]}" \
+                || { build_rc=$?; break; }
+            i=$(( i + parallel ))
+        done
+    elif [[ "$parallel" -ge 1 ]]; then
+        COMPOSE_PARALLEL_LIMIT="$parallel" docker compose "${base[@]}" ${svcs[@]+"${svcs[@]}"} \
+            || build_rc=$?
     else
-        docker compose "$@" || build_rc=$?   # REDAMON_BUILD_PARALLEL=0 -> unbounded
+        # REDAMON_BUILD_PARALLEL=0 -> unbounded, one call, no pacing at all.
+        docker compose "${base[@]}" ${svcs[@]+"${svcs[@]}"} || build_rc=$?
     fi
 
     # Layer 3: drop the cache the rebuild just orphaned. ONLY on success -- after
@@ -3943,6 +4010,29 @@ _test_run_webapp() {
     fi
 }
 
+# Containers whose SERVICE has been removed from docker-compose.yml. Compose never
+# deletes those: it leaves them behind and prints "Found orphan containers" on every
+# single `up`. Removing them by name keeps an upgraded install as clean as a fresh
+# one. Only ever list containers that are inert by construction.
+#   redamon-gvm-postgres-init: its stale-lock cleanup moved INTO gvm-postgres'
+#   own entrypoint, because as a sibling one-shot it deleted the LIVE socket on
+#   every repeat `up` and left gvmd crash-looping (issue #174).
+_REMOVED_CONTAINERS=(redamon-gvm-postgres-init)
+
+prune_removed_containers() {
+    command -v docker >/dev/null 2>&1 || return 0
+    local existing c
+    existing="$(docker ps -a --format '{{.Names}}' 2>/dev/null)" || return 0
+    for c in "${_REMOVED_CONTAINERS[@]}"; do
+        if printf '%s\n' "$existing" | grep -qx "$c"; then
+            docker rm -f "$c" >/dev/null 2>&1 \
+                && info "Removed obsolete container $c (its service no longer exists)"
+        fi
+    done
+    return 0
+}
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -3978,7 +4068,7 @@ esac
 # Running it here also means the .env block is written BEFORE any `docker compose
 # up` in those commands reads it.
 case "${1:-help}" in
-    install|update|up) export_resource_caps ;;
+    install|update|up) export_resource_caps; prune_removed_containers ;;
 esac
 
 case "${1:-help}" in

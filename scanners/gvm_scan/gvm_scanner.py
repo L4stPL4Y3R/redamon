@@ -484,8 +484,9 @@ class GVMScanner:
                         f"(status {status_text}, progress {progress_text}%). The scan "
                         f"was accepted by gvmd but nothing is running it - check that "
                         f"redamon-gvm-ospd is up and that its VT feed loader "
-                        f"(redamon-gvm-vt) completed. Raise NO_PROGRESS_TIMEOUT if "
-                        f"this target is genuinely just slow."
+                        f"(redamon-gvm-vt) completed. If this target is genuinely "
+                        f"just slow, raise it: GVM_NO_PROGRESS_TIMEOUT=3600 in .env, "
+                        f"then ./redamon.sh up."
                     )
 
             time.sleep(self.poll_interval)
