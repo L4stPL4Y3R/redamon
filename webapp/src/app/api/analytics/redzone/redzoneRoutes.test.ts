@@ -15,7 +15,7 @@ vi.mock('@/lib/access', () => ({ guardProject: vi.fn().mockResolvedValue(null) }
 const runCalls: Array<{ cypher: string; params: Record<string, unknown> }> = []
 let runReturn: Array<Record<string, unknown>> = []
 /** Rows returned only for a query whose Cypher matches. The secrets route runs
- *  TWO queries (the :Secret traversal and the TrufflehogFinding one); a flat
+ *  TWO queries (the :Secret traversal and the MultiscannerFinding one); a flat
  *  `runReturn` would answer both and double every row. */
 let runReturnFor: Array<{ match: RegExp; rows: Array<Record<string, unknown>> }> = []
 let shouldThrow: Error | null = null
@@ -273,7 +273,7 @@ describe('/api/analytics/redzone/takeover', () => {
 
 // ---------------------------------------------------------------------------
 // secrets: the :Secret traversal (BaseURL OR JsReconFinding) UNIONed with the
-// TrufflehogFinding one, so a credential confirmed live is not graph-only.
+// MultiscannerFinding one, so a credential confirmed live is not graph-only.
 // ---------------------------------------------------------------------------
 describe('/api/analytics/redzone/secrets', () => {
   test('the Secret query traverses both HAS_SECRET paths', async () => {
@@ -290,7 +290,7 @@ describe('/api/analytics/redzone/secrets', () => {
   test('a second query picks up Secret Multiscanner findings', async () => {
     runReturn = []
     await secretsRoute.GET(makeRequest('p1'))
-    const c = runCalls.find(call => /TrufflehogFinding/.test(call.cypher))
+    const c = runCalls.find(call => /MultiscannerFinding/.test(call.cypher))
     expect(c).toBeDefined()
     // Untyped asset match: assets carry one of five labels, and naming one
     // would silently drop every non-git source.
@@ -322,7 +322,7 @@ describe('/api/analytics/redzone/secrets', () => {
       { match: /MATCH \(s:Secret/, rows: [
         { id: 's1', secretType: 'API Key', validationStatus: 'unvalidated', origin: 'Secret' },
       ] },
-      { match: /TrufflehogFinding/, rows: [
+      { match: /MultiscannerFinding/, rows: [
         { id: 'tf1', secretType: 'AWS', validationStatus: 'validated', trufflehogSource: 'docker',
           asset: 'acme/app:1.0', location: '/app/.env', findingKind: 'secret' },
       ] },
@@ -330,7 +330,7 @@ describe('/api/analytics/redzone/secrets', () => {
     const body = await (await secretsRoute.GET(makeRequest('p1'))).json()
     expect(body.rows).toHaveLength(2)
     expect(body.rows[0].id).toBe('tf1')
-    expect(body.rows[0].origin).toBe('TrufflehogFinding')
+    expect(body.rows[0].origin).toBe('MultiscannerFinding')
     expect(body.rows[0].severity).toBe('critical')
     expect(body.rows[0].trufflehogSource).toBe('docker')
   })
@@ -339,7 +339,7 @@ describe('/api/analytics/redzone/secrets', () => {
     // 'unverified' means nobody looked; it must not read as "checked and safe".
     runReturnFor = [
       { match: /MATCH \(s:Secret/, rows: [] },
-      { match: /TrufflehogFinding/, rows: [
+      { match: /MultiscannerFinding/, rows: [
         { id: 'never', secretType: 'AWS', validationStatus: 'unverified' },
         { id: 'dead', secretType: 'AWS', validationStatus: 'unvalidated' },
         { id: 'errored', secretType: 'AWS', validationStatus: 'verify_error' },
@@ -356,7 +356,7 @@ describe('/api/analytics/redzone/secrets', () => {
       { match: /MATCH \(s:Secret/, rows: Array.from({ length: 50 }, (_, i) => ({
         id: `s${i}`, secretType: 'API Key', validationStatus: 'unvalidated', origin: 'Secret',
       })) },
-      { match: /TrufflehogFinding/, rows: Array.from({ length: 50 }, (_, i) => ({
+      { match: /MultiscannerFinding/, rows: Array.from({ length: 50 }, (_, i) => ({
         id: `tf${i}`, secretType: 'AWS', validationStatus: 'validated', trufflehogSource: 'docker',
       })) },
     ]
@@ -378,7 +378,7 @@ describe('/api/analytics/redzone/secrets', () => {
       { match: /MATCH \(s:Secret/, rows: [] },
       // The driver projects every RETURN column, so an absent value arrives as
       // null rather than missing; the fixture mirrors that.
-      { match: /TrufflehogFinding/, rows: [{
+      { match: /MultiscannerFinding/, rows: [{
         id: 'tf1', secretType: 'AWS', validationStatus: null, trufflehogSource: null,
         asset: null, location: null, findingKind: null, valueSample: null, sourceUrl: null,
       }] },
@@ -386,14 +386,14 @@ describe('/api/analytics/redzone/secrets', () => {
     const body = await (await secretsRoute.GET(makeRequest('p1'))).json()
     expect(body.rows).toHaveLength(1)
     expect(body.rows[0].asset).toBeNull()
-    expect(body.rows[0].origin).toBe('TrufflehogFinding')
+    expect(body.rows[0].origin).toBe('MultiscannerFinding')
     expect(body.rows[0].severity).toBe('medium')
   })
 
   test('a build-history finding shows a name, not a path that does not exist', async () => {
     runReturnFor = [
       { match: /MATCH \(s:Secret/, rows: [] },
-      { match: /TrufflehogFinding/, rows: [
+      { match: /MultiscannerFinding/, rows: [
         { id: 'tf1', secretType: 'AWS', validationStatus: 'validated',
           location: 'image-metadata:history:3:created-by', findingKind: 'image_history' },
       ] },

@@ -123,7 +123,7 @@ TOOL_REGISTRY = {
             'Endpoints, Parameters, Certificates, Headers, Technologies, Vulnerabilities, '
             'CVEs, MitreData (CWE), CAPEC, Traceroute hops, Exploits, ExploitGvm, '
             'GithubHunt, Repositories, Paths, Secrets, SensitiveFiles, '
-            'JsReconFinding, TrufflehogScan, TrufflehogRepository, TrufflehogFinding\n'
+            'JsReconFinding, MultiscannerScan, MultiscannerRepository, MultiscannerFinding\n'
             '   - Skip if you already know which specific tool to use'
         ),
     },

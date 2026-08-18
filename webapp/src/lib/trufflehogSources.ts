@@ -99,7 +99,7 @@ export function isValidScanTargetName(name: string): boolean {
 
 export const TRUFFLEHOG_SOURCES: Record<string, TrufflehogSource> = {
   git: {
-    id: 'git', label: 'Git repository', assetLabel: 'TrufflehogRepository', assetKind: 'repository',
+    id: 'git', label: 'Git repository', assetLabel: 'MultiscannerRepository', assetKind: 'repository',
     description: 'Any Git host over https://, ssh:// or file://.',
     credentials: [CRED.gitUser, CRED.gitToken],
     fields: [
@@ -115,7 +115,7 @@ export const TRUFFLEHOG_SOURCES: Record<string, TrufflehogSource> = {
     ],
   },
   github: {
-    id: 'github', label: 'GitHub', assetLabel: 'TrufflehogRepository', assetKind: 'repository',
+    id: 'github', label: 'GitHub', assetLabel: 'MultiscannerRepository', assetKind: 'repository',
     description: 'Repositories, organizations, wikis, gists and issue/PR comments.',
     credentials: [CRED.github],
     fields: [
@@ -139,7 +139,7 @@ export const TRUFFLEHOG_SOURCES: Record<string, TrufflehogSource> = {
   },
   github_experimental: {
     id: 'github_experimental', label: 'GitHub deleted commits',
-    assetLabel: 'TrufflehogRepository', assetKind: 'repository',
+    assetLabel: 'MultiscannerRepository', assetKind: 'repository',
     description: 'Finds secrets in force-pushed and deleted commits. Far slower, and its findings have no live file path.',
     credentials: [CRED.github],
     fields: [
@@ -149,7 +149,7 @@ export const TRUFFLEHOG_SOURCES: Record<string, TrufflehogSource> = {
     ],
   },
   gitlab: {
-    id: 'gitlab', label: 'GitLab', assetLabel: 'TrufflehogRepository', assetKind: 'repository',
+    id: 'gitlab', label: 'GitLab', assetLabel: 'MultiscannerRepository', assetKind: 'repository',
     description: 'GitLab.com or a self-hosted instance.',
     credentials: [CRED.gitlab],
     fields: [
@@ -163,7 +163,7 @@ export const TRUFFLEHOG_SOURCES: Record<string, TrufflehogSource> = {
     ],
   },
   docker: {
-    id: 'docker', label: 'Docker registry', assetLabel: 'TrufflehogImage', assetKind: 'image',
+    id: 'docker', label: 'Docker registry', assetLabel: 'MultiscannerImage', assetKind: 'image',
     description: 'Docker Hub or any OCI registry. Scans image layers and the build history baked into RUN/ENV directives.',
     credentials: [CRED.docker],
     fields: [
@@ -179,7 +179,7 @@ export const TRUFFLEHOG_SOURCES: Record<string, TrufflehogSource> = {
     ],
   },
   huggingface: {
-    id: 'huggingface', label: 'Hugging Face', assetLabel: 'TrufflehogModel', assetKind: 'model',
+    id: 'huggingface', label: 'Hugging Face', assetLabel: 'MultiscannerModel', assetKind: 'model',
     description: 'Models, spaces and datasets — either named assets or a whole org/user sweep.',
     credentials: [CRED.huggingface],
     fields: [
@@ -211,7 +211,7 @@ export const TRUFFLEHOG_SOURCES: Record<string, TrufflehogSource> = {
     ],
   },
   s3: {
-    id: 's3', label: 'AWS S3', assetLabel: 'TrufflehogBucket', assetKind: 'bucket',
+    id: 's3', label: 'AWS S3', assetLabel: 'MultiscannerBucket', assetKind: 'bucket',
     description: 'S3 buckets, optionally across assumed roles.',
     credentials: [CRED.awsKey, CRED.awsSecret, CRED.awsSession],
     fields: [
@@ -223,7 +223,7 @@ export const TRUFFLEHOG_SOURCES: Record<string, TrufflehogSource> = {
     ],
   },
   gcs: {
-    id: 'gcs', label: 'Google Cloud Storage', assetLabel: 'TrufflehogBucket', assetKind: 'bucket',
+    id: 'gcs', label: 'Google Cloud Storage', assetLabel: 'MultiscannerBucket', assetKind: 'bucket',
     description: 'GCS buckets, authenticated or public-only.',
     credentials: [CRED.gcp],
     fields: [
@@ -238,7 +238,7 @@ export const TRUFFLEHOG_SOURCES: Record<string, TrufflehogSource> = {
     ],
   },
   filesystem: {
-    id: 'filesystem', label: 'Filesystem', assetLabel: 'TrufflehogEndpoint', assetKind: 'endpoint',
+    id: 'filesystem', label: 'Filesystem', assetLabel: 'MultiscannerEndpoint', assetKind: 'endpoint',
     description: `Always scans ${SCAN_TARGET_FOLDERS.filesystem} — put the files to scan in that folder. No target to type, and no credential.`,
     credentials: [],
     fields: [
@@ -248,7 +248,7 @@ export const TRUFFLEHOG_SOURCES: Record<string, TrufflehogSource> = {
     ],
   },
   jenkins: {
-    id: 'jenkins', label: 'Jenkins', assetLabel: 'TrufflehogEndpoint', assetKind: 'endpoint',
+    id: 'jenkins', label: 'Jenkins', assetLabel: 'MultiscannerEndpoint', assetKind: 'endpoint',
     description: 'A Jenkins instance. An exposed unauthenticated one scans without a credential — and is itself a finding.',
     credentials: [CRED.jenkinsUser, CRED.jenkinsPass],
     fields: [
@@ -257,7 +257,7 @@ export const TRUFFLEHOG_SOURCES: Record<string, TrufflehogSource> = {
     ],
   },
   elasticsearch: {
-    id: 'elasticsearch', label: 'Elasticsearch', assetLabel: 'TrufflehogEndpoint', assetKind: 'endpoint',
+    id: 'elasticsearch', label: 'Elasticsearch', assetLabel: 'MultiscannerEndpoint', assetKind: 'endpoint',
     description: 'An Elasticsearch cluster. If secured, set exactly ONE of username+password, API key, or service token.',
     credentials: [CRED.esUser, CRED.esPass, CRED.esApiKey, CRED.esServiceToken],
     fields: [
@@ -269,7 +269,7 @@ export const TRUFFLEHOG_SOURCES: Record<string, TrufflehogSource> = {
     ],
   },
   postman: {
-    id: 'postman', label: 'Postman', assetLabel: 'TrufflehogEndpoint', assetKind: 'endpoint',
+    id: 'postman', label: 'Postman', assetLabel: 'MultiscannerEndpoint', assetKind: 'endpoint',
     description: 'Postman workspaces, collections and environments.',
     credentials: [CRED.postman],
     fields: [
@@ -283,13 +283,13 @@ export const TRUFFLEHOG_SOURCES: Record<string, TrufflehogSource> = {
     ],
   },
   circleci: {
-    id: 'circleci', label: 'CircleCI', assetLabel: 'TrufflehogEndpoint', assetKind: 'endpoint',
+    id: 'circleci', label: 'CircleCI', assetLabel: 'MultiscannerEndpoint', assetKind: 'endpoint',
     description: 'The token defines the scan scope; there is nothing else to configure.',
     credentials: [CRED.circleci],
     fields: [],
   },
   travisci: {
-    id: 'travisci', label: 'Travis CI', assetLabel: 'TrufflehogEndpoint', assetKind: 'endpoint',
+    id: 'travisci', label: 'Travis CI', assetLabel: 'MultiscannerEndpoint', assetKind: 'endpoint',
     description: 'The token defines the scan scope; there is nothing else to configure.',
     credentials: [CRED.travisci],
     fields: [],

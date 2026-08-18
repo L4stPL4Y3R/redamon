@@ -144,7 +144,7 @@ class TestCrossTenantLeakRegression(unittest.TestCase):
         """The exact query that returned another project's malicious package."""
         query = (
             "MATCH (n)\n"
-            "WHERE n:JsReconFinding OR n:Secret OR n:TrufflehogFinding\n"
+            "WHERE n:JsReconFinding OR n:Secret OR n:MultiscannerFinding\n"
             "   OR (n:MalPackageFinding AND (n.advisory_id STARTS WITH 'MAL-'"
             " OR any(a IN coalesce(n.aliases,[]) WHERE a STARTS WITH 'MAL-')))\n"
             "OPTIONAL MATCH (pkg:Package)-[:FLAGGED_AS]->(n)\n"

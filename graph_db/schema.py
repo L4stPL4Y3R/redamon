@@ -11,6 +11,32 @@ DROP_LEGACY_CONSTRAINTS = [
     "DROP CONSTRAINT subdomain_unique IF EXISTS",
     "DROP CONSTRAINT ip_unique IF EXISTS",
     "DROP CONSTRAINT baseurl_unique IF EXISTS",
+    # Renamed with the Trufflehog -> Multiscanner labels. Dropped by their OLD
+    # names, because a constraint is identified by NAME: recreating it under the
+    # new name leaves this one behind, still guarding a label nothing writes.
+    "DROP CONSTRAINT trufflehogscan_unique IF EXISTS",
+    "DROP CONSTRAINT trufflehogrepository_unique IF EXISTS",
+    "DROP CONSTRAINT trufflehogfinding_unique IF EXISTS",
+    "DROP CONSTRAINT trufflehogimage_unique IF EXISTS",
+    "DROP CONSTRAINT trufflehogmodel_unique IF EXISTS",
+    "DROP CONSTRAINT trufflehogbucket_unique IF EXISTS",
+    "DROP CONSTRAINT trufflehogendpoint_unique IF EXISTS",
+    "DROP INDEX idx_trufflehogscan_tenant IF EXISTS",
+    "DROP INDEX idx_trufflehogrepository_tenant IF EXISTS",
+    "DROP INDEX idx_trufflehogfinding_tenant IF EXISTS",
+    "DROP INDEX idx_trufflehogimage_tenant IF EXISTS",
+    "DROP INDEX idx_trufflehogmodel_tenant IF EXISTS",
+    "DROP INDEX idx_trufflehogbucket_tenant IF EXISTS",
+    "DROP INDEX idx_trufflehogendpoint_tenant IF EXISTS",
+    "DROP INDEX idx_trufflehogfinding_detector IF EXISTS",
+    "DROP INDEX idx_trufflehogfinding_source IF EXISTS",
+    "DROP INDEX idx_trufflehogfinding_validation IF EXISTS",
+    "DROP INDEX idx_trufflehogscan_source IF EXISTS",
+    "DROP INDEX idx_trufflehogrepository_name IF EXISTS",
+    "DROP INDEX idx_trufflehogimage_name IF EXISTS",
+    "DROP INDEX idx_trufflehogmodel_name IF EXISTS",
+    "DROP INDEX idx_trufflehogbucket_name IF EXISTS",
+    "DROP INDEX idx_trufflehogendpoint_name IF EXISTS",
 ]
 
 # Uniqueness constraints (tenant-scoped for per-project nodes, global for shared reference nodes)
@@ -49,16 +75,16 @@ CONSTRAINTS = [
     # project_id), matching the MERGE key: an id-only constraint plus a project
     # import that re-owns the tenant props WITHOUT rewriting the embedded id left
     # the two disagreeing about who owns the node.
-    "CREATE CONSTRAINT trufflehogscan_unique IF NOT EXISTS FOR (ts:TrufflehogScan) REQUIRE (ts.id, ts.user_id, ts.project_id) IS UNIQUE",
-    "CREATE CONSTRAINT trufflehogrepository_unique IF NOT EXISTS FOR (tr:TrufflehogRepository) REQUIRE (tr.id, tr.user_id, tr.project_id) IS UNIQUE",
-    "CREATE CONSTRAINT trufflehogfinding_unique IF NOT EXISTS FOR (tf:TrufflehogFinding) REQUIRE (tf.id, tf.user_id, tf.project_id) IS UNIQUE",
+    "CREATE CONSTRAINT multiscannerscan_unique IF NOT EXISTS FOR (ts:MultiscannerScan) REQUIRE (ts.id, ts.user_id, ts.project_id) IS UNIQUE",
+    "CREATE CONSTRAINT multiscannerrepository_unique IF NOT EXISTS FOR (tr:MultiscannerRepository) REQUIRE (tr.id, tr.user_id, tr.project_id) IS UNIQUE",
+    "CREATE CONSTRAINT multiscannerfinding_unique IF NOT EXISTS FOR (tf:MultiscannerFinding) REQUIRE (tf.id, tf.user_id, tf.project_id) IS UNIQUE",
     # Four asset labels for the non-git sources. Grouped by asset SHAPE, not one
     # per source: the graph renderer draws a node from labels[0] (a single label,
     # unordered by Neo4j), so a node may carry only one.
-    "CREATE CONSTRAINT trufflehogimage_unique IF NOT EXISTS FOR (ti:TrufflehogImage) REQUIRE (ti.id, ti.user_id, ti.project_id) IS UNIQUE",
-    "CREATE CONSTRAINT trufflehogmodel_unique IF NOT EXISTS FOR (tm:TrufflehogModel) REQUIRE (tm.id, tm.user_id, tm.project_id) IS UNIQUE",
-    "CREATE CONSTRAINT trufflehogbucket_unique IF NOT EXISTS FOR (tb:TrufflehogBucket) REQUIRE (tb.id, tb.user_id, tb.project_id) IS UNIQUE",
-    "CREATE CONSTRAINT trufflehogendpoint_unique IF NOT EXISTS FOR (te:TrufflehogEndpoint) REQUIRE (te.id, te.user_id, te.project_id) IS UNIQUE",
+    "CREATE CONSTRAINT multiscannerimage_unique IF NOT EXISTS FOR (ti:MultiscannerImage) REQUIRE (ti.id, ti.user_id, ti.project_id) IS UNIQUE",
+    "CREATE CONSTRAINT multiscannermodel_unique IF NOT EXISTS FOR (tm:MultiscannerModel) REQUIRE (tm.id, tm.user_id, tm.project_id) IS UNIQUE",
+    "CREATE CONSTRAINT multiscannerbucket_unique IF NOT EXISTS FOR (tb:MultiscannerBucket) REQUIRE (tb.id, tb.user_id, tb.project_id) IS UNIQUE",
+    "CREATE CONSTRAINT multiscannerendpoint_unique IF NOT EXISTS FOR (te:MultiscannerEndpoint) REQUIRE (te.id, te.user_id, te.project_id) IS UNIQUE",
     # JS Recon Scanner constraints
     "CREATE CONSTRAINT jsreconfinding_unique IF NOT EXISTS FOR (jf:JsReconFinding) REQUIRE jf.id IS UNIQUE",
     # Secret constraints
@@ -103,13 +129,13 @@ TENANT_INDEXES = [
     "CREATE INDEX idx_githubsecret_tenant IF NOT EXISTS FOR (gs:GithubSecret) ON (gs.user_id, gs.project_id)",
     "CREATE INDEX idx_githubsensitivefile_tenant IF NOT EXISTS FOR (gsf:GithubSensitiveFile) ON (gsf.user_id, gsf.project_id)",
     # TruffleHog Secret Scanner tenant indexes
-    "CREATE INDEX idx_trufflehogscan_tenant IF NOT EXISTS FOR (ts:TrufflehogScan) ON (ts.user_id, ts.project_id)",
-    "CREATE INDEX idx_trufflehogrepository_tenant IF NOT EXISTS FOR (tr:TrufflehogRepository) ON (tr.user_id, tr.project_id)",
-    "CREATE INDEX idx_trufflehogfinding_tenant IF NOT EXISTS FOR (tf:TrufflehogFinding) ON (tf.user_id, tf.project_id)",
-    "CREATE INDEX idx_trufflehogimage_tenant IF NOT EXISTS FOR (ti:TrufflehogImage) ON (ti.user_id, ti.project_id)",
-    "CREATE INDEX idx_trufflehogmodel_tenant IF NOT EXISTS FOR (tm:TrufflehogModel) ON (tm.user_id, tm.project_id)",
-    "CREATE INDEX idx_trufflehogbucket_tenant IF NOT EXISTS FOR (tb:TrufflehogBucket) ON (tb.user_id, tb.project_id)",
-    "CREATE INDEX idx_trufflehogendpoint_tenant IF NOT EXISTS FOR (te:TrufflehogEndpoint) ON (te.user_id, te.project_id)",
+    "CREATE INDEX idx_multiscannerscan_tenant IF NOT EXISTS FOR (ts:MultiscannerScan) ON (ts.user_id, ts.project_id)",
+    "CREATE INDEX idx_multiscannerrepository_tenant IF NOT EXISTS FOR (tr:MultiscannerRepository) ON (tr.user_id, tr.project_id)",
+    "CREATE INDEX idx_multiscannerfinding_tenant IF NOT EXISTS FOR (tf:MultiscannerFinding) ON (tf.user_id, tf.project_id)",
+    "CREATE INDEX idx_multiscannerimage_tenant IF NOT EXISTS FOR (ti:MultiscannerImage) ON (ti.user_id, ti.project_id)",
+    "CREATE INDEX idx_multiscannermodel_tenant IF NOT EXISTS FOR (tm:MultiscannerModel) ON (tm.user_id, tm.project_id)",
+    "CREATE INDEX idx_multiscannerbucket_tenant IF NOT EXISTS FOR (tb:MultiscannerBucket) ON (tb.user_id, tb.project_id)",
+    "CREATE INDEX idx_multiscannerendpoint_tenant IF NOT EXISTS FOR (te:MultiscannerEndpoint) ON (te.user_id, te.project_id)",
     # JS Recon Scanner tenant indexes
     "CREATE INDEX idx_jsreconfinding_tenant IF NOT EXISTS FOR (jf:JsReconFinding) ON (jf.user_id, jf.project_id)",
     # Secret tenant indexes
@@ -162,15 +188,15 @@ ADDITIONAL_INDEXES = [
     # TruffleHog functional indexes. The source index carries the scoped clear:
     # every ingest deletes its own source's subgraph first, and that MATCH runs
     # on (user_id, project_id, source).
-    "CREATE INDEX idx_trufflehogfinding_detector IF NOT EXISTS FOR (tf:TrufflehogFinding) ON (tf.detector_name)",
-    "CREATE INDEX idx_trufflehogfinding_source IF NOT EXISTS FOR (tf:TrufflehogFinding) ON (tf.source)",
-    "CREATE INDEX idx_trufflehogfinding_validation IF NOT EXISTS FOR (tf:TrufflehogFinding) ON (tf.validation_status)",
-    "CREATE INDEX idx_trufflehogscan_source IF NOT EXISTS FOR (ts:TrufflehogScan) ON (ts.source)",
-    "CREATE INDEX idx_trufflehogrepository_name IF NOT EXISTS FOR (tr:TrufflehogRepository) ON (tr.name)",
-    "CREATE INDEX idx_trufflehogimage_name IF NOT EXISTS FOR (ti:TrufflehogImage) ON (ti.name)",
-    "CREATE INDEX idx_trufflehogmodel_name IF NOT EXISTS FOR (tm:TrufflehogModel) ON (tm.name)",
-    "CREATE INDEX idx_trufflehogbucket_name IF NOT EXISTS FOR (tb:TrufflehogBucket) ON (tb.name)",
-    "CREATE INDEX idx_trufflehogendpoint_name IF NOT EXISTS FOR (te:TrufflehogEndpoint) ON (te.name)",
+    "CREATE INDEX idx_multiscannerfinding_detector IF NOT EXISTS FOR (tf:MultiscannerFinding) ON (tf.detector_name)",
+    "CREATE INDEX idx_multiscannerfinding_source IF NOT EXISTS FOR (tf:MultiscannerFinding) ON (tf.source)",
+    "CREATE INDEX idx_multiscannerfinding_validation IF NOT EXISTS FOR (tf:MultiscannerFinding) ON (tf.validation_status)",
+    "CREATE INDEX idx_multiscannerscan_source IF NOT EXISTS FOR (ts:MultiscannerScan) ON (ts.source)",
+    "CREATE INDEX idx_multiscannerrepository_name IF NOT EXISTS FOR (tr:MultiscannerRepository) ON (tr.name)",
+    "CREATE INDEX idx_multiscannerimage_name IF NOT EXISTS FOR (ti:MultiscannerImage) ON (ti.name)",
+    "CREATE INDEX idx_multiscannermodel_name IF NOT EXISTS FOR (tm:MultiscannerModel) ON (tm.name)",
+    "CREATE INDEX idx_multiscannerbucket_name IF NOT EXISTS FOR (tb:MultiscannerBucket) ON (tb.name)",
+    "CREATE INDEX idx_multiscannerendpoint_name IF NOT EXISTS FOR (te:MultiscannerEndpoint) ON (te.name)",
     # Secret functional indexes
     "CREATE INDEX idx_secret_type IF NOT EXISTS FOR (s:Secret) ON (s.secret_type)",
     "CREATE INDEX idx_secret_severity IF NOT EXISTS FOR (s:Secret) ON (s.severity)",
@@ -189,12 +215,103 @@ ADDITIONAL_INDEXES = [
 ]
 
 
+
+# Nodes written before the Trufflehog -> Multiscanner rename. Relabelled in place
+# rather than left behind: every read is by label, so an un-migrated node is not
+# "old data", it is invisible - a finished scan whose findings silently vanish
+# from the Red Zone and from every report.
+LEGACY_LABEL_RENAMES = [
+    ("TrufflehogScan", "MultiscannerScan"),
+    ("TrufflehogRepository", "MultiscannerRepository"),
+    ("TrufflehogFinding", "MultiscannerFinding"),
+    ("TrufflehogImage", "MultiscannerImage"),
+    ("TrufflehogModel", "MultiscannerModel"),
+    ("TrufflehogBucket", "MultiscannerBucket"),
+    ("TrufflehogEndpoint", "MultiscannerEndpoint"),
+]
+
+LEGACY_REL_RENAMES = [("HAS_TRUFFLEHOG_SCAN", "HAS_MULTISCANNER_SCAN")]
+
+
+def migrate_legacy_labels(session):
+    """Move pre-rename nodes and relationships onto the current names.
+
+    Idempotent and cheap on the common path: each label is probed with a LIMIT 1
+    scan (a label lookup, not a full scan) and skipped when nothing matches, so
+    an already-migrated database pays seven trivial queries at startup.
+
+    Runs BEFORE the constraints are created. A uniqueness constraint on the new
+    label cannot be satisfied by nodes that still carry the old one, and creating
+    it first would fail on a database that has data to migrate.
+    """
+    for old, new in LEGACY_LABEL_RENAMES:
+        try:
+            probe = session.run(
+                f"MATCH (n:`{old}`) RETURN count(n) AS c LIMIT 1").single()
+            if not probe or not probe["c"]:
+                continue
+            session.run(f"MATCH (n:`{old}`) SET n:`{new}` REMOVE n:`{old}`")
+            print(f"[graph-db] migrated {probe['c']} {old} -> {new}")
+        except Exception as e:
+            print(f"[!][graph-db] label migration {old} -> {new} failed: {e}")
+
+    # The node id is the MERGE key, and it carried the old name as a prefix.
+    # Left alone, a re-scan would MERGE on the NEW prefix and create a second
+    # copy of every node beside the migrated one, so the ids move too. `scan_id`
+    # is rewritten as well: it is a foreign key holding the same string.
+    for label in (new for _old, new in LEGACY_LABEL_RENAMES):
+        for prop in ("id", "scan_id"):
+            try:
+                # Collision guard: if a node ALREADY holds the migrated id,
+                # rewriting would violate the uniqueness constraint and abort the
+                # whole statement, leaving the rest un-migrated. Skip that one and
+                # say so, rather than failing the batch for everyone else.
+                if prop == "id":
+                    stuck = session.run(
+                        f"MATCH (n:`{label}`) WHERE n.id STARTS WITH 'trufflehog-' "
+                        f"AND EXISTS {{ MATCH (m:`{label}`) "
+                        f"WHERE m.id = 'multiscanner-' + substring(n.id, 11) }} "
+                        f"RETURN count(n) AS c").single()
+                    if stuck and stuck["c"]:
+                        print(f"[!][graph-db] {stuck['c']} legacy {label} node(s) "
+                              f"already superseded by a migrated copy; left as-is")
+                    session.run(
+                        f"MATCH (n:`{label}`) WHERE n.id STARTS WITH 'trufflehog-' "
+                        f"AND NOT EXISTS {{ MATCH (m:`{label}`) "
+                        f"WHERE m.id = 'multiscanner-' + substring(n.id, 11) }} "
+                        f"SET n.id = 'multiscanner-' + substring(n.id, 11)")
+                    continue
+                session.run(
+                    f"MATCH (n:`{label}`) WHERE n.{prop} STARTS WITH 'trufflehog-' "
+                    f"SET n.{prop} = 'multiscanner-' + substring(n.{prop}, 11)")
+            except Exception as e:
+                print(f"[!][graph-db] {label}.{prop} prefix migration failed: {e}")
+
+    # A relationship type cannot be renamed in place; it is recreated and the old
+    # one deleted. Properties are carried over so nothing is lost.
+    for old, new in LEGACY_REL_RENAMES:
+        try:
+            probe = session.run(
+                f"MATCH ()-[r:`{old}`]->() RETURN count(r) AS c LIMIT 1").single()
+            if not probe or not probe["c"]:
+                continue
+            session.run(
+                f"MATCH (a)-[r:`{old}`]->(b) "
+                f"CREATE (a)-[n:`{new}`]->(b) SET n = properties(r) DELETE r")
+            print(f"[graph-db] migrated {probe['c']} {old} -> {new}")
+        except Exception as e:
+            print(f"[!][graph-db] relationship migration {old} -> {new} failed: {e}")
+
 def init_schema(session):
     """
     Initialize constraints and indexes for the graph schema.
 
     Safe to call multiple times — all statements use IF NOT EXISTS / IF EXISTS guards.
     """
+    # Before the DDL: the new constraints cannot be created while data still
+    # carries the old labels.
+    migrate_legacy_labels(session)
+
     for stmt in DROP_LEGACY_CONSTRAINTS:
         try:
             session.run(stmt)

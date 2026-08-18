@@ -1914,13 +1914,13 @@ RETURN s.name AS host, svc.name AS service, u.url AS url,
 | GithubPath | id, repository, path | ✅ Unique (global), ✅ Tenant index |
 | GithubSecret | id, repository, path, secret_type, sample | ✅ Unique (global), ✅ Tenant index |
 | GithubSensitiveFile | id, repository, path, secret_type | ✅ Unique (global), ✅ Tenant index |
-| TrufflehogScan | id, source, target, status, total_findings, validated_findings, assets_scanned | ✅ Unique (tenant), ✅ Tenant index |
-| TrufflehogRepository | id, name, source, asset_kind | ✅ Unique (tenant), ✅ Tenant index |
-| TrufflehogImage | id, name, source, asset_kind | ✅ Unique (tenant), ✅ Tenant index |
-| TrufflehogModel | id, name, source, asset_kind | ✅ Unique (tenant), ✅ Tenant index |
-| TrufflehogBucket | id, name, source, asset_kind | ✅ Unique (tenant), ✅ Tenant index |
-| TrufflehogEndpoint | id, name, source, asset_kind | ✅ Unique (tenant), ✅ Tenant index |
-| TrufflehogFinding | id, source, detector_name, validation_status, finding_kind, asset, location, line | ✅ Unique (tenant), ✅ Tenant index |
+| MultiscannerScan | id, source, target, status, total_findings, validated_findings, assets_scanned | ✅ Unique (tenant), ✅ Tenant index |
+| MultiscannerRepository | id, name, source, asset_kind | ✅ Unique (tenant), ✅ Tenant index |
+| MultiscannerImage | id, name, source, asset_kind | ✅ Unique (tenant), ✅ Tenant index |
+| MultiscannerModel | id, name, source, asset_kind | ✅ Unique (tenant), ✅ Tenant index |
+| MultiscannerBucket | id, name, source, asset_kind | ✅ Unique (tenant), ✅ Tenant index |
+| MultiscannerEndpoint | id, name, source, asset_kind | ✅ Unique (tenant), ✅ Tenant index |
+| MultiscannerFinding | id, source, detector_name, validation_status, finding_kind, asset, location, line | ✅ Unique (tenant), ✅ Tenant index |
 | Secret | id, secret_type, severity, source, source_url, base_url, sample | ✅ Unique (global), ✅ Tenant index |
 | JsReconFinding | id, finding_type, severity, confidence, title, detail, source_url, package_name, package_version | ✅ Unique (global), ✅ Tenant index |
 | Package | purl, ecosystem, name, version, source, source_path, first_seen, last_seen | ✅ Unique (purl, user_id, project_id) |
@@ -2433,21 +2433,21 @@ RETURN gr.name AS repo, secrets, sensitive_files ORDER BY secrets + sensitive_fi
 
 ---
 
-## 🔐 TruffleHog Secret Scanner Nodes
+## 🔐 Secret Multiscanner Nodes
 
-TruffleHog scan findings are stored in a 3-level node hierarchy linked to the Domain root.
-TruffleHog uses detector-based credential verification and deep git history analysis.
+Secret Multiscanner scan findings are stored in a 3-level node hierarchy linked to the Domain root.
+Secret Multiscanner uses detector-based credential verification and deep git history analysis.
 Findings are deduplicated by `{repository}:{file}:{line}:{detector_name}`.
 
-### TrufflehogScan (Scan Metadata)
+### MultiscannerScan (Scan Metadata)
 
 One scan node per **project + source**. The source is part of the id, which is
 what lets a Docker run and a HuggingFace run coexist instead of overwriting each
 other's metadata.
 
 ```cypher
-(:TrufflehogScan {
-    id: "trufflehog-scan-<user_id>-<project_id>-<source>",
+(:MultiscannerScan {
+    id: "multiscanner-scan-<user_id>-<project_id>-<source>",
     user_id: "samgiam",
     project_id: "first_test",
     source: "docker",                    // git | github | github_experimental | gitlab
@@ -2472,7 +2472,7 @@ other's metadata.
 })
 ```
 
-**Relationship:** `Domain -[:HAS_TRUFFLEHOG_SCAN]-> TrufflehogScan`
+**Relationship:** `Domain -[:HAS_MULTISCANNER_SCAN]-> MultiscannerScan`
 
 ### Asset nodes (five labels, not sixteen)
 
@@ -2483,42 +2483,42 @@ every source the same colour, so assets are grouped by **shape**:
 
 | Label | Sources | `asset_kind` | `name` holds |
 | ----- | ------- | ------------ | ------------ |
-| `TrufflehogRepository` | git, github, github_experimental, gitlab | `repository` | `org/repo` or clone URL |
-| `TrufflehogImage` | docker | `image` | `namespace/image:tag` |
-| `TrufflehogModel` | huggingface | `model` | `user/model` |
-| `TrufflehogBucket` | s3, gcs | `bucket` | bucket name |
-| `TrufflehogEndpoint` | jenkins, elasticsearch, postman, circleci, travisci, filesystem | `endpoint` | URL, node, workspace or scan root |
+| `MultiscannerRepository` | git, github, github_experimental, gitlab | `repository` | `org/repo` or clone URL |
+| `MultiscannerImage` | docker | `image` | `namespace/image:tag` |
+| `MultiscannerModel` | huggingface | `model` | `user/model` |
+| `MultiscannerBucket` | s3, gcs | `bucket` | bucket name |
+| `MultiscannerEndpoint` | jenkins, elasticsearch, postman, circleci, travisci, filesystem | `endpoint` | URL, node, workspace or scan root |
 
 ```cypher
-(:TrufflehogImage {
-    id: "trufflehog-asset-<user_id>-<project_id>-<source>-<digest12>",
+(:MultiscannerImage {
+    id: "multiscanner-asset-<user_id>-<project_id>-<source>-<digest12>",
     name: "acme/app:1.0",
     source: "docker",                    // required: the scoped clear matches on it
     asset_kind: "image",
-    scan_id: "trufflehog-scan-<user_id>-<project_id>-docker",
+    scan_id: "multiscanner-scan-<user_id>-<project_id>-docker",
     user_id: "samgiam",
     project_id: "first_test",
     updated_at: "2026-03-20T16:35:05.335142"
 })
 ```
 
-**Relationship:** `TrufflehogScan -[:HAS_ASSET]-> <asset label>`
+**Relationship:** `MultiscannerScan -[:HAS_ASSET]-> <asset label>`
 
-### TrufflehogFinding (Detected Credential Finding)
+### MultiscannerFinding (Detected Credential Finding)
 
 Leaf node for individual credential findings. One label regardless of source: a
 secret is a secret wherever it was found.
 
 ```cypher
-(:TrufflehogFinding {
-    id: "trufflehog-finding-<user_id>-<project_id>-<source>-<digest12>",
+(:MultiscannerFinding {
+    id: "multiscanner-finding-<user_id>-<project_id>-<source>-<digest12>",
     user_id: "samgiam",
     project_id: "first_test",
     source: "docker",
-    scan_id: "trufflehog-scan-<user_id>-<project_id>-docker",
+    scan_id: "multiscanner-scan-<user_id>-<project_id>-docker",
     detector_name: "AWS",
     detector_description: "Amazon Web Services access key",
-    verified: true,                      // raw TruffleHog bool
+    verified: true,                      // raw Secret Multiscanner bool
     validation_status: "validated",      // the load-bearing attribute, see below
     finding_kind: "secret",              // secret | image_history
     redacted: "AKIA2E0A8F3B1...",
@@ -2559,14 +2559,14 @@ so the same secret found by two sources stays two findings.
 `hash()`, which is randomised per process (PYTHONHASHSEED) and gave the same
 asset a different id on every run.
 
-**Relationship:** `<asset label> -[:HAS_FINDING]-> TrufflehogFinding`
+**Relationship:** `<asset label> -[:HAS_FINDING]-> MultiscannerFinding`
 
 ### Full Chain
 
 ```
-Domain -[:HAS_TRUFFLEHOG_SCAN]-> TrufflehogScan          (one per project+source)
-    -[:HAS_ASSET]-> TrufflehogRepository|Image|Model|Bucket|Endpoint
-        -[:HAS_FINDING]-> TrufflehogFinding
+Domain -[:HAS_MULTISCANNER_SCAN]-> MultiscannerScan          (one per project+source)
+    -[:HAS_ASSET]-> MultiscannerRepository|Image|Model|Bucket|Endpoint
+        -[:HAS_FINDING]-> MultiscannerFinding
 ```
 
 ### Scoped clearing
@@ -2580,46 +2580,46 @@ erases every HuggingFace finding — silently.
 
 ```cypher
 -- Tenant-scoped, matching the MERGE key. Applies to all six labels.
-CREATE CONSTRAINT trufflehogscan_unique IF NOT EXISTS
-FOR (ts:TrufflehogScan) REQUIRE (ts.id, ts.user_id, ts.project_id) IS UNIQUE;
+CREATE CONSTRAINT multiscannerscan_unique IF NOT EXISTS
+FOR (ts:MultiscannerScan) REQUIRE (ts.id, ts.user_id, ts.project_id) IS UNIQUE;
 
-CREATE CONSTRAINT trufflehogfinding_unique IF NOT EXISTS
-FOR (tf:TrufflehogFinding) REQUIRE (tf.id, tf.user_id, tf.project_id) IS UNIQUE;
--- ... plus TrufflehogRepository / Image / Model / Bucket / Endpoint
+CREATE CONSTRAINT multiscannerfinding_unique IF NOT EXISTS
+FOR (tf:MultiscannerFinding) REQUIRE (tf.id, tf.user_id, tf.project_id) IS UNIQUE;
+-- ... plus MultiscannerRepository / Image / Model / Bucket / Endpoint
 
-CREATE INDEX idx_trufflehogfinding_tenant IF NOT EXISTS
-FOR (tf:TrufflehogFinding) ON (tf.user_id, tf.project_id);
+CREATE INDEX idx_multiscannerfinding_tenant IF NOT EXISTS
+FOR (tf:MultiscannerFinding) ON (tf.user_id, tf.project_id);
 
 -- Carries the scoped clear, which matches on (user_id, project_id, source).
-CREATE INDEX idx_trufflehogfinding_source IF NOT EXISTS
-FOR (tf:TrufflehogFinding) ON (tf.source);
+CREATE INDEX idx_multiscannerfinding_source IF NOT EXISTS
+FOR (tf:MultiscannerFinding) ON (tf.source);
 
-CREATE INDEX idx_trufflehogfinding_validation IF NOT EXISTS
-FOR (tf:TrufflehogFinding) ON (tf.validation_status);
+CREATE INDEX idx_multiscannerfinding_validation IF NOT EXISTS
+FOR (tf:MultiscannerFinding) ON (tf.validation_status);
 ```
 
 ### Example Queries
 
 ```cypher
-// Full chain: all TruffleHog findings for a project, any source
+// Full chain: all Secret Multiscanner findings for a project, any source
 MATCH (d:Domain {user_id: $userId, project_id: $projectId})
-      -[:HAS_TRUFFLEHOG_SCAN]->(ts:TrufflehogScan)-[:HAS_ASSET]->(a)-[:HAS_FINDING]->(tf:TrufflehogFinding)
+      -[:HAS_MULTISCANNER_SCAN]->(ts:MultiscannerScan)-[:HAS_ASSET]->(a)-[:HAS_FINDING]->(tf:MultiscannerFinding)
 RETURN ts.source AS source, a.name AS asset, tf.detector_name AS detector,
        tf.location AS location, tf.validation_status AS validation
 
 // Live credentials only — the ones that need acting on now
-MATCH (tf:TrufflehogFinding {user_id: $userId, project_id: $projectId,
+MATCH (tf:MultiscannerFinding {user_id: $userId, project_id: $projectId,
                              validation_status: 'validated'})
 RETURN tf.source, tf.asset, tf.location, tf.detector_name, tf.redacted
 
 // Findings per source
-MATCH (tf:TrufflehogFinding {user_id: $userId, project_id: $projectId})
+MATCH (tf:MultiscannerFinding {user_id: $userId, project_id: $projectId})
 RETURN tf.source AS source, count(*) AS total,
        sum(CASE WHEN tf.validation_status = 'validated' THEN 1 ELSE 0 END) AS live
 ORDER BY live DESC
 
 // Secrets baked into a Docker image's build history
-MATCH (tf:TrufflehogFinding {user_id: $userId, project_id: $projectId,
+MATCH (tf:MultiscannerFinding {user_id: $userId, project_id: $projectId,
                              finding_kind: 'image_history'})
 RETURN tf.asset AS image, tf.detector_name AS detector, tf.redacted
 ```
@@ -3197,7 +3197,7 @@ Documented here so the prefix convention stays coherent as later laps land. Empt
 |---|---|---|
 | `Vulnerability` | `ai_asr`, `ai_trials`, `ai_oracle_kind`, `ai_transcript_ref`, `ai_payload_class`, `ai_probe_pack_version`, `ai_target_url` | ✅ **SHIPPED** — AI Attack Surface (garak/pyrit/giskard/promptfoo, see section above) |
 | `CVE` | `is_ai_library` | vuln_scan AI library lookup lap |
-| `Secret` / `TrufflehogFinding` / `GithubSecret` | `ai_provider` | trufflehog / github-secret-hunt AI detector lap |
+| `Secret` / `MultiscannerFinding` / `GithubSecret` | `ai_provider` | secret-multiscanner / github-secret-hunt AI detector lap |
 | `JsReconFinding` | `finding_type` values `ai-sdk-client`, `ai-sdk-key-literal`, `ai-sdk-browser-allowed`, `ai-frontend-detected` | js_recon AI SDK lap |
 | `MitreData` | `id` starting with `AML.T` | add_mitre ATLAS lap |
 

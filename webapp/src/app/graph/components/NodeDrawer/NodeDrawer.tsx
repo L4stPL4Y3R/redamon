@@ -79,7 +79,7 @@ export function NodeDrawer({
         })
     : []
 
-  const trufflehogFields = displayNode?.type === 'TrufflehogFinding'
+  const trufflehogFields = displayNode?.type === 'MultiscannerFinding'
     ? trufflehogDisplayFields((displayNode.properties ?? {}) as Record<string, unknown>)
     : []
 

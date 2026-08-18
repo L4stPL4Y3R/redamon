@@ -161,7 +161,7 @@ class TestRunnerOutput(RunnerTestCase):
         self.run_with(runner, [jsonl_result()])
         data = json.loads(Path(runner.output_file).read_text())
         self.assertEqual(data["source"], "docker")
-        self.assertEqual(data["asset_label"], "TrufflehogImage")
+        self.assertEqual(data["asset_label"], "MultiscannerImage")
         self.assertEqual(data["asset_kind"], "image")
         self.assertEqual(data["run_id"], "docker")
         self.assertEqual(data["status"], "completed")

@@ -100,7 +100,7 @@ class FakeClient(SecretMixin):
         return [n for k, n in self.store["nodes"].items() if k[0] == label]
 
     def findings(self, source=None):
-        out = self.nodes_of("TrufflehogFinding")
+        out = self.nodes_of("MultiscannerFinding")
         return [f for f in out if source is None or f.get("source") == source]
 
 

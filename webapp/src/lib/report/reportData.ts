@@ -1195,9 +1195,9 @@ async function queryTrufflehog(session: any, pid: string) {
   // (Repository/Image/Model/Bucket/Endpoint) and naming one would silently drop
   // every non-git source from the report.
   const summaryRes = await session.run(
-    `OPTIONAL MATCH (d:Domain {project_id: $pid})-[:HAS_TRUFFLEHOG_SCAN]->(ts:TrufflehogScan)
+    `OPTIONAL MATCH (d:Domain {project_id: $pid})-[:HAS_MULTISCANNER_SCAN]->(ts:MultiscannerScan)
      OPTIONAL MATCH (ts)-[:HAS_ASSET]->(a)
-     OPTIONAL MATCH (a)-[:HAS_FINDING]->(tf:TrufflehogFinding)
+     OPTIONAL MATCH (a)-[:HAS_FINDING]->(tf:MultiscannerFinding)
      RETURN count(DISTINCT tf) AS total,
             count(DISTINCT CASE WHEN tf.verified = true THEN tf END) AS verified,
             count(DISTINCT CASE WHEN tf.validation_status = 'validated' THEN tf END) AS live,
@@ -1205,8 +1205,8 @@ async function queryTrufflehog(session: any, pid: string) {
     { pid }
   )
   const bySourceRes = await session.run(
-    `MATCH (d:Domain {project_id: $pid})-[:HAS_TRUFFLEHOG_SCAN]->(ts:TrufflehogScan)
-     OPTIONAL MATCH (ts)-[:HAS_ASSET]->(a)-[:HAS_FINDING]->(tf:TrufflehogFinding)
+    `MATCH (d:Domain {project_id: $pid})-[:HAS_MULTISCANNER_SCAN]->(ts:MultiscannerScan)
+     OPTIONAL MATCH (ts)-[:HAS_ASSET]->(a)-[:HAS_FINDING]->(tf:MultiscannerFinding)
      RETURN ts.source AS source, ts.target AS target, ts.status AS status,
             count(DISTINCT tf) AS total,
             count(DISTINCT CASE WHEN tf.validation_status = 'validated' THEN tf END) AS live,
@@ -1215,7 +1215,7 @@ async function queryTrufflehog(session: any, pid: string) {
     { pid }
   )
   const findingsRes = await session.run(
-    `MATCH (d:Domain {project_id: $pid})-[:HAS_TRUFFLEHOG_SCAN]->()-[:HAS_ASSET]->(a)-[:HAS_FINDING]->(tf:TrufflehogFinding)
+    `MATCH (d:Domain {project_id: $pid})-[:HAS_MULTISCANNER_SCAN]->()-[:HAS_ASSET]->(a)-[:HAS_FINDING]->(tf:MultiscannerFinding)
      RETURN tf.detector_name AS detectorName, tf.verified AS verified,
             tf.validation_status AS validationStatus, tf.source AS source,
             tf.finding_kind AS findingKind,

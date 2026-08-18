@@ -123,12 +123,12 @@ export const getNodeColor = (node: GraphNode): string => {
   if (isGoalFinding(node)) {
     return GOAL_FINDING_COLORS.active
   }
-  // A TruffleHog finding's colour carries its validation state: a credential
+  // A Multiscanner finding's colour carries its validation state: a credential
   // CONFIRMED live by the owning API is the single most actionable node on the
   // graph and must be unmistakable. One label cannot express that, and sixteen
   // labels would (the renderer draws labels[0]), so it resolves on
   // (type, validation_status) instead.
-  if (node.type === 'TrufflehogFinding' && isValidatedFinding(node)) {
+  if (node.type === 'MultiscannerFinding' && isValidatedFinding(node)) {
     return NODE_COLORS.Secret ?? NODE_COLORS.Default
   }
   return NODE_COLORS[node.type] || NODE_COLORS.Default
@@ -159,7 +159,7 @@ export const getNodeSize = (node: GraphNode): number => {
 
   // Same rationale as the colour override: a live credential outranks every
   // other finding on the canvas.
-  if (node.type === 'TrufflehogFinding' && isValidatedFinding(node)) {
+  if (node.type === 'MultiscannerFinding' && isValidatedFinding(node)) {
     return baseSize * 1.8
   }
 

@@ -107,12 +107,12 @@ class TestSingleSourceRoundTrip(PipelineTestCase):
         out = self.scan(job, [github_result("acme/api", "src/app.py", verified=True)])
         self.ingest(out)
 
-        scans = self.graph.nodes_of("TrufflehogScan")
+        scans = self.graph.nodes_of("MultiscannerScan")
         self.assertEqual(len(scans), 1)
         self.assertEqual(scans[0]["source"], "github")
         self.assertEqual(scans[0]["target"], "acme")
 
-        repos = self.graph.nodes_of("TrufflehogRepository")
+        repos = self.graph.nodes_of("MultiscannerRepository")
         self.assertEqual([r["name"] for r in repos], ["acme/api"])
 
         findings = self.graph.findings()
@@ -126,7 +126,7 @@ class TestSingleSourceRoundTrip(PipelineTestCase):
         out = self.scan(job, [docker_result("acme/app", "1.0", "/app/.env")])
         self.ingest(out)
 
-        images = self.graph.nodes_of("TrufflehogImage")
+        images = self.graph.nodes_of("MultiscannerImage")
         self.assertEqual([i["name"] for i in images], ["acme/app:1.0"])
         extra = json.loads(self.graph.findings()[0]["extra_data"])
         self.assertEqual(extra["Tag"], "1.0")
@@ -140,7 +140,7 @@ class TestSingleSourceRoundTrip(PipelineTestCase):
             github_result("acme/web", "c.py"),
         ])
         self.ingest(out)
-        scan = self.graph.nodes_of("TrufflehogScan")[0]
+        scan = self.graph.nodes_of("MultiscannerScan")[0]
         self.assertEqual(scan["total_findings"], 3)
         self.assertEqual(scan["validated_findings"], 1)
         self.assertEqual(scan["assets_scanned"], 2)
@@ -162,9 +162,9 @@ class TestParallelSources(PipelineTestCase):
 
         self.assertEqual(len(self.graph.findings("github")), 1)
         self.assertEqual(len(self.graph.findings("docker")), 1)
-        self.assertEqual(len(self.graph.nodes_of("TrufflehogScan")), 2)
-        self.assertEqual(len(self.graph.nodes_of("TrufflehogRepository")), 1)
-        self.assertEqual(len(self.graph.nodes_of("TrufflehogImage")), 1)
+        self.assertEqual(len(self.graph.nodes_of("MultiscannerScan")), 2)
+        self.assertEqual(len(self.graph.nodes_of("MultiscannerRepository")), 1)
+        self.assertEqual(len(self.graph.nodes_of("MultiscannerImage")), 1)
 
     def test_the_two_runs_never_share_an_output_file(self):
         gh_job = self.write_job("github", {"orgs": ["acme"]})
@@ -188,9 +188,9 @@ class TestParallelSources(PipelineTestCase):
         keeps the same node across runs."""
         job = self.write_job("github", {"orgs": ["acme"]})
         self.ingest(self.scan(job, [github_result("acme/api", "a.py")]))
-        first = self.graph.nodes_of("TrufflehogRepository")[0]["id"]
+        first = self.graph.nodes_of("MultiscannerRepository")[0]["id"]
         self.ingest(self.scan(job, [github_result("acme/api", "a.py")]))
-        self.assertEqual(self.graph.nodes_of("TrufflehogRepository")[0]["id"], first)
+        self.assertEqual(self.graph.nodes_of("MultiscannerRepository")[0]["id"], first)
 
 
 class TestCrossBoundaryContract(PipelineTestCase):
@@ -206,9 +206,9 @@ class TestCrossBoundaryContract(PipelineTestCase):
 
     def test_asset_kind_crosses_the_boundary_and_picks_the_label(self):
         for source, config, kind, label in (
-            ("huggingface", {"models": ["acme/m"]}, "model", "TrufflehogModel"),
-            ("s3", {"buckets": ["b"]}, "bucket", "TrufflehogBucket"),
-            ("jenkins", {"url": "https://ci.example.com"}, "endpoint", "TrufflehogEndpoint"),
+            ("huggingface", {"models": ["acme/m"]}, "model", "MultiscannerModel"),
+            ("s3", {"buckets": ["b"]}, "bucket", "MultiscannerBucket"),
+            ("jenkins", {"url": "https://ci.example.com"}, "endpoint", "MultiscannerEndpoint"),
         ):
             graph = FakeClient()
             job = self.write_job(source, config)
@@ -227,7 +227,7 @@ class TestCrossBoundaryContract(PipelineTestCase):
         self.assertFalse(out["verification_enabled"])
         self.ingest(out)
         self.assertEqual(self.graph.findings()[0]["validation_status"], "unverified")
-        self.assertFalse(self.graph.nodes_of("TrufflehogScan")[0]["verification_enabled"])
+        self.assertFalse(self.graph.nodes_of("MultiscannerScan")[0]["verification_enabled"])
 
     def test_source_spelling_is_normalised_once_and_stays_normalised(self):
         run_dir = self.tmp / "run_dashed"
@@ -242,7 +242,7 @@ class TestCrossBoundaryContract(PipelineTestCase):
         out = self.scan(job, [])
         self.assertEqual(out["source"], "github_experimental")
         self.ingest(out)
-        self.assertEqual(self.graph.nodes_of("TrufflehogScan")[0]["source"],
+        self.assertEqual(self.graph.nodes_of("MultiscannerScan")[0]["source"],
                          "github_experimental")
 
     def test_the_command_matches_the_registry_for_the_job_config(self):
@@ -267,7 +267,7 @@ class TestFailureModes(PipelineTestCase):
         self.assertEqual(out["status"], "error")
         stats = self.ingest(out)
         self.assertEqual(stats["scan_created"], 1)
-        self.assertEqual(self.graph.nodes_of("TrufflehogScan")[0]["status"], "error")
+        self.assertEqual(self.graph.nodes_of("MultiscannerScan")[0]["status"], "error")
 
     def test_an_unknown_metadata_key_still_yields_distinct_graph_nodes(self):
         # The silent-failure case: empty assets collapse every finding into one.
@@ -286,7 +286,7 @@ class TestFailureModes(PipelineTestCase):
         job = self.write_job("s3", {"buckets": ["acme-prod"]})
         out = self.scan(job, [])
         self.ingest(out)
-        self.assertEqual(len(self.graph.nodes_of("TrufflehogScan")), 1)
+        self.assertEqual(len(self.graph.nodes_of("MultiscannerScan")), 1)
         self.assertEqual(self.graph.findings(), [])
 
 

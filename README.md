@@ -765,7 +765,7 @@ Scans GitHub repositories, gists, and commit history for exposed secrets using *
 
 ### TruffleHog Deep Secret Scanner
 
-Scans GitHub repositories for leaked credentials using **700+ detectors** with automatic verification of whether discovered secrets are still active. Powered by the TruffleHog engine (`trufflesecurity/trufflehog`), it detects API keys, passwords, tokens, certificates, and more across full commit history. Results are stored as `TrufflehogScan → TrufflehogRepository → TrufflehogFinding` nodes in the Neo4j graph. Both GitHub Hunt and TruffleHog are accessible from the **"Other Scans" modal** in the graph toolbar.
+Scans GitHub repositories for leaked credentials using **700+ detectors** with automatic verification of whether discovered secrets are still active. Powered by the TruffleHog engine (`trufflesecurity/trufflehog`), it detects API keys, passwords, tokens, certificates, and more across full commit history. Results are stored as `MultiscannerScan → MultiscannerRepository → MultiscannerFinding` nodes in the Neo4j graph. Both GitHub Hunt and the Secret Multiscanner are accessible from the **"Other Scans" modal** in the graph toolbar.
 
 ### Supply Chain / Malicious Package Detection
 

@@ -60,7 +60,7 @@ export async function GET(request: NextRequest) {
     // it. The asset match is untyped `(a)` on purpose — assets carry one of five
     // labels and naming one would drop every non-git source.
     const thResult = await session.run(
-      `MATCH (tf:TrufflehogFinding {project_id: $pid})
+      `MATCH (tf:MultiscannerFinding {project_id: $pid})
        OPTIONAL MATCH (a)-[:HAS_FINDING]->(tf)
        RETURN tf.id                AS id,
               tf.detector_name     AS secretType,
@@ -102,7 +102,7 @@ export async function GET(request: NextRequest) {
       const findingKind = r.get('findingKind') as string | null
       const location = r.get('location') as string | null
       return {
-        origin: 'TrufflehogFinding',
+        origin: 'MultiscannerFinding',
         id: (r.get('id') as string) || '',
         secretType: (r.get('secretType') as string) || 'unknown',
         valueSample: r.get('valueSample') as string | null,

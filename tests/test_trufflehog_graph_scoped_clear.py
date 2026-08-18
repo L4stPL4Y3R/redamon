@@ -52,7 +52,7 @@ class TestScopedClearPreservesOtherSources(unittest.TestCase):
         for source, kind in (("docker", "image"), ("huggingface", "model"), ("github", "repository")):
             c.update_graph_from_trufflehog(
                 scan_payload(source, kind, [finding("a")]), "u1", "p1")
-        scans = c.nodes_of("TrufflehogScan")
+        scans = c.nodes_of("MultiscannerScan")
         self.assertEqual(len(scans), 3)
         self.assertEqual(sorted(s["source"] for s in scans),
                          ["docker", "github", "huggingface"])
@@ -85,7 +85,7 @@ class TestScopedClearPreservesOtherSources(unittest.TestCase):
             scan_payload("github", "repository", [finding("b")]), "u1", "p1")
         c.clear_trufflehog_data("u1", "p1")
         self.assertEqual(c.findings(), [])
-        self.assertEqual(c.nodes_of("TrufflehogScan"), [])
+        self.assertEqual(c.nodes_of("MultiscannerScan"), [])
 
     def test_scoped_clear_sweeps_every_asset_label(self):
         # Missing one label leaks its nodes forever; a source is never re-run to
@@ -101,7 +101,7 @@ class TestScopedClearPreservesOtherSources(unittest.TestCase):
         scanner was github-only then, so that is what they are — and only the
         github clear may claim them."""
         c = FakeClient()
-        c.store["nodes"][("TrufflehogFinding", (("id", "legacy"), ("project_id", "p1"), ("user_id", "u1")))] = {
+        c.store["nodes"][("MultiscannerFinding", (("id", "legacy"), ("project_id", "p1"), ("user_id", "u1")))] = {
             "id": "legacy", "user_id": "u1", "project_id": "p1", "source": None,
         }
         c.clear_trufflehog_data("u1", "p1", source="docker")
@@ -141,18 +141,18 @@ class TestTenantScopedMerge(unittest.TestCase):
         payload = scan_payload("docker", "image", [finding("acme/app")])
         c.update_graph_from_trufflehog(payload, "u1", "p1")
         c.update_graph_from_trufflehog(payload, "u2", "p2")
-        self.assertEqual(len(c.nodes_of("TrufflehogScan")), 2)
+        self.assertEqual(len(c.nodes_of("MultiscannerScan")), 2)
         self.assertEqual(len(c.findings()), 2)
 
 
 class TestNodeShape(unittest.TestCase):
     def test_asset_label_follows_the_source_shape(self):
         cases = {
-            "repository": "TrufflehogRepository",
-            "image": "TrufflehogImage",
-            "model": "TrufflehogModel",
-            "bucket": "TrufflehogBucket",
-            "endpoint": "TrufflehogEndpoint",
+            "repository": "MultiscannerRepository",
+            "image": "MultiscannerImage",
+            "model": "MultiscannerModel",
+            "bucket": "MultiscannerBucket",
+            "endpoint": "MultiscannerEndpoint",
         }
         for kind, label in cases.items():
             c = FakeClient()
@@ -164,13 +164,13 @@ class TestNodeShape(unittest.TestCase):
         c = FakeClient()
         c.update_graph_from_trufflehog(
             scan_payload("docker", "spaceship", [finding("a")]), "u1", "p1")
-        self.assertEqual(len(c.nodes_of("TrufflehogEndpoint")), 1)
+        self.assertEqual(len(c.nodes_of("MultiscannerEndpoint")), 1)
 
     def test_relationship_chain(self):
         c = FakeClient()
         c.update_graph_from_trufflehog(
             scan_payload("docker", "image", [finding("acme/app")]), "u1", "p1")
-        self.assertIn("HAS_TRUFFLEHOG_SCAN", c.store["rels"])
+        self.assertIn("HAS_MULTISCANNER_SCAN", c.store["rels"])
         self.assertIn("HAS_ASSET", c.store["rels"])
         self.assertIn("HAS_FINDING", c.store["rels"])
 
@@ -179,7 +179,7 @@ class TestNodeShape(unittest.TestCase):
         c = FakeClient()
         c.update_graph_from_trufflehog(
             scan_payload("docker", "image", [finding("acme/app")]), "u1", "p1")
-        for label in ("TrufflehogScan", "TrufflehogImage", "TrufflehogFinding"):
+        for label in ("MultiscannerScan", "MultiscannerImage", "MultiscannerFinding"):
             for node in c.nodes_of(label):
                 self.assertEqual(node["source"], "docker", f"{label} has no source")
 
@@ -273,7 +273,7 @@ class TestStableIds(unittest.TestCase):
         c = FakeClient()
         c.update_graph_from_trufflehog(
             scan_payload("docker", "image", [finding("acme/app")]), "u1", "p1")
-        self.assertTrue(c.nodes_of("TrufflehogScan")[0]["id"].endswith("-docker"))
+        self.assertTrue(c.nodes_of("MultiscannerScan")[0]["id"].endswith("-docker"))
         self.assertIn("-docker-", c.findings()[0]["id"])
 
     def test_digest_matches_the_scanner_side_implementation(self):
@@ -319,7 +319,7 @@ class TestBackwardCompatibility(unittest.TestCase):
             {"source": "docker", "asset_kind": "image", "target": "x", "findings": []},
             "u1", "p1")
         self.assertEqual(stats["scan_created"], 1)
-        self.assertEqual(c.nodes_of("TrufflehogScan")[0]["total_findings"], 0)
+        self.assertEqual(c.nodes_of("MultiscannerScan")[0]["total_findings"], 0)
 
     def test_ingesting_the_same_payload_twice_is_idempotent(self):
         # The status sweep can retry an ingest; a second pass must leave the
@@ -346,7 +346,7 @@ class TestBoundaryAndBadInput(unittest.TestCase):
     def test_an_empty_findings_list_still_records_the_run(self):
         c = FakeClient()
         c.update_graph_from_trufflehog(scan_payload("s3", "bucket", []), "u1", "p1")
-        self.assertEqual(len(c.nodes_of("TrufflehogScan")), 1)
+        self.assertEqual(len(c.nodes_of("MultiscannerScan")), 1)
         self.assertEqual(c.findings(), [])
 
     def test_a_very_long_asset_name_is_not_truncated_into_a_collision(self):
@@ -354,7 +354,7 @@ class TestBoundaryAndBadInput(unittest.TestCase):
         a, b = "x" * 4000, "x" * 4000 + "y"
         c.update_graph_from_trufflehog(
             scan_payload("docker", "image", [finding(a, "/1"), finding(b, "/2")]), "u1", "p1")
-        self.assertEqual(len(c.nodes_of("TrufflehogImage")), 2)
+        self.assertEqual(len(c.nodes_of("MultiscannerImage")), 2)
 
     def test_null_versus_missing_fields_behave_the_same(self):
         c = FakeClient()

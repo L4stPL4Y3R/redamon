@@ -153,7 +153,7 @@ ALL_CREDENTIALS: tuple[Credential, ...] = (
 SOURCES: dict[str, Source] = {
     "git": Source(
         id="git", label="Git repository", subcommand="git",
-        asset_label="TrufflehogRepository", asset_kind="repository",
+        asset_label="MultiscannerRepository", asset_kind="repository",
         credentials=(CRED_GIT_USER, CRED_GIT_TOKEN),
         fields=(
             Field("uri", "text", "", label="Repository URI"),
@@ -171,7 +171,7 @@ SOURCES: dict[str, Source] = {
     ),
     "github": Source(
         id="github", label="GitHub", subcommand="github",
-        asset_label="TrufflehogRepository", asset_kind="repository",
+        asset_label="MultiscannerRepository", asset_kind="repository",
         credentials=(CRED_GITHUB,),
         fields=(
             Field("endpoint", "text", "--endpoint"),
@@ -195,7 +195,7 @@ SOURCES: dict[str, Source] = {
     "github_experimental": Source(
         id="github_experimental", label="GitHub deleted commits",
         subcommand="github-experimental",
-        asset_label="TrufflehogRepository", asset_kind="repository",
+        asset_label="MultiscannerRepository", asset_kind="repository",
         credentials=(CRED_GITHUB,),
         # --object-discovery is the only submodule; the command errors without it.
         fixed_args=("--object-discovery",),
@@ -207,7 +207,7 @@ SOURCES: dict[str, Source] = {
     ),
     "gitlab": Source(
         id="gitlab", label="GitLab", subcommand="gitlab",
-        asset_label="TrufflehogRepository", asset_kind="repository",
+        asset_label="MultiscannerRepository", asset_kind="repository",
         credentials=(CRED_GITLAB,),
         fields=(
             Field("endpoint", "text", "--endpoint"),
@@ -221,7 +221,7 @@ SOURCES: dict[str, Source] = {
     ),
     "docker": Source(
         id="docker", label="Docker registry", subcommand="docker",
-        asset_label="TrufflehogImage", asset_kind="image",
+        asset_label="MultiscannerImage", asset_kind="image",
         credentials=(CRED_DOCKER,),
         fields=(
             Field("images", "multi", "--image"),
@@ -239,7 +239,7 @@ SOURCES: dict[str, Source] = {
     ),
     "huggingface": Source(
         id="huggingface", label="Hugging Face", subcommand="huggingface",
-        asset_label="TrufflehogModel", asset_kind="model",
+        asset_label="MultiscannerModel", asset_kind="model",
         credentials=(CRED_HUGGINGFACE,),
         fields=(
             Field("mode", "select", client=True),   # "assets" | "sweep"
@@ -268,7 +268,7 @@ SOURCES: dict[str, Source] = {
     ),
     "s3": Source(
         id="s3", label="AWS S3", subcommand="s3",
-        asset_label="TrufflehogBucket", asset_kind="bucket",
+        asset_label="MultiscannerBucket", asset_kind="bucket",
         credentials=(CRED_AWS_KEY, CRED_AWS_SECRET, CRED_AWS_SESSION),
         fields=(
             Field("buckets", "multi", "--bucket"),
@@ -280,7 +280,7 @@ SOURCES: dict[str, Source] = {
     ),
     "gcs": Source(
         id="gcs", label="Google Cloud Storage", subcommand="gcs",
-        asset_label="TrufflehogBucket", asset_kind="bucket",
+        asset_label="MultiscannerBucket", asset_kind="bucket",
         credentials=(CRED_GCP,),
         fields=(
             Field("projectId", "text", "--project-id"),
@@ -295,7 +295,7 @@ SOURCES: dict[str, Source] = {
     ),
     "filesystem": Source(
         id="filesystem", label="Filesystem", subcommand="filesystem",
-        asset_label="TrufflehogEndpoint", asset_kind="endpoint",
+        asset_label="MultiscannerEndpoint", asset_kind="endpoint",
         fields=(
             # No target field on purpose. This source always scans
             # SCAN_TARGET_DIRS["filesystem"], so there is no path to type and
@@ -308,7 +308,7 @@ SOURCES: dict[str, Source] = {
     ),
     "jenkins": Source(
         id="jenkins", label="Jenkins", subcommand="jenkins",
-        asset_label="TrufflehogEndpoint", asset_kind="endpoint",
+        asset_label="MultiscannerEndpoint", asset_kind="endpoint",
         credentials=(CRED_JENKINS_USER, CRED_JENKINS_PASS),
         fields=(
             Field("url", "text", "--url", required=True),
@@ -317,7 +317,7 @@ SOURCES: dict[str, Source] = {
     ),
     "elasticsearch": Source(
         id="elasticsearch", label="Elasticsearch", subcommand="elasticsearch",
-        asset_label="TrufflehogEndpoint", asset_kind="endpoint",
+        asset_label="MultiscannerEndpoint", asset_kind="endpoint",
         credentials=(CRED_ES_USER, CRED_ES_PASS, CRED_ES_APIKEY, CRED_ES_SVCTOKEN),
         fields=(
             Field("nodes", "multi", "--nodes"),
@@ -332,7 +332,7 @@ SOURCES: dict[str, Source] = {
     ),
     "postman": Source(
         id="postman", label="Postman", subcommand="postman",
-        asset_label="TrufflehogEndpoint", asset_kind="endpoint",
+        asset_label="MultiscannerEndpoint", asset_kind="endpoint",
         credentials=(CRED_POSTMAN,),
         fields=(
             Field("workspaceIds", "multi", "--workspace-id"),
@@ -346,12 +346,12 @@ SOURCES: dict[str, Source] = {
     ),
     "circleci": Source(
         id="circleci", label="CircleCI", subcommand="circleci",
-        asset_label="TrufflehogEndpoint", asset_kind="endpoint",
+        asset_label="MultiscannerEndpoint", asset_kind="endpoint",
         credentials=(CRED_CIRCLECI,),
     ),
     "travisci": Source(
         id="travisci", label="Travis CI", subcommand="travisci",
-        asset_label="TrufflehogEndpoint", asset_kind="endpoint",
+        asset_label="MultiscannerEndpoint", asset_kind="endpoint",
         credentials=(CRED_TRAVISCI,),
     ),
 }
@@ -726,7 +726,7 @@ def decode_cloud_id_host(cloud_id) -> str:
 
 
 def describe_target(source_id: str, config: dict) -> str:
-    """A short human descriptor of what this run scans; stored on TrufflehogScan
+    """A short human descriptor of what this run scans; stored on MultiscannerScan
     and logged in the audit row (12.9). Never includes a credential."""
     src = get_source(source_id)
     cfg = config or {}

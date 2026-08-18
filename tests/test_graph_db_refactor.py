@@ -327,14 +327,33 @@ class TestSchema(unittest.TestCase):
             self.assertIn("IF EXISTS", stmt, f"Missing guard: {stmt}")
 
     def test_init_schema_calls_every_statement(self):
+        """Every DDL statement is executed.
+
+        Asserted by inclusion rather than by call count: init_schema also runs
+        the legacy-label migration, whose probe queries are not DDL. A bare count
+        would have to be bumped for every migration ever added, and would fail
+        for a reason that has nothing to do with the schema being applied.
+        """
         mock_session = MagicMock()
         mock_session.run.return_value = None
         self.mod.init_schema(mock_session)
-        total = (len(self.mod.DROP_LEGACY_CONSTRAINTS)
-                 + len(self.mod.CONSTRAINTS)
-                 + len(self.mod.TENANT_INDEXES)
-                 + len(self.mod.ADDITIONAL_INDEXES))
-        self.assertEqual(mock_session.run.call_count, total)
+        executed = [c.args[0] for c in mock_session.run.call_args_list if c.args]
+        for stmt in (self.mod.DROP_LEGACY_CONSTRAINTS + self.mod.CONSTRAINTS
+                     + self.mod.TENANT_INDEXES + self.mod.ADDITIONAL_INDEXES):
+            self.assertIn(stmt, executed)
+
+    def test_init_schema_migrates_labels_before_creating_constraints(self):
+        """Ordering is load-bearing: a uniqueness constraint on the new label
+        cannot be satisfied while data still carries the old one."""
+        mock_session = MagicMock()
+        mock_session.run.return_value = None
+        self.mod.init_schema(mock_session)
+        executed = [c.args[0] for c in mock_session.run.call_args_list if c.args]
+        first_migration = next(
+            i for i, q in enumerate(executed) if "TrufflehogFinding" in q)
+        first_constraint = next(
+            i for i, q in enumerate(executed) if q.startswith("CREATE CONSTRAINT"))
+        self.assertLess(first_migration, first_constraint)
 
     def test_init_schema_tolerates_errors(self):
         mock_session = MagicMock()

@@ -14,13 +14,13 @@ export const NODE_SIZES: Record<string, number> = {
   GithubPath: 1.2,          // File path nodes
   GithubSecret: 1,          // Leaf: leaked secret
   GithubSensitiveFile: 1,   // Leaf: sensitive file
-  TrufflehogScan: 2.5,       // Prominent scan node (same as GithubHunt)
-  TrufflehogRepository: 1.5, // Medium repo nodes
-  TrufflehogImage: 1.5,      // Asset nodes all sit at the repository size
-  TrufflehogModel: 1.5,
-  TrufflehogBucket: 1.5,
-  TrufflehogEndpoint: 1.5,
-  TrufflehogFinding: 1,      // Leaf: secret finding
+  MultiscannerScan: 2.5,       // Prominent scan node (same as GithubHunt)
+  MultiscannerRepository: 1.5, // Medium repo nodes
+  MultiscannerImage: 1.5,      // Asset nodes all sit at the repository size
+  MultiscannerModel: 1.5,
+  MultiscannerBucket: 1.5,
+  MultiscannerEndpoint: 1.5,
+  MultiscannerFinding: 1,      // Leaf: secret finding
   Secret: 1.2,              // Slightly larger than default leaf nodes
   JsReconFinding: 1,        // Leaf: JS analysis finding
   ExternalDomain: 1.5,      // Small - informational

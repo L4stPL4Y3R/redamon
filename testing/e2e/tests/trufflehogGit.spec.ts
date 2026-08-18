@@ -204,7 +204,7 @@ test.describe('Secret Multiscanner git source', () => {
     const rows = await secrets.json()
     const list = Array.isArray(rows) ? rows : (rows.rows ?? rows.secrets ?? [])
     const fromTrufflehog = list.filter(
-      (r: { origin?: string }) => r.origin === 'TrufflehogFinding')
+      (r: { origin?: string }) => r.origin === 'MultiscannerFinding')
     expect(fromTrufflehog.map((r: { secretType: string }) => r.secretType))
       .toEqual(expect.arrayContaining(['PrivateKey', 'Github', 'SlackWebhook']))
   })

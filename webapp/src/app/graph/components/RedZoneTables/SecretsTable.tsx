@@ -18,7 +18,7 @@ import { redactSecret } from './redact'
 import rowStyles from './RedZoneTableRow.module.css'
 
 interface SecretRow {
-  origin: 'Secret' | 'JsReconFinding' | 'TrufflehogFinding' | string
+  origin: 'Secret' | 'JsReconFinding' | 'MultiscannerFinding' | string
   id: string
   secretType: string
   valueSample: string | null

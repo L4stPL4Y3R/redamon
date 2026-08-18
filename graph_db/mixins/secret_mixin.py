@@ -415,34 +415,34 @@ class SecretMixin:
     # TruffleHog Secret Scanner — Graph Integration
     # =========================================================================
     #
-    # Multi-source model. One TrufflehogScan per (project, SOURCE), so a Docker
+    # Multi-source model. One MultiscannerScan per (project, SOURCE), so a Docker
     # run and a HuggingFace run coexist instead of overwriting one another:
     #
-    #   Domain -[:HAS_TRUFFLEHOG_SCAN]-> TrufflehogScan     (one per project+source)
+    #   Domain -[:HAS_MULTISCANNER_SCAN]-> MultiscannerScan     (one per project+source)
     #         -[:HAS_ASSET]-> <asset label>                 (one per scanned thing)
-    #               -[:HAS_FINDING]-> TrufflehogFinding     (one per deduped secret)
+    #               -[:HAS_FINDING]-> MultiscannerFinding     (one per deduped secret)
     #
     # Five asset labels, not sixteen: a Docker image, an S3 bucket, an HF model
     # and a Jenkins instance are not "repositories", but the graph renderer draws
     # a node from labels[0] (a SINGLE label, and Neo4j does not order labels), so
     # every node carries exactly one. Grouping by asset SHAPE gives five, and the
-    # git family keeps TrufflehogRepository — its existing colour and history.
+    # git family keeps MultiscannerRepository — its existing colour and history.
 
     #: Asset shape -> label. The scan's own source decides which is used; a
     #: finding never picks its label from the metadata, or a mis-keyed result
     #: would land under another source's label.
     TRUFFLEHOG_ASSET_LABELS = {
-        "repository": "TrufflehogRepository",
-        "image": "TrufflehogImage",
-        "model": "TrufflehogModel",
-        "bucket": "TrufflehogBucket",
-        "endpoint": "TrufflehogEndpoint",
+        "repository": "MultiscannerRepository",
+        "image": "MultiscannerImage",
+        "model": "MultiscannerModel",
+        "bucket": "MultiscannerBucket",
+        "endpoint": "MultiscannerEndpoint",
     }
 
     #: The label set the scoped clear has to sweep. Missing one leaks its nodes.
     TRUFFLEHOG_ALL_ASSET_LABELS = (
-        "TrufflehogRepository", "TrufflehogImage", "TrufflehogModel",
-        "TrufflehogBucket", "TrufflehogEndpoint",
+        "MultiscannerRepository", "MultiscannerImage", "MultiscannerModel",
+        "MultiscannerBucket", "MultiscannerEndpoint",
     )
 
     @staticmethod
@@ -506,7 +506,7 @@ class SecretMixin:
             # dangling off a deleted asset.
             result = session.run(
                 f"""
-                MATCH (n:TrufflehogFinding)
+                MATCH (n:MultiscannerFinding)
                 WHERE n.user_id = $uid AND n.project_id = $pid{where}
                 DETACH DELETE n
                 RETURN count(n) as deleted
@@ -533,7 +533,7 @@ class SecretMixin:
 
             result = session.run(
                 f"""
-                MATCH (n:TrufflehogScan)
+                MATCH (n:MultiscannerScan)
                 WHERE n.user_id = $uid AND n.project_id = $pid{where}
                 DETACH DELETE n
                 RETURN count(n) as deleted
@@ -592,7 +592,7 @@ class SecretMixin:
         scan_statistics = trufflehog_data.get("statistics") or {}
         asset_kind = trufflehog_data.get("asset_kind") or "endpoint"
         asset_label = self.TRUFFLEHOG_ASSET_LABELS.get(
-            asset_kind, "TrufflehogEndpoint")
+            asset_kind, "MultiscannerEndpoint")
 
         with self.driver.session() as session:
             # SCOPED clear, never the blanket one: this reaps only this source's
@@ -600,7 +600,7 @@ class SecretMixin:
             clear_stats = self.clear_trufflehog_data(user_id, project_id, source=source)
             print(f"[*][graph-db] Pre-cleared {source}: {clear_stats}")
 
-            scan_id = f"trufflehog-scan-{user_id}-{project_id}-{source}"
+            scan_id = f"multiscanner-scan-{user_id}-{project_id}-{source}"
             scan_props = {
                 "id": scan_id,
                 "user_id": user_id,
@@ -627,23 +627,23 @@ class SecretMixin:
             try:
                 session.run(
                     """
-                    MERGE (ts:TrufflehogScan {id: $id, user_id: $uid, project_id: $pid})
+                    MERGE (ts:MultiscannerScan {id: $id, user_id: $uid, project_id: $pid})
                     SET ts += $props, ts.updated_at = datetime()
                     """,
                     id=scan_id, uid=user_id, pid=project_id, props=scan_props,
                 )
                 stats["scan_created"] += 1
             except Exception as e:
-                stats["errors"].append(f"Failed to create TrufflehogScan node: {e}")
-                print(f"[!][graph-db] TrufflehogScan creation failed: {e}")
+                stats["errors"].append(f"Failed to create MultiscannerScan node: {e}")
+                print(f"[!][graph-db] MultiscannerScan creation failed: {e}")
                 return stats
 
             try:
                 result = session.run(
                     """
                     MATCH (d:Domain {user_id: $uid, project_id: $pid})
-                    MATCH (ts:TrufflehogScan {id: $scan_id, user_id: $uid, project_id: $pid})
-                    MERGE (d)-[:HAS_TRUFFLEHOG_SCAN]->(ts)
+                    MATCH (ts:MultiscannerScan {id: $scan_id, user_id: $uid, project_id: $pid})
+                    MERGE (d)-[:HAS_MULTISCANNER_SCAN]->(ts)
                     RETURN count(*) as linked
                     """,
                     uid=user_id, pid=project_id, scan_id=scan_id,
@@ -655,7 +655,7 @@ class SecretMixin:
                     print(f"[!][graph-db] Warning: No Domain node found for "
                           f"user_id={user_id}, project_id={project_id}")
             except Exception as e:
-                stats["errors"].append(f"Failed to link TrufflehogScan to Domain: {e}")
+                stats["errors"].append(f"Failed to link MultiscannerScan to Domain: {e}")
 
             seen_findings = set()
             created_assets = set()
@@ -677,9 +677,9 @@ class SecretMixin:
                     continue
                 seen_findings.add(dedup_key)
 
-                asset_id = (f"trufflehog-asset-{user_id}-{project_id}-{source}-"
+                asset_id = (f"multiscanner-asset-{user_id}-{project_id}-{source}-"
                             f"{self._trufflehog_digest(user_id, project_id, source, asset)}")
-                finding_id = (f"trufflehog-finding-{user_id}-{project_id}-{source}-"
+                finding_id = (f"multiscanner-finding-{user_id}-{project_id}-{source}-"
                               f"{self._trufflehog_digest(user_id, project_id, dedup_key)}")
 
                 if asset and asset not in created_assets:
@@ -707,7 +707,7 @@ class SecretMixin:
 
                         session.run(
                             f"""
-                            MATCH (ts:TrufflehogScan {{id: $scan_id, user_id: $uid, project_id: $pid}})
+                            MATCH (ts:MultiscannerScan {{id: $scan_id, user_id: $uid, project_id: $pid}})
                             MATCH (ta:{asset_label} {{id: $asset_id, user_id: $uid, project_id: $pid}})
                             MERGE (ts)-[:HAS_ASSET]->(ta)
                             """,
@@ -746,7 +746,7 @@ class SecretMixin:
                 try:
                     session.run(
                         """
-                        MERGE (tf:TrufflehogFinding {id: $id, user_id: $uid, project_id: $pid})
+                        MERGE (tf:MultiscannerFinding {id: $id, user_id: $uid, project_id: $pid})
                         SET tf += $props, tf.updated_at = datetime()
                         """,
                         id=finding_id, uid=user_id, pid=project_id, props=finding_props,
@@ -757,7 +757,7 @@ class SecretMixin:
                         session.run(
                             f"""
                             MATCH (ta:{asset_label} {{id: $asset_id, user_id: $uid, project_id: $pid}})
-                            MATCH (tf:TrufflehogFinding {{id: $finding_id, user_id: $uid, project_id: $pid}})
+                            MATCH (tf:MultiscannerFinding {{id: $finding_id, user_id: $uid, project_id: $pid}})
                             MERGE (ta)-[:HAS_FINDING]->(tf)
                             """,
                             asset_id=asset_id, finding_id=finding_id,
@@ -768,9 +768,9 @@ class SecretMixin:
                     stats["errors"].append(f"Failed to create finding {dedup_key}: {e}")
 
             print(f"\n[+] TruffleHog Graph Update Summary ({source}):")
-            print(f"[+][graph-db] Created {stats['scan_created']} TrufflehogScan node")
+            print(f"[+][graph-db] Created {stats['scan_created']} MultiscannerScan node")
             print(f"[+][graph-db] Created {stats['assets_created']} {asset_label} nodes")
-            print(f"[+][graph-db] Created {stats['findings_created']} TrufflehogFinding nodes")
+            print(f"[+][graph-db] Created {stats['findings_created']} MultiscannerFinding nodes")
             print(f"[+][graph-db] Created {stats['relationships_created']} relationships")
             print(f"[+][graph-db] Deduplicated {stats['findings_deduplicated']} findings")
 

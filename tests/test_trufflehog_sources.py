@@ -31,8 +31,8 @@ class TestRegistryShape(unittest.TestCase):
             self.assertEqual(src.id, source_id)
             self.assertTrue(src.subcommand)
             self.assertIn(src.asset_label, {
-                "TrufflehogRepository", "TrufflehogImage", "TrufflehogModel",
-                "TrufflehogBucket", "TrufflehogEndpoint",
+                "MultiscannerRepository", "MultiscannerImage", "MultiscannerModel",
+                "MultiscannerBucket", "MultiscannerEndpoint",
             })
             self.assertIn(src.asset_kind, {"repository", "image", "model", "bucket", "endpoint"})
 

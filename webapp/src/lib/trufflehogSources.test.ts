@@ -24,7 +24,7 @@ describe('registry shape', () => {
   test('14 sources, each with an asset label and kind', () => {
     expect(TRUFFLEHOG_SOURCE_IDS).toHaveLength(14)
     for (const src of Object.values(TRUFFLEHOG_SOURCES)) {
-      expect(src.assetLabel).toMatch(/^Trufflehog/)
+      expect(src.assetLabel).toMatch(/^Multiscanner/)
       expect(['repository', 'image', 'model', 'bucket', 'endpoint']).toContain(src.assetKind)
     }
   })
