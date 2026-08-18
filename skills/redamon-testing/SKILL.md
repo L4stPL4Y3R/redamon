@@ -82,7 +82,10 @@ and assert **both** the parsed result and the command from `mock_run.call_args`.
 
 ## Where a test goes, and its tier
 
-Tier is auto-assigned by filename in each `conftest.py` (live checked first):
+Tier is auto-assigned by filename in each `conftest.py` (live checked first). An
+explicit `@pytest.mark.{unit,integration,live}` wins, on the file **or on a single
+test** - the gate passes the tier to pytest as `-m`, so an opted-out test inside a
+unit-named file really is skipped:
 
 | Filename contains | Tier | Meaning |
 | --- | --- | --- |
