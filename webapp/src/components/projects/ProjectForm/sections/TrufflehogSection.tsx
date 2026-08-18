@@ -670,7 +670,15 @@ function FieldInput({
           <span className={styles.toggleLabel}>{field.label}</span>
           {field.hint && <p className={styles.toggleDescription}>{field.hint}</p>}
         </div>
-        <Toggle checked={Boolean(value)} onChange={onChange} disabled={disabled} />
+        {/* The label is a sibling span, not a <label>, so without this the
+            switch has no accessible name: a screen reader announces "switch,
+            off" for all thirteen of them. */}
+        <Toggle
+          checked={Boolean(value)}
+          onChange={onChange}
+          disabled={disabled}
+          aria-label={field.label}
+        />
       </div>
     )
   }
