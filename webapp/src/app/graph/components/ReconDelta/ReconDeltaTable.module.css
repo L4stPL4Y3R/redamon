@@ -249,12 +249,30 @@
 }
 
 .lenses {
+  /* Fixed 4-up (not auto-fit): the lens bodies hold free-form node labels - long
+     URLs, package coordinates, cert subjects - and an auto-fit track collapses to
+     240px, at which point every label wraps to a column of single characters.
+     minmax(0, 1fr) is what lets a track shrink below its longest word. */
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: var(--space-3);
+  align-items: start;
+}
+
+@media (max-width: 1400px) {
+  .lenses { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 1050px) {
+  .lenses { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 700px) {
+  .lenses { grid-template-columns: minmax(0, 1fr); }
 }
 
 .lens {
+  min-width: 0;
   padding: var(--space-3);
   background: var(--bg-tertiary);
   border-radius: var(--radius-default);
@@ -279,15 +297,20 @@
 }
 
 .lensList {
+  /* A lens with hundreds of findings must not stretch the row; it scrolls on its
+     own so the 4-up grid keeps a predictable height. */
   margin: 0;
   padding-left: var(--space-4);
+  max-height: 15rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   font-size: var(--text-xs);
   color: var(--text-secondary);
 }
 
 .lensList li {
   margin-bottom: 2px;
-  word-break: break-all;
+  overflow-wrap: anywhere;
 }
 
 .spinner {
