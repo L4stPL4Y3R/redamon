@@ -97,11 +97,16 @@ services:
   # ===========================================================================
 
   # --- Data containers (init-only, exit after populating volumes) ---
+  # They restart on failure because gvm-ospd is gated on them via
+  # service_completed_successfully: one SIGKILL (a host OOM, a stop landing
+  # mid-copy) otherwise leaves the scanner never created, and gvmd then accepts
+  # scan tasks that nothing will ever run (issue #174).
 
   gvm-vt:
     image: registry.community.greenbone.net/community/vulnerability-tests
     container_name: redamon-gvm-vt
     mem_limit: ${GVM_DATA_MEM:-1g}    # shared cap for the one-shot feed loaders (they start concurrently)
+    restart: on-failure:5
     environment:
       FEED_RELEASE: "24.10"
     volumes:
@@ -111,6 +116,7 @@ services:
     image: registry.community.greenbone.net/community/notus-data
     container_name: redamon-gvm-notus-data
     mem_limit: ${GVM_DATA_MEM:-1g}    # shared cap for the one-shot feed loaders (they start concurrently)
+    restart: on-failure:5
     volumes:
       - notus_data:/mnt
 
@@ -118,6 +124,7 @@ services:
     image: registry.community.greenbone.net/community/scap-data
     container_name: redamon-gvm-scap-data
     mem_limit: ${GVM_DATA_MEM:-1g}    # shared cap for the one-shot feed loaders (they start concurrently)
+    restart: on-failure:5
     volumes:
       - scap_data:/mnt
 
@@ -125,6 +132,7 @@ services:
     image: registry.community.greenbone.net/community/cert-bund-data
     container_name: redamon-gvm-cert-data
     mem_limit: ${GVM_DATA_MEM:-1g}    # shared cap for the one-shot feed loaders (they start concurrently)
+    restart: on-failure:5
     volumes:
       - cert_data:/mnt
 
@@ -132,6 +140,7 @@ services:
     image: registry.community.greenbone.net/community/dfn-cert-data
     container_name: redamon-gvm-dfn-cert
     mem_limit: ${GVM_DATA_MEM:-1g}    # shared cap for the one-shot feed loaders (they start concurrently)
+    restart: on-failure:5
     volumes:
       - cert_data:/mnt
     depends_on:
@@ -141,6 +150,7 @@ services:
     image: registry.community.greenbone.net/community/data-objects
     container_name: redamon-gvm-data-objects
     mem_limit: ${GVM_DATA_MEM:-1g}    # shared cap for the one-shot feed loaders (they start concurrently)
+    restart: on-failure:5
     environment:
       FEED_RELEASE: "24.10"
     volumes:
@@ -150,6 +160,7 @@ services:
     image: registry.community.greenbone.net/community/report-formats
     container_name: redamon-gvm-report-formats
     mem_limit: ${GVM_DATA_MEM:-1g}    # shared cap for the one-shot feed loaders (they start concurrently)
+    restart: on-failure:5
     environment:
       FEED_RELEASE: "24.10"
     volumes:
@@ -161,6 +172,7 @@ services:
     image: registry.community.greenbone.net/community/gpg-data
     container_name: redamon-gvm-gpg-data
     mem_limit: ${GVM_DATA_MEM:-1g}    # shared cap for the one-shot feed loaders (they start concurrently)
+    restart: on-failure:5
     volumes:
       - gpg_data:/mnt
 
@@ -174,26 +186,30 @@ services:
     volumes:
       - gvm_redis_socket:/run/redis/
 
-  gvm-postgres-init:
-    image: alpine:3.20
-    container_name: redamon-gvm-postgres-init
-    mem_limit: ${GVM_DATA_MEM:-1g}    # shared cap for the one-shot feed loaders (they start concurrently)
-    volumes:
-      - gvm_psql_data:/var/lib/postgresql
-      - gvm_psql_socket:/var/run/postgresql
-    entrypoint: ["/bin/sh", "-c", "rm -f /var/run/postgresql/.s.PGSQL.5432.lock /var/run/postgresql/.s.PGSQL.5432 /var/lib/postgresql/17/main/postmaster.pid && echo 'Cleaned stale PG locks'"]
-
   gvm-postgres:
     image: registry.community.greenbone.net/community/pg-gvm:stable
     container_name: redamon-gvm-postgres
     mem_limit: ${GVM_POSTGRES_MEM:-1g}   # sized from host RAM by redamon.sh (GVM's own database)
     restart: on-failure
+    # The stale-lock cleanup runs INSIDE this container, right before postgres
+    # starts. It used to be a sibling one-shot sharing the socket volume, which
+    # deleted the LIVE socket on every repeat `up`: compose leaves an already-
+    # running service alone but still re-runs an exited one-shot, so gvmd lost
+    # its database and crash-looped while postgres still reported healthy (#174).
+    # Cleaning from inside is race-free by construction - nothing here is serving
+    # yet. The image's own entrypoint runs as root and ends in `exec gosu
+    # postgres "$@"`, so it is re-entered with its default command unchanged.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        rm -f /var/run/postgresql/.s.PGSQL.5432 \
+              /var/run/postgresql/.s.PGSQL.5432.lock \
+              /var/lib/postgresql/*/main/postmaster.pid
+        exec /usr/local/bin/entrypoint /usr/local/bin/start-postgresql
     volumes:
       - gvm_psql_data:/var/lib/postgresql
       - gvm_psql_socket:/var/run/postgresql
-    depends_on:
-      gvm-postgres-init:
-        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -h /var/run/postgresql"]
       interval: 5s

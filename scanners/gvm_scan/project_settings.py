@@ -41,6 +41,14 @@ DEFAULT_GVM_SETTINGS: dict[str, Any] = {
     # Poll interval for checking scan status (seconds)
     'POLL_INTERVAL': 30,
 
+    # Give up on a task that reports NO progress at all for this long (seconds).
+    # A task whose scanner is not actually running is accepted by gvmd and sits at
+    # 0%/-1% until TASK_TIMEOUT, so without this a scannerless stack burns the full
+    # 4h on every target in turn (issue #174: ospd-openvas was never started
+    # because its VT-feed loader had been killed). Not mapped from the webapp API -
+    # a diagnostic bound, not a user-facing scan option. 0 disables the watchdog.
+    'NO_PROGRESS_TIMEOUT': 1800,  # 30 min
+
     # Readiness wait before a scan gives up on gvmd. A gvmd (re)start re-imports
     # ALL feeds; the scan configs ("Full and fast", ...) come from the Data Objects
     # feed, which is gated behind the heavy SCAP CVE import and can take the better
@@ -70,7 +78,10 @@ def fetch_gvm_settings(project_id: str, webapp_url: str) -> dict[str, Any]:
     url = f"{webapp_url.rstrip('/')}/api/projects/{project_id}"
     logger.info(f"Fetching GVM settings from {url}")
 
-    _internal_headers = {"X-Internal-Key": os.environ.get("INTERNAL_API_KEY", "")}
+    # S3/E6: scanners receive the SCOPED SCANNER_API_KEY; fall back to the master
+    # INTERNAL_API_KEY only on pre-secret installs. The webapp accepts either.
+    _internal_headers = {"X-Internal-Key": (os.environ.get("SCANNER_API_KEY")
+                                            or os.environ.get("INTERNAL_API_KEY", ""))}
     response = requests.get(url, timeout=30, headers=_internal_headers)
     response.raise_for_status()
     project = response.json()

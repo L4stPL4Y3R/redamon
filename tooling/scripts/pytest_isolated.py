@@ -14,6 +14,12 @@ Tiers are inferred from the filename (kept in sync with each conftest.py):
   integration: *_integration.py, *_skill.py, *_e2e*
   unit:        everything else
 
+The tier is ALSO passed to pytest as `-m`, so an explicit
+``@pytest.mark.{unit,integration,live}`` on a single test inside an otherwise
+unit-tier file is honoured. Filename selection alone cannot see inside a file,
+which is how a wall-clock test that had opted out of the unit tier still ran in
+it - and failed whenever the parallel gate loaded the host.
+
 Usage:
   python tooling/scripts/pytest_isolated.py <tier> <testdir> [<testdir> ...]
         [--parallel N] [--cov PKG --cov-floor N]
@@ -80,6 +86,17 @@ def collect_files(testpaths, want, exclude=()):
 _PER_FILE_TIMEOUT = int(os.environ.get("REDAMON_TEST_FILE_TIMEOUT", "600"))
 
 
+# The pytest marker expression for a tier. Mirrors the conftest auto-marking, so
+# a file whose name puts it in this tier still contributes every test that has no
+# explicit marker of its own.
+_MARKEXPR = {
+    "unit": "unit",
+    "integration": "integration",
+    "live": "live",
+    "all": "unit or integration",
+}
+
+
 def run_one(path, extra):
     cmd = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
            "--no-header", *extra, path]
@@ -122,7 +139,8 @@ def main() -> int:
         for f in files:
             subprocess.run(
                 [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
-                 "--no-header", f"--cov={args.cov}", "--cov-append", f],
+                 "--no-header", "-m", _MARKEXPR[args.tier],
+                 f"--cov={args.cov}", "--cov-append", f],
                 capture_output=True, text=True,
             )
         rep = subprocess.run([sys.executable, "-m", "coverage", "report", "--skip-covered"],
@@ -142,7 +160,8 @@ def main() -> int:
     failures = []
     passed = skipped = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, args.parallel)) as ex:
-        for path, code, out in ex.map(lambda p: run_one(p, []), files):
+        markexpr = ["-m", _MARKEXPR[args.tier]]
+        for path, code, out in ex.map(lambda p: run_one(p, markexpr), files):
             if code == 5:            # no tests collected in this file
                 skipped += 1
                 continue

@@ -99,6 +99,7 @@ class GVMScanner:
         self.scan_config_name = scan_config or get_setting('SCAN_CONFIG', 'Full and fast')
         self.task_timeout = task_timeout if task_timeout is not None else get_setting('TASK_TIMEOUT', 14400)
         self.poll_interval = poll_interval if poll_interval is not None else get_setting('POLL_INTERVAL', 30)
+        self.no_progress_timeout = get_setting('NO_PROGRESS_TIMEOUT', 1800)
         
         # Connection state
         self._connection = None
@@ -152,6 +153,7 @@ class GVMScanner:
 
                 # Cache commonly needed IDs
                 self._cache_scanner_id()
+                self._verify_scanner_alive()
                 self._cache_config_id()
                 self._cache_report_format_id()
                 self._cache_port_list_id()
@@ -171,6 +173,8 @@ class GVMScanner:
                         reason = "scan configs not loaded yet (feed sync in progress)"
                     elif "not found" in error_msg.lower() and "scanner" in error_msg.lower():
                         reason = "OpenVAS scanner not registered yet"
+                    elif "not reachable" in error_msg:
+                        reason = "ospd-openvas not reachable yet"
                     elif "Authentication failed" in error_msg:
                         reason = "admin user not created yet"
                     else:
@@ -213,6 +217,47 @@ class GVMScanner:
                 return
         raise RuntimeError("OpenVAS scanner not found in GVM")
     
+    # gvmd's replies when it cannot reach the scanner daemon. Anything outside
+    # this set is not evidence of a dead scanner.
+    SCANNER_DOWN_STATUSES = ('500', '503')
+
+    def _verify_scanner_alive(self):
+        """Ask gvmd to actually TALK to the OpenVAS scanner.
+
+        _cache_scanner_id only proves gvmd has a scanner ROW in its own database,
+        which survives ospd-openvas being absent entirely. That is exactly what
+        happened in issue #174: the VT-feed loader was killed, so ospd (gated on it
+        via depends_on) was never started, gvmd accepted every task anyway, and each
+        one sat at 0% until the 4h timeout. VERIFY_SCANNER is the one call that
+        distinguishes "registered" from "answering".
+
+        Only a "service is down" verdict blocks the scan. Every other reply - an
+        unimplemented command on an older gvmd, an unexpected status, a raising
+        client - is treated as NO VERDICT and lets the scan proceed, because a
+        probe that can veto a healthy stack is worse than no probe. The stall
+        watchdog in wait_for_task is the backstop that needs no cooperation.
+        """
+        try:
+            response = self.gmp.verify_scanner(self.scanner_id)
+        except Exception as e:
+            print(f"    [i] Could not verify the OpenVAS scanner ({e}); continuing")
+            return
+
+        status = response.get('status', '')
+        if status not in self.SCANNER_DOWN_STATUSES:
+            if status != '200':
+                print(f"    [i] VERIFY_SCANNER returned status {status}; "
+                      f"treating the liveness check as inconclusive")
+            return
+
+        status_text = response.get('status_text', 'no detail')
+        raise RuntimeError(
+            f"OpenVAS scanner is registered but not reachable "
+            f"(VERIFY_SCANNER status {status}: {status_text}). ospd-openvas is "
+            f"probably not running - check `docker ps` for redamon-gvm-ospd and "
+            f"the feed loader it depends on (redamon-gvm-vt)."
+        )
+
     def _cache_config_id(self):
         """Get and cache scan config ID."""
         configs = self.gmp.get_scan_configs()
@@ -379,6 +424,10 @@ class GVMScanner:
         print(f"    [⏳] Waiting for task {task_id}...")
         start_time = time.time()
         progress_note_shown = False
+        # The watchdog measures time since the task last moved, not since it
+        # started, so a slow-but-advancing scan is never cut off.
+        last_progress = -1
+        last_progress_at = start_time
 
         while True:
             elapsed = time.time() - start_time
@@ -410,7 +459,7 @@ class GVMScanner:
                 print("        [i] GVM is running thousands of vulnerability checks. "
                       "This may take 15-45 minutes per target.")
                 progress_note_shown = True
-            
+
             if status_text == "Done":
                 return status_text, report_id
             elif status_text in ("Stopped", "Stop Requested"):
@@ -422,7 +471,23 @@ class GVMScanner:
                 )
             elif "Error" in status_text:
                 raise RuntimeError(f"Task failed: {status_text}")
-            
+
+            current_progress = self._safe_int(progress_text, -1)
+            if current_progress > last_progress:
+                last_progress = current_progress
+                last_progress_at = time.time()
+            elif self.no_progress_timeout > 0:
+                stalled = time.time() - last_progress_at
+                if stalled > self.no_progress_timeout:
+                    raise RuntimeError(
+                        f"Task {task_id} made no progress for {int(stalled)}s "
+                        f"(status {status_text}, progress {progress_text}%). The scan "
+                        f"was accepted by gvmd but nothing is running it - check that "
+                        f"redamon-gvm-ospd is up and that its VT feed loader "
+                        f"(redamon-gvm-vt) completed. Raise NO_PROGRESS_TIMEOUT if "
+                        f"this target is genuinely just slow."
+                    )
+
             time.sleep(self.poll_interval)
     
     def get_report(self, report_id: str) -> Dict:

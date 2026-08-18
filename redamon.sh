@@ -483,8 +483,11 @@ _MEM_SPEC_GVM="GVMD:120:768:b GVM_OSPD:110:512:b GVM_REDIS:90:256:b GVM_POSTGRES
 # GVM_DATA's share is the TOTAL for the loader group; the exported
 # GVM_DATA_MEM is that divided by the container count, because ONE compose
 # var caps all of them and six start concurrently. Counting the group once
-# while applying it nine times would understate the worst case ninefold.
-_GVM_DATA_CONTAINERS=9
+# while applying it eight times would understate the worst case eightfold.
+# Keep in step with the number of services carrying `mem_limit: ${GVM_DATA_MEM}`
+# in docker-compose.yml (the stale-lock cleanup moved into gvm-postgres itself,
+# so the count went 9 -> 8).
+_GVM_DATA_CONTAINERS=8
 _MEM_SPEC_KB="KB_REFRESH:150:512:b"
 
 # Results, published as parallel indexed arrays (NOT associative: redamon.sh
