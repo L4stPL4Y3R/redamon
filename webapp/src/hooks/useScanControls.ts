@@ -50,6 +50,21 @@ export function useScanControls({
   const [otherScansOpen, setOtherScansOpen] = useState(false)
   const [hasReconData, setHasReconData] = useState(false)
   const [hasGvmData, setHasGvmData] = useState(false)
+  // Optimistic like the graph page: assume installed until /available says no,
+  // so the button does not flash disabled on every mount.
+  const [gvmAvailable, setGvmAvailable] = useState(true)
+
+  // The GVM stack is an optional install (./redamon.sh install --gvm). Without
+  // this the button starts a scan that can only fail.
+  useEffect(() => {
+    if (!enabled) return
+    let cancelled = false
+    fetch('/api/gvm/available')
+      .then(res => res.json())
+      .then(data => { if (!cancelled) setGvmAvailable(data.available ?? false) })
+      .catch(() => { if (!cancelled) setGvmAvailable(false) })
+    return () => { cancelled = true }
+  }, [enabled])
 
   // Exactly how the graph page decides whether a download button is live: a HEAD
   // against the download route. Re-probed when a scan settles, since that is
@@ -120,6 +135,7 @@ export function useScanControls({
       isPaused: gvmPaused,
       isActive: gvmActive,
       hasData: hasGvmData,
+      isAvailable: gvmAvailable,
       download: downloadGvmJSON,
     },
     githubHunt: { ...githubHunt, isBusy: ghBusy, isRunning: ghRunning, isActive: ghActive },
@@ -136,7 +152,7 @@ export function useScanControls({
     githubHunt, ghBusy, ghRunning, ghActive,
     trufflehog, thRunning, thActive,
     supplyChain, scStatus, scBusy, scActive,
-    downloadReconJSON, downloadGvmJSON, otherScansOpen, hasReconData, hasGvmData,
+    downloadReconJSON, downloadGvmJSON, otherScansOpen, hasReconData, hasGvmData, gvmAvailable,
   ])
 }
 

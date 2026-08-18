@@ -747,7 +747,7 @@ export function ProjectForm({
                 {isReconRunning ? 'Running...' : isReconPaused ? 'Paused' : 'Start Recon Pipeline'}
               </button>
 
-              <ScanActions scans={scans} />
+              <ScanActions scans={scans} stealthMode={formData.stealthMode} />
               {/* Partial Recon Badges */}
               {activePartialRecons.length > 0 && (
                 <PartialReconBadges

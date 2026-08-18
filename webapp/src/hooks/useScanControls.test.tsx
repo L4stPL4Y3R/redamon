@@ -28,11 +28,12 @@ vi.mock('./useSupplyChainStatus', () => ({
 
 beforeEach(() => {
   for (const k of Object.keys(calls) as (keyof typeof calls)[]) calls[k].length = 0
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false }))
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, json: async () => ({}) }))
 })
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
 const last = (a: unknown[]) => a[a.length - 1] as Record<string, unknown>
+const fetchCalls = () => (fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls
 
 describe('useScanControls', () => {
   test('a project id enables all four scan hooks', () => {
@@ -77,10 +78,39 @@ describe('useScanControls', () => {
     // A GET here would pull the whole artifact just to grey out a button.
     const { result } = renderHook(() => useScanControls({ projectId: 'p1' }))
     await waitFor(() => expect(fetch).toHaveBeenCalled())
-    for (const call of (fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls) {
+    for (const call of fetchCalls()) {
+      if (!String(call[0]).endsWith('/download')) continue
       expect((call[1] as { method: string }).method).toBe('HEAD')
     }
     expect(result.current.hasReconData).toBe(false)
+  })
+
+  test('an uninstalled GVM stack marks the scan unavailable', async () => {
+    // Redzone greys the GVM button out on /api/gvm/available; the project form
+    // showed it enabled, so the only feedback was a scan that could not start.
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => (
+      String(url).includes('/api/gvm/available')
+        ? { ok: true, json: async () => ({ available: false }) }
+        : { ok: false, json: async () => ({}) }
+    )))
+    const { result } = renderHook(() => useScanControls({ projectId: 'p1' }))
+    await waitFor(() => expect(result.current.gvm.isAvailable).toBe(false))
+  })
+
+  test('an installed GVM stack leaves the scan available', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => (
+      String(url).includes('/api/gvm/available')
+        ? { ok: true, json: async () => ({ available: true }) }
+        : { ok: false, json: async () => ({}) }
+    )))
+    const { result } = renderHook(() => useScanControls({ projectId: 'p1' }))
+    await waitFor(() => expect(fetch).toHaveBeenCalled())
+    expect(result.current.gvm.isAvailable).toBe(true)
+  })
+
+  test('a disabled surface does not probe availability either', () => {
+    renderHook(() => useScanControls({ projectId: 'p1', enabled: false }))
+    expect(fetchCalls().some(c => String(c[0]).includes('/api/gvm/available'))).toBe(false)
   })
 
   test('the Other Scans modal starts closed and toggles', () => {

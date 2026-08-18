@@ -18,15 +18,27 @@ export function ScanActions({
   scans,
   showReconDownload = true,
   disabledReason = '',
+  stealthMode = false,
 }: {
   scans: ScanControls
   /** The recon download; off where the surface already has its own. */
   showReconDownload?: boolean
   /** Non-empty disables every action and explains why (e.g. a past version). */
   disabledReason?: string
+  /** The project's Stealth Mode, which bars GVM the same way the graph does. */
+  stealthMode?: boolean
 }) {
   const { gvm, githubHunt, trufflehog } = scans
   const blocked = Boolean(disabledReason)
+
+  // The graph toolbar's GVM preconditions, kept in the same order so the two
+  // surfaces agree on WHY the button is off, not just that it is.
+  const gvmBlockedReason =
+    disabledReason ? disabledReason
+    : !gvm.isAvailable ? 'GVM is not installed. Run ./redamon.sh install --gvm to enable vulnerability scanning'
+    : stealthMode && !gvm.isPaused ? 'GVM scanning is disabled in Stealth Mode (generates ~50,000 active probes per target)'
+    : !scans.hasReconData && !gvm.isPaused ? 'Run recon first'
+    : ''
 
   return (
     <>
@@ -47,9 +59,9 @@ export function ScanActions({
           type="button"
           className={`${styles.gvmButton} ${gvm.isActive ? styles.gvmButtonActive : ''}`}
           onClick={() => void (gvm.isPaused ? gvm.resumeGvm() : gvm.startGvm())}
-          disabled={blocked || gvm.isRunning}
+          disabled={Boolean(gvmBlockedReason) || gvm.isRunning}
           title={
-            disabledReason ||
+            gvmBlockedReason ||
             (gvm.isStopping ? 'Stopping...'
               : gvm.isRunning ? 'GVM scan in progress...'
               : gvm.isPaused ? 'Resume GVM Scan'
