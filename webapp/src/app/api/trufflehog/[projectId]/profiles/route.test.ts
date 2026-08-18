@@ -70,7 +70,7 @@ describe('GET /profiles', () => {
     h.settingsFindUnique.mockResolvedValue({ trufflehogGithubToken: '' })
     const body = await (await list.GET(req(), params)).json()
     expect(body.profiles[0].missingCredentials)
-      .toEqual([{ settingsKey: 'trufflehogGithubToken', label: 'TruffleHog GitHub Token' }])
+      .toEqual([{ settingsKey: 'trufflehogGithubToken', label: 'Secret Multiscanner GitHub Token' }])
     // The response must not carry any credential VALUE.
     expect(JSON.stringify(body)).not.toContain('trufflehogGithubToken":"g')
   })

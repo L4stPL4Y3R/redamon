@@ -77,7 +77,7 @@ describe('ScanScheduleTable', () => {
       jobs: [JOB, { ...JOB, id: 'q1', kind: 'trufflehog', status: 'failed' }],
     }))
     render(<ScanScheduleTable projectId="p1" />)
-    await waitFor(() => expect(screen.getByText('TruffleHog')).toBeTruthy())
+    await waitFor(() => expect(screen.getByText('Secret Multiscanner')).toBeTruthy())
     expect(screen.getByText('Full recon')).toBeTruthy()
   })
 

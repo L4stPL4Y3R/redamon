@@ -116,12 +116,12 @@ export async function resolveTrufflehogStart(
   if (!profile) {
     return {
       ok: false, status: 404,
-      error: 'No TruffleHog scan profile found for this source. Configure the source first.',
+      error: 'No Secret Multiscanner scan profile found for this source. Configure the source first.',
     }
   }
 
   const src = getTrufflehogSource(profile.source)
-  if (!src) return { ok: false, status: 400, error: `Unknown TruffleHog source: ${profile.source}` }
+  if (!src) return { ok: false, status: 400, error: `Unknown Secret Multiscanner source: ${profile.source}` }
 
   const config = (profile.config ?? {}) as Record<string, unknown>
   const errors = validateTrufflehogConfig(src.id, config)
@@ -139,7 +139,7 @@ export async function resolveTrufflehogStart(
     return {
       ok: false, status: 400,
       error: `${src.label} requires ${missing.map(m => m.label).join(', ')}. `
-        + 'Set it in Global Settings > API Keys > TruffleHog.',
+        + 'Set it in Global Settings > API Keys > Secret Multiscanner.',
     }
   }
 

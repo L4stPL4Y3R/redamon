@@ -69,7 +69,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const files = await findRunFiles(projectId)
     if (files.length === 0) {
       return NextResponse.json(
-        { error: 'TruffleHog data not found. Run a TruffleHog scan first.' },
+        { error: 'Secret Multiscanner data not found. Run a Secret Multiscanner scan first.' },
         { status: 404 },
       )
     }

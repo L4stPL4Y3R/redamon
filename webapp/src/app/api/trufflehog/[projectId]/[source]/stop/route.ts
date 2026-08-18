@@ -23,7 +23,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}))
       return NextResponse.json(
-        { error: errorData.detail || 'Failed to stop TruffleHog scan' },
+        { error: errorData.detail || 'Failed to stop Secret Multiscanner scan' },
         { status: response.status },
       )
     }

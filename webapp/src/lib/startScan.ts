@@ -147,7 +147,7 @@ export async function dispatchStart(
     })
     if (!resolved.ok) return { ok: false, status: resolved.status, error: resolved.error }
     path = `/trufflehog/${projectId}/start`
-    fallback = 'Failed to start TruffleHog scan'
+    fallback = 'Failed to start Secret Multiscanner scan'
     body = resolved.body as unknown as Record<string, unknown>
   } else if (kind === 'ai_attack') {
     path = `/ai-attack-surface/${projectId}/start`

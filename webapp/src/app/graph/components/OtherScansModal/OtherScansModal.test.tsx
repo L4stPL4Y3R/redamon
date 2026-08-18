@@ -114,7 +114,7 @@ describe('OtherScansModal — past-version / activation gating', () => {
 
 
 // The multi-source behaviour the card exists for.
-describe('OtherScansModal — TruffleHog sources', () => {
+describe('OtherScansModal — Secret Multiscanner sources', () => {
   test('one row per configured source, each with its own Start', () => {
     render(<OtherScansModal {...baseProps} viewingPastVersion={false} isActivatingVersion={false} />)
     expect(screen.getByText('Docker registry')).toBeTruthy()
@@ -145,13 +145,13 @@ describe('OtherScansModal — TruffleHog sources', () => {
         isActivatingVersion={false}
         trufflehogProfiles={[{
           ...TRUFFLEHOG_PROFILES[1],
-          missingCredentials: [{ settingsKey: 'trufflehogGithubToken', label: 'TruffleHog GitHub Token' }],
+          missingCredentials: [{ settingsKey: 'trufflehogGithubToken', label: 'Secret Multiscanner GitHub Token' }],
         }]}
       />
     )
     const start = buttonsByLabel('Start').find(b => /GitHub Token/.test(b.title))
     expect(start?.disabled).toBe(true)
-    expect(screen.getByText(/TruffleHog GitHub Token required/)).toBeTruthy()
+    expect(screen.getByText(/Secret Multiscanner GitHub Token required/)).toBeTruthy()
   })
 
   test('an incompletely configured source cannot be started', () => {

@@ -62,7 +62,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       // Governor rejections carry a structured object detail; normalize to a
       // string message (+ limit) so it is never rendered as a raw React child.
       const { error, limit } = normalizeOrchestratorStartError(
-        errorData, 'Failed to start TruffleHog scan',
+        errorData, 'Failed to start Secret Multiscanner scan',
       )
       return NextResponse.json({ error, ...(limit ? { limit } : {}) }, { status: response.status })
     }

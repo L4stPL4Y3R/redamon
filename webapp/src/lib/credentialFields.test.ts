@@ -53,7 +53,7 @@ describe('credential catalogue', () => {
   })
 
   // The shortcut cannot prompt for a key it cannot describe.
-  test('every credential in the TruffleHog source registry has a catalogue entry', () => {
+  test('every credential in the Secret Multiscanner source registry has a catalogue entry', () => {
     for (const source of Object.values(TRUFFLEHOG_SOURCES)) {
       for (const cred of source.credentials) {
         expect(
@@ -75,7 +75,7 @@ describe('credential catalogue', () => {
     }
   })
 
-  test('the TruffleHog fields all carry a source id that exists', () => {
+  test('the Secret Multiscanner fields all carry a source id that exists', () => {
     const ids = new Set(Object.values(TRUFFLEHOG_SOURCES).map(s => s.id))
     for (const f of TRUFFLEHOG_KEY_FIELDS) {
       expect(ids, `'${f.name}' claims source '${f.source}', which is not a registered source`).toContain(f.source)

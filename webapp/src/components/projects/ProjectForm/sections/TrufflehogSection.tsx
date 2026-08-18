@@ -171,7 +171,7 @@ export function TrufflehogSection({ data, updateField, projectId, mode = 'edit' 
       <div className={styles.sectionHeader} onClick={() => setIsOpen(!isOpen)}>
         <h2 className={styles.sectionTitle}>
           <Search size={16} />
-          TruffleHog Secret Scanner
+          Secret Multiscanner
           <WikiInfoButton target="Trufflehog" />
           {/* Dynamic, not a fixed "Passive": with verification on, the scanner
               authenticates to third-party services with credentials it found. */}
@@ -363,7 +363,7 @@ export function TrufflehogSection({ data, updateField, projectId, mode = 'edit' 
               </div>
               {unknownInclude.length > 0 && (
                 <span className={styles.fieldHint} style={{ color: '#f59e0b' }}>
-                  TruffleHog does not know {unknownInclude.join(', ')} and refuses to start. Check the
+                  Secret Multiscanner does not know {unknownInclude.join(', ')} and refuses to start. Check the
                   spelling in the list; names are case-sensitive.
                 </span>
               )}
@@ -396,7 +396,7 @@ export function TrufflehogSection({ data, updateField, projectId, mode = 'edit' 
               </div>
               {unknownExclude.length > 0 && (
                 <span className={styles.fieldHint} style={{ color: '#f59e0b' }}>
-                  TruffleHog does not know {unknownExclude.join(', ')} and refuses to start. Check the
+                  Secret Multiscanner does not know {unknownExclude.join(', ')} and refuses to start. Check the
                   spelling in the list; names are case-sensitive.
                 </span>
               )}
@@ -599,7 +599,7 @@ function ProfileEditor({
             <p className={styles.sectionRequirement}>
               {src.label} requires {missing.map(m => m.label).join(', ')}. Set it below, or in{' '}
               <Link href={`${SETTINGS_KEYS_HREF}#trufflehog-keys`} style={{ color: 'var(--accent-primary)', fontWeight: 500 }}>
-                Global Settings &gt; API Keys &gt; TruffleHog
+                Global Settings &gt; API Keys &gt; Secret Multiscanner
               </Link>
               . Until then this source cannot start.
             </p>

@@ -55,25 +55,25 @@ export interface TrufflehogSource {
 }
 
 const CRED = {
-  github: { settingsKey: 'trufflehogGithubToken', label: 'TruffleHog GitHub Token' },
-  gitlab: { settingsKey: 'trufflehogGitlabToken', label: 'TruffleHog GitLab Token' },
-  docker: { settingsKey: 'trufflehogDockerToken', label: 'TruffleHog Docker Token' },
-  huggingface: { settingsKey: 'trufflehogHuggingfaceToken', label: 'TruffleHog Hugging Face Token' },
-  postman: { settingsKey: 'trufflehogPostmanToken', label: 'TruffleHog Postman Token' },
-  circleci: { settingsKey: 'trufflehogCircleciToken', label: 'TruffleHog CircleCI Token' },
-  travisci: { settingsKey: 'trufflehogTravisciToken', label: 'TruffleHog Travis CI Token' },
-  awsKey: { settingsKey: 'trufflehogAwsAccessKeyId', label: 'TruffleHog AWS Access Key ID' },
-  awsSecret: { settingsKey: 'trufflehogAwsSecretKey', label: 'TruffleHog AWS Secret Key' },
-  awsSession: { settingsKey: 'trufflehogAwsSessionToken', label: 'TruffleHog AWS Session Token', optional: true },
-  gcp: { settingsKey: 'trufflehogGcpServiceAccount', label: 'TruffleHog GCP Service Account' },
-  jenkinsUser: { settingsKey: 'trufflehogJenkinsUsername', label: 'TruffleHog Jenkins Username', optional: true },
-  jenkinsPass: { settingsKey: 'trufflehogJenkinsPassword', label: 'TruffleHog Jenkins Password', optional: true },
-  esUser: { settingsKey: 'trufflehogElasticUsername', label: 'TruffleHog Elasticsearch Username', optional: true },
-  esPass: { settingsKey: 'trufflehogElasticPassword', label: 'TruffleHog Elasticsearch Password', optional: true },
-  esApiKey: { settingsKey: 'trufflehogElasticApiKey', label: 'TruffleHog Elasticsearch API Key', optional: true },
-  esServiceToken: { settingsKey: 'trufflehogElasticServiceToken', label: 'TruffleHog Elasticsearch Service Token', optional: true },
-  gitUser: { settingsKey: 'trufflehogGitUsername', label: 'TruffleHog Git Username', optional: true },
-  gitToken: { settingsKey: 'trufflehogGitToken', label: 'TruffleHog Git Token', optional: true },
+  github: { settingsKey: 'trufflehogGithubToken', label: 'Secret Multiscanner GitHub Token' },
+  gitlab: { settingsKey: 'trufflehogGitlabToken', label: 'Secret Multiscanner GitLab Token' },
+  docker: { settingsKey: 'trufflehogDockerToken', label: 'Secret Multiscanner Docker Token' },
+  huggingface: { settingsKey: 'trufflehogHuggingfaceToken', label: 'Secret Multiscanner Hugging Face Token' },
+  postman: { settingsKey: 'trufflehogPostmanToken', label: 'Secret Multiscanner Postman Token' },
+  circleci: { settingsKey: 'trufflehogCircleciToken', label: 'Secret Multiscanner CircleCI Token' },
+  travisci: { settingsKey: 'trufflehogTravisciToken', label: 'Secret Multiscanner Travis CI Token' },
+  awsKey: { settingsKey: 'trufflehogAwsAccessKeyId', label: 'Secret Multiscanner AWS Access Key ID' },
+  awsSecret: { settingsKey: 'trufflehogAwsSecretKey', label: 'Secret Multiscanner AWS Secret Key' },
+  awsSession: { settingsKey: 'trufflehogAwsSessionToken', label: 'Secret Multiscanner AWS Session Token', optional: true },
+  gcp: { settingsKey: 'trufflehogGcpServiceAccount', label: 'Secret Multiscanner GCP Service Account' },
+  jenkinsUser: { settingsKey: 'trufflehogJenkinsUsername', label: 'Secret Multiscanner Jenkins Username', optional: true },
+  jenkinsPass: { settingsKey: 'trufflehogJenkinsPassword', label: 'Secret Multiscanner Jenkins Password', optional: true },
+  esUser: { settingsKey: 'trufflehogElasticUsername', label: 'Secret Multiscanner Elasticsearch Username', optional: true },
+  esPass: { settingsKey: 'trufflehogElasticPassword', label: 'Secret Multiscanner Elasticsearch Password', optional: true },
+  esApiKey: { settingsKey: 'trufflehogElasticApiKey', label: 'Secret Multiscanner Elasticsearch API Key', optional: true },
+  esServiceToken: { settingsKey: 'trufflehogElasticServiceToken', label: 'Secret Multiscanner Elasticsearch Service Token', optional: true },
+  gitUser: { settingsKey: 'trufflehogGitUsername', label: 'Secret Multiscanner Git Username', optional: true },
+  gitToken: { settingsKey: 'trufflehogGitToken', label: 'Secret Multiscanner Git Token', optional: true },
 } as const
 
 /**
@@ -319,7 +319,7 @@ const asText = (v: unknown): string => (v == null ? '' : String(v).trim())
  */
 export function validateTrufflehogConfig(sourceId: string, config: Record<string, unknown>): string[] {
   const src = getTrufflehogSource(sourceId)
-  if (!src) return [`Unknown TruffleHog source: ${sourceId}`]
+  if (!src) return [`Unknown Secret Multiscanner source: ${sourceId}`]
   const cfg = config || {}
   const errors: string[] = []
 
@@ -537,7 +537,7 @@ export function rejectTrufflehogSecretFields(
     // would otherwise swallow every such key behind a message that does not
     // tell the operator where the value actually belongs.
     if (/(?:token|password|secret|apikey|api_key)$/i.test(key)) {
-      return `'${key}' looks like a credential. TruffleHog credentials live in `
+      return `'${key}' looks like a credential. Secret Multiscanner credentials live in `
         + 'Global Settings > API Keys, never in a scan profile.'
     }
     if (!known.has(key)) {

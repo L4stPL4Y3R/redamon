@@ -169,7 +169,7 @@ export function NodeDrawer({
             </div>
           </div>
 
-          {/* A TruffleHog finding's asset/location/extra_data are generic on the
+          {/* A Secret Multiscanner finding's asset/location/extra_data are generic on the
               node — they must hold a repo AND an image AND a bucket. The
               per-source display registry says what they MEAN, so the drawer
               shows "Image / Layer / Tag" for a docker finding rather than three

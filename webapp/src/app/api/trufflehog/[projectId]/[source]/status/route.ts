@@ -23,7 +23,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}))
       return NextResponse.json(
-        { error: errorData.detail || 'Failed to get TruffleHog status' },
+        { error: errorData.detail || 'Failed to get Secret Multiscanner status' },
         { status: response.status },
       )
     }

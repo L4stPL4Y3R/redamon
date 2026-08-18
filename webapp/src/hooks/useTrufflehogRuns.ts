@@ -82,7 +82,7 @@ export function useTrufflehogRuns({
       const response = await fetch(`/api/trufflehog/${projectId}/all`)
       if (!response.ok) {
         const data = await response.json().catch(() => ({}))
-        throw new Error(data.error || 'Failed to fetch TruffleHog runs')
+        throw new Error(data.error || 'Failed to fetch Secret Multiscanner runs')
       }
       const data = await response.json()
       const next: TrufflehogState[] = Array.isArray(data?.runs) ? data.runs : []
@@ -129,7 +129,7 @@ export function useTrufflehogRuns({
       if (!response.ok) {
         // Carries the governor's structured limit payload so the caller can
         // offer the queue instead of just showing an error.
-        const message = data?.error || 'Failed to start TruffleHog scan'
+        const message = data?.error || 'Failed to start Secret Multiscanner scan'
         lastStartErrorRef.current = { status: response.status, message, limit: data?.limit }
         throw new Error(message)
       }
@@ -151,7 +151,7 @@ export function useTrufflehogRuns({
       )
       if (!response.ok) {
         const data = await response.json().catch(() => ({}))
-        throw new Error(data.error || 'Failed to stop TruffleHog scan')
+        throw new Error(data.error || 'Failed to stop Secret Multiscanner scan')
       }
       const data = await response.json()
       await fetchRuns()

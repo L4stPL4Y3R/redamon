@@ -2,7 +2,7 @@ import { test, expect, type Page } from '@playwright/test'
 import { signIn } from './auth'
 
 /**
- * The TruffleHog git source, driven through the real UI against the real stack.
+ * The Secret Multiscanner git source, driven through the real UI against the real stack.
  *
  * The backend matrix (testing/e2e/backend/trufflehog_git_matrix.py) proves what
  * each PARAMETER does to a scan. This proves the parts only a browser can reach:
@@ -77,7 +77,7 @@ async function addGitSource(page: Page) {
   return section
 }
 
-test.describe('TruffleHog git source', () => {
+test.describe('Secret Multiscanner git source', () => {
   test('the section explains where local repositories go', async ({ page }) => {
     await clearGitProfiles(page)
     const section = await addGitSource(page)

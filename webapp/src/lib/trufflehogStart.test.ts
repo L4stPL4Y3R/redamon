@@ -116,7 +116,7 @@ describe('resolveTrufflehogStart', () => {
     const r = await start()
     expect(r).toMatchObject({ ok: false, status: 400 })
     if (!r.ok) {
-      expect(r.error).toContain('TruffleHog GitHub Token')
+      expect(r.error).toContain('Secret Multiscanner GitHub Token')
       expect(r.error).toContain('API Keys')
     }
   })

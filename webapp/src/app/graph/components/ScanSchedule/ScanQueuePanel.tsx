@@ -44,7 +44,7 @@ const KIND_LABEL: Record<string, string> = {
   partial_recon: 'Partial recon',
   gvm: 'GVM',
   github_hunt: 'GitHub hunt',
-  trufflehog: 'TruffleHog',
+  trufflehog: 'Secret Multiscanner',
   supply_chain: 'Supply chain',
   supply_chain_repo: 'Supply chain (repo)',
   ai_attack: 'AI attack surface',

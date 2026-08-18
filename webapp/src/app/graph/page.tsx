@@ -1243,7 +1243,7 @@ export default function GraphPage() {
       const result = await startTrufflehog(source)
       if (result) {
         setActiveLogsDrawer(`trufflehog:${source}`)
-        toast.info(`TruffleHog ${source} scan started`)
+        toast.info(`Secret Multiscanner ${source} scan started`)
       } else {
         throw new Error('start failed')
       }
@@ -1725,7 +1725,7 @@ export default function GraphPage() {
         errorMessage={openTrufflehogRun?.error}
         onClearLogs={clearTrufflehogLogs}
         onStop={() => { if (openTrufflehogLogsSource) void handleStopTrufflehog(openTrufflehogLogsSource) }}
-        title={`TruffleHog Logs — ${openTrufflehogLogsSource ?? ''}`}
+        title={`Secret Multiscanner Logs — ${openTrufflehogLogsSource ?? ''}`}
         phases={TRUFFLEHOG_PHASES}
         totalPhases={3}
       />

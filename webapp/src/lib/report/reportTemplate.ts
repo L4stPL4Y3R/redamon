@@ -497,7 +497,7 @@ function renderTOC(data: ReportData): string {
     dynamicSections.push({ id: 'github-secrets', label: 'GitHub Secrets' })
   }
   if (data.trufflehog.totalFindings > 0) {
-    dynamicSections.push({ id: 'trufflehog', label: 'TruffleHog Findings' })
+    dynamicSections.push({ id: 'trufflehog', label: 'Secret Multiscanner Findings' })
   }
   if (data.secrets.total > 0) {
     dynamicSections.push({ id: 'secrets', label: 'Secret Detection' })
@@ -1131,7 +1131,7 @@ function renderTrufflehog(data: ReportData): string {
   return `
 <div class="page-break"></div>
 <div class="section" id="trufflehog">
-  <h2 class="section-title">TruffleHog Findings</h2>
+  <h2 class="section-title">Secret Multiscanner Findings</h2>
   ${live > 0 ? `<div class="alert alert-critical">
     ${live} credential(s) confirmed LIVE by the owning service. These were validated against the real API and represent immediate risk.
   </div>` : ''}
@@ -1838,7 +1838,7 @@ function renderAppendix(data: ReportData): string {
       <tr><td>Reconnaissance</td><td>Subfinder, HTTPX, Katana, Naabu, GAU</td></tr>
       <tr><td>Vulnerability Scanning</td><td>Nuclei, GreenBone (GVM)</td></tr>
       <tr><td>Exploitation</td><td>Metasploit Framework</td></tr>
-      <tr><td>Secret Detection</td><td>GitHub Hunt, TruffleHog, jsluice, JS Recon</td></tr>
+      <tr><td>Secret Detection</td><td>GitHub Hunt, Secret Multiscanner, jsluice, JS Recon</td></tr>
       <tr><td>JS Analysis</td><td>JS Recon (dependency confusion, source maps, DOM sinks)</td></tr>
       <tr><td>Threat Intelligence</td><td>AlienVault OTX</td></tr>
       <tr><td>Graph Database</td><td>Neo4j</td></tr>

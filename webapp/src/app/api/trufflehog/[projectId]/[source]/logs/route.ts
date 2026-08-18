@@ -22,7 +22,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
   if (!response.ok) {
     return new Response(
-      JSON.stringify({ error: 'Failed to connect to TruffleHog log stream' }),
+      JSON.stringify({ error: 'Failed to connect to Secret Multiscanner log stream' }),
       { status: response.status, headers: { 'Content-Type': 'application/json' } },
     )
   }

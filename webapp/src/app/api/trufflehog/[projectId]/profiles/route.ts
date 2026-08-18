@@ -78,7 +78,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const src = getTrufflehogSource(String(body.source ?? ''))
     if (!src) {
       return NextResponse.json(
-        { error: `Unknown TruffleHog source: ${body.source}` },
+        { error: `Unknown Secret Multiscanner source: ${body.source}` },
         { status: 400 },
       )
     }

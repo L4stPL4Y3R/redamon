@@ -107,9 +107,9 @@ describe('describeLiveGraphWriters', () => {
     expect(await describeLiveGraphWriters('p1')).toBe('a GitHub Secret Hunt is running')
   })
 
-  test('a running TruffleHog scan blocks', async () => {
+  test('a running Secret Multiscanner scan blocks', async () => {
     secondary({ trufflehog: 'running' })
-    expect(await describeLiveGraphWriters('p1')).toBe('a TruffleHog scan is running')
+    expect(await describeLiveGraphWriters('p1')).toBe('a Secret Multiscanner scan is running')
   })
 
   test.each(['idle', 'completed', 'error'])('a finished secondary scan (%s) does not block', async status => {
@@ -144,7 +144,7 @@ describe('describeSecondaryScanWriters', () => {
     expect(await describeSecondaryScanWriters('p1')).toBeNull()
   })
 
-  test('any active TruffleHog RUN blocks', async () => {
+  test('any active Secret Multiscanner RUN blocks', async () => {
     // Read from /all, not a project-level status: with several sources running
     // in parallel a single status describes one of them, and activation would
     // rebuild the graph out from under the rest.
@@ -152,10 +152,10 @@ describe('describeSecondaryScanWriters', () => {
       url.includes('/trufflehog/')
         ? okJson({ runs: [{ status: 'completed' }, { status: 'running' }] })
         : url.includes('/all') ? okJson({ runs: [] }) : okJson({ status: 'idle' }))
-    expect(await describeSecondaryScanWriters('p1')).toBe('a TruffleHog scan is running')
+    expect(await describeSecondaryScanWriters('p1')).toBe('a Secret Multiscanner scan is running')
   })
 
-  test('TruffleHog runs that all finished do not block', async () => {
+  test('Secret Multiscanner runs that all finished do not block', async () => {
     fetchMock.mockImplementation(async (url: string) =>
       url.includes('/trufflehog/')
         ? okJson({ runs: [{ status: 'completed' }, { status: 'error' }] })
@@ -163,7 +163,7 @@ describe('describeSecondaryScanWriters', () => {
     expect(await describeSecondaryScanWriters('p1')).toBeNull()
   })
 
-  test('TruffleHog is polled run-keyed, never project-level', async () => {
+  test('Secret Multiscanner is polled run-keyed, never project-level', async () => {
     await describeSecondaryScanWriters('p1')
     const polled = fetchMock.mock.calls.map(c => String(c[0])).filter(u => u.includes('/trufflehog/'))
     expect(polled).toHaveLength(1)

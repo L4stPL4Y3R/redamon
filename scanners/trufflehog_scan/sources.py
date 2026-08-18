@@ -115,27 +115,27 @@ class Source:
 # UserSettings column; the orchestrator resolves it and sets ``env``.
 # ---------------------------------------------------------------------------
 
-CRED_GITHUB = Credential("GITHUB_TOKEN", "trufflehogGithubToken", "TruffleHog GitHub Token", "--token")
-CRED_GITLAB = Credential("GITLAB_TOKEN", "trufflehogGitlabToken", "TruffleHog GitLab Token", "--token")
-CRED_DOCKER = Credential("DOCKER_TOKEN", "trufflehogDockerToken", "TruffleHog Docker Token", "--token")
-CRED_HUGGINGFACE = Credential("HUGGINGFACE_TOKEN", "trufflehogHuggingfaceToken", "TruffleHog Hugging Face Token", "--token")
-CRED_POSTMAN = Credential("POSTMAN_TOKEN", "trufflehogPostmanToken", "TruffleHog Postman Token", "--token")
-CRED_CIRCLECI = Credential("CIRCLECI_TOKEN", "trufflehogCircleciToken", "TruffleHog CircleCI Token", "--token")
-CRED_TRAVISCI = Credential("TRAVISCI_TOKEN", "trufflehogTravisciToken", "TruffleHog Travis CI Token", "--token")
-CRED_AWS_KEY = Credential("AWS_ACCESS_KEY_ID", "trufflehogAwsAccessKeyId", "TruffleHog AWS Access Key ID", "--key")
-CRED_AWS_SECRET = Credential("AWS_SECRET_ACCESS_KEY", "trufflehogAwsSecretKey", "TruffleHog AWS Secret Key", "--secret")
-CRED_AWS_SESSION = Credential("AWS_SESSION_TOKEN", "trufflehogAwsSessionToken", "TruffleHog AWS Session Token", "--session-token", optional_within_source=True)
+CRED_GITHUB = Credential("GITHUB_TOKEN", "trufflehogGithubToken", "Secret Multiscanner GitHub Token", "--token")
+CRED_GITLAB = Credential("GITLAB_TOKEN", "trufflehogGitlabToken", "Secret Multiscanner GitLab Token", "--token")
+CRED_DOCKER = Credential("DOCKER_TOKEN", "trufflehogDockerToken", "Secret Multiscanner Docker Token", "--token")
+CRED_HUGGINGFACE = Credential("HUGGINGFACE_TOKEN", "trufflehogHuggingfaceToken", "Secret Multiscanner Hugging Face Token", "--token")
+CRED_POSTMAN = Credential("POSTMAN_TOKEN", "trufflehogPostmanToken", "Secret Multiscanner Postman Token", "--token")
+CRED_CIRCLECI = Credential("CIRCLECI_TOKEN", "trufflehogCircleciToken", "Secret Multiscanner CircleCI Token", "--token")
+CRED_TRAVISCI = Credential("TRAVISCI_TOKEN", "trufflehogTravisciToken", "Secret Multiscanner Travis CI Token", "--token")
+CRED_AWS_KEY = Credential("AWS_ACCESS_KEY_ID", "trufflehogAwsAccessKeyId", "Secret Multiscanner AWS Access Key ID", "--key")
+CRED_AWS_SECRET = Credential("AWS_SECRET_ACCESS_KEY", "trufflehogAwsSecretKey", "Secret Multiscanner AWS Secret Key", "--secret")
+CRED_AWS_SESSION = Credential("AWS_SESSION_TOKEN", "trufflehogAwsSessionToken", "Secret Multiscanner AWS Session Token", "--session-token", optional_within_source=True)
 # --service-account takes a PATH, not the JSON itself, so the blob is written to
 # the run dir and the path goes in argv (no upstream Envar for this flag).
-CRED_GCP = Credential("GCP_SERVICE_ACCOUNT", "trufflehogGcpServiceAccount", "TruffleHog GCP Service Account", "--service-account", native_env=False)
-CRED_JENKINS_USER = Credential("JENKINS_USERNAME", "trufflehogJenkinsUsername", "TruffleHog Jenkins Username", "--username", optional_within_source=True)
-CRED_JENKINS_PASS = Credential("JENKINS_PASSWORD", "trufflehogJenkinsPassword", "TruffleHog Jenkins Password", "--password", optional_within_source=True)
-CRED_ES_USER = Credential("ELASTICSEARCH_USERNAME", "trufflehogElasticUsername", "TruffleHog Elasticsearch Username", "--username", optional_within_source=True)
-CRED_ES_PASS = Credential("ELASTICSEARCH_PASSWORD", "trufflehogElasticPassword", "TruffleHog Elasticsearch Password", "--password", optional_within_source=True)
-CRED_ES_APIKEY = Credential("ELASTICSEARCH_API_KEY", "trufflehogElasticApiKey", "TruffleHog Elasticsearch API Key", "--api-key", optional_within_source=True)
-CRED_ES_SVCTOKEN = Credential("ELASTICSEARCH_SERVICE_TOKEN", "trufflehogElasticServiceToken", "TruffleHog Elasticsearch Service Token", "--service-token", optional_within_source=True)
-CRED_GIT_USER = Credential("GIT_USERNAME", "trufflehogGitUsername", "TruffleHog Git Username", optional_within_source=True)
-CRED_GIT_TOKEN = Credential("GIT_TOKEN", "trufflehogGitToken", "TruffleHog Git Token", optional_within_source=True)
+CRED_GCP = Credential("GCP_SERVICE_ACCOUNT", "trufflehogGcpServiceAccount", "Secret Multiscanner GCP Service Account", "--service-account", native_env=False)
+CRED_JENKINS_USER = Credential("JENKINS_USERNAME", "trufflehogJenkinsUsername", "Secret Multiscanner Jenkins Username", "--username", optional_within_source=True)
+CRED_JENKINS_PASS = Credential("JENKINS_PASSWORD", "trufflehogJenkinsPassword", "Secret Multiscanner Jenkins Password", "--password", optional_within_source=True)
+CRED_ES_USER = Credential("ELASTICSEARCH_USERNAME", "trufflehogElasticUsername", "Secret Multiscanner Elasticsearch Username", "--username", optional_within_source=True)
+CRED_ES_PASS = Credential("ELASTICSEARCH_PASSWORD", "trufflehogElasticPassword", "Secret Multiscanner Elasticsearch Password", "--password", optional_within_source=True)
+CRED_ES_APIKEY = Credential("ELASTICSEARCH_API_KEY", "trufflehogElasticApiKey", "Secret Multiscanner Elasticsearch API Key", "--api-key", optional_within_source=True)
+CRED_ES_SVCTOKEN = Credential("ELASTICSEARCH_SERVICE_TOKEN", "trufflehogElasticServiceToken", "Secret Multiscanner Elasticsearch Service Token", "--service-token", optional_within_source=True)
+CRED_GIT_USER = Credential("GIT_USERNAME", "trufflehogGitUsername", "Secret Multiscanner Git Username", optional_within_source=True)
+CRED_GIT_TOKEN = Credential("GIT_TOKEN", "trufflehogGitToken", "Secret Multiscanner Git Token", optional_within_source=True)
 
 #: Every credential env var the feature can inject, for redaction sweeps.
 ALL_CREDENTIALS: tuple[Credential, ...] = (

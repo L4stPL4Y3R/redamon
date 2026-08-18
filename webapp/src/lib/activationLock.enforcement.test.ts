@@ -155,7 +155,7 @@ describe('agent session start (ws ticket)', () => {
 describe.each([
   { name: 'GVM scan', run: startGvm, path: 'gvm' },
   { name: 'GitHub Secret Hunt', run: startGithubHunt, path: 'github-hunt' },
-  { name: 'TruffleHog scan', run: startTrufflehog, path: 'trufflehog' },
+  { name: 'Secret Multiscanner scan', run: startTrufflehog, path: 'trufflehog' },
 ])('$name start', ({ run, path }) => {
   const req = () => new NextRequest(`http://x/api/${path}/p1/start`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },

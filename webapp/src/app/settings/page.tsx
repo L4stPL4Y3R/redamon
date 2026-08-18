@@ -1354,7 +1354,7 @@ export default function SettingsPage() {
           <div className={styles.settingsGrid}>
             <KeyGroup
               id="trufflehog-keys"
-              title="TruffleHog Secret Scanner"
+              title="Secret Multiscanner"
               hint="One key per source. A source whose key is mandatory cannot start until it is set; the scan card says which one is missing. Keys are stored per user and are never included in a project export."
             />
             {TRUFFLEHOG_KEY_FIELDS.map(field => (
@@ -1363,7 +1363,7 @@ export default function SettingsPage() {
                 label={field.label}
                 hint={field.hint}
                 signupUrl={field.signupUrl}
-                badges={['TruffleHog', field.source]}
+                badges={['Secret Multiscanner', field.source]}
                 value={(settings as unknown as Record<string, string>)[field.name] ?? ''}
                 visible={!!visibleFields[field.name]}
                 onToggle={() => toggleFieldVisibility(field.name)}
@@ -1373,7 +1373,7 @@ export default function SettingsPage() {
 
             <SecretField
               label="GitHub Access Token"
-              hint="Required for GitHub Secret Hunt, and for Supply Chain scans of a private repository (public repos clone anonymously). Use repo scope for private repos, or a fine-grained token for specific repos only. NOT used by TruffleHog — it has its own GitHub token in the TruffleHog section above."
+              hint="Required for GitHub Secret Hunt, and for Supply Chain scans of a private repository (public repos clone anonymously). Use repo scope for private repos, or a fine-grained token for specific repos only. NOT used by Secret Multiscanner — it has its own GitHub token in the Secret Multiscanner section above."
               signupUrl="https://github.com/settings/tokens"
               badges={['GitHub Secret Hunt', 'Supply Chain']}
               value={settings.githubAccessToken}
@@ -2351,7 +2351,7 @@ const BADGE_STYLES: Record<string, React.CSSProperties> = {
     verticalAlign: 'middle',
     letterSpacing: '0.02em',
   },
-  'TruffleHog': {
+  'Secret Multiscanner': {
     display: 'inline-block',
     fontSize: '10px',
     fontWeight: 600,

@@ -142,7 +142,7 @@ describe('validateTrufflehogConfig', () => {
   })
 
   test('an unknown source is an error, not silence', () => {
-    expect(validateTrufflehogConfig('slack', {})).toEqual(['Unknown TruffleHog source: slack'])
+    expect(validateTrufflehogConfig('slack', {})).toEqual(['Unknown Secret Multiscanner source: slack'])
   })
 })
 
@@ -177,7 +177,7 @@ describe('the credential gate', () => {
   test('resolveMissingCredentials names the exact settings field', () => {
     const missing = resolveMissingCredentials('github', {}, {})
     expect(missing.map(m => m.settingsKey)).toEqual(['trufflehogGithubToken'])
-    expect(missing[0].label).toBe('TruffleHog GitHub Token')
+    expect(missing[0].label).toBe('Secret Multiscanner GitHub Token')
   })
 
   test('a set key clears the gate', () => {

@@ -100,15 +100,15 @@ export async function describeSecondaryScanWriters(projectId: string): Promise<s
       method: 'GET',
       headers: { 'Content-Type': 'application/json' },
     })
-    if (!res.ok) return 'the TruffleHog scan status could not be verified'
+    if (!res.ok) return 'the Secret Multiscanner scan status could not be verified'
     const data = await res.json()
     const runs: Array<{ status?: string }> = Array.isArray(data?.runs) ? data.runs : []
     if (runs.some(r => r.status && ACTIVE_SECONDARY_STATUSES.has(r.status))) {
-      return 'a TruffleHog scan is running'
+      return 'a Secret Multiscanner scan is running'
     }
   } catch (err) {
     console.error('[graphWriters] trufflehog check failed (treating as busy):', err)
-    return 'the TruffleHog scan status could not be verified'
+    return 'the Secret Multiscanner scan status could not be verified'
   }
 
   // AI attack surface: run-list shaped, so check each run like partial recon.

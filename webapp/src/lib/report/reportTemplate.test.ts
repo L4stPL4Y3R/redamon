@@ -193,12 +193,12 @@ describe('Report Template Generation', () => {
 })
 
 describe('Conditional Section Rendering', () => {
-  test('TruffleHog section NOT rendered when no findings', () => {
+  test('Secret Multiscanner section NOT rendered when no findings', () => {
     const html = generateReportHtml(makeReportData(), null)
     expect(html).not.toContain('id="trufflehog"')
   })
 
-  test('TruffleHog section rendered when findings exist', () => {
+  test('Secret Multiscanner section rendered when findings exist', () => {
     const data = makeReportData({
       trufflehog: {
         totalFindings: 3,
@@ -218,7 +218,7 @@ describe('Conditional Section Rendering', () => {
     })
     const html = generateReportHtml(data, null)
     expect(html).toContain('id="trufflehog"')
-    expect(html).toContain('TruffleHog Findings')
+    expect(html).toContain('Secret Multiscanner Findings')
     expect(html).toContain('AWS')
     expect(html).toContain('AKIA...')
     // A credential confirmed live by the owning API, not merely "verified".
@@ -234,7 +234,7 @@ describe('Conditional Section Rendering', () => {
     expect(html).toContain('Dockerfile (build history)')
   })
 
-  test('TruffleHog live count leads even when `verified` disagrees', () => {
+  test('Secret Multiscanner live count leads even when `verified` disagrees', () => {
     // verifiedFindings is the raw TruffleHog bool; liveFindings is the
     // normalised one. The alert must follow the normalised count.
     const data = makeReportData({
@@ -483,7 +483,7 @@ describe('Dynamic TOC Numbering', () => {
     })
     const html = generateReportHtml(data, null)
     // Core: 1-7, then TruffleHog=8, JS Recon=9, OTX=10, Recommendations=11, Appendix=12
-    expect(html).toContain('8. TruffleHog Findings')
+    expect(html).toContain('8. Secret Multiscanner Findings')
     expect(html).toContain('9. JavaScript Reconnaissance')
     expect(html).toContain('10. OTX Threat Intelligence')
     expect(html).toContain('11. Recommendations')
@@ -510,7 +510,7 @@ describe('Dynamic TOC Numbering', () => {
     })
     const html = generateReportHtml(data, null)
     expect(html).toContain('GitHub Secrets')
-    expect(html).toContain('TruffleHog Findings')
+    expect(html).toContain('Secret Multiscanner Findings')
     expect(html).toContain('Secret Detection')
     expect(html).toContain('JavaScript Reconnaissance')
     expect(html).toContain('OTX Threat Intelligence')
@@ -627,7 +627,7 @@ describe('Section ID Consistency', () => {
 describe('Appendix Tools Table', () => {
   test('lists new tools in appendix', () => {
     const html = generateReportHtml(makeReportData(), null)
-    expect(html).toContain('TruffleHog')
+    expect(html).toContain('Secret Multiscanner')
     expect(html).toContain('jsluice')
     expect(html).toContain('JS Recon')
     expect(html).toContain('AlienVault OTX')

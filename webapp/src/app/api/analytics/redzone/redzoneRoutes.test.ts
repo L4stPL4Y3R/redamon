@@ -287,7 +287,7 @@ describe('/api/analytics/redzone/secrets', () => {
     expect(c).toMatch(/\(buJs:BaseURL\)-\[:HAS_JS_FILE\]->\(j\)/)
   })
 
-  test('a second query picks up TruffleHog findings', async () => {
+  test('a second query picks up Secret Multiscanner findings', async () => {
     runReturn = []
     await secretsRoute.GET(makeRequest('p1'))
     const c = runCalls.find(call => /TrufflehogFinding/.test(call.cypher))
@@ -315,7 +315,7 @@ describe('/api/analytics/redzone/secrets', () => {
     expect(body.rows[2].id).toBe('s1')   // API Key, unvalidated
   })
 
-  test('a live TruffleHog finding outranks every unvalidated :Secret row', async () => {
+  test('a live Secret Multiscanner finding outranks every unvalidated :Secret row', async () => {
     // The point of surfacing them here: a credential the owning API CONFIRMED
     // works is the most actionable row in the table.
     runReturnFor = [
@@ -335,7 +335,7 @@ describe('/api/analytics/redzone/secrets', () => {
     expect(body.rows[0].trufflehogSource).toBe('docker')
   })
 
-  test('a never-checked TruffleHog finding ranks BELOW a checked-and-dead one', async () => {
+  test('a never-checked Secret Multiscanner finding ranks BELOW a checked-and-dead one', async () => {
     // 'unverified' means nobody looked; it must not read as "checked and safe".
     runReturnFor = [
       { match: /MATCH \(s:Secret/, rows: [] },
@@ -373,7 +373,7 @@ describe('/api/analytics/redzone/secrets', () => {
     }
   })
 
-  test('a TruffleHog row with no asset or location does not break the response', async () => {
+  test('a Secret Multiscanner row with no asset or location does not break the response', async () => {
     runReturnFor = [
       { match: /MATCH \(s:Secret/, rows: [] },
       // The driver projects every RETURN column, so an absent value arrives as

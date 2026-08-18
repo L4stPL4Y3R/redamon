@@ -106,7 +106,7 @@ export function ScanActions({
           type="button"
           className={`${styles.githubHuntButton} ${(githubHunt.isActive || trufflehog.isActive) ? styles.githubHuntButtonActive : ''}`}
           onClick={scans.toggleOtherScans}
-          title="Other Scans (GitHub Hunt, TruffleHog, Supply Chain)"
+          title="Other Scans (GitHub Hunt, Secret Multiscanner, Supply Chain)"
         >
           {(githubHunt.isRunning || trufflehog.isRunning)
             ? <Loader2 size={14} className={styles.spinner} />

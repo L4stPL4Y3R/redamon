@@ -279,12 +279,12 @@ export function OtherScansModal({
           </div>
         </div>
 
-        {/* TruffleHog Scanner Card — one row per configured source */}
+        {/* Secret Multiscanner Card — one row per configured source */}
         <div className={styles.card}>
           <div className={styles.cardHeader}>
             <Search size={18} className={styles.cardIcon} />
-            <h3 className={styles.cardTitle}>TruffleHog Scanner</h3>
-            <WikiInfoButton target="Trufflehog" title="TruffleHog Secret Scanning wiki" />
+            <h3 className={styles.cardTitle}>Secret Multiscanner</h3>
+            <WikiInfoButton target="Trufflehog" title="Secret Multiscanner wiki" />
             <StatusBadge status={trufflehogCardStatus} />
           </div>
           <p className={styles.cardDescription}>
@@ -412,7 +412,7 @@ export function OtherScansModal({
                 href={projectSettingsHref(projectId, 'trufflehog-scanner')}
                 className={styles.settingsButton}
                 title="Configure which sources to scan and their options in project settings"
-                aria-label="Configure TruffleHog Scanner in project settings"
+                aria-label="Configure Secret Multiscanner in project settings"
               >
                 <Settings size={13} />
               </Link>

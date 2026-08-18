@@ -30,7 +30,7 @@ function fakeKeys(overrides: Partial<CredentialKeysApi> = {}): CredentialKeysApi
 }
 
 const KEY = 'trufflehogGithubToken'
-const LABEL = 'TruffleHog GitHub Token'
+const LABEL = 'Secret Multiscanner GitHub Token'
 
 describe('CredentialShortcut', () => {
   test('labels the key and says the value is global, not per-project', () => {
