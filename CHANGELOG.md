@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.11.0] - 2026-08-18
+
+### Fixed
+
+- **An IP-target scan imported none of its findings into the graph.** Nuclei reported 16 CVEs and the graph writer logged `Created 0 Vulnerability nodes` / `Skipped 1 items out of scan scope`. IP mode mints a placeholder hostname per target so a `Subdomain` node has a name (`21.40.250.84` -> `21-40-250-84`), but every scanner targets and reports the IP literal, and the graph mixins scoped on `recon_data["subdomains"]` alone - which holds only the placeholders. So 100% of an IP-mode scan's Nuclei findings, and every endpoint, parameter, form and secret from the crawl, were discarded as out-of-scope. The allowed-host set is now built once in `graph_db/mixins/recon/scope.py` from the subdomains **plus** `metadata.subdomain_filter` and `metadata.expanded_ips` - the same allowed-host list httpx already filters on - and host comparison normalises the forms the scanners actually emit (`host`, `host:port`, a full URL, `[::1]:443`). Genuinely foreign hosts are still dropped ([#172]).
+- **IP-mode hosts were marked "no HTTP" in the graph even when httpx probed them.** The same placeholder-vs-literal mismatch: the sweep that demotes unprobed subdomains to `no_http` diffed placeholder names against probed IPs, so every live IP-mode host was demoted on each HTTP-probe graph update. It now translates through `metadata.ip_to_hostname` first.
+
 ## [6.10.0] - 2026-08-15
 
 ### Added

@@ -8,6 +8,7 @@ from datetime import datetime
 from urllib.parse import urlparse, parse_qs
 
 from graph_db.cpe_resolver import _is_ip_address
+from graph_db.mixins.recon.scope import build_host_scope, host_in_scope
 
 class ResourceMixin:
     def update_graph_from_resource_enum(self, recon_data: dict, user_id: str, project_id: str) -> dict:
@@ -42,21 +43,14 @@ class ResourceMixin:
             stats["errors"].append("No resource_enum data found in recon_data")
             return stats
 
-        # Get target subdomains from scan scope - only create nodes for these
-        target_subdomains = set(recon_data.get("subdomains", []))
-        target_domain = recon_data.get("domain", "")
-
-        # Also include the main domain if no subdomains specified
-        if target_domain and not target_subdomains:
-            target_subdomains.add(target_domain)
+        # Only create nodes for hosts inside the scan scope. In IP mode the
+        # scope is the IP literals, not the dashed placeholder names that end
+        # up in recon_data["subdomains"] -- see build_host_scope.
+        target_hosts = build_host_scope(recon_data)
 
         def is_in_scope(base_url: str) -> bool:
             """Check if a base URL's hostname is within the scan scope."""
-            if not target_subdomains:
-                return True  # No filter if no subdomains defined
-            parsed = urlparse(base_url)
-            host = parsed.netloc.split(":")[0] if ":" in parsed.netloc else parsed.netloc
-            return host in target_subdomains
+            return host_in_scope(base_url, target_hosts)
 
         with self.driver.session() as session:
             # Ensure schema is initialized

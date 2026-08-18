@@ -697,6 +697,11 @@ class HttpMixin:
 
             # Mark resolved subdomains that got no HTTP response at all as "no_http"
             all_probed_hosts = set(by_host.keys())
+            # IP mode probes the IP literal while the Subdomain node carries the
+            # placeholder name minted for that IP ("21.40.250.84" -> "21-40-250-84"),
+            # so translate before the diff or every live IP-mode host is demoted.
+            ip_to_hostname = (recon_data.get("metadata") or {}).get("ip_to_hostname", {})
+            all_probed_hosts |= {ip_to_hostname[h] for h in all_probed_hosts if h in ip_to_hostname}
             all_target_subs = set(recon_data.get("subdomains", []))
             no_response_hosts = all_target_subs - all_probed_hosts
             if no_response_hosts:
