@@ -1,3 +1,5 @@
-requests>=2.31.0
-neo4j>=5.0.0
-python-dotenv>=1.0.0
+# Intentionally empty. The TruffleHog container is the dirty half of the
+# dirty/clean split: it reads a job file, runs the Go binary and writes JSON.
+# It has no Neo4j client (ingest is the orchestrator's clean step) and no HTTP
+# settings fetch, so neo4j/requests/python-dotenv were dropped — every package
+# here is code an exploited target image could reach.

@@ -22,8 +22,9 @@ const okJson = (body: unknown) => ({ ok: true, json: async () => body })
 beforeEach(() => {
   vi.clearAllMocks()
   prismaMock.conversation.findFirst.mockResolvedValue(null)
+  // Run-keyed endpoints answer with a run LIST; project-level ones with a status.
   fetchMock.mockImplementation(async (url: string) =>
-    url.includes('/partial/all') ? okJson({ runs: [] }) : okJson({ status: 'idle' }))
+    url.includes('/all') ? okJson({ runs: [] }) : okJson({ status: 'idle' }))
 })
 
 describe('describeLiveGraphWriters', () => {
@@ -39,13 +40,13 @@ describe('describeLiveGraphWriters', () => {
 
   test.each(['running', 'starting', 'paused', 'stopping'])('recon status %s blocks', async status => {
     fetchMock.mockImplementation(async (url: string) =>
-      url.includes('/partial/all') ? okJson({ runs: [] }) : okJson({ status }))
+      url.includes('/all') ? okJson({ runs: [] }) : okJson({ status }))
     expect(await describeLiveGraphWriters('p1')).toBe('a full recon scan is running')
   })
 
   test.each(['idle', 'completed', 'error'])('recon status %s does not block', async status => {
     fetchMock.mockImplementation(async (url: string) =>
-      url.includes('/partial/all') ? okJson({ runs: [] }) : okJson({ status }))
+      url.includes('/all') ? okJson({ runs: [] }) : okJson({ status }))
     expect(await describeLiveGraphWriters('p1')).toBeNull()
   })
 
@@ -53,7 +54,7 @@ describe('describeLiveGraphWriters', () => {
     fetchMock.mockImplementation(async (url: string) =>
       url.includes('/partial/all')
         ? okJson({ runs: [{ status: 'completed' }, { status: 'running' }] })
-        : okJson({ status: 'idle' }))
+        : url.includes('/all') ? okJson({ runs: [] }) : okJson({ status: 'idle' }))
     expect(await describeLiveGraphWriters('p1')).toBe('a partial recon run is active')
   })
 
@@ -61,7 +62,7 @@ describe('describeLiveGraphWriters', () => {
     fetchMock.mockImplementation(async (url: string) =>
       url.includes('/partial/all')
         ? okJson({ runs: [{ status: 'completed' }, { status: 'error' }] })
-        : okJson({ status: 'idle' }))
+        : url.includes('/all') ? okJson({ runs: [] }) : okJson({ status: 'idle' }))
     expect(await describeLiveGraphWriters('p1')).toBeNull()
   })
 
@@ -88,7 +89,11 @@ describe('describeLiveGraphWriters', () => {
       if (url.includes('/partial/all')) return okJson({ runs: [] })
       if (url.includes('/gvm/')) return okJson({ status: over.gvm ?? 'idle' })
       if (url.includes('/github-hunt/')) return okJson({ status: over.github ?? 'idle' })
-      if (url.includes('/trufflehog/')) return okJson({ status: over.trufflehog ?? 'idle' })
+      // Run-keyed: a run LIST, not a project-level status.
+      if (url.includes('/trufflehog/')) {
+        return okJson({ runs: over.trufflehog ? [{ status: over.trufflehog }] : [] })
+      }
+      if (url.includes('/all')) return okJson({ runs: [] })
       return okJson({ status: 'idle' }) // full recon
     })
 
@@ -102,9 +107,9 @@ describe('describeLiveGraphWriters', () => {
     expect(await describeLiveGraphWriters('p1')).toBe('a GitHub Secret Hunt is running')
   })
 
-  test('a running TruffleHog scan blocks', async () => {
+  test('a running Secret Multiscanner scan blocks', async () => {
     secondary({ trufflehog: 'running' })
-    expect(await describeLiveGraphWriters('p1')).toBe('a TruffleHog scan is running')
+    expect(await describeLiveGraphWriters('p1')).toBe('a Secret Multiscanner scan is running')
   })
 
   test.each(['idle', 'completed', 'error'])('a finished secondary scan (%s) does not block', async status => {
@@ -123,7 +128,7 @@ describe('describeLiveGraphWriters', () => {
 
   test('EFFICIENCY: a running full recon short-circuits before the secondary checks', async () => {
     fetchMock.mockImplementation(async (url: string) =>
-      url.includes('/partial/all') ? okJson({ runs: [] }) : okJson({ status: 'running' }))
+      url.includes('/all') ? okJson({ runs: [] }) : okJson({ status: 'running' }))
     expect(await describeLiveGraphWriters('p1')).toBe('a full recon scan is running')
     // The GVM/GitHub/TruffleHog status endpoints must not have been polled at all.
     const polled = fetchMock.mock.calls.map(c => String(c[0]))
@@ -133,19 +138,41 @@ describe('describeLiveGraphWriters', () => {
 
 // The secondary subset in isolation (used only by activation).
 describe('describeSecondaryScanWriters', () => {
-  test('all three idle → null', async () => {
-    fetchMock.mockImplementation(async () => okJson({ status: 'idle' }))
+  test('everything idle → null', async () => {
+    fetchMock.mockImplementation(async (url: string) =>
+      url.includes('/all') ? okJson({ runs: [] }) : okJson({ status: 'idle' }))
     expect(await describeSecondaryScanWriters('p1')).toBeNull()
   })
 
-  test('polls in order GVM → GitHub → TruffleHog and returns the first active', async () => {
+  test('any active Secret Multiscanner RUN blocks', async () => {
+    // Read from /all, not a project-level status: with several sources running
+    // in parallel a single status describes one of them, and activation would
+    // rebuild the graph out from under the rest.
     fetchMock.mockImplementation(async (url: string) =>
-      url.includes('/trufflehog/') ? okJson({ status: 'running' }) : okJson({ status: 'idle' }))
-    expect(await describeSecondaryScanWriters('p1')).toBe('a TruffleHog scan is running')
+      url.includes('/trufflehog/')
+        ? okJson({ runs: [{ status: 'completed' }, { status: 'running' }] })
+        : url.includes('/all') ? okJson({ runs: [] }) : okJson({ status: 'idle' }))
+    expect(await describeSecondaryScanWriters('p1')).toBe('a Secret Multiscanner scan is running')
+  })
+
+  test('Secret Multiscanner runs that all finished do not block', async () => {
+    fetchMock.mockImplementation(async (url: string) =>
+      url.includes('/trufflehog/')
+        ? okJson({ runs: [{ status: 'completed' }, { status: 'error' }] })
+        : url.includes('/all') ? okJson({ runs: [] }) : okJson({ status: 'idle' }))
+    expect(await describeSecondaryScanWriters('p1')).toBeNull()
+  })
+
+  test('Secret Multiscanner is polled run-keyed, never project-level', async () => {
+    await describeSecondaryScanWriters('p1')
+    const polled = fetchMock.mock.calls.map(c => String(c[0])).filter(u => u.includes('/trufflehog/'))
+    expect(polled).toHaveLength(1)
+    expect(polled[0]).toMatch(/\/trufflehog\/p1\/all$/)
   })
 
   test('a 200 response with no status field is treated as idle, not busy', async () => {
-    fetchMock.mockImplementation(async () => okJson({}))
+    fetchMock.mockImplementation(async (url: string) =>
+      url.includes('/all') ? okJson({ runs: [] }) : okJson({}))
     expect(await describeSecondaryScanWriters('p1')).toBeNull()
   })
 

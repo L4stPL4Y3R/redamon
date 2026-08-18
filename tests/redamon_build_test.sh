@@ -41,8 +41,12 @@ warn() { :; }
 # independently of the build: PRUNE_RC fails the prune while the build succeeds,
 # and PRUNE_OUT injects a realistic "Total:\t<size>" trailer to exercise the
 # reclaimed-space reporting path.
+# FAIL_MATCH narrows DOCKER_RC to the calls whose arguments contain it, so a
+# single batch can fail while its siblings succeed (a plain DOCKER_RC would fail
+# the Layer-1 webapp build first and never reach Layer 2).
 CALLS=""
 DOCKER_RC=0
+FAIL_MATCH=""
 PRUNE_RC=0
 PRUNE_OUT=""
 docker() {
@@ -51,15 +55,27 @@ docker() {
         [[ -n "$PRUNE_OUT" ]] && printf '%s\n' "$PRUNE_OUT"
         return "$PRUNE_RC"
     fi
+    if [[ -n "$FAIL_MATCH" ]]; then
+        if [[ "$*" == *"$FAIL_MATCH"* ]]; then return "$DOCKER_RC"; fi
+        return 0
+    fi
     return "$DOCKER_RC"
 }
 reset_calls() {
-    CALLS="$(mktemp)"; DOCKER_RC=0; PRUNE_RC=0; PRUNE_OUT=""
+    CALLS="$(mktemp)"; DOCKER_RC=0; FAIL_MATCH=""; PRUNE_RC=0; PRUNE_OUT=""
     unset COMPOSE_PARALLEL_LIMIT REDAMON_NO_AUTO_PRUNE
 }
 
 # Fix detected resources deterministically for integration tests.
 stub_resources() { detect_build_resources() { BUILD_MEM_MB="${1:-8192}"; BUILD_NCPU="${2:-8}"; BUILD_RES_SOURCE="stub"; }; }
+
+# Fix the "build everything" target set so batch membership is deterministic.
+# The real resolver shells out to `docker compose build --print`; S5 covers it
+# against the real compose file. 7 targets at parallelism 2 -> 4 batches.
+STUB_TARGETS="agent baddns-scanner capture-proxy recon vuln-scanner webapp wcvs"
+stub_targets() { _compose_build_targets() { printf '%s\n' $STUB_TARGETS; }; }
+# Count the service names in a recorded call line (everything after `build `).
+svc_count_of() { local rest="${1##*build }"; printf '%s\n' $rest | wc -l | tr -d ' '; }
 
 # =============================================================================
 section "UNIT: pick_parallelism tiers"
@@ -132,20 +148,26 @@ assert_eq "adequate mem -> no warning" "$out" ""
 # =============================================================================
 section "INTEGRATION: compose_build orchestration (stubbed docker)"
 stub_resources 8192 8   # -> parallelism 2
+stub_targets
 
-# I1: install full build. 3 calls, not 2: Layer 1 (webapp) + Layer 2 (the rest) +
-# Layer 3's build-cache prune. See the "build-cache auto-prune" section below.
+# I1: install full build. Layer 1 (webapp alone) + one call per batch of the
+# resolved target set + Layer 3's build-cache prune. See the "build-cache
+# auto-prune" and "Layer 2 batching" sections below.
 reset_calls; compose_build --profile tools build
 c1="$(sed -n 1p "$CALLS")"; c2="$(sed -n 2p "$CALLS")"; n="$(wc -l < "$CALLS")"
-assert_eq       "I1 full build: 3 docker calls (2 build + 1 prune)" "$n" "3"
+assert_eq       "I1 full build: 6 docker calls (webapp + 4 batches + prune)" "$n" "6"
 assert_contains "I1 webapp isolated first (unset limit)" "$c1" "LIMIT=unset|compose build webapp"
-assert_contains "I1 then full build capped"              "$c2" "LIMIT=2|compose --profile tools build"
+assert_contains "I1 first batch capped, profile kept"    "$c2" "LIMIT=2|compose --profile tools build agent baddns-scanner"
+assert_contains "I1 last batch is the remainder" "$(sed -n 5p "$CALLS")" "LIMIT=2|compose --profile tools build wcvs"
 
-# I2: update core INCLUDING webapp (the OOM case) + ordering + passthrough
+# I2: update core INCLUDING webapp (the OOM case) + ordering + passthrough. An
+# explicit list longer than the budget is paced too, in the caller's order.
 reset_calls; compose_build build recon-orchestrator kali-sandbox agent webapp docker-broker
 c1="$(sed -n 1p "$CALLS")"; c2="$(sed -n 2p "$CALLS")"
 assert_contains "I2 webapp built FIRST"      "$c1" "LIMIT=unset|compose build webapp"
-assert_contains "I2 full list built after"   "$c2" "LIMIT=2|compose build recon-orchestrator kali-sandbox agent webapp docker-broker"
+assert_contains "I2 batch 1 in caller order" "$c2" "LIMIT=2|compose build recon-orchestrator kali-sandbox"
+assert_contains "I2 batch 2 in caller order" "$(sed -n 3p "$CALLS")" "LIMIT=2|compose build agent webapp"
+assert_contains "I2 batch 3 is the remainder" "$(sed -n 4p "$CALLS")" "LIMIT=2|compose build docker-broker"
 
 # I3: update core WITHOUT webapp -> no isolation, single capped build (+ prune)
 reset_calls; compose_build build agent
@@ -159,19 +181,21 @@ reset_calls; compose_build --profile tools build recon vuln-scanner
 assert_not_contains "I4 tools-only: no webapp build" "$(cat "$CALLS")" "compose build webapp"
 assert_contains     "I4 tools built capped"          "$(cat "$CALLS")" "LIMIT=2|compose --profile tools build recon vuln-scanner"
 
-# I5: override=0 still isolates webapp, second call unbounded
+# I5: override=0 still isolates webapp; the rest goes out unbatched and unbounded
 reset_calls; REDAMON_BUILD_PARALLEL=0 compose_build build agent webapp
 c1="$(sed -n 1p "$CALLS")"; c2="$(sed -n 2p "$CALLS")"
 assert_contains "I5 override0 still isolates webapp" "$c1" "LIMIT=unset|compose build webapp"
 assert_contains "I5 override0 second call unbounded" "$c2" "LIMIT=unset|compose build agent webapp"
+assert_eq       "I5 override0 does not batch" "$(wc -l < "$CALLS")" "3"
 
 # I6: override=3 -> limit 3
 reset_calls; REDAMON_BUILD_PARALLEL=3 compose_build build agent
 assert_contains "I6 override3 applied" "$(cat "$CALLS")" "LIMIT=3|compose build agent"
 
-# I7: passthrough of extra build flags on a full build
+# I7: build flags must be repeated on EVERY batch, not just the first
 reset_calls; compose_build --profile tools build --no-cache
-assert_contains "I7 flag passthrough + isolation" "$(cat "$CALLS")" "LIMIT=2|compose --profile tools build --no-cache"
+assert_contains "I7 flag passthrough + isolation" "$(sed -n 2p "$CALLS")" "LIMIT=2|compose --profile tools build --no-cache agent baddns-scanner"
+assert_eq       "I7 flag present in all 4 batches" "$(grep -c -- '--no-cache' "$CALLS")" "4"
 assert_contains "I7 webapp still isolated"         "$(sed -n 1p "$CALLS")" "compose build webapp"
 
 # I8: failure propagation under set -e (faithful to real script)
@@ -183,6 +207,62 @@ DOCKER_RC=0
 # I9: isolation command shape is exactly `build webapp` (no --profile leakage)
 reset_calls; compose_build --profile tools build
 assert_eq "I9 isolation call exact" "$(sed -n 1p "$CALLS" | cut -d'|' -f2)" "compose build webapp"
+
+# =============================================================================
+section "INTEGRATION: Layer 2 batching (bake ignores COMPOSE_PARALLEL_LIMIT)"
+# COMPOSE_PARALLEL_LIMIT is only a hint, and Compose v5 / Docker 29 drop it: they
+# delegate to bake, which starts every target at once. Issue #171 is that failure
+# -- a host that logged "parallelism=3" and then built 16 images together until
+# pip ran out of bandwidth. Layer 2 therefore pages the list through `build` N
+# names at a time, so the cap is a property of the command line, not a request.
+# These tests pin that property; the limit env var is still asserted above because
+# older Compose honours it.
+
+# B1: no single call may exceed the budget. This is THE invariant #171 broke.
+reset_calls; compose_build --profile tools build
+over=""
+while IFS= read -r line; do
+    case "$line" in *"builder prune"*|*"compose build webapp") continue ;; esac
+    if [[ "$(svc_count_of "$line")" -gt 2 ]]; then over="$over[$line]"; fi
+done < "$CALLS"
+assert_eq "B1 no batch exceeds parallelism 2" "$over" ""
+
+# B2: the batches must cover the resolved set exactly once. A slicing bug that
+# drops a target is otherwise invisible -- the build still succeeds, just without
+# one image, and the miss only surfaces at `up` time.
+built="$(tail -n +2 "$CALLS" | grep -v 'builder prune' | sed 's/.*build //' | tr ' ' '\n' | sort | tr '\n' ' ')"
+assert_eq "B2 batches cover the target set once each" "$built" "$(printf '%s\n' $STUB_TARGETS | sort | tr '\n' ' ')"
+
+# B3: a failing batch stops the run (building on wastes minutes on a broken tree)
+# and propagates its code. FAIL_MATCH fails only batch 2.
+reset_calls; DOCKER_RC=7; FAIL_MATCH="build capture-proxy"
+( set -e; compose_build --profile tools build ) >/dev/null 2>&1; rc=$?
+assert_eq           "B3 failing batch propagates its code" "$rc" "7"
+assert_not_contains "B3 later batches never run"           "$(cat "$CALLS")" "vuln-scanner"
+assert_not_contains "B3 failed run does not prune"         "$(cat "$CALLS")" "builder prune"
+reset_calls
+
+# B4: a build flag that consumes the next token must not have its VALUE batched as
+# if it were a service name (`--build-arg FOO=bar` -> `docker compose build bar`).
+reset_calls; compose_build --profile tools build --build-arg FOO=bar recon vuln-scanner baddns-scanner
+assert_contains "B4 flag value stays a flag value" "$(sed -n 1p "$CALLS")" "build --build-arg FOO=bar recon vuln-scanner"
+assert_contains "B4 remainder batch keeps the flag" "$(sed -n 2p "$CALLS")" "build --build-arg FOO=bar baddns-scanner"
+
+# B5: parallelism 1 (a low-memory host) means strictly one image per call.
+reset_calls; REDAMON_BUILD_PARALLEL=1 compose_build build agent recon webapp
+assert_eq       "B5 serial: 5 calls (webapp + 3 batches + prune)" "$(wc -l < "$CALLS")" "5"
+assert_contains "B5 one service per call" "$(sed -n 2p "$CALLS")" "LIMIT=1|compose build agent"
+assert_contains "B5 one service per call" "$(sed -n 4p "$CALLS")" "LIMIT=1|compose build webapp"
+
+# B6: an unresolvable target set (older Compose has no `build --print`) must fall
+# back to one unbatched build rather than building nothing. That path is also the
+# one where COMPOSE_PARALLEL_LIMIT is still honoured, so nothing is lost.
+reset_calls
+_compose_build_targets() { :; }
+compose_build --profile tools build
+assert_eq "B6 no targets -> single unbatched build" "$(sed -n 2p "$CALLS")" "LIMIT=2|compose --profile tools build"
+assert_eq "B6 still 3 calls total"                  "$(wc -l < "$CALLS")" "3"
+stub_targets
 
 # =============================================================================
 section "INTEGRATION: build-cache auto-prune (compose_build Layer 3)"
@@ -250,6 +330,19 @@ if command -v docker >/dev/null 2>&1 && command docker info >/dev/null 2>&1; the
     detect_build_resources
     if [[ "$BUILD_MEM_MB" -gt 0 ]]; then pass "S4 real mem>0 ($BUILD_MEM_MB MB, $BUILD_RES_SOURCE)"; else fail "S4 real mem=0"; fi
     if [[ "$BUILD_NCPU" -ge 1 ]]; then pass "S4 real cpu>=1 ($BUILD_NCPU)"; else fail "S4 cpu"; fi
+    # S5: the real target resolver against the real compose file. Everything it
+    # returns is handed to `docker compose build`, so an image-only service
+    # (neo4j, postgres) leaking into the list would fail the batch it lands in.
+    # `unset -f docker` drops the integration stub for this one call.
+    targets="$( unset -f docker; _compose_build_targets --profile tools build 2>/dev/null | tr '\n' ' ' )"
+    if [[ -n "$targets" ]]; then
+        assert_contains     "S5 resolver finds webapp"        "$targets" "webapp"
+        assert_contains     "S5 resolver finds vuln-scanner"   "$targets" "vuln-scanner"
+        assert_not_contains "S5 resolver excludes neo4j"      "$targets" "neo4j"
+        assert_not_contains "S5 resolver excludes postgres"   "$targets" "postgres"
+    else
+        printf '  \033[0;33mSKIP\033[0m S5 (compose has no `build --print`; batching falls back)\n'
+    fi
 else
     printf '  \033[0;33mSKIP\033[0m S3/S4 (docker daemon unavailable)\n'
 fi
@@ -269,8 +362,13 @@ if [[ "$n_calls" -ge 4 ]]; then pass "R2 >=4 compose_build call sites ($n_calls)
 if grep -q "One or more tool images failed to build" "$rd"; then pass "R3 tools-failure warn intact"; else fail "R3 warn removed"; fi
 # R4: source guard present so tests can load functions
 if grep -qF '"${BASH_SOURCE[0]}" == "${0}"' "$rd"; then pass "R4 source guard present"; else fail "R4 source guard missing"; fi
-# R5: core service list still built as a unit (no service silently dropped) -- checked via I2 passthrough above
-pass "R5 service-set passthrough verified in I2"
+# R5: no service silently dropped from a paced build -- pinned by B2 (coverage of
+# the resolved set) and I2 (caller-supplied list, in order).
+pass "R5 service-set coverage verified in B2/I2"
+# R6: the two pieces that make the cap real rather than advisory. If a refactor
+# removes either, Layer 2 is back to handing bake the whole list at once (#171).
+if grep -q '_compose_build_targets' "$rd"; then pass "R6 target resolver present"; else fail "R6 target resolver missing"; fi
+if grep -qF 'batch_svcs[@]:i:parallel' "$rd"; then pass "R6 batching slice present"; else fail "R6 batching slice missing"; fi
 
 # =============================================================================
 printf '\n\033[1m==================== RESULTS ====================\033[0m\n'

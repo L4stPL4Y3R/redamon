@@ -11,6 +11,7 @@
 import { Prisma } from '@prisma/client'
 import prisma from '@/lib/prisma'
 import { envelopeForKind, settingsFingerprint } from '@/lib/jobQueue'
+import { resolveTrufflehogFingerprintExtra } from '@/lib/trufflehogStart'
 
 export const QUEUEABLE_KINDS = [
   'full_recon', 'partial_recon', 'gvm', 'github_hunt', 'trufflehog',
@@ -65,7 +66,12 @@ export async function enqueueJob(input: EnqueueInput): Promise<EnqueueResult> {
   const project = await prisma.project.findUnique({ where: { id: projectId } })
   if (!project) return { ok: false, status: 404, error: 'Project not found' }
 
-  const settingsHash = settingsFingerprint(kind, project as unknown as Record<string, unknown>)
+  // TruffleHog's targets live on a per-source profile, not the Project row, so
+  // the fingerprint has to fetch it before hashing (section 4 / C-4).
+  const fingerprintExtra = await resolveTrufflehogFingerprintExtra(kind, projectId, payload)
+  const settingsHash = settingsFingerprint(
+    kind, project as unknown as Record<string, unknown>, fingerprintExtra,
+  )
   const envelopeBytes = BigInt(envelopeForKind(kind))
 
   const row = await prisma.jobQueue.create({

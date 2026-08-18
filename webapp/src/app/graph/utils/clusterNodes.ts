@@ -37,6 +37,12 @@ const STRUCTURAL_EDGE_TYPES = new Set([
   'HAS_BASE_URL',
   'RESOLVES_TO',
   'HAS_SUBDOMAIN',
+  // Multiscanner asset hubs: a namespace scan can hang hundreds of findings off
+  // one image or bucket. Leaf findings already collapse through the generic
+  // degree-1 passes, but pass-2 hub clustering is NOT generic — without its edge
+  // types here an asset hub with many children never collapses at all.
+  'HAS_ASSET',
+  'HAS_FINDING',
 ])
 
 function linkEndpointId(endpoint: string | GraphNode): string {

@@ -4,7 +4,7 @@ Pydantic models for Recon Orchestrator API
 from datetime import datetime
 from enum import Enum
 from typing import Optional, Union
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ReconStatus(str, Enum):
@@ -209,16 +209,37 @@ class TrufflehogStatus(str, Enum):
 
 
 class TrufflehogStartRequest(BaseModel):
-    """Request to start a TruffleHog scan"""
+    """Request to start ONE TruffleHog source.
+
+    `source` is the run key (C3): two runs of the same source are refused, any
+    number of distinct sources run in parallel, gated only by the memory
+    governor. `config` is the source-specific field set from the scan profile and
+    `common` the shared per-project options; neither ever carries a credential —
+    those are resolved from UserSettings by the start route and injected as env.
+    """
     project_id: str
     user_id: str
     webapp_api_url: str
+    source: str
+    config: dict = Field(default_factory=dict)
+    common: dict = Field(default_factory=dict)
+    #: Resolved credential values keyed by UserSettings column name. Server-side
+    #: only: the webapp start route reads them, the orchestrator injects the ones
+    #: this source needs, and they are never persisted or logged.
+    secrets: dict = Field(default_factory=dict)
 
 
 class TrufflehogState(BaseModel):
-    """Current state of a TruffleHog scan process"""
+    """Current state of ONE TruffleHog source run"""
     project_id: str
     status: TrufflehogStatus
+    #: Carried so the clean ingest step knows which tenant to write the findings
+    #: under; the dirty container never learns it.
+    user_id: str = ""
+    #: The source id, which is also the run key. Empty only on a synthetic IDLE.
+    source: str = ""
+    run_id: str = ""
+    target: str = ""
     current_phase: Optional[str] = None
     phase_number: Optional[Union[int, float]] = None
     total_phases: int = 3
@@ -226,6 +247,22 @@ class TrufflehogState(BaseModel):
     completed_at: Optional[datetime] = None
     error: Optional[str] = None
     container_id: Optional[str] = None
+    #: Set once the clean ingest step has written this run's findings to Neo4j.
+    ingested: bool = False
+    #: Bounded so a permanently-failing ingest is not retried on every 30 s sweep.
+    ingest_attempts: int = 0
+    #: True once the finished container has been removed — after which there is
+    #: nothing left to ask Docker about this run.
+    container_removed: bool = False
+    findings_count: int = 0
+
+
+class TrufflehogListResponse(BaseModel):
+    """Every TruffleHog run for a project. The webapp reconcile and the
+    activation guard both read this instead of a project-level status, which
+    would only ever show one of N parallel runs."""
+    project_id: str
+    runs: list[TrufflehogState] = Field(default_factory=list)
 
 
 class TrufflehogLogEvent(BaseModel):

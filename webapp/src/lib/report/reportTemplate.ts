@@ -497,7 +497,7 @@ function renderTOC(data: ReportData): string {
     dynamicSections.push({ id: 'github-secrets', label: 'GitHub Secrets' })
   }
   if (data.trufflehog.totalFindings > 0) {
-    dynamicSections.push({ id: 'trufflehog', label: 'TruffleHog Findings' })
+    dynamicSections.push({ id: 'trufflehog', label: 'Secret Multiscanner Findings' })
   }
   if (data.secrets.total > 0) {
     dynamicSections.push({ id: 'secrets', label: 'Secret Detection' })
@@ -1082,33 +1082,71 @@ function renderGithubSecrets(data: ReportData): string {
 </div>`
 }
 
+/** Validation state -> report label + colour. The four states are deliberately
+ *  distinct: "not live" and "never checked" mean very different things to
+ *  whoever reads this report, and merging them would overstate the assurance. */
+const TH_VALIDATION_LABEL: Record<string, { text: string; color: string; weight: string }> = {
+  validated: { text: 'LIVE', color: '#dc2626', weight: '600' },
+  unvalidated: { text: 'Not live', color: '#6b7280', weight: '400' },
+  verify_error: { text: 'Verify failed', color: '#d97706', weight: '500' },
+  unverified: { text: 'Not checked', color: '#d97706', weight: '400' },
+}
+
+function thValidation(f: { validationStatus: string | null; verified: boolean }) {
+  const key = f.validationStatus || (f.verified ? 'validated' : 'unvalidated')
+  return TH_VALIDATION_LABEL[key] ?? TH_VALIDATION_LABEL.unvalidated
+}
+
 function renderTrufflehog(data: ReportData): string {
   const th = data.trufflehog
   if (th.totalFindings === 0) return ''
 
-  const findingRows = th.findings.map(f => `
-    <tr${f.verified ? ' style="background:#fef2f2"' : ''}>
+  const live = th.liveFindings ?? th.verifiedFindings
+
+  const findingRows = th.findings.map(f => {
+    const v = thValidation(f)
+    const location = f.findingKind === 'image_history'
+      ? 'Dockerfile (build history)'
+      : (f.location || f.file || '')
+    return `
+    <tr${v.text === 'LIVE' ? ' style="background:#fef2f2"' : ''}>
       <td>${esc(f.detectorName)}</td>
-      <td>${f.verified ? '<span style="color:#dc2626;font-weight:600">VERIFIED</span>' : '<span style="color:#d97706">Unverified</span>'}</td>
+      <td>${esc(f.source || '')}</td>
+      <td><span style="color:${v.color};font-weight:${v.weight}">${v.text}</span></td>
       <td style="font-family:monospace;font-size:11px">${esc(f.redacted || '')}</td>
-      <td>${esc(f.repository || '')}</td>
-      <td>${esc(f.file || '')}</td>
+      <td>${esc(f.asset || f.repository || '')}</td>
+      <td>${esc(location)}</td>
+    </tr>`
+  }).join('')
+
+  const sourceRows = (th.sources || []).map(s => `
+    <tr>
+      <td>${esc(s.source)}</td>
+      <td>${esc(s.target || '')}</td>
+      <td>${s.assets}</td>
+      <td>${s.total}</td>
+      <td${s.live > 0 ? ' style="color:#dc2626;font-weight:600"' : ''}>${s.live}</td>
     </tr>`).join('')
 
   return `
 <div class="page-break"></div>
 <div class="section" id="trufflehog">
-  <h2 class="section-title">TruffleHog Findings</h2>
-  ${th.verifiedFindings > 0 ? `<div class="alert alert-critical">
-    ${th.verifiedFindings} verified credential(s) detected in git history. These credentials have been confirmed as active and represent immediate risk.
+  <h2 class="section-title">Secret Multiscanner Findings</h2>
+  ${live > 0 ? `<div class="alert alert-critical">
+    ${live} credential(s) confirmed LIVE by the owning service. These were validated against the real API and represent immediate risk.
   </div>` : ''}
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
     <div class="metric-card-sm" style="border-left:3px solid #6366f1"><div class="metric-value-sm">${th.totalFindings}</div><div class="metric-label-sm">Total Findings</div></div>
-    <div class="metric-card-sm" style="border-left:3px solid #dc2626"><div class="metric-value-sm">${th.verifiedFindings}</div><div class="metric-label-sm">Verified</div></div>
-    <div class="metric-card-sm"><div class="metric-value-sm">${th.repositories}</div><div class="metric-label-sm">Repositories</div></div>
+    <div class="metric-card-sm" style="border-left:3px solid #dc2626"><div class="metric-value-sm">${live}</div><div class="metric-label-sm">Live Credentials</div></div>
+    <div class="metric-card-sm"><div class="metric-value-sm">${th.repositories}</div><div class="metric-label-sm">Assets Scanned</div></div>
   </div>
+  ${sourceRows ? `<h3 class="subsection-title">By source</h3>
   <table class="data-table">
-    <thead><tr><th>Detector</th><th>Status</th><th>Redacted</th><th>Repository</th><th>File</th></tr></thead>
+    <thead><tr><th>Source</th><th>Target</th><th>Assets</th><th>Findings</th><th>Live</th></tr></thead>
+    <tbody>${sourceRows}</tbody>
+  </table>` : ''}
+  <table class="data-table">
+    <thead><tr><th>Detector</th><th>Source</th><th>Status</th><th>Redacted</th><th>Asset</th><th>Location</th></tr></thead>
     <tbody>${findingRows}</tbody>
   </table>
 </div>`
@@ -1800,7 +1838,7 @@ function renderAppendix(data: ReportData): string {
       <tr><td>Reconnaissance</td><td>Subfinder, HTTPX, Katana, Naabu, GAU</td></tr>
       <tr><td>Vulnerability Scanning</td><td>Nuclei, GreenBone (GVM)</td></tr>
       <tr><td>Exploitation</td><td>Metasploit Framework</td></tr>
-      <tr><td>Secret Detection</td><td>GitHub Hunt, TruffleHog, jsluice, JS Recon</td></tr>
+      <tr><td>Secret Detection</td><td>GitHub Hunt, Secret Multiscanner, jsluice, JS Recon</td></tr>
       <tr><td>JS Analysis</td><td>JS Recon (dependency confusion, source maps, DOM sinks)</td></tr>
       <tr><td>Threat Intelligence</td><td>AlienVault OTX</td></tr>
       <tr><td>Graph Database</td><td>Neo4j</td></tr>

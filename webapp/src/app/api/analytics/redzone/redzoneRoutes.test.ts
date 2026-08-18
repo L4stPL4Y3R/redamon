@@ -14,6 +14,10 @@ vi.mock('@/lib/access', () => ({ guardProject: vi.fn().mockResolvedValue(null) }
 // --- Mock neo4j module BEFORE importing route modules ---
 const runCalls: Array<{ cypher: string; params: Record<string, unknown> }> = []
 let runReturn: Array<Record<string, unknown>> = []
+/** Rows returned only for a query whose Cypher matches. The secrets route runs
+ *  TWO queries (the :Secret traversal and the MultiscannerFinding one); a flat
+ *  `runReturn` would answer both and double every row. */
+let runReturnFor: Array<{ match: RegExp; rows: Array<Record<string, unknown>> }> = []
 let shouldThrow: Error | null = null
 
 vi.mock('@/app/api/graph/neo4j', () => ({
@@ -21,7 +25,9 @@ vi.mock('@/app/api/graph/neo4j', () => ({
     run: async (cypher: string, params: Record<string, unknown>) => {
       runCalls.push({ cypher, params })
       if (shouldThrow) throw shouldThrow
-      const records = runReturn.map(row => ({
+      const matched = runReturnFor.find(r => r.match.test(cypher))
+      const rows = matched ? matched.rows : (runReturnFor.length ? [] : runReturn)
+      const records = rows.map(row => ({
         get: (key: string) => row[key],
       }))
       return { records }
@@ -50,6 +56,7 @@ function makeRequest(projectId: string | null): any {
 beforeEach(() => {
   runCalls.length = 0
   runReturn = []
+  runReturnFor = []
   shouldThrow = null
 })
 
@@ -265,19 +272,31 @@ describe('/api/analytics/redzone/takeover', () => {
 })
 
 // ---------------------------------------------------------------------------
-// secrets: single Cypher; Secret nodes attached via BaseURL OR JsReconFinding
+// secrets: the :Secret traversal (BaseURL OR JsReconFinding) UNIONed with the
+// MultiscannerFinding one, so a credential confirmed live is not graph-only.
 // ---------------------------------------------------------------------------
 describe('/api/analytics/redzone/secrets', () => {
-  test('runs a single Cypher that traverses both HAS_SECRET paths', async () => {
+  test('the Secret query traverses both HAS_SECRET paths', async () => {
     runReturn = []
     await secretsRoute.GET(makeRequest('p1'))
-    expect(runCalls).toHaveLength(1)
-    const c = runCalls[0].cypher
+    const c = runCalls.find(call => /MATCH \(s:Secret/.test(call.cypher))!.cypher
     expect(c).toMatch(/MATCH \(s:Secret \{project_id: \$pid\}\)/)
     expect(c).toMatch(/\(buDirect:BaseURL\)-\[:HAS_SECRET\]->\(s\)/)
     expect(c).toMatch(/JsReconFinding.*finding_type: 'js_file'/s)
     expect(c).toMatch(/-\[:HAS_SECRET\]->\(s\)/)
     expect(c).toMatch(/\(buJs:BaseURL\)-\[:HAS_JS_FILE\]->\(j\)/)
+  })
+
+  test('a second query picks up Secret Multiscanner findings', async () => {
+    runReturn = []
+    await secretsRoute.GET(makeRequest('p1'))
+    const c = runCalls.find(call => /MultiscannerFinding/.test(call.cypher))
+    expect(c).toBeDefined()
+    // Untyped asset match: assets carry one of five labels, and naming one
+    // would silently drop every non-git source.
+    expect(c!.cypher).toMatch(/OPTIONAL MATCH \(a\)-\[:HAS_FINDING\]->\(tf\)/)
+    expect(c!.cypher).toMatch(/tf\.validation_status/)
+    expect(c!.params.pid).toBe('p1')
   })
 
   test('sorts validated > format_validated > unvalidated then by type priority', async () => {
@@ -286,6 +305,7 @@ describe('/api/analytics/redzone/secrets', () => {
       { id: 's2', secretType: 'AWS Secret Key', valueSample: 'akia...', matchedText: null, entropy: 4.8, confidence: 'high', severity: 'critical', sourceModule: 'resource_enum', sourceUrl: 'http://a/config.json', secretBaseUrl: null, keyType: 'cloud', detectionMethod: 'regex', validationStatus: 'validated', baseUrl: 'http://a', subdomain: 'a.com', jsFileUrl: null, origin: 'Secret' },
       { id: 's3', secretType: 'GitHub Token Classic', valueSample: 'ghp_', matchedText: null, entropy: 4.2, confidence: 'high', severity: 'high', sourceModule: 'js_recon', sourceUrl: 'http://a/app.js', secretBaseUrl: null, keyType: 'auth', detectionMethod: 'regex', validationStatus: 'format_validated', baseUrl: 'http://a', subdomain: 'a.com', jsFileUrl: 'http://a/app.js', origin: 'JsReconFinding' },
     ]
+    runReturnFor = [{ match: /MATCH \(s:Secret/, rows: runReturn }]
     const res = await secretsRoute.GET(makeRequest('p1'))
     const body = await res.json()
     expect(body.rows).toHaveLength(3)
@@ -293,6 +313,93 @@ describe('/api/analytics/redzone/secrets', () => {
     expect(body.rows[0].id).toBe('s2')   // AWS Secret Key, validated
     expect(body.rows[1].id).toBe('s3')   // GitHub Token, format_validated
     expect(body.rows[2].id).toBe('s1')   // API Key, unvalidated
+  })
+
+  test('a live Secret Multiscanner finding outranks every unvalidated :Secret row', async () => {
+    // The point of surfacing them here: a credential the owning API CONFIRMED
+    // works is the most actionable row in the table.
+    runReturnFor = [
+      { match: /MATCH \(s:Secret/, rows: [
+        { id: 's1', secretType: 'API Key', validationStatus: 'unvalidated', origin: 'Secret' },
+      ] },
+      { match: /MultiscannerFinding/, rows: [
+        { id: 'tf1', secretType: 'AWS', validationStatus: 'validated', trufflehogSource: 'docker',
+          asset: 'acme/app:1.0', location: '/app/.env', findingKind: 'secret' },
+      ] },
+    ]
+    const body = await (await secretsRoute.GET(makeRequest('p1'))).json()
+    expect(body.rows).toHaveLength(2)
+    expect(body.rows[0].id).toBe('tf1')
+    expect(body.rows[0].origin).toBe('MultiscannerFinding')
+    expect(body.rows[0].severity).toBe('critical')
+    expect(body.rows[0].trufflehogSource).toBe('docker')
+  })
+
+  test('a never-checked Secret Multiscanner finding ranks BELOW a checked-and-dead one', async () => {
+    // 'unverified' means nobody looked; it must not read as "checked and safe".
+    runReturnFor = [
+      { match: /MATCH \(s:Secret/, rows: [] },
+      { match: /MultiscannerFinding/, rows: [
+        { id: 'never', secretType: 'AWS', validationStatus: 'unverified' },
+        { id: 'dead', secretType: 'AWS', validationStatus: 'unvalidated' },
+        { id: 'errored', secretType: 'AWS', validationStatus: 'verify_error' },
+      ] },
+    ]
+    const body = await (await secretsRoute.GET(makeRequest('p1'))).json()
+    expect(body.rows.map((r: { id: string }) => r.id)).toEqual(['errored', 'dead', 'never'])
+  })
+
+  test('N+1 guard: exactly two queries regardless of how many rows come back', async () => {
+    // Both traversals are set-based. A per-row lookup creeping in (to resolve an
+    // asset name, say) would show up here as query count scaling with rows.
+    runReturnFor = [
+      { match: /MATCH \(s:Secret/, rows: Array.from({ length: 50 }, (_, i) => ({
+        id: `s${i}`, secretType: 'API Key', validationStatus: 'unvalidated', origin: 'Secret',
+      })) },
+      { match: /MultiscannerFinding/, rows: Array.from({ length: 50 }, (_, i) => ({
+        id: `tf${i}`, secretType: 'AWS', validationStatus: 'validated', trufflehogSource: 'docker',
+      })) },
+    ]
+    const body = await (await secretsRoute.GET(makeRequest('p1'))).json()
+    expect(body.rows).toHaveLength(100)
+    expect(runCalls).toHaveLength(2)
+  })
+
+  test('every query is scoped to the requested project', async () => {
+    await secretsRoute.GET(makeRequest('p1'))
+    for (const call of runCalls) {
+      expect(call.params.pid).toBe('p1')
+      expect(call.cypher).toContain('project_id: $pid')
+    }
+  })
+
+  test('a Secret Multiscanner row with no asset or location does not break the response', async () => {
+    runReturnFor = [
+      { match: /MATCH \(s:Secret/, rows: [] },
+      // The driver projects every RETURN column, so an absent value arrives as
+      // null rather than missing; the fixture mirrors that.
+      { match: /MultiscannerFinding/, rows: [{
+        id: 'tf1', secretType: 'AWS', validationStatus: null, trufflehogSource: null,
+        asset: null, location: null, findingKind: null, valueSample: null, sourceUrl: null,
+      }] },
+    ]
+    const body = await (await secretsRoute.GET(makeRequest('p1'))).json()
+    expect(body.rows).toHaveLength(1)
+    expect(body.rows[0].asset).toBeNull()
+    expect(body.rows[0].origin).toBe('MultiscannerFinding')
+    expect(body.rows[0].severity).toBe('medium')
+  })
+
+  test('a build-history finding shows a name, not a path that does not exist', async () => {
+    runReturnFor = [
+      { match: /MATCH \(s:Secret/, rows: [] },
+      { match: /MultiscannerFinding/, rows: [
+        { id: 'tf1', secretType: 'AWS', validationStatus: 'validated',
+          location: 'image-metadata:history:3:created-by', findingKind: 'image_history' },
+      ] },
+    ]
+    const body = await (await secretsRoute.GET(makeRequest('p1'))).json()
+    expect(body.rows[0].location).toBe('Dockerfile (build history)')
   })
 
   test('origin label reflects source traversal (BaseURL direct vs JsReconFinding)', async () => {

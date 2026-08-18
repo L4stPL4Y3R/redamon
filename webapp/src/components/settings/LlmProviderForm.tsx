@@ -171,8 +171,8 @@ export function LlmProviderForm({ userId, provider, existingProviderTypes = [], 
       })
 
       if (!resp.ok) {
-        const err = await resp.json()
-        throw new Error(err.error || 'Failed to save')
+        const err = await resp.json().catch(() => null)
+        throw new Error(err?.error || `Failed to save provider (HTTP ${resp.status})`)
       }
 
       toast.success(isEditing ? 'Provider updated' : 'Provider added')
@@ -180,7 +180,10 @@ export function LlmProviderForm({ userId, provider, existingProviderTypes = [], 
       onSave()
     } catch (err) {
       console.error('Failed to save provider:', err)
-      toast.error('Failed to save provider')
+      // Show what the server actually said. The blanket message hid the real
+      // cause of issue #173 (a write against a user id that no longer exists)
+      // behind an unactionable "Failed to save provider".
+      toast.error(err instanceof Error && err.message ? err.message : 'Failed to save provider')
     } finally {
       setSaving(false)
     }

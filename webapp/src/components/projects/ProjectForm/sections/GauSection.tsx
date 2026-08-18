@@ -82,7 +82,7 @@ export function GauSection({ data, updateField, onRun }: GauSectionProps) {
             <>
               <div className={styles.subSection}>
                 <h3 className={styles.subSectionTitle}>Providers</h3>
-                <p className={styles.fieldHint} style={{ marginBottom: '0.5rem' }}>Data sources to query for archived URLs</p>
+                <p className={styles.fieldHint}>Data sources to query for archived URLs</p>
                 <div className={styles.checkboxGroup}>
                   {PROVIDER_OPTIONS.map(provider => (
                     <label key={provider} className="checkboxLabel">

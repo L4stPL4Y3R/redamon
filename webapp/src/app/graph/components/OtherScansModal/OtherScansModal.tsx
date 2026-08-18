@@ -1,13 +1,17 @@
 'use client'
 
-import { useRef, useState } from 'react'
 import { Play, Pause, Square, Terminal, Download, Loader2, Github, Search, AlertTriangle, PackageSearch, Settings } from 'lucide-react'
 import Link from 'next/link'
 import { SETTINGS_KEYS_HREF } from '@/lib/settingsLinks'
+import { CredentialShortcut } from '@/components/settings/CredentialShortcut'
+import { useCredentialKeys } from '@/hooks/useCredentialKeys'
+import { TRUFFLEHOG_SOURCES } from '@/lib/trufflehogSources'
+import type { TrufflehogProfileSummary } from '@/hooks/useTrufflehogRuns'
 import { projectSettingsHref } from '@/lib/projectSettingsLinks'
 import { Modal, WikiInfoButton } from '@/components/ui'
 import type { GithubHuntStatus, TrufflehogStatus, SupplyChainStatus } from '@/lib/recon-types'
-import SupplyChainInput, { type OrgBatchState, type SupplyChainInputHandle } from './SupplyChainInput'
+import { useSupplyChainConfig } from './useSupplyChainConfig'
+import { SupplyChainOrgBatchButton } from './SupplyChainOrgBatchButton'
 import styles from './OtherScansModal.module.css'
 
 interface OtherScansModalProps {
@@ -30,16 +34,20 @@ interface OtherScansModalProps {
   githubHuntStatus?: GithubHuntStatus
   hasGithubHuntData?: boolean
   isGithubHuntLogsOpen?: boolean
-  // TruffleHog
-  onStartTrufflehog?: () => void
-  onPauseTrufflehog?: () => void
-  onResumeTrufflehog?: () => void
-  onStopTrufflehog?: () => void
+  // TruffleHog — run-keyed: one row per configured SOURCE, each with its own
+  // status, Start, Stop and Logs. A single project-level set of controls could
+  // only ever drive one of N parallel runs.
+  onStartTrufflehog?: (source: string) => void
+  onStopTrufflehog?: (source: string) => void
   onDownloadTrufflehogJSON?: () => void
-  onToggleTrufflehogLogs?: () => void
-  trufflehogStatus?: TrufflehogStatus
+  onToggleTrufflehogLogs?: (source: string) => void
+  /** One entry per configured source, from /api/trufflehog/{id}/profiles. */
+  trufflehogProfiles?: TrufflehogProfileSummary[]
+  /** Live run state keyed by source, from /api/trufflehog/{id}/all. */
+  trufflehogRunsBySource?: Record<string, { status: TrufflehogStatus; target?: string } | undefined>
   hasTrufflehogData?: boolean
-  isTrufflehogLogsOpen?: boolean
+  /** Which source's log drawer is open, if any. */
+  openTrufflehogLogsSource?: string | null
 
   // Supply Chain (L1)
   onStartSupplyChain?: () => void
@@ -51,8 +59,8 @@ interface OtherScansModalProps {
   supplyChainStatus?: SupplyChainStatus
   hasSupplyChainData?: boolean
   isSupplyChainLogsOpen?: boolean
-  /** Needed to configure the scan input inline (upload / repository). Without
-   *  it the card renders read-only and Start stays disabled. */
+  /** Needed to read the configured scan input and to link into project settings.
+   *  Without it every card renders read-only. */
   projectId?: string
 }
 
@@ -73,6 +81,13 @@ function StatusBadge({ status }: { status: string }) {
   )
 }
 
+/** What the Supply-Chain card says it would read, per configured source. */
+const SUPPLY_CHAIN_INPUT_LABEL = {
+  upload: 'SBOM / lockfile',
+  github: 'Repository',
+  org: 'Organization',
+} as const
+
 export function OtherScansModal({
   isOpen,
   onClose,
@@ -92,14 +107,13 @@ export function OtherScansModal({
   isGithubHuntLogsOpen = false,
   // TruffleHog
   onStartTrufflehog,
-  onPauseTrufflehog,
-  onResumeTrufflehog,
   onStopTrufflehog,
   onDownloadTrufflehogJSON,
   onToggleTrufflehogLogs,
-  trufflehogStatus = 'idle',
+  trufflehogProfiles = [],
+  trufflehogRunsBySource = {},
   hasTrufflehogData = false,
-  isTrufflehogLogsOpen = false,
+  openTrufflehogLogsSource = null,
 
   // Supply Chain (L1)
   onStartSupplyChain,
@@ -121,25 +135,27 @@ export function OtherScansModal({
   const isGHPaused = githubHuntStatus === 'paused'
   const isGHActive = isGHRunning || isGHPaused
 
-  // TruffleHog derived state
-  const isTHBusy = trufflehogStatus === 'running' || trufflehogStatus === 'starting' || trufflehogStatus === 'pausing'
-  const isTHStopping = trufflehogStatus === 'stopping'
-  const isTHPausing = trufflehogStatus === 'pausing'
-  const isTHRunning = isTHBusy || isTHStopping
-  const isTHPaused = trufflehogStatus === 'paused'
-  const isTHActive = isTHRunning || isTHPaused
+  // TruffleHog derived state: aggregated across every source, used only for the
+  // card-level badge and the Download button (the JSON download is per project).
+  const trufflehogStatuses = trufflehogProfiles
+    .map(p => trufflehogRunsBySource[p.source]?.status ?? 'idle')
+  const isTHActive = trufflehogStatuses.some(
+    st => st === 'running' || st === 'starting' || st === 'stopping')
+  const trufflehogCardStatus: TrufflehogStatus =
+    trufflehogStatuses.find(st => st === 'running' || st === 'starting') ??
+    (trufflehogStatuses.includes('error') ? 'error'
+      : trufflehogStatuses.includes('completed') ? 'completed' : 'idle')
 
-  // Whether the SELECTED input source actually has a usable value. Reported by
-  // SupplyChainInput, because only it knows which source is active - a
-  // configured repository must not make Start clickable while the upload
-  // source is selected, and vice versa.
-  const [scInputReady, setInputReady] = useState(false)
+  // WHAT the supply-chain scan reads is configured in project settings, so the
+  // card reads the saved project to know whether Start can be enabled at all.
+  // Re-read every time the modal opens: the settings may have changed since.
+  const supplyChain = useSupplyChainConfig(projectId, isOpen)
 
-  // Org mode queues N scans instead of starting this project's single one, so
-  // its action replaces Start in the row below rather than sitting beside a
-  // button that can never be enabled. Non-null only while 'org' is selected.
-  const [orgBatch, setOrgBatch] = useState<OrgBatchState | null>(null)
-  const supplyChainRef = useRef<SupplyChainInputHandle>(null)
+  // The keys the scan cards below can set in place. `hasGithubToken` is resolved
+  // by the page that owns this modal and does not change when a key is saved
+  // here, so the live value is OR-ed in to release the Start button at once.
+  const credentialKeys = useCredentialKeys()
+  const githubTokenSet = hasGithubToken || credentialKeys.isSet('githubAccessToken')
 
   // Supply Chain derived state
   const isSCBusy = supplyChainStatus === 'running' || supplyChainStatus === 'starting' || supplyChainStatus === 'pausing'
@@ -156,15 +172,28 @@ export function OtherScansModal({
     ? 'Viewing a saved version - switch back to the active version to run scans'
     : 'A version activation is in progress'
 
+  const supplyChainSettingsLink = projectId && (
+    <Link
+      href={projectSettingsHref(projectId, 'supply-chain-scanner')}
+      style={{ color: 'var(--accent-primary)', fontWeight: 500 }}
+    >
+      Set it in project settings
+    </Link>
+  )
+
   return (
     <Modal
       isOpen={isOpen}
       onClose={onClose}
       title="Other Scans"
       size="large"
+      className={styles.wideModal}
     >
       <div className={styles.content}>
-        <div className={styles.row}>
+        {/* Two columns: the two half-height cards on the left, and the Secret
+            Multiscanner on the right spanning both rows - it lists one row per
+            configured source, so it is the card that actually grows. */}
+        <div className={styles.grid}>
         {/* GitHub Secret Hunt Card */}
         <div className={styles.card}>
           <div className={styles.cardHeader}>
@@ -176,32 +205,16 @@ export function OtherScansModal({
           <p className={styles.cardDescription}>
             Search GitHub repositories for exposed secrets, API keys, and credentials related to your target domain.
           </p>
-          {!hasGithubToken && (
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              padding: '8px 12px',
-              background: 'rgba(245, 158, 11, 0.1)',
-              border: '1px solid rgba(245, 158, 11, 0.3)',
-              borderRadius: '6px',
-            }}>
-              <AlertTriangle size={14} style={{ color: '#f59e0b', flexShrink: 0 }} />
-              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                GitHub Access Token required.{' '}
-                <Link href={SETTINGS_KEYS_HREF} style={{ color: 'var(--accent-primary)', fontWeight: 500 }}>
-                  Global Settings
-                </Link>
-              </span>
-            </div>
+          {!githubTokenSet && (
+            <CredentialShortcut settingsKey="githubAccessToken" keys={credentialKeys} compact />
           )}
           <div className={styles.cardActions}>
             {isGHPaused ? (
               <button
                 className={styles.resumeButton}
                 onClick={onResumeGithubHunt}
-                disabled={!hasGithubToken || scanBlocked}
-                title={scanBlocked ? blockedTitle : !hasGithubToken ? 'GitHub token required' : 'Resume GitHub Hunt'}
+                disabled={!githubTokenSet || scanBlocked}
+                title={scanBlocked ? blockedTitle : !githubTokenSet ? 'GitHub token required' : 'Resume GitHub Hunt'}
               >
                 <Play size={12} />
                 <span>Resume</span>
@@ -210,8 +223,8 @@ export function OtherScansModal({
               <button
                 className={styles.startButton}
                 onClick={onStartGithubHunt}
-                disabled={!hasGithubToken || isGHRunning || (!hasReconData && !isGHPaused) || scanBlocked}
-                title={scanBlocked ? blockedTitle : !hasGithubToken ? 'GitHub token required' : !hasReconData ? 'Run recon first' : isGHRunning ? 'In progress...' : 'Start GitHub Hunt'}
+                disabled={!githubTokenSet || isGHRunning || (!hasReconData && !isGHPaused) || scanBlocked}
+                title={scanBlocked ? blockedTitle : !githubTokenSet ? 'GitHub token required' : !hasReconData ? 'Run recon first' : isGHRunning ? 'In progress...' : 'Start GitHub Hunt'}
               >
                 {isGHRunning ? (
                   <Loader2 size={12} className={styles.spinner} />
@@ -279,97 +292,130 @@ export function OtherScansModal({
           </div>
         </div>
 
-        {/* TruffleHog Scanner Card */}
-        <div className={styles.card}>
+        {/* Secret Multiscanner Card — one row per configured source, full height */}
+        <div className={`${styles.card} ${styles.cardTall}`}>
           <div className={styles.cardHeader}>
             <Search size={18} className={styles.cardIcon} />
-            <h3 className={styles.cardTitle}>TruffleHog Scanner</h3>
-            <WikiInfoButton target="Trufflehog" title="TruffleHog Secret Scanning wiki" />
-            <StatusBadge status={trufflehogStatus} />
+            <h3 className={styles.cardTitle}>Secret Multiscanner</h3>
+            <WikiInfoButton target="Trufflehog" title="Secret Multiscanner wiki" />
+            <StatusBadge status={trufflehogCardStatus} />
           </div>
           <p className={styles.cardDescription}>
-            Deep secret scanning with 700+ detectors and optional verification against live APIs.
+            Deep secret scanning with 700+ detectors across git hosts, container registries,
+            Hugging Face, object storage and CI systems. Sources run independently and in parallel.
           </p>
-          {!hasGithubToken && (
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              padding: '8px 12px',
-              background: 'rgba(245, 158, 11, 0.1)',
-              border: '1px solid rgba(245, 158, 11, 0.3)',
-              borderRadius: '6px',
-            }}>
-              <AlertTriangle size={14} style={{ color: '#f59e0b', flexShrink: 0 }} />
-              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                GitHub Access Token required.{' '}
-                <Link href={SETTINGS_KEYS_HREF} style={{ color: 'var(--accent-primary)', fontWeight: 500 }}>
-                  Global Settings
+
+          {/* Scrolls on its own: any number of sources can be added, and the
+              card must not push the modal past the viewport. */}
+          <div className={styles.sourceList}>
+          {trufflehogProfiles.length === 0 ? (
+            <p className={styles.cardDescription} style={{ opacity: 0.75 }}>
+              No sources configured.{' '}
+              {projectId && (
+                <Link
+                  href={projectSettingsHref(projectId, 'trufflehog-scanner')}
+                  style={{ color: 'var(--accent-primary)', fontWeight: 500 }}
+                >
+                  Add one in project settings
                 </Link>
-              </span>
-            </div>
-          )}
-          <div className={styles.cardActions}>
-            {isTHPaused ? (
-              <button
-                className={styles.resumeButton}
-                onClick={onResumeTrufflehog}
-                disabled={!hasGithubToken || scanBlocked}
-                title={scanBlocked ? blockedTitle : !hasGithubToken ? 'GitHub token required' : 'Resume TruffleHog'}
-              >
-                <Play size={12} />
-                <span>Resume</span>
-              </button>
-            ) : (
-              <button
-                className={styles.startButton}
-                onClick={onStartTrufflehog}
-                disabled={!hasGithubToken || isTHRunning || (!hasReconData && !isTHPaused) || scanBlocked}
-                title={scanBlocked ? blockedTitle : !hasGithubToken ? 'GitHub token required' : !hasReconData ? 'Run recon first' : isTHRunning ? 'In progress...' : 'Start TruffleHog'}
-              >
-                {isTHRunning ? (
-                  <Loader2 size={12} className={styles.spinner} />
-                ) : (
-                  <Play size={12} />
+              )}
+              {' '}to make it startable here.
+            </p>
+          ) : (
+            trufflehogProfiles.map(profile => {
+              const run = trufflehogRunsBySource[profile.source]
+              const status = run?.status ?? 'idle'
+              const busy = status === 'running' || status === 'starting'
+              const stopping = status === 'stopping'
+              const active = busy || stopping
+              const missing = (profile.missingCredentials ?? [])
+                .filter(m => !credentialKeys.isSet(m.settingsKey))
+              const invalid = (profile.validationErrors ?? []).length > 0
+              // Fails closed in the UI too, and the start route re-checks: a key
+              // cleared after this rendered must not produce an opaque failure.
+              const blockedReason = missing.length
+                ? `Set ${missing.map(m => m.label).join(', ')} in Global Settings > API Keys`
+                : invalid ? 'This source is not fully configured'
+                : scanBlocked ? blockedTitle : ''
+
+              return (
+                <div key={profile.id}>
+                {/* Status, Start and Logs stay on ONE line with the source name;
+                    the name is what gives way when the card is narrow. */}
+                <div className={styles.sourceRow}>
+                  <span className={styles.sourceName}>
+                    <span className={styles.sourceLabel}>
+                      {TRUFFLEHOG_SOURCES[profile.source]?.label ?? profile.source}
+                    </span>
+                    {run?.target && (
+                      <span className={styles.sourceTarget} title={run.target}>{run.target}</span>
+                    )}
+                  </span>
+                  <StatusBadge status={status} />
+
+                  <button
+                    className={styles.startButton}
+                    onClick={() => onStartTrufflehog?.(profile.source)}
+                    disabled={active || Boolean(blockedReason)}
+                    title={blockedReason || (active ? 'In progress...' : `Start ${profile.source}`)}
+                  >
+                    {busy ? <Loader2 size={12} className={styles.spinner} /> : <Play size={12} />}
+                    <span>{busy ? 'Running...' : stopping ? 'Stopping...' : 'Start'}</span>
+                  </button>
+
+                  {active && (
+                    <button
+                      className={styles.stopButton}
+                      onClick={() => onStopTrufflehog?.(profile.source)}
+                      disabled={stopping}
+                      title="Stop this source"
+                    >
+                      <Square size={12} />
+                      <span>Stop</span>
+                    </button>
+                  )}
+
+                  <button
+                    className={`${styles.logsButton} ${openTrufflehogLogsSource === profile.source ? styles.logsButtonActive : ''}`}
+                    onClick={() => onToggleTrufflehogLogs?.(profile.source)}
+                    disabled={!active}
+                    title="View Logs"
+                  >
+                    <Terminal size={12} />
+                    <span>Logs</span>
+                  </button>
+                </div>
+
+                {missing.length > 0 && (
+                  <span className={styles.missingKeyNote}>
+                    <AlertTriangle size={12} />
+                    <Link href={`${SETTINGS_KEYS_HREF}#trufflehog-keys`} style={{ color: 'inherit' }}>
+                      {missing.map(m => m.label).join(', ')} required
+                    </Link>
+                  </span>
                 )}
-                <span>{isTHPausing ? 'Pausing...' : isTHBusy ? 'Running...' : isTHStopping ? 'Stopping...' : 'Start'}</span>
-              </button>
-            )}
 
-            {isTHBusy && (
-              <button
-                className={styles.pauseButton}
-                onClick={onPauseTrufflehog}
-                disabled={isTHPausing}
-                title="Pause"
-              >
-                {isTHPausing ? <Loader2 size={12} className={styles.spinner} /> : <Pause size={12} />}
-                <span>Pause</span>
-              </button>
-            )}
+                {/* Only the keys that actually block THIS source, so a row that
+                    can start stays a single line. */}
+                {missing.length > 0 && (
+                  <div className={styles.credentialStack}>
+                    {missing.map(m => (
+                      <CredentialShortcut
+                        key={m.settingsKey}
+                        settingsKey={m.settingsKey}
+                        keys={credentialKeys}
+                        compact
+                      />
+                    ))}
+                  </div>
+                )}
+                </div>
+              )
+            })
+          )}
+          </div>
 
-            {isTHActive && (
-              <button
-                className={styles.stopButton}
-                onClick={onStopTrufflehog}
-                disabled={isTHStopping}
-                title="Stop"
-              >
-                <Square size={12} />
-                <span>Stop</span>
-              </button>
-            )}
-
-            <button
-              className={`${styles.logsButton} ${isTrufflehogLogsOpen ? styles.logsButtonActive : ''}`}
-              onClick={onToggleTrufflehogLogs}
-              disabled={!isTHActive}
-              title="View Logs"
-            >
-              <Terminal size={12} />
-              <span>Logs</span>
-            </button>
-
+          <div className={styles.cardActions}>
             <button
               className={styles.downloadButton}
               onClick={onDownloadTrufflehogJSON}
@@ -384,8 +430,8 @@ export function OtherScansModal({
               <Link
                 href={projectSettingsHref(projectId, 'trufflehog-scanner')}
                 className={styles.settingsButton}
-                title="Configure the target org, repos and scan options in project settings"
-                aria-label="Configure TruffleHog Scanner in project settings"
+                title="Configure which sources to scan and their options in project settings"
+                aria-label="Configure Secret Multiscanner in project settings"
               >
                 <Settings size={13} />
               </Link>
@@ -393,31 +439,32 @@ export function OtherScansModal({
           </div>
         </div>
 
-      </div>
-
-        {/* Supply Chain Scanner (L1) - full-width second row.
-            It carries its own input configuration, so it needs more room than
-            the two hunters above and no longer sends the operator to Project
-            Settings to pick a file. */}
+        {/* Supply Chain Scanner (L1). Like the two hunters above it, this card
+            owns the run controls only: its input (uploaded SBOM / lockfile,
+            repository, or an organization to batch) is configured in project
+            settings, which is what the gear links to. */}
         <div className={styles.card}>
           <div className={styles.cardHeader}>
-            <Search size={18} className={styles.cardIcon} />
+            <PackageSearch size={18} className={styles.cardIcon} />
             <h3 className={styles.cardTitle}>Supply Chain Scanner</h3>
             <WikiInfoButton target="SupplyChainScan" title="Supply-Chain Scanning wiki" />
             <StatusBadge status={supplyChainStatus} />
           </div>
           <p className={styles.cardDescription}>
-            Audit an SBOM / lockfile, or a GitHub repository, against the offline OSV database for known-malicious (MAL) and known-vulnerable packages. The OSV verdict is fully offline.
+            Audit an SBOM / lockfile, or a GitHub repository, against the offline OSV database for
+            known-malicious (MAL) and known-vulnerable packages. The OSV verdict is fully offline.
           </p>
 
-          {projectId && (
-            <SupplyChainInput
-              ref={supplyChainRef}
-              projectId={projectId}
-              disabled={isSCActive}
-              onInputAvailabilityChange={setInputReady}
-              onOrgBatchStateChange={setOrgBatch}
-            />
+          {supplyChain.ready ? (
+            <p className={styles.targetLine}>
+              <span className={styles.targetKind}>{SUPPLY_CHAIN_INPUT_LABEL[supplyChain.source]}</span>
+              <span className={styles.targetValue} title={supplyChain.target}>{supplyChain.target}</span>
+            </p>
+          ) : (
+            <p className={styles.cardDescription} style={{ opacity: 0.75 }}>
+              {supplyChain.loading ? 'Loading the configured input...' : <>No input configured.{' '}
+                {supplyChainSettingsLink} to make it startable here.</>}
+            </p>
           )}
 
           <div className={styles.cardActions}>
@@ -426,18 +473,20 @@ export function OtherScansModal({
                 title={scanBlocked ? blockedTitle : 'Resume Supply-Chain scan'}>
                 <Play size={12} /><span>Resume</span>
               </button>
-            ) : orgBatch ? (
-              <button className={styles.startButton}
-                onClick={() => supplyChainRef.current?.launchOrgBatch()}
-                disabled={!orgBatch.canQueue || orgBatch.busy || isSCActive || scanBlocked}
-                title={scanBlocked ? blockedTitle : !orgBatch.canQueue ? 'Enter an organization or user above first' : 'Queue one scan per repository'}>
-                {orgBatch.busy ? <Loader2 size={12} className={styles.spinner} /> : <PackageSearch size={12} />}
-                <span>{orgBatch.busy ? 'Queuing...' : 'Queue org batch'}</span>
-              </button>
+            ) : supplyChain.source === 'org' && projectId ? (
+              // The org mode queues N scans instead of running this project's
+              // single input, so it replaces Start rather than sitting next to a
+              // button that can never be enabled.
+              <SupplyChainOrgBatchButton
+                projectId={projectId}
+                org={supplyChain.org}
+                disabled={isSCActive || scanBlocked}
+                blockedReason={scanBlocked ? blockedTitle : ''}
+              />
             ) : (
               <button className={styles.startButton} onClick={onStartSupplyChain}
-                disabled={!scInputReady || isSCRunning || scanBlocked}
-                title={scanBlocked ? blockedTitle : !scInputReady ? 'Choose an input above first' : isSCRunning ? 'In progress...' : 'Start Supply-Chain scan'}>
+                disabled={!supplyChain.ready || isSCRunning || scanBlocked}
+                title={scanBlocked ? blockedTitle : !supplyChain.ready ? 'Configure the scan input in project settings first' : isSCRunning ? 'In progress...' : 'Start Supply-Chain scan'}>
                 {isSCRunning ? <Loader2 size={12} className={styles.spinner} /> : <Play size={12} />}
                 <span>{isSCPausing ? 'Pausing...' : isSCBusy ? 'Running...' : isSCStopping ? 'Stopping...' : 'Start'}</span>
               </button>
@@ -461,7 +510,19 @@ export function OtherScansModal({
               title={viewingPastVersion ? 'Download reflects the active version, not this saved view' : hasSupplyChainData ? 'Download JSON' : 'No data available'}>
               <Download size={12} /><span>Download</span>
             </button>
+
+            {projectId && (
+              <Link
+                href={projectSettingsHref(projectId, 'supply-chain-scanner')}
+                className={styles.settingsButton}
+                title="Configure the SBOM / lockfile, repository or organization to scan in project settings"
+                aria-label="Configure Supply Chain Scanner in project settings"
+              >
+                <Settings size={13} />
+              </Link>
+            )}
           </div>
+        </div>
         </div>
       </div>
     </Modal>

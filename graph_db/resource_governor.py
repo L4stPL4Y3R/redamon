@@ -360,6 +360,14 @@ _FALLBACK_PROFILE = {
         "gvm": 2_684_354_560,             # 2.5 GB openvas is the heaviest scanner
         "github_hunt": 805_306_368,       # 768 MB clone + regex sweep
         "trufflehog": 805_306_368,        # 768 MB clone + verifier sweep
+        # Source-qualified: docker and huggingface pull and decompress remote
+        # blobs, so they peak far above the git-based sources. scan_job_envelope
+        # falls back to (and floors at) the plain "trufflehog" entry, so every
+        # source without a line here keeps the 768 MB family envelope.
+        "trufflehog:docker": 1_610_612_736,        # 1.5 GB layer decompression
+        "trufflehog:huggingface": 1_610_612_736,   # 1.5 GB model/LFS blobs
+        "trufflehog:s3": 1_207_959_552,            # 1.125 GB object streaming
+        "trufflehog:gcs": 1_207_959_552,           # 1.125 GB object streaming
         # 1.75 GB = clean writer + the dirty analyzer sibling it dispatches for
         # GuardDog deep analysis. The former 900 MB predated L1 deep analysis and
         # was smaller than the analyzer alone, so a deep L1 scan under-reserved.

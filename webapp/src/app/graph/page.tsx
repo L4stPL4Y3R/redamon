@@ -50,7 +50,7 @@ import { useStableGraphData } from './hooks/useStableGraphData'
 import { exportToCsv, exportToJson, exportToMarkdown } from './utils/exportCsv'
 import { clusterGraphData } from './utils/clusterNodes'
 import { isOverNodeCap } from './utils/nodeCap'
-import { useTheme, useSession, useReconStatus, useReconSSE, useGvmStatus, useGvmSSE, useGithubHuntStatus, useGithubHuntSSE, useTrufflehogStatus, useTrufflehogSSE, useSupplyChainStatus, useSupplyChainSSE, useActiveSessions, useMultiPartialReconStatus, useMultiPartialReconSSE } from '@/hooks'
+import { useTheme, useSession, useReconStatus, useReconSSE, useGvmStatus, useGvmSSE, useGithubHuntStatus, useGithubHuntSSE, useTrufflehogRuns, useTrufflehogSSE, useSupplyChainStatus, useSupplyChainSSE, useActiveSessions, useMultiPartialReconStatus, useMultiPartialReconSSE } from '@/hooks'
 import { useProjectById } from '@/hooks/useProjects'
 import { useScanStartFailure } from '@/hooks/useScanStartFailure'
 import { useGraphTypeFilterPrefs, useGraphViewPrefs } from '@/hooks/useUserPreferences'
@@ -94,7 +94,7 @@ export default function GraphPage() {
   const [isAIOpen, setIsAIOpen] = useState(false)
   const [isFileSystemOpen, setIsFileSystemOpen] = useState(false)
   const [isReconModalOpen, setIsReconModalOpen] = useState(false)
-  const [activeLogsDrawer, setActiveLogsDrawer] = useState<'recon' | 'gvm' | 'githubHunt' | 'trufflehog' | 'supplyChain' | `partialRecon:${string}` | null>(null)
+  const [activeLogsDrawer, setActiveLogsDrawer] = useState<'recon' | 'gvm' | 'githubHunt' | 'supplyChain' | `trufflehog:${string}` | `partialRecon:${string}` | null>(null)
   const [hasReconData, setHasReconData] = useState(false)
   const [hasGvmData, setHasGvmData] = useState(false)
   const [hasGithubHuntData, setHasGithubHuntData] = useState(false)
@@ -447,22 +447,30 @@ export default function GraphPage() {
     enabled: githubHuntState?.status === 'running' || githubHuntState?.status === 'starting' || githubHuntState?.status === 'paused' || githubHuntState?.status === 'stopping' || githubHuntState?.status === 'pausing',
   })
 
-  // TruffleHog status hook
+  // TruffleHog: run-keyed (one run per SOURCE, several in parallel), so the page
+  // tracks the whole run list plus the configured profiles rather than one state.
   const {
-    state: trufflehogState,
+    runs: trufflehogRuns,
+    profiles: trufflehogProfiles,
+    bySource: trufflehogRunsBySource,
+    isAnyRunning: isTrufflehogRunning,
     startTrufflehog,
     stopTrufflehog,
-    pauseTrufflehog,
-    resumeTrufflehog,
     getLastStartError: getTrufflehogStartError,
-  } = useTrufflehogStatus({
+  } = useTrufflehogRuns({
     projectId,
     enabled: !!projectId,
   })
 
-  const isTrufflehogRunning = trufflehogState?.status === 'running' || trufflehogState?.status === 'starting' || trufflehogState?.status === 'pausing'
+  // Which source's log drawer is open. `activeLogsDrawer` carries the source so
+  // two live containers do not share one stream.
+  const openTrufflehogLogsSource = activeLogsDrawer?.startsWith('trufflehog:')
+    ? activeLogsDrawer.slice('trufflehog:'.length)
+    : null
+  const openTrufflehogRun = openTrufflehogLogsSource
+    ? trufflehogRunsBySource[openTrufflehogLogsSource]
+    : undefined
 
-  // TruffleHog logs SSE hook
   const {
     logs: trufflehogLogs,
     currentPhase: trufflehogCurrentPhase,
@@ -470,7 +478,8 @@ export default function GraphPage() {
     clearLogs: clearTrufflehogLogs,
   } = useTrufflehogSSE({
     projectId,
-    enabled: trufflehogState?.status === 'running' || trufflehogState?.status === 'starting' || trufflehogState?.status === 'paused' || trufflehogState?.status === 'stopping' || trufflehogState?.status === 'pausing',
+    source: openTrufflehogLogsSource,
+    enabled: Boolean(openTrufflehogRun && ['running', 'starting', 'stopping'].includes(openTrufflehogRun.status)),
   })
 
   // Supply-Chain scan (L1) status + logs
@@ -988,14 +997,17 @@ export default function GraphPage() {
     }
   }, [githubHuntState?.status, refetchAfterCompletion, checkGithubHuntData])
 
-  // Refresh when TruffleHog completes
+  // Refresh when ANY TruffleHog source completes. Keyed on the joined statuses
+  // so a second source finishing still triggers a refetch.
+  const trufflehogStatusKey = trufflehogRuns.map(r => `${r.source}:${r.status}`).join(',')
   useEffect(() => {
-    if (trufflehogState?.status === 'completed' || trufflehogState?.status === 'error') {
+    if (trufflehogRuns.some(r => r.status === 'completed' || r.status === 'error')) {
       const cleanup = refetchAfterCompletion()
       checkTrufflehogData()
       return cleanup
     }
-  }, [trufflehogState?.status, refetchAfterCompletion, checkTrufflehogData])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trufflehogStatusKey, refetchAfterCompletion, checkTrufflehogData])
 
   // Refresh when Supply-Chain (L1) completes
   useEffect(() => {
@@ -1088,7 +1100,7 @@ export default function GraphPage() {
     }
     const openLogs = searchParams.get('openlogs')
     if (openLogs && projectId) {
-      setActiveLogsDrawer(openLogs as 'recon' | 'gvm' | 'githubHunt' | 'trufflehog' | `partialRecon:${string}`)
+      setActiveLogsDrawer(openLogs as 'recon' | 'gvm' | 'githubHunt' | `trufflehog:${string}` | `partialRecon:${string}`)
       router.replace(`/graph?project=${projectId}`)
     }
     // Deep-link into a specific Red Zone table (e.g. ?table=aiRisk from the AI
@@ -1224,21 +1236,19 @@ export default function GraphPage() {
     setActiveLogsDrawer(prev => prev === 'githubHunt' ? null : 'githubHunt')
   }, [])
 
-  const handleStartTrufflehog = useCallback(async () => {
-    if (isViewingPastVersion) {
-      alertError(PAST_VERSION_SCAN_MSG, 'Read-only version')
-      return
-    }
+  const handleStartTrufflehog = useCallback(async (source: string) => {
+    if (isViewingPastVersion) return
     try {
       clearTrufflehogLogs()
-      const result = await startTrufflehog()
+      const result = await startTrufflehog(source)
       if (result) {
-        setActiveLogsDrawer('trufflehog')
-        toast.info('Trufflehog scan started')
+        setActiveLogsDrawer(`trufflehog:${source}`)
+        toast.info(`Secret Multiscanner ${source} scan started`)
+      } else {
+        throw new Error('start failed')
       }
     } catch {
-      // Temporary -> Cancel / Add to queue; permanent -> error (Scan Queue Phase 3).
-      await handleStartFailure('trufflehog', getTrufflehogStartError?.())
+      await handleStartFailure('trufflehog', getTrufflehogStartError?.(), { source })
     }
   }, [startTrufflehog, clearTrufflehogLogs, toast, isViewingPastVersion, getTrufflehogStartError, handleStartFailure])
 
@@ -1252,8 +1262,8 @@ export default function GraphPage() {
     window.open(`/api/supply-chain/${projectId}/download`, '_blank')
   }, [projectId])
 
-  const handleToggleTrufflehogLogs = useCallback(() => {
-    setActiveLogsDrawer(prev => prev === 'trufflehog' ? null : 'trufflehog')
+  const handleToggleTrufflehogLogs = useCallback((source: string) => {
+    setActiveLogsDrawer(prev => prev === `trufflehog:${source}` ? null : `trufflehog:${source}`)
   }, [])
 
   // Auto-open partial recon logs drawer when a new run appears or transitions to running
@@ -1284,9 +1294,7 @@ export default function GraphPage() {
   const handlePauseGithubHunt = useCallback(async () => { await pauseGithubHunt() }, [pauseGithubHunt])
   const handleResumeGithubHunt = useCallback(async () => { await resumeGithubHunt() }, [resumeGithubHunt])
   const handleStopGithubHunt = useCallback(async () => { await stopGithubHunt() }, [stopGithubHunt])
-  const handlePauseTrufflehog = useCallback(async () => { await pauseTrufflehog() }, [pauseTrufflehog])
-  const handleResumeTrufflehog = useCallback(async () => { await resumeTrufflehog() }, [resumeTrufflehog])
-  const handleStopTrufflehog = useCallback(async () => { await stopTrufflehog() }, [stopTrufflehog])
+  const handleStopTrufflehog = useCallback(async (source: string) => { await stopTrufflehog(source) }, [stopTrufflehog])
 
   // Partial Recon handlers
   const handleStopPartialRecon = useCallback(async (runId: string) => { await stopPartialRecon(runId) }, [stopPartialRecon])
@@ -1317,8 +1325,12 @@ export default function GraphPage() {
     if (githubHuntState?.status === 'running' || githubHuntState?.status === 'starting') {
       tasks.push(pauseGithubHunt())
     }
-    if (trufflehogState?.status === 'running' || trufflehogState?.status === 'starting') {
-      tasks.push(pauseTrufflehog())
+    // TruffleHog has no pause (dropped with the multi-source migration, matching
+    // ai_attack): emergency stop stops each live SOURCE.
+    for (const run of trufflehogRuns) {
+      if (run.status === 'running' || run.status === 'starting') {
+        tasks.push(stopTrufflehog(run.source ?? ''))
+      }
     }
     for (const run of activePartialRecons) {
       if (run.status === 'running' || run.status === 'starting') {
@@ -1328,7 +1340,7 @@ export default function GraphPage() {
     // Stop all running AI agent conversations
     tasks.push(fetch('/api/agent/emergency-stop-all', { method: 'POST' }))
     await Promise.allSettled(tasks)
-  }, [reconState?.status, gvmState?.status, githubHuntState?.status, trufflehogState?.status, activePartialRecons, pauseRecon, pauseGvm, pauseGithubHunt, pauseTrufflehog, stopPartialRecon])
+  }, [reconState?.status, gvmState?.status, githubHuntState?.status, trufflehogRuns, activePartialRecons, pauseRecon, pauseGvm, pauseGithubHunt, stopTrufflehog, stopPartialRecon])
 
   // Show message if no project is selected
   if (!projectLoading && !projectId) {
@@ -1391,16 +1403,10 @@ export default function GraphPage() {
         githubHuntStatus={githubHuntState?.status || 'idle'}
         hasGithubHuntData={hasGithubHuntData}
         isGithubHuntLogsOpen={activeLogsDrawer === 'githubHunt'}
-        // TruffleHog props
-        onStartTrufflehog={handleStartTrufflehog}
-        onPauseTrufflehog={handlePauseTrufflehog}
-        onResumeTrufflehog={handleResumeTrufflehog}
-        onStopTrufflehog={handleStopTrufflehog}
-        onDownloadTrufflehogJSON={handleDownloadTrufflehogJSON}
-        onToggleTrufflehogLogs={handleToggleTrufflehogLogs}
-        trufflehogStatus={trufflehogState?.status || 'idle'}
+        // TruffleHog props: the toolbar only shows whether a source is live;
+        // the per-source controls are in the Other Scans modal.
+        isTrufflehogRunning={isTrufflehogRunning}
         hasTrufflehogData={hasTrufflehogData}
-        isTrufflehogLogsOpen={activeLogsDrawer === 'trufflehog'}
         // Partial Recon props (multi-run)
         activePartialRecons={activePartialRecons}
         activePartialReconLogsDrawer={activePartialReconRunId}
@@ -1449,14 +1455,13 @@ export default function GraphPage() {
         isGithubHuntLogsOpen={activeLogsDrawer === 'githubHunt'}
         // TruffleHog
         onStartTrufflehog={handleStartTrufflehog}
-        onPauseTrufflehog={handlePauseTrufflehog}
-        onResumeTrufflehog={handleResumeTrufflehog}
         onStopTrufflehog={handleStopTrufflehog}
         onDownloadTrufflehogJSON={handleDownloadTrufflehogJSON}
         onToggleTrufflehogLogs={handleToggleTrufflehogLogs}
-        trufflehogStatus={trufflehogState?.status || 'idle'}
+        trufflehogProfiles={trufflehogProfiles}
+        trufflehogRunsBySource={trufflehogRunsBySource}
         hasTrufflehogData={hasTrufflehogData}
-        isTrufflehogLogsOpen={activeLogsDrawer === 'trufflehog'}
+        openTrufflehogLogsSource={openTrufflehogLogsSource}
         // Supply Chain (L1)
         onStartSupplyChain={handleStartSupplyChain}
         onPauseSupplyChain={() => { void pauseSupplyChain() }}
@@ -1711,18 +1716,16 @@ export default function GraphPage() {
       />
 
       <ReconLogsDrawer
-        isOpen={activeLogsDrawer === 'trufflehog'}
+        isOpen={Boolean(openTrufflehogLogsSource)}
         onClose={() => setActiveLogsDrawer(null)}
         logs={trufflehogLogs}
         currentPhase={trufflehogCurrentPhase}
         currentPhaseNumber={trufflehogCurrentPhaseNumber}
-        status={trufflehogState?.status || 'idle'}
-        errorMessage={trufflehogState?.error}
+        status={openTrufflehogRun?.status || 'idle'}
+        errorMessage={openTrufflehogRun?.error}
         onClearLogs={clearTrufflehogLogs}
-        onPause={handlePauseTrufflehog}
-        onResume={handleResumeTrufflehog}
-        onStop={handleStopTrufflehog}
-        title="TruffleHog Secret Scanner Logs"
+        onStop={() => { if (openTrufflehogLogsSource) void handleStopTrufflehog(openTrufflehogLogsSource) }}
+        title={`Secret Multiscanner Logs — ${openTrufflehogLogsSource ?? ''}`}
         phases={TRUFFLEHOG_PHASES}
         totalPhases={3}
       />

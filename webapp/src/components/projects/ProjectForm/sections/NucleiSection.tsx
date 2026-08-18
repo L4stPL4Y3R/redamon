@@ -163,7 +163,7 @@ export function NucleiSection({ data, updateField, onRun }: NucleiSectionProps) 
           <>
           <div className={styles.subSection}>
             <h3 className={styles.subSectionTitle}>Severity Levels</h3>
-            <p className={styles.fieldHint} style={{ marginBottom: '0.5rem' }}>Filter vulnerabilities by severity. Exclude &ldquo;info&rdquo; for production scans</p>
+            <p className={styles.fieldHint}>Filter vulnerabilities by severity. Exclude &ldquo;info&rdquo; for production scans</p>
             <TimeEstimate estimate="Critical only: ~70% faster than all severities" />
             <div className={styles.checkboxGroup}>
               {SEVERITY_OPTIONS.map(severity => (
@@ -315,7 +315,7 @@ export function NucleiSection({ data, updateField, onRun }: NucleiSectionProps) 
 
           <div className={styles.subSection}>
             <h3 className={styles.subSectionTitle}>Template Tags</h3>
-            <p className={styles.fieldHint} style={{ marginBottom: '0.5rem' }}>Filter templates by functionality tags</p>
+            <p className={styles.fieldHint}>Filter templates by functionality tags</p>
             <div className={styles.toggleRow} style={{ marginBottom: 'var(--space-2)', alignItems: 'center' }}>
               <AiToggleLabel
                 label="Use AI for Tag Selection"

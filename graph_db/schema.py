@@ -11,6 +11,32 @@ DROP_LEGACY_CONSTRAINTS = [
     "DROP CONSTRAINT subdomain_unique IF EXISTS",
     "DROP CONSTRAINT ip_unique IF EXISTS",
     "DROP CONSTRAINT baseurl_unique IF EXISTS",
+    # Renamed with the Trufflehog -> Multiscanner labels. Dropped by their OLD
+    # names, because a constraint is identified by NAME: recreating it under the
+    # new name leaves this one behind, still guarding a label nothing writes.
+    "DROP CONSTRAINT trufflehogscan_unique IF EXISTS",
+    "DROP CONSTRAINT trufflehogrepository_unique IF EXISTS",
+    "DROP CONSTRAINT trufflehogfinding_unique IF EXISTS",
+    "DROP CONSTRAINT trufflehogimage_unique IF EXISTS",
+    "DROP CONSTRAINT trufflehogmodel_unique IF EXISTS",
+    "DROP CONSTRAINT trufflehogbucket_unique IF EXISTS",
+    "DROP CONSTRAINT trufflehogendpoint_unique IF EXISTS",
+    "DROP INDEX idx_trufflehogscan_tenant IF EXISTS",
+    "DROP INDEX idx_trufflehogrepository_tenant IF EXISTS",
+    "DROP INDEX idx_trufflehogfinding_tenant IF EXISTS",
+    "DROP INDEX idx_trufflehogimage_tenant IF EXISTS",
+    "DROP INDEX idx_trufflehogmodel_tenant IF EXISTS",
+    "DROP INDEX idx_trufflehogbucket_tenant IF EXISTS",
+    "DROP INDEX idx_trufflehogendpoint_tenant IF EXISTS",
+    "DROP INDEX idx_trufflehogfinding_detector IF EXISTS",
+    "DROP INDEX idx_trufflehogfinding_source IF EXISTS",
+    "DROP INDEX idx_trufflehogfinding_validation IF EXISTS",
+    "DROP INDEX idx_trufflehogscan_source IF EXISTS",
+    "DROP INDEX idx_trufflehogrepository_name IF EXISTS",
+    "DROP INDEX idx_trufflehogimage_name IF EXISTS",
+    "DROP INDEX idx_trufflehogmodel_name IF EXISTS",
+    "DROP INDEX idx_trufflehogbucket_name IF EXISTS",
+    "DROP INDEX idx_trufflehogendpoint_name IF EXISTS",
 ]
 
 # Uniqueness constraints (tenant-scoped for per-project nodes, global for shared reference nodes)
@@ -45,10 +71,20 @@ CONSTRAINTS = [
     "CREATE CONSTRAINT malpackagefinding_unique IF NOT EXISTS FOR (mf:MalPackageFinding) REQUIRE (mf.finding_id, mf.user_id, mf.project_id) IS UNIQUE",
     "CREATE CONSTRAINT githubsecret_unique IF NOT EXISTS FOR (gs:GithubSecret) REQUIRE gs.id IS UNIQUE",
     "CREATE CONSTRAINT githubsensitivefile_unique IF NOT EXISTS FOR (gsf:GithubSensitiveFile) REQUIRE gsf.id IS UNIQUE",
-    # TruffleHog Secret Scanner constraints
-    "CREATE CONSTRAINT trufflehogscan_unique IF NOT EXISTS FOR (ts:TrufflehogScan) REQUIRE ts.id IS UNIQUE",
-    "CREATE CONSTRAINT trufflehogrepository_unique IF NOT EXISTS FOR (tr:TrufflehogRepository) REQUIRE tr.id IS UNIQUE",
-    "CREATE CONSTRAINT trufflehogfinding_unique IF NOT EXISTS FOR (tf:TrufflehogFinding) REQUIRE tf.id IS UNIQUE",
+    # TruffleHog Secret Scanner constraints. Tenant-scoped (id, user_id,
+    # project_id), matching the MERGE key: an id-only constraint plus a project
+    # import that re-owns the tenant props WITHOUT rewriting the embedded id left
+    # the two disagreeing about who owns the node.
+    "CREATE CONSTRAINT multiscannerscan_unique IF NOT EXISTS FOR (ts:MultiscannerScan) REQUIRE (ts.id, ts.user_id, ts.project_id) IS UNIQUE",
+    "CREATE CONSTRAINT multiscannerrepository_unique IF NOT EXISTS FOR (tr:MultiscannerRepository) REQUIRE (tr.id, tr.user_id, tr.project_id) IS UNIQUE",
+    "CREATE CONSTRAINT multiscannerfinding_unique IF NOT EXISTS FOR (tf:MultiscannerFinding) REQUIRE (tf.id, tf.user_id, tf.project_id) IS UNIQUE",
+    # Four asset labels for the non-git sources. Grouped by asset SHAPE, not one
+    # per source: the graph renderer draws a node from labels[0] (a single label,
+    # unordered by Neo4j), so a node may carry only one.
+    "CREATE CONSTRAINT multiscannerimage_unique IF NOT EXISTS FOR (ti:MultiscannerImage) REQUIRE (ti.id, ti.user_id, ti.project_id) IS UNIQUE",
+    "CREATE CONSTRAINT multiscannermodel_unique IF NOT EXISTS FOR (tm:MultiscannerModel) REQUIRE (tm.id, tm.user_id, tm.project_id) IS UNIQUE",
+    "CREATE CONSTRAINT multiscannerbucket_unique IF NOT EXISTS FOR (tb:MultiscannerBucket) REQUIRE (tb.id, tb.user_id, tb.project_id) IS UNIQUE",
+    "CREATE CONSTRAINT multiscannerendpoint_unique IF NOT EXISTS FOR (te:MultiscannerEndpoint) REQUIRE (te.id, te.user_id, te.project_id) IS UNIQUE",
     # JS Recon Scanner constraints
     "CREATE CONSTRAINT jsreconfinding_unique IF NOT EXISTS FOR (jf:JsReconFinding) REQUIRE jf.id IS UNIQUE",
     # Secret constraints
@@ -93,9 +129,13 @@ TENANT_INDEXES = [
     "CREATE INDEX idx_githubsecret_tenant IF NOT EXISTS FOR (gs:GithubSecret) ON (gs.user_id, gs.project_id)",
     "CREATE INDEX idx_githubsensitivefile_tenant IF NOT EXISTS FOR (gsf:GithubSensitiveFile) ON (gsf.user_id, gsf.project_id)",
     # TruffleHog Secret Scanner tenant indexes
-    "CREATE INDEX idx_trufflehogscan_tenant IF NOT EXISTS FOR (ts:TrufflehogScan) ON (ts.user_id, ts.project_id)",
-    "CREATE INDEX idx_trufflehogrepository_tenant IF NOT EXISTS FOR (tr:TrufflehogRepository) ON (tr.user_id, tr.project_id)",
-    "CREATE INDEX idx_trufflehogfinding_tenant IF NOT EXISTS FOR (tf:TrufflehogFinding) ON (tf.user_id, tf.project_id)",
+    "CREATE INDEX idx_multiscannerscan_tenant IF NOT EXISTS FOR (ts:MultiscannerScan) ON (ts.user_id, ts.project_id)",
+    "CREATE INDEX idx_multiscannerrepository_tenant IF NOT EXISTS FOR (tr:MultiscannerRepository) ON (tr.user_id, tr.project_id)",
+    "CREATE INDEX idx_multiscannerfinding_tenant IF NOT EXISTS FOR (tf:MultiscannerFinding) ON (tf.user_id, tf.project_id)",
+    "CREATE INDEX idx_multiscannerimage_tenant IF NOT EXISTS FOR (ti:MultiscannerImage) ON (ti.user_id, ti.project_id)",
+    "CREATE INDEX idx_multiscannermodel_tenant IF NOT EXISTS FOR (tm:MultiscannerModel) ON (tm.user_id, tm.project_id)",
+    "CREATE INDEX idx_multiscannerbucket_tenant IF NOT EXISTS FOR (tb:MultiscannerBucket) ON (tb.user_id, tb.project_id)",
+    "CREATE INDEX idx_multiscannerendpoint_tenant IF NOT EXISTS FOR (te:MultiscannerEndpoint) ON (te.user_id, te.project_id)",
     # JS Recon Scanner tenant indexes
     "CREATE INDEX idx_jsreconfinding_tenant IF NOT EXISTS FOR (jf:JsReconFinding) ON (jf.user_id, jf.project_id)",
     # Secret tenant indexes
@@ -145,9 +185,18 @@ ADDITIONAL_INDEXES = [
     "CREATE INDEX idx_sbomdoc_name IF NOT EXISTS FOR (d:SbomDocument) ON (d.name)",
     "CREATE INDEX idx_githubpath_path IF NOT EXISTS FOR (gp:GithubPath) ON (gp.path)",
     "CREATE INDEX idx_githubsecret_secret_type IF NOT EXISTS FOR (gs:GithubSecret) ON (gs.secret_type)",
-    # TruffleHog functional indexes
-    "CREATE INDEX idx_trufflehogfinding_detector IF NOT EXISTS FOR (tf:TrufflehogFinding) ON (tf.detector_name)",
-    "CREATE INDEX idx_trufflehogrepository_name IF NOT EXISTS FOR (tr:TrufflehogRepository) ON (tr.name)",
+    # TruffleHog functional indexes. The source index carries the scoped clear:
+    # every ingest deletes its own source's subgraph first, and that MATCH runs
+    # on (user_id, project_id, source).
+    "CREATE INDEX idx_multiscannerfinding_detector IF NOT EXISTS FOR (tf:MultiscannerFinding) ON (tf.detector_name)",
+    "CREATE INDEX idx_multiscannerfinding_source IF NOT EXISTS FOR (tf:MultiscannerFinding) ON (tf.source)",
+    "CREATE INDEX idx_multiscannerfinding_validation IF NOT EXISTS FOR (tf:MultiscannerFinding) ON (tf.validation_status)",
+    "CREATE INDEX idx_multiscannerscan_source IF NOT EXISTS FOR (ts:MultiscannerScan) ON (ts.source)",
+    "CREATE INDEX idx_multiscannerrepository_name IF NOT EXISTS FOR (tr:MultiscannerRepository) ON (tr.name)",
+    "CREATE INDEX idx_multiscannerimage_name IF NOT EXISTS FOR (ti:MultiscannerImage) ON (ti.name)",
+    "CREATE INDEX idx_multiscannermodel_name IF NOT EXISTS FOR (tm:MultiscannerModel) ON (tm.name)",
+    "CREATE INDEX idx_multiscannerbucket_name IF NOT EXISTS FOR (tb:MultiscannerBucket) ON (tb.name)",
+    "CREATE INDEX idx_multiscannerendpoint_name IF NOT EXISTS FOR (te:MultiscannerEndpoint) ON (te.name)",
     # Secret functional indexes
     "CREATE INDEX idx_secret_type IF NOT EXISTS FOR (s:Secret) ON (s.secret_type)",
     "CREATE INDEX idx_secret_severity IF NOT EXISTS FOR (s:Secret) ON (s.severity)",
@@ -166,12 +215,175 @@ ADDITIONAL_INDEXES = [
 ]
 
 
+
+# Nodes written before the Trufflehog -> Multiscanner rename. Relabelled in place
+# rather than left behind: every read is by label, so an un-migrated node is not
+# "old data", it is invisible - a finished scan whose findings silently vanish
+# from the Red Zone and from every report.
+LEGACY_LABEL_RENAMES = [
+    ("TrufflehogScan", "MultiscannerScan"),
+    ("TrufflehogRepository", "MultiscannerRepository"),
+    ("TrufflehogFinding", "MultiscannerFinding"),
+    ("TrufflehogImage", "MultiscannerImage"),
+    ("TrufflehogModel", "MultiscannerModel"),
+    ("TrufflehogBucket", "MultiscannerBucket"),
+    ("TrufflehogEndpoint", "MultiscannerEndpoint"),
+]
+
+LEGACY_REL_RENAMES = [("HAS_TRUFFLEHOG_SCAN", "HAS_MULTISCANNER_SCAN")]
+
+
+# Set once the rename has fully applied. Without it the migration re-scans every
+# label on every Neo4jClient construction - and init_schema runs from
+# BaseMixin.__init__, so that is every scan container spawn and every agent graph
+# call, forever, at a cost that grows with the size of the graph.
+#
+# A global reference node: it describes the DATABASE, not a project, so it
+# carries no tenant key (see the graph-db-writes ruleset).
+MIGRATION_MARKER = "trufflehog-to-multiscanner-v1"
+
+# Relabelling the whole graph in one statement is a single transaction whose size
+# is the caller's data. Batched so a large graph cannot exceed the heap and leave
+# the rest un-migrated - which would be invisible data, not merely stale data.
+MIGRATION_BATCH = 10_000
+
+
+def _migration_applied(session, marker=MIGRATION_MARKER) -> bool:
+    try:
+        row = session.run(
+            "MATCH (m:RedamonSchemaMigration {id: $id}) RETURN count(m) AS c",
+            id=marker).single()
+        return bool(row and row["c"])
+    except Exception:
+        # Unknown state: re-running the migration is idempotent, skipping it is
+        # not recoverable, so fail towards doing the work.
+        return False
+
+
+def _mark_migration_applied(session, marker=MIGRATION_MARKER) -> None:
+    try:
+        session.run(
+            "MERGE (m:RedamonSchemaMigration {id: $id}) "
+            "ON CREATE SET m.applied_at = datetime()", id=marker)
+    except Exception as e:
+        print(f"[!][graph-db] could not record migration marker: {e}")
+
+
+def _run_batched(session, query: str, **params) -> int:
+    """Run `query` (which must carry its own LIMIT and RETURN a count) until it
+    stops matching. Returns the total touched."""
+    total = 0
+    while True:
+        row = session.run(query, **params).single()
+        touched = (row or {}).get("c") or 0
+        total += touched
+        if not touched:
+            return total
+
+
+def migrate_legacy_labels(session):
+    """Move pre-rename nodes and relationships onto the current names.
+
+    A rename does not leave old data stale, it leaves it INVISIBLE: every read is
+    by label, so an un-migrated finding disappears from the Red Zone and from
+    every report while still sitting in the database.
+
+    Guarded by a marker node, so the steady-state cost is ONE lookup rather than
+    a scan per label. The marker is written only after every step succeeded; a
+    partial migration therefore retries on the next construction instead of
+    silently stopping half-way.
+
+    Runs BEFORE the constraints are created: a uniqueness constraint on the new
+    label cannot be satisfied while data still carries the old one.
+    """
+    if _migration_applied(session):
+        return
+
+    ok = True
+
+    for old, new in LEGACY_LABEL_RENAMES:
+        try:
+            moved = _run_batched(
+                session,
+                f"MATCH (n:`{old}`) WITH n LIMIT {MIGRATION_BATCH} "
+                f"SET n:`{new}` REMOVE n:`{old}` RETURN count(n) AS c")
+            if moved:
+                print(f"[graph-db] migrated {moved} {old} -> {new}")
+        except Exception as e:
+            print(f"[!][graph-db] label migration {old} -> {new} failed: {e}")
+            ok = False
+
+    # The node id is the MERGE key and carried the old name as a prefix. Left
+    # alone, the next scan would MERGE on the NEW prefix and create a second copy
+    # of every node beside the migrated one. `scan_id` moves with it, being a
+    # foreign key holding the same string.
+    for label in (new for _old, new in LEGACY_LABEL_RENAMES):
+        for prop in ("id", "scan_id"):
+            try:
+                if prop == "id":
+                    # A node may already hold the migrated id (reachable if a
+                    # write lands between the code rename and this migration).
+                    # Rewriting it would violate the uniqueness constraint and
+                    # abort the statement, leaving everything after it undone.
+                    stuck = session.run(
+                        f"MATCH (n:`{label}`) WHERE n.id STARTS WITH 'trufflehog-' "
+                        f"AND EXISTS {{ MATCH (m:`{label}`) "
+                        f"WHERE m.id = 'multiscanner-' + substring(n.id, 11) }} "
+                        f"RETURN count(n) AS c").single()
+                    if stuck and stuck["c"]:
+                        print(f"[!][graph-db] {stuck['c']} legacy {label} node(s) "
+                              f"already superseded by a migrated copy; left as-is")
+                    _run_batched(
+                        session,
+                        f"MATCH (n:`{label}`) WHERE n.id STARTS WITH 'trufflehog-' "
+                        f"AND NOT EXISTS {{ MATCH (m:`{label}`) "
+                        f"WHERE m.id = 'multiscanner-' + substring(n.id, 11) }} "
+                        f"WITH n LIMIT {MIGRATION_BATCH} "
+                        f"SET n.id = 'multiscanner-' + substring(n.id, 11) "
+                        f"RETURN count(n) AS c")
+                    continue
+                _run_batched(
+                    session,
+                    f"MATCH (n:`{label}`) WHERE n.{prop} STARTS WITH 'trufflehog-' "
+                    f"WITH n LIMIT {MIGRATION_BATCH} "
+                    f"SET n.{prop} = 'multiscanner-' + substring(n.{prop}, 11) "
+                    f"RETURN count(n) AS c")
+            except Exception as e:
+                print(f"[!][graph-db] {label}.{prop} prefix migration failed: {e}")
+                ok = False
+
+    # A relationship type cannot be renamed in place; it is recreated and the old
+    # one deleted. Properties are carried over so nothing is lost.
+    for old, new in LEGACY_REL_RENAMES:
+        try:
+            moved = _run_batched(
+                session,
+                f"MATCH (a)-[r:`{old}`]->(b) WITH a, r, b LIMIT {MIGRATION_BATCH} "
+                f"CREATE (a)-[n:`{new}`]->(b) SET n = properties(r) "
+                f"DELETE r RETURN count(r) AS c")
+            if moved:
+                print(f"[graph-db] migrated {moved} {old} -> {new}")
+        except Exception as e:
+            print(f"[!][graph-db] relationship migration {old} -> {new} failed: {e}")
+            ok = False
+
+    if ok:
+        _mark_migration_applied(session)
+    else:
+        print("[!][graph-db] migration incomplete; it will be retried on the "
+              "next connection (no marker written)")
+
+
 def init_schema(session):
     """
     Initialize constraints and indexes for the graph schema.
 
     Safe to call multiple times — all statements use IF NOT EXISTS / IF EXISTS guards.
     """
+    # Before the DDL: the new constraints cannot be created while data still
+    # carries the old labels.
+    migrate_legacy_labels(session)
+
     for stmt in DROP_LEGACY_CONSTRAINTS:
         try:
             session.run(stmt)

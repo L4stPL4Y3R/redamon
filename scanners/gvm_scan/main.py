@@ -50,6 +50,35 @@ from gvm_scan.gvm_scanner import (
 # Output directory for vulnerability results
 OUTPUT_DIR = Path(__file__).parent / "output"
 
+# A STACK-level fault (no scanner running, gvmd unreachable) fails every target
+# identically, so walking the whole list only multiplies the wait: 1140 targets
+# took 18 hours to get four IPs into a scan that could never have worked (issue
+# #174). Stop once the failures are plainly not target-specific.
+MAX_CONSECUTIVE_TARGET_FAILURES = 3
+
+
+class ScanAborted(RuntimeError):
+    """The stack, not the target, is broken - continuing cannot help."""
+
+
+def check_failure_streak(result: dict, streak: int, target: str) -> int:
+    """Count consecutive failed targets, aborting the scan when they pile up.
+
+    Returns the updated streak (0 after any target that worked).
+    """
+    if result.get("status") != "error":
+        return 0
+
+    streak += 1
+    if streak >= MAX_CONSECUTIVE_TARGET_FAILURES:
+        raise ScanAborted(
+            f"Aborting after {streak} consecutive failed targets (last: {target} - "
+            f"{result.get('error', 'no detail')}). Failing on every target means the "
+            f"GVM stack is broken, not the targets: check that redamon-gvm-ospd is "
+            f"running and that its feed loader redamon-gvm-vt completed."
+        )
+    return streak
+
 
 def check_recon_has_live_targets(recon_data: dict) -> tuple:
     """
@@ -127,6 +156,7 @@ def run_vulnerability_scan(
     scan_targets = get_setting('SCAN_TARGETS', 'both')
     task_timeout = get_setting('TASK_TIMEOUT', 14400)
     poll_interval = get_setting('POLL_INTERVAL', 30)
+    no_progress_timeout = get_setting('NO_PROGRESS_TIMEOUT', 1800)
     cleanup = get_setting('CLEANUP_AFTER_SCAN', True)
 
     print("\n" + "=" * 70)
@@ -137,6 +167,7 @@ def run_vulnerability_scan(
     print(f"  Scan Strategy: {scan_targets}")
     print(f"  Task Timeout:  {task_timeout}s")
     print(f"  Poll Interval: {poll_interval}s")
+    print(f"  Stall Limit:   {no_progress_timeout}s (no-progress watchdog)")
     print(f"  Cleanup After: {cleanup}")
     print("=" * 70 + "\n")
 
@@ -261,6 +292,7 @@ def run_vulnerability_scan(
             print(f"\n[*] PHASE 1: Scanning {len(ip_list)} IP addresses (individually)...")
             print("-" * 50)
             
+            failure_streak = 0
             for i, ip in enumerate(ip_list, 1):
                 print(f"\n[*] IP {i}/{len(ip_list)}: {ip}")
                 
@@ -283,6 +315,8 @@ def run_vulnerability_scan(
                 # Save after each IP
                 save_incremental()
                 print(f"    [+] Progress saved to {output_file}")
+
+                failure_streak = check_failure_streak(ip_results, failure_streak, ip)
         
         # =====================================================================
         # PHASE 2: Scan Hostnames (one at a time for incremental saving)
@@ -299,6 +333,7 @@ def run_vulnerability_scan(
             print(f"\n[*] PHASE 2: Scanning {len(hostname_list)} hostnames (individually)...")
             print("-" * 50)
             
+            failure_streak = 0
             for i, hostname in enumerate(hostname_list, 1):
                 print(f"\n[*] Hostname {i}/{len(hostname_list)}: {hostname}")
                 
@@ -321,10 +356,19 @@ def run_vulnerability_scan(
                 # Save after each hostname
                 save_incremental()
                 print(f"    [+] Progress saved to {output_file}")
+
+                failure_streak = check_failure_streak(hostname_results, failure_streak, hostname)
         
         # Final save
         save_vuln_results(results, project_id)
-        
+
+    except ScanAborted as e:
+        # Not an error path to hide: report it, keep the partial findings, and
+        # fall through to the normal summary/graph update below.
+        print(f"\n[!] {e}")
+        results["aborted"] = str(e)
+        save_vuln_results(results, project_id)
+
     finally:
         scanner.disconnect()
     

@@ -4,11 +4,13 @@ SecretMixin: Secret detection graph operations (GitHub hunt + TruffleHog).
 Provides methods to ingest secret detection results:
 - clear_github_hunt_data: wipe GitHub hunt data for a project
 - update_graph_from_github_hunt: ingest GitHub secret hunt scan results
-- clear_trufflehog_data: wipe TruffleHog data for a project
-- update_graph_from_trufflehog: ingest TruffleHog secret scan results
+- clear_trufflehog_data: wipe TruffleHog data for a project, or for ONE source
+- update_graph_from_trufflehog: ingest one TruffleHog source's scan results
 """
 
+import hashlib
 from datetime import datetime
+from typing import Optional
 
 
 class SecretMixin:
@@ -412,130 +414,202 @@ class SecretMixin:
     # =========================================================================
     # TruffleHog Secret Scanner — Graph Integration
     # =========================================================================
+    #
+    # Multi-source model. One MultiscannerScan per (project, SOURCE), so a Docker
+    # run and a HuggingFace run coexist instead of overwriting one another:
+    #
+    #   Domain -[:HAS_MULTISCANNER_SCAN]-> MultiscannerScan     (one per project+source)
+    #         -[:HAS_ASSET]-> <asset label>                 (one per scanned thing)
+    #               -[:HAS_FINDING]-> MultiscannerFinding     (one per deduped secret)
+    #
+    # Five asset labels, not sixteen: a Docker image, an S3 bucket, an HF model
+    # and a Jenkins instance are not "repositories", but the graph renderer draws
+    # a node from labels[0] (a SINGLE label, and Neo4j does not order labels), so
+    # every node carries exactly one. Grouping by asset SHAPE gives five, and the
+    # git family keeps MultiscannerRepository — its existing colour and history.
 
-    def clear_trufflehog_data(self, user_id: str, project_id: str) -> dict:
+    #: Asset shape -> label. The scan's own source decides which is used; a
+    #: finding never picks its label from the metadata, or a mis-keyed result
+    #: would land under another source's label.
+    TRUFFLEHOG_ASSET_LABELS = {
+        "repository": "MultiscannerRepository",
+        "image": "MultiscannerImage",
+        "model": "MultiscannerModel",
+        "bucket": "MultiscannerBucket",
+        "endpoint": "MultiscannerEndpoint",
+    }
+
+    #: The label set the scoped clear has to sweep. Missing one leaks its nodes.
+    TRUFFLEHOG_ALL_ASSET_LABELS = (
+        "MultiscannerRepository", "MultiscannerImage", "MultiscannerModel",
+        "MultiscannerBucket", "MultiscannerEndpoint",
+    )
+
+    @staticmethod
+    def _trufflehog_digest(*parts: str) -> str:
+        """Stable 12-hex identity digest.
+
+        MUST match scanners/trufflehog_scan/findings.py:digest — the two run in
+        different images and cannot import each other, and
+        tests/test_trufflehog_stable_ids.py asserts they agree. Replaces the
+        builtin hash(), which is randomised per process via PYTHONHASHSEED and so
+        produced a different node id for the same repository on every run. The
+        old blanket pre-clear hid that; with source-scoped clearing it would
+        surface as duplicated and orphaned nodes.
         """
-        Delete only TruffleHog Secret Scanner nodes and relationships for a project.
+        return hashlib.sha1("\x1f".join(str(p) for p in parts).encode()).hexdigest()[:12]
 
-        Preserves all recon, GVM, and GitHub Hunt data. Only removes:
-        - TrufflehogFinding nodes (leaf findings)
-        - TrufflehogRepository nodes
-        - TrufflehogScan nodes
-        - All relationships between them and to Domain
+    @staticmethod
+    def _trufflehog_validation_status(finding: dict) -> str:
+        """Normalise a finding into the vocabulary the :Secret nodes already use.
 
-        Args:
-            user_id: User identifier
-            project_id: Project identifier
-
-        Returns:
-            dict with counts of deleted items
+        Prefers the scanner's own field (it alone knows whether verification was
+        switched off for the run); the derivation is only a fallback for findings
+        written before the field existed. 'unvalidated' (checked, dead) and
+        'unverified' (never checked) must not collapse — the difference decides
+        whether a pentest report can call a credential safe.
         """
-        stats = {
-            "findings_deleted": 0,
-            "repositories_deleted": 0,
-            "scans_deleted": 0,
-        }
+        status = str(finding.get("validation_status") or "").strip()
+        if status:
+            return status
+        if finding.get("verified"):
+            return "validated"
+        if finding.get("verification_error"):
+            return "verify_error"
+        return "unvalidated"
+
+    def clear_trufflehog_data(self, user_id: str, project_id: str,
+                              source: Optional[str] = None) -> dict:
+        """Delete TruffleHog nodes for a project.
+
+        With `source` set, delete ONLY that source's subgraph. This is the change
+        that must not be missed: the old blanket clear ran at the head of every
+        ingest, so a Docker scan finishing would DETACH DELETE every HuggingFace
+        finding — no error, no warning, and a perfect-looking JSON artifact to go
+        with it. Ingest always passes a source; only project deletion passes None.
+
+        Legacy nodes (written before the multi-source model, when the scanner was
+        github-only and stamped no `source`) are swept together with the `github`
+        source, which is what they are. Any other scoped clear leaves them alone.
+        """
+        stats = {"findings_deleted": 0, "assets_deleted": 0, "scans_deleted": 0}
+        scoped = bool(source)
+        # Untagged legacy data is github data; nothing else may claim it.
+        legacy = " OR n.source IS NULL" if source == "github" else ""
+        where = f" AND (n.source = $source{legacy})" if scoped else ""
+        params = {"uid": user_id, "pid": project_id}
+        if scoped:
+            params["source"] = source
 
         with self.driver.session() as session:
-            # 1. Delete leaf nodes first (TrufflehogFinding)
+            # Leaves first, so an interrupted clear cannot leave a finding
+            # dangling off a deleted asset.
             result = session.run(
-                """
-                MATCH (tf:TrufflehogFinding {user_id: $uid, project_id: $pid})
-                DETACH DELETE tf
-                RETURN count(tf) as deleted
+                f"""
+                MATCH (n:MultiscannerFinding)
+                WHERE n.user_id = $uid AND n.project_id = $pid{where}
+                DETACH DELETE n
+                RETURN count(n) as deleted
                 """,
-                uid=user_id, pid=project_id
+                **params,
             )
             record = result.single()
             if record:
                 stats["findings_deleted"] = record["deleted"]
 
-            # 2. Delete TrufflehogRepository nodes
-            result = session.run(
-                """
-                MATCH (tr:TrufflehogRepository {user_id: $uid, project_id: $pid})
-                DETACH DELETE tr
-                RETURN count(tr) as deleted
-                """,
-                uid=user_id, pid=project_id
-            )
-            record = result.single()
-            if record:
-                stats["repositories_deleted"] = record["deleted"]
+            for label in self.TRUFFLEHOG_ALL_ASSET_LABELS:
+                result = session.run(
+                    f"""
+                    MATCH (n:{label})
+                    WHERE n.user_id = $uid AND n.project_id = $pid{where}
+                    DETACH DELETE n
+                    RETURN count(n) as deleted
+                    """,
+                    **params,
+                )
+                record = result.single()
+                if record:
+                    stats["assets_deleted"] += record["deleted"]
 
-            # 3. Delete TrufflehogScan nodes
             result = session.run(
-                """
-                MATCH (ts:TrufflehogScan {user_id: $uid, project_id: $pid})
-                DETACH DELETE ts
-                RETURN count(ts) as deleted
+                f"""
+                MATCH (n:MultiscannerScan)
+                WHERE n.user_id = $uid AND n.project_id = $pid{where}
+                DETACH DELETE n
+                RETURN count(n) as deleted
                 """,
-                uid=user_id, pid=project_id
+                **params,
             )
             record = result.single()
             if record:
                 stats["scans_deleted"] = record["deleted"]
 
             total = sum(stats.values())
-            print(f"[*][graph-db] Cleared TruffleHog data: {total} items removed")
+            scope = f"source={source}" if scoped else "ALL sources"
+            print(f"[*][graph-db] Cleared TruffleHog data ({scope}): {total} items removed")
 
         return stats
 
-    def update_graph_from_trufflehog(self, trufflehog_data: dict, user_id: str, project_id: str) -> dict:
-        """
-        Update the Neo4j graph database with TruffleHog scan results.
+    def update_graph_from_trufflehog(self, trufflehog_data: dict, user_id: str,
+                                     project_id: str) -> dict:
+        """Write ONE source's TruffleHog run into the graph.
 
-        Node hierarchy (3 levels):
-        - TrufflehogScan node (scan metadata: target, timestamps, statistics)
-        - TrufflehogRepository nodes (each scanned repository)
-        - TrufflehogFinding nodes (each secret finding with verification status)
+        Called by the orchestrator after the scan container exits — the clean
+        half of the dirty/clean split. Every string in `trufflehog_data` is
+        target-controlled (repo names, image tags, file paths), so every value
+        goes in as a Cypher PARAMETER; nothing is formatted into a query string.
 
-        Relationships:
-        - Domain -[:HAS_TRUFFLEHOG_SCAN]-> TrufflehogScan
-        - TrufflehogScan -[:HAS_REPOSITORY]-> TrufflehogRepository
-        - TrufflehogRepository -[:HAS_FINDING]-> TrufflehogFinding
-
-        Deduplication: Findings are deduplicated by repository+file+line+detector_name.
-
-        Args:
-            trufflehog_data: The TruffleHog scan JSON data (top-level with target, findings, statistics)
-            user_id: User identifier for multi-tenant isolation
-            project_id: Project identifier for multi-tenant isolation
-
-        Returns:
-            Dictionary with statistics about created nodes/relationships
+        Deduplication is source-scoped: the same secret found by two sources is
+        two findings, because the second source's context is a separate fact.
         """
         stats = {
             "scan_created": 0,
-            "repositories_created": 0,
+            "assets_created": 0,
             "findings_created": 0,
             "relationships_created": 0,
             "findings_deduplicated": 0,
-            "errors": []
+            "errors": [],
         }
 
-        # Validate input
-        target = trufflehog_data.get("target")
-        findings = trufflehog_data.get("findings", [])
-        if not target:
-            stats["errors"].append("No target found in trufflehog_data")
+        source = str(trufflehog_data.get("source") or "").strip()
+        if not source:
+            stats["errors"].append("No source in trufflehog_data; refusing to write")
             return stats
 
-        scan_statistics = trufflehog_data.get("statistics", {})
+        target = trufflehog_data.get("target") or ""
+        # `or []` rather than a .get default: a truncated or hand-edited artifact
+        # can carry an explicit null, and the key being PRESENT means the default
+        # never applies. The scan node is still written — losing the run record
+        # too would hide that the scan happened at all.
+        findings = trufflehog_data.get("findings") or []
+        if not isinstance(findings, list):
+            # Deliberately `type(findings)` and not its dunder name attribute:
+            # tests/test_graph_db_refactor.py screens mixins for that literal to
+            # catch stray main-guard blocks, with a plain substring match.
+            stats["errors"].append(
+                f"findings is {type(findings)}, not a list; ignoring them")
+            findings = []
+        scan_statistics = trufflehog_data.get("statistics") or {}
+        asset_kind = trufflehog_data.get("asset_kind") or "endpoint"
+        asset_label = self.TRUFFLEHOG_ASSET_LABELS.get(
+            asset_kind, "MultiscannerEndpoint")
 
         with self.driver.session() as session:
+            # SCOPED clear, never the blanket one: this reaps only this source's
+            # previous run (and any partial nodes a crashed run left behind).
+            clear_stats = self.clear_trufflehog_data(user_id, project_id, source=source)
+            print(f"[*][graph-db] Pre-cleared {source}: {clear_stats}")
 
-            # Clear previous TruffleHog data for this project
-            clear_stats = self.clear_trufflehog_data(user_id, project_id)
-            print(f"[*][graph-db] Pre-cleared: {clear_stats}")
-
-            # 1. Create TrufflehogScan node (scan metadata)
-            scan_id = f"trufflehog-scan-{user_id}-{project_id}"
+            scan_id = f"multiscanner-scan-{user_id}-{project_id}-{source}"
             scan_props = {
                 "id": scan_id,
                 "user_id": user_id,
                 "project_id": project_id,
+                "source": source,
+                "source_label": trufflehog_data.get("source_label", source),
+                "run_id": trufflehog_data.get("run_id", source),
                 "target": target,
+                "verification_enabled": bool(trufflehog_data.get("verification_enabled", True)),
                 "scan_start_time": trufflehog_data.get("scan_start_time", ""),
                 "scan_end_time": trufflehog_data.get("scan_end_time", ""),
                 "duration_seconds": trufflehog_data.get("duration_seconds", 0),
@@ -543,109 +617,125 @@ class SecretMixin:
                 "total_findings": scan_statistics.get("total_findings", 0),
                 "verified_findings": scan_statistics.get("verified_findings", 0),
                 "unverified_findings": scan_statistics.get("unverified_findings", 0),
-                "repositories_scanned": scan_statistics.get("repositories_scanned", 0),
+                "validated_findings": scan_statistics.get("validated", 0),
+                "assets_scanned": scan_statistics.get("assets_scanned", 0),
+                # Kept for one release so report queries reading the old name
+                # keep working (renamed to assets_scanned).
+                "repositories_scanned": scan_statistics.get("assets_scanned", 0),
             }
 
             try:
                 session.run(
                     """
-                    MERGE (ts:TrufflehogScan {id: $id})
+                    MERGE (ts:MultiscannerScan {id: $id, user_id: $uid, project_id: $pid})
                     SET ts += $props, ts.updated_at = datetime()
                     """,
-                    id=scan_id, props=scan_props
+                    id=scan_id, uid=user_id, pid=project_id, props=scan_props,
                 )
                 stats["scan_created"] += 1
             except Exception as e:
-                stats["errors"].append(f"Failed to create TrufflehogScan node: {e}")
-                print(f"[!][graph-db] TrufflehogScan creation failed: {e}")
+                stats["errors"].append(f"Failed to create MultiscannerScan node: {e}")
+                print(f"[!][graph-db] MultiscannerScan creation failed: {e}")
                 return stats
 
-            # 2. Link TrufflehogScan to Domain node
             try:
                 result = session.run(
                     """
                     MATCH (d:Domain {user_id: $uid, project_id: $pid})
-                    MATCH (ts:TrufflehogScan {id: $scan_id})
-                    MERGE (d)-[:HAS_TRUFFLEHOG_SCAN]->(ts)
+                    MATCH (ts:MultiscannerScan {id: $scan_id, user_id: $uid, project_id: $pid})
+                    MERGE (d)-[:HAS_MULTISCANNER_SCAN]->(ts)
                     RETURN count(*) as linked
                     """,
-                    uid=user_id, pid=project_id, scan_id=scan_id
+                    uid=user_id, pid=project_id, scan_id=scan_id,
                 )
                 record = result.single()
                 if record and record["linked"] > 0:
                     stats["relationships_created"] += 1
                 else:
-                    print(f"[!][graph-db] Warning: No Domain node found for user_id={user_id}, project_id={project_id}")
+                    print(f"[!][graph-db] Warning: No Domain node found for "
+                          f"user_id={user_id}, project_id={project_id}")
             except Exception as e:
-                stats["errors"].append(f"Failed to link TrufflehogScan to Domain: {e}")
+                stats["errors"].append(f"Failed to link MultiscannerScan to Domain: {e}")
 
-            # 3. Process findings (deduplicate by repo+file+line+detector)
             seen_findings = set()
-            created_repos = set()
+            created_assets = set()
 
             for finding in findings:
-                repository = finding.get("repository", "")
-                file_path = finding.get("file", "")
+                asset = finding.get("asset") or finding.get("repository") or ""
+                location = finding.get("location") or finding.get("file") or ""
                 line = finding.get("line", 0)
                 detector_name = finding.get("detector_name", "")
 
                 if not detector_name:
                     continue
 
-                # Deduplicate
-                dedup_key = f"{repository}:{file_path}:{line}:{detector_name}"
+                # Source-scoped: without the prefix, the same secret found by two
+                # sources collapses into one node.
+                dedup_key = f"{source}:{asset}:{location}:{line}:{detector_name}"
                 if dedup_key in seen_findings:
                     stats["findings_deduplicated"] += 1
                     continue
                 seen_findings.add(dedup_key)
 
-                # Generate IDs
-                repo_hash = f"{hash(f'{user_id}:{project_id}:{repository}') & 0xFFFFFFFF:08x}"
-                repo_id = f"trufflehog-repo-{user_id}-{project_id}-{repo_hash}"
-                finding_hash = f"{hash(dedup_key) & 0xFFFFFFFF:08x}"
-                finding_id = f"trufflehog-finding-{user_id}-{project_id}-{finding_hash}"
+                asset_id = (f"multiscanner-asset-{user_id}-{project_id}-{source}-"
+                            f"{self._trufflehog_digest(user_id, project_id, source, asset)}")
+                finding_id = (f"multiscanner-finding-{user_id}-{project_id}-{source}-"
+                              f"{self._trufflehog_digest(user_id, project_id, dedup_key)}")
 
-                # 3a. Create/merge TrufflehogRepository node
-                if repository and repository not in created_repos:
-                    repo_props = {
-                        "id": repo_id,
-                        "name": repository,
+                if asset and asset not in created_assets:
+                    asset_props = {
+                        "id": asset_id,
+                        "name": asset,
+                        "source": source,
+                        "asset_kind": asset_kind,
+                        "scan_id": scan_id,
                         "user_id": user_id,
                         "project_id": project_id,
                     }
                     try:
+                        # The label is interpolated because Cypher cannot
+                        # parameterise one — it comes from OUR registry
+                        # (TRUFFLEHOG_ASSET_LABELS), never from scan output.
                         session.run(
-                            "MERGE (tr:TrufflehogRepository {id: $id}) SET tr += $props, tr.updated_at = datetime()",
-                            id=repo_id, props=repo_props
+                            f"MERGE (ta:{asset_label} "
+                            f"{{id: $id, user_id: $uid, project_id: $pid}}) "
+                            f"SET ta += $props, ta.updated_at = datetime()",
+                            id=asset_id, uid=user_id, pid=project_id, props=asset_props,
                         )
-                        stats["repositories_created"] += 1
-                        created_repos.add(repository)
+                        stats["assets_created"] += 1
+                        created_assets.add(asset)
 
-                        # Link TrufflehogScan → TrufflehogRepository
                         session.run(
-                            """
-                            MATCH (ts:TrufflehogScan {id: $scan_id})
-                            MATCH (tr:TrufflehogRepository {id: $repo_id})
-                            MERGE (ts)-[:HAS_REPOSITORY]->(tr)
+                            f"""
+                            MATCH (ts:MultiscannerScan {{id: $scan_id, user_id: $uid, project_id: $pid}})
+                            MATCH (ta:{asset_label} {{id: $asset_id, user_id: $uid, project_id: $pid}})
+                            MERGE (ts)-[:HAS_ASSET]->(ta)
                             """,
-                            scan_id=scan_id, repo_id=repo_id
+                            scan_id=scan_id, asset_id=asset_id, uid=user_id, pid=project_id,
                         )
                         stats["relationships_created"] += 1
                     except Exception as e:
-                        stats["errors"].append(f"Failed to create repo {repository}: {e}")
+                        stats["errors"].append(f"Failed to create asset {asset}: {e}")
                         continue
 
-                # 3b. Create TrufflehogFinding node
                 finding_props = {
                     "id": finding_id,
                     "user_id": user_id,
                     "project_id": project_id,
+                    "source": source,
+                    "scan_id": scan_id,
                     "detector_name": detector_name,
                     "detector_description": finding.get("detector_description", ""),
                     "verified": finding.get("verified", False),
+                    "validation_status": self._trufflehog_validation_status(finding),
+                    "finding_kind": finding.get("finding_kind", "secret"),
                     "redacted": finding.get("redacted", ""),
-                    "repository": repository,
-                    "file": file_path,
+                    "asset": asset,
+                    "location": location,
+                    # Deprecated aliases, one release, so existing report Cypher
+                    # keeps matching while it is migrated.
+                    "repository": asset,
+                    "file": location,
                     "commit": finding.get("commit", ""),
                     "line": line,
                     "link": finding.get("link", ""),
@@ -655,30 +745,32 @@ class SecretMixin:
 
                 try:
                     session.run(
-                        "MERGE (tf:TrufflehogFinding {id: $id}) SET tf += $props, tf.updated_at = datetime()",
-                        id=finding_id, props=finding_props
+                        """
+                        MERGE (tf:MultiscannerFinding {id: $id, user_id: $uid, project_id: $pid})
+                        SET tf += $props, tf.updated_at = datetime()
+                        """,
+                        id=finding_id, uid=user_id, pid=project_id, props=finding_props,
                     )
                     stats["findings_created"] += 1
 
-                    # Link TrufflehogRepository → TrufflehogFinding
-                    if repository:
+                    if asset:
                         session.run(
-                            """
-                            MATCH (tr:TrufflehogRepository {id: $repo_id})
-                            MATCH (tf:TrufflehogFinding {id: $finding_id})
-                            MERGE (tr)-[:HAS_FINDING]->(tf)
+                            f"""
+                            MATCH (ta:{asset_label} {{id: $asset_id, user_id: $uid, project_id: $pid}})
+                            MATCH (tf:MultiscannerFinding {{id: $finding_id, user_id: $uid, project_id: $pid}})
+                            MERGE (ta)-[:HAS_FINDING]->(tf)
                             """,
-                            repo_id=repo_id, finding_id=finding_id
+                            asset_id=asset_id, finding_id=finding_id,
+                            uid=user_id, pid=project_id,
                         )
                         stats["relationships_created"] += 1
                 except Exception as e:
                     stats["errors"].append(f"Failed to create finding {dedup_key}: {e}")
 
-            # Print summary
-            print(f"\n[+] TruffleHog Graph Update Summary:")
-            print(f"[+][graph-db] Created {stats['scan_created']} TrufflehogScan node")
-            print(f"[+][graph-db] Created {stats['repositories_created']} TrufflehogRepository nodes")
-            print(f"[+][graph-db] Created {stats['findings_created']} TrufflehogFinding nodes")
+            print(f"\n[+] TruffleHog Graph Update Summary ({source}):")
+            print(f"[+][graph-db] Created {stats['scan_created']} MultiscannerScan node")
+            print(f"[+][graph-db] Created {stats['assets_created']} {asset_label} nodes")
+            print(f"[+][graph-db] Created {stats['findings_created']} MultiscannerFinding nodes")
             print(f"[+][graph-db] Created {stats['relationships_created']} relationships")
             print(f"[+][graph-db] Deduplicated {stats['findings_deduplicated']} findings")
 
@@ -686,4 +778,3 @@ class SecretMixin:
                 print(f"[!][graph-db] {len(stats['errors'])} errors occurred")
 
         return stats
-

@@ -10,6 +10,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 import os
 import re
+import shutil
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -20,6 +21,20 @@ from docker.errors import NotFound, APIError
 
 import resource_governor as rg
 from admission_ledger import ReservationLedger, AdmissionError
+from ip_denylist import classify_host
+
+# The TruffleHog source registry lives with the scanner and is mounted in
+# (compose: ./scanners/trufflehog_scan:/app/trufflehog_scan). Imported through a
+# shim that also resolves the repo-checkout path. Guarded because a missing
+# mount must degrade to "TruffleHog cannot start" rather than crash-loop the
+# whole orchestrator, which spawns six other scan types.
+try:
+    from trufflehog_registry import sources as th_sources
+except ImportError as _th_exc:  # pragma: no cover - deployment misconfiguration
+    th_sources = None
+    _TRUFFLEHOG_REGISTRY_ERROR = str(_th_exc)
+else:
+    _TRUFFLEHOG_REGISTRY_ERROR = ""
 
 from models import (
     ReconState, ReconStatus, ReconLogEvent,
@@ -164,11 +179,24 @@ GITHUB_HUNT_PHASE_PATTERNS = [
     (r"SCAN SUMMARY|Final results saved|Scan complete", "Complete", 3),
 ]
 
-# TruffleHog Secret Scanner phase patterns to detect from logs
+# How many times a finished run's graph ingest is retried before giving up. The
+# 30 s sweep would otherwise retry a permanently-failing ingest forever, each
+# attempt copying the artifact and opening a fresh Neo4j connection.
+MAX_TRUFFLEHOG_INGEST_ATTEMPTS = int(os.environ.get("TRUFFLEHOG_INGEST_ATTEMPTS", "5"))
+
+# How long a finished run stays in the state dict before it is pruned. Must stay
+# comfortably above the webapp's 90 s reconcile grace: prune sooner and a run
+# whose UI was closed disappears from /all before the reconcile reads it, and its
+# history row is recorded as `canceled` instead of its real outcome.
+TRUFFLEHOG_TERMINAL_RETENTION_S = int(os.environ.get("TRUFFLEHOG_TERMINAL_RETENTION", "600"))
+
+# TruffleHog Secret Scanner phase patterns to detect from logs. Matched against
+# what scanners/trufflehog_scan actually prints — the container reads a job file
+# now, so there is no settings-loading phase to report.
 TRUFFLEHOG_PHASE_PATTERNS = [
-    (r"TruffleHog Secret Scanner|Loading.*settings|Initializing TruffleHog", "Loading Settings", 1),
-    (r"Scanning repositor|Scanning organization|Running:.*trufflehog", "Scanning Repositories", 2),
-    (r"SCAN SUMMARY|Final results saved|Scan complete", "Complete", 3),
+    (r"TruffleHog Secret Scanner|\[\*\] Source:", "Preparing", 1),
+    (r"\[\*\] Running: trufflehog|\[\+\] Found:", "Scanning", 2),
+    (r"SCAN SUMMARY|Results saved to", "Complete", 3),
 ]
 
 # AI Attack Surface phase patterns. Match ONLY the explicit [Phase N] markers
@@ -210,7 +238,11 @@ class ContainerManager:
         self.partial_recon_states: dict[str, dict[str, PartialReconState]] = {}
         self.gvm_states: dict[str, GvmState] = {}
         self.github_hunt_states: dict[str, GithubHuntState] = {}
-        self.trufflehog_states: dict[str, TrufflehogState] = {}
+        # Nested project_id -> source (parallel per-source runs). The inner key is
+        # the SOURCE, not a uuid: that makes "one run per source, unlimited
+        # distinct sources" a property of the data structure, with no counter to
+        # maintain and no trufflehog-specific parallelism cap to tune.
+        self.trufflehog_states: dict[str, dict[str, TrufflehogState]] = {}
         self.supply_chain_states: dict[str, SupplyChainState] = {}
         # AI Attack Surface: nested project_id -> run_id (parallel per-tool jobs).
         self.ai_attack_states: dict[str, dict[str, AiAttackSurfaceState]] = {}
@@ -279,6 +311,28 @@ class ContainerManager:
             _env_unset_if_blank("SUPPLY_CHAIN_ANALYZER_NANOCPUS", str(2_000_000_000)))
         self.supply_chain_analyzer_pids = int(
             _env_unset_if_blank("SUPPLY_CHAIN_ANALYZER_PIDS", "512"))
+        # TruffleHog scan network. A user-defined bridge, never host: the scan
+        # needs outbound internet but must not see the host's loopback stack,
+        # where Neo4j (7687) and the orchestrator (8010) listen.
+        self.trufflehog_network = _env_unset_if_blank(
+            "TRUFFLEHOG_NETWORK", "redamon-trufflehog-net")
+        # Allowlisted host paths for the `filesystem` source, keyed by the UI
+        # value. Server-resolved on purpose: an operator-typed host path plus a
+        # scan container is a file-disclosure primitive. Absent => not mounted,
+        # so the scan finds an empty dir rather than something unintended.
+        # Overwritten by api.py from the orchestrator's OWN detected mounts (the
+        # repo's rule for host paths); the env vars are only the fallback for a
+        # non-compose run. Absent => that root is not offered to the scan.
+        # Host path of scanners/scan_targets — the ONLY directory a scan
+        # container may read from disk. Overwritten by api.py from the
+        # orchestrator's OWN detected mounts (the repo's rule for host paths);
+        # this env var is the fallback for a non-compose run. Empty => no mount,
+        # and the scan finds an empty directory rather than a guessed one.
+        self.trufflehog_scan_targets = os.environ.get(
+            "TRUFFLEHOG_SCAN_TARGETS_PATH", "").strip()
+        # Injected by api.py when a scope/ROE loader is configured; see
+        # _trufflehog_scope_check. None => no scope declared, same as other scans.
+        self.trufflehog_scope_checker = None
         self.supply_chain_osv_db_volume = os.environ.get(
             "SUPPLY_CHAIN_OSV_DB_VOLUME", "redamon-osv-db")
         # Named volume shared with the webapp: the operator's uploaded SBOM/
@@ -378,9 +432,13 @@ class ContainerManager:
         for pid, st in self.github_hunt_states.items():
             if st.status in (GithubHuntStatus.RUNNING, GithubHuntStatus.STARTING, GithubHuntStatus.PAUSED):
                 keys.add(self._scan_key("github_hunt", pid))
-        for pid, st in self.trufflehog_states.items():
-            if st.status in (TrufflehogStatus.RUNNING, TrufflehogStatus.STARTING, TrufflehogStatus.PAUSED):
-                keys.add(self._scan_key("trufflehog", pid))
+        for pid, runs in self.trufflehog_states.items():
+            for source, st in runs.items():
+                if st.status in (TrufflehogStatus.RUNNING, TrufflehogStatus.STARTING, TrufflehogStatus.PAUSED):
+                    # MUST match the key _admit_scan built, source-qualified kind
+                    # included. A mismatch makes the 30 s reaper free a live
+                    # scan's reservation and the governor over-admit into OOM.
+                    keys.add(self._scan_key(self._trufflehog_kind(source), pid, source))
         for pid, st in self.supply_chain_states.items():
             if st.status in (SupplyChainStatus.RUNNING, SupplyChainStatus.STARTING, SupplyChainStatus.PAUSED):
                 keys.add(self._scan_key("supply_chain", pid))
@@ -416,8 +474,10 @@ class ContainerManager:
         for pid, st in self.github_hunt_states.items():
             if st.status in (GithubHuntStatus.RUNNING, GithubHuntStatus.STARTING, GithubHuntStatus.PAUSED):
                 projects.add(pid)
-        for pid, st in self.trufflehog_states.items():
-            if st.status in (TrufflehogStatus.RUNNING, TrufflehogStatus.STARTING, TrufflehogStatus.PAUSED):
+        for pid, runs in self.trufflehog_states.items():
+            if any(st.status in (TrufflehogStatus.RUNNING, TrufflehogStatus.STARTING,
+                                 TrufflehogStatus.PAUSED)
+                   for st in runs.values()):
                 projects.add(pid)
         for pid, st in self.supply_chain_states.items():
             if st.status in (SupplyChainStatus.RUNNING, SupplyChainStatus.STARTING, SupplyChainStatus.PAUSED):
@@ -457,7 +517,7 @@ class ContainerManager:
                 pass
         for pid in list(self.trufflehog_states.keys()):
             try:
-                await self.get_trufflehog_status(pid)
+                await self.get_all_trufflehog_statuses(pid)
             except Exception:
                 pass
         # L1-1: sweep supply-chain too, or a finished scan whose tab is closed
@@ -1693,11 +1753,14 @@ class ContainerManager:
                 await self.stop_github_hunt(project_id, timeout=5)
             except Exception as e:
                 logger.error(f"Error cleaning up GitHub hunt {project_id}: {e}")
-        for project_id in list(self.trufflehog_states.keys()):
-            try:
-                await self.stop_trufflehog(project_id, timeout=5)
-            except Exception as e:
-                logger.error(f"Error cleaning up TruffleHog {project_id}: {e}")
+        # Per SOURCE, not per project: a project-level stop would leave every
+        # other source's container orphaned on shutdown, still holding RAM.
+        for project_id, runs in list(self.trufflehog_states.items()):
+            for source in list(runs.keys()):
+                try:
+                    await self.stop_trufflehog(project_id, source, timeout=5)
+                except Exception as e:
+                    logger.error(f"Error cleaning up TruffleHog {project_id}/{source}: {e}")
         # L1-3: stop supply-chain scans too, or a running redamon-supply-chain-<pid>
         # (holding Neo4j creds + its mem envelope) orphans on orchestrator shutdown.
         for project_id in list(self.supply_chain_states.keys()):
@@ -2731,6 +2794,11 @@ class ContainerManager:
                     "NEO4J_PASSWORD": os.environ.get("NEO4J_PASSWORD", ""),
                     **self._scanner_env(),  # S3/E6: scoped scanner token
                     # GVM connection settings
+                    # Operator pin for the stall watchdog. Forwarded ONLY when set,
+                    # so an unset knob reaches the scan as "use the shipped default"
+                    # rather than as an explicit empty value (issue #174).
+                    **({"GVM_NO_PROGRESS_TIMEOUT": os.environ["GVM_NO_PROGRESS_TIMEOUT"]}
+                       if os.environ.get("GVM_NO_PROGRESS_TIMEOUT", "").strip() else {}),
                     "GVM_SOCKET_PATH": os.environ.get("GVM_SOCKET_PATH", "/run/gvmd/gvmd.sock"),
                     "GVM_USERNAME": os.environ.get("GVM_USERNAME", "admin"),
                     "GVM_PASSWORD": os.environ.get("GVM_PASSWORD", "admin"),
@@ -3415,22 +3483,229 @@ class ContainerManager:
     # TruffleHog Secret Scanner Container Lifecycle
     # =========================================================================
 
-    def _get_trufflehog_container_name(self, project_id: str) -> str:
-        """Generate container name for a TruffleHog scan"""
+    @staticmethod
+    def _trufflehog_kind(source: str) -> str:
+        """Source-qualified admission kind.
+
+        Sources are not interchangeable in RAM terms: a git clone is a few
+        hundred MB, while docker and huggingface pull and decompress remote blobs
+        and peak far above that. ``scan_job_envelope`` resolves
+        ``trufflehog:<source>`` and FLOORS it at the plain ``trufflehog``
+        envelope, so qualifying every source is safe — a source with no entry of
+        its own keeps the family envelope, and a calibrated host can never make a
+        heavy source reserve less than the base.
+
+        Same rule as ``_partial_kind``: admission and reconcile must use this
+        identical key format, or the reaper frees a live scan's reservation.
+        """
+        return f"trufflehog:{source}" if source else "trufflehog"
+
+    def _get_trufflehog_container_name(self, project_id: str, source: str) -> str:
+        """Container name for ONE source's run. The source is part of the name,
+        so starting docker does not force-remove a running huggingface scan."""
         safe_id = re.sub(r'[^a-zA-Z0-9_.-]', '_', project_id)
-        return f"redamon-trufflehog-{safe_id}"
+        safe_source = re.sub(r'[^a-zA-Z0-9_.-]', '_', source or "unknown")
+        return f"redamon-trufflehog-{safe_id}-{safe_source}"
 
-    async def get_trufflehog_status(self, project_id: str) -> TrufflehogState:
-        """Get current status of a TruffleHog scan process. Docker inspection
-        runs off the event loop (_run_blocking) so a slow daemon can't stall the
-        worker -- same poll cadence and freeze risk as recon."""
-        return await self._run_blocking(self._get_trufflehog_status_sync, project_id)
+    def _trufflehog_run_dir(self, project_id: str, source: str) -> Path:
+        """Per-run scratch dir on the host: the job file in, the scan's working
+        files (regex path-files, the GCP service-account blob) alongside.
 
-    def _get_trufflehog_status_sync(self, project_id: str) -> TrufflehogState:
-        if project_id in self.trufflehog_states:
-            state = self.trufflehog_states[project_id]
+        Together with the output dir this is the ENTIRE contract across the
+        dirty/clean boundary. The scan container gets these two directories rw
+        and nothing else writable.
+        """
+        safe_id = re.sub(r'[^a-zA-Z0-9_.-]', '_', project_id)
+        safe_source = re.sub(r'[^a-zA-Z0-9_.-]', '_', source or "unknown")
+        return Path(f"/tmp/redamon/trufflehog_{safe_id}_{safe_source}")
 
-            if state.container_id:
+    @staticmethod
+    def _trufflehog_output_name(project_id: str, source: str) -> str:
+        """Findings filename, per project AND source. The webapp's download route
+        globs these, so the shape is part of that contract."""
+        safe_id = re.sub(r'[^a-zA-Z0-9_.-]', '_', project_id)
+        safe_source = re.sub(r'[^a-zA-Z0-9_.-]', '_', source or "unknown")
+        return f"trufflehog_{safe_id}_{safe_source}.json"
+
+    def _trufflehog_output_path(self, project_id: str, source: str) -> Path:
+        """Where the published findings live, as the ORCHESTRATOR sees them.
+        Compose binds this dir into the webapp read-only for the JSON download."""
+        return Path("/app/trufflehog_scan/output") / self._trufflehog_output_name(project_id, source)
+
+    def _trufflehog_git_config_mount(self, run_dir: Path, scan_target_mounts: dict) -> dict:
+        """A system gitconfig that lets the scan read a locally-supplied repo.
+
+        git refuses a repository it does not own ("detected dubious ownership")
+        and the clone fails outright — the fixture belongs to whoever created it
+        on the host, the container runs as an unprivileged uid, and the two never
+        match. The failure is silent in the worst way: the wrapper still writes an
+        artifact, so it reads as a clean scan of a clean repo.
+
+        It has to be a config FILE. git honours `safe.directory` only from
+        protected configuration, deliberately, so that an untrusted repository
+        cannot inject it — which rules out `-c` and the GIT_CONFIG_* env vars.
+
+        Written into the run's own scratch dir and mounted read-only, so it lives
+        and dies with the run rather than being baked into the image. Only for
+        runs that actually carry the scan-targets tree; that tree is read-only and
+        is the only repository this container can reach.
+        """
+        if not scan_target_mounts:
+            return {}
+        try:
+            # A SIBLING of the run dir, never inside it: run_dir is bind-mounted
+            # rw at /work, so a gitconfig written there would be rewritable by
+            # the container through that mount and the read-only bind below would
+            # promise something it does not deliver.
+            cfg = run_dir.parent / f"{run_dir.name}.gitconfig"
+            cfg.parent.mkdir(parents=True, exist_ok=True)
+            cfg.write_text("[safe]\n\tdirectory = *\n")
+        except OSError as e:
+            logger.warning(f"[trufflehog] could not write gitconfig: {e}")
+            return {}
+        return {str(cfg): {"bind": "/etc/gitconfig", "mode": "ro"}}
+
+    def _trufflehog_artifact_error(self, project_id: str, source: str) -> str:
+        """The scan's own verdict from its artifact, or "" if it succeeded.
+
+        The wrapper exits 0 whenever it managed to WRITE a result, including a
+        result that records a failed scan, so the container exit code cannot tell
+        a clean target from a target that was never reached. Unreadable or
+        missing is treated as success: this decides whether to flip a run to
+        ERROR, and a parse problem here must not invent a failure that the scan
+        did not report.
+        """
+        try:
+            run_dir = self._trufflehog_run_dir(project_id, source)
+            out = run_dir / "out.json"
+            if not out.exists():
+                # The wrapper writes a result on every path it can reach,
+                # including the ones that record a failure. No file at all means
+                # it died before it could - reporting that as a clean scan is the
+                # exact silent lie this function exists to stop.
+                return "The scan exited without writing a result file"
+            data = json.loads(out.read_text())
+        except Exception:
+            # Unreadable or half-written: cannot tell a failure from a clean run,
+            # and inventing one would flip a good scan to ERROR.
+            return ""
+        if not isinstance(data, dict) or data.get("status") != "error":
+            return ""
+        err = str(data.get("error") or "").strip()
+        return err or "The scan reported an error and produced no findings"
+
+    def _publish_trufflehog_output(self, project_id: str, source: str) -> Optional[Path]:
+        """Copy a finished run's findings from the scratch dir to the shared
+        output dir, and return the published path.
+
+        Done by the orchestrator, not the container: the scan runs as a non-root
+        uid with every capability dropped and cannot write the host-owned output
+        directory — which is precisely why it is not mounted into it.
+
+        Returns None when the run wrote nothing (a container that died before its
+        first write); the caller then has nothing to ingest.
+        """
+        src = self._trufflehog_run_dir(project_id, source) / "out.json"
+        if not src.exists():
+            return None
+        dest = self._trufflehog_output_path(project_id, source)
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src, dest)
+            os.chmod(dest, 0o644)
+            return dest
+        except OSError as e:
+            logger.warning(f"[trufflehog] could not publish {source} findings: {e}")
+            # Fall back to the scratch copy so ingest still runs; only the
+            # operator-facing download is lost.
+            return src
+
+    def _drop_trufflehog_run(self, project_id: str, source: str,
+                             expected: Optional[TrufflehogState] = None) -> None:
+        """Release a run slot, and prune the project entry when it empties.
+
+        `expected` guards against dropping a DIFFERENT run that claimed the slot
+        in the meantime — only the caller's own claim is removed.
+        """
+        runs = self.trufflehog_states.get(project_id)
+        if not runs:
+            return
+        if expected is not None and runs.get(source) is not expected:
+            return
+        runs.pop(source, None)
+        if not runs:
+            self.trufflehog_states.pop(project_id, None)
+
+    def _ensure_trufflehog_network(self) -> None:
+        """Create the TruffleHog scan network if missing.
+
+        A user-defined bridge, NOT ``network_mode=host``. The scan legitimately
+        needs outbound internet (github.com, a docker registry, huggingface.co),
+        which a bridge gives it through NAT; what it must NOT have is the host's
+        own loopback stack, where Neo4j (7687) and the orchestrator (8010) live.
+        On host networking a target of ``127.0.0.1:7687`` resolves straight into
+        RedAmon's own graph. Compose never creates this network because no
+        service is attached to it. Idempotent, tolerates the create race.
+        """
+        name = self.trufflehog_network
+        try:
+            self.client.networks.get(name)
+            return
+        except NotFound:
+            pass
+        try:
+            self.client.networks.create(name, driver="bridge", check_duplicate=True)
+            logger.info(f"[trufflehog] created scan network {name}")
+        except APIError as e:
+            logger.warning(f"[trufflehog] network ensure for {name}: {e}")
+
+    async def get_trufflehog_status(self, project_id: str, source: str) -> TrufflehogState:
+        """Status of ONE source's run. Docker inspection runs off the event loop
+        (_run_blocking) so a slow daemon can't stall the worker."""
+        return await self._run_blocking(self._get_trufflehog_status_sync, project_id, source)
+
+    async def get_all_trufflehog_statuses(self, project_id: str) -> list[TrufflehogState]:
+        """Every run for a project.
+
+        The webapp reconcile, the version-save guard and the activation guard all
+        read this rather than a project-level status: with N parallel runs a
+        single status can only ever describe one of them, and the other N-1 look
+        idle to every caller.
+        """
+        runs = self.trufflehog_states.get(project_id, {})
+        out: list[TrufflehogState] = []
+        stale: list[str] = []
+        now = datetime.now(timezone.utc)
+        for source in list(runs.keys()):
+            state = await self.get_trufflehog_status(project_id, source)
+            out.append(state)
+            # Retire long-finished runs so the dict cannot grow without bound
+            # across the orchestrator's lifetime. The retention window is far
+            # wider than the reconcile grace, so the outcome is always observed
+            # before the run disappears.
+            if (state.status in (TrufflehogStatus.COMPLETED, TrufflehogStatus.ERROR)
+                    and state.completed_at
+                    and (now - state.completed_at).total_seconds() > TRUFFLEHOG_TERMINAL_RETENTION_S):
+                stale.append(source)
+        # pop(), not del: the awaits above are suspension points, so a concurrent
+        # caller may already have retired the same run.
+        for source in stale:
+            self._drop_trufflehog_run(project_id, source)
+        return out
+
+    def _get_trufflehog_status_sync(self, project_id: str, source: str) -> TrufflehogState:
+        runs = self.trufflehog_states.get(project_id, {})
+        if source in runs:
+            state = runs[source]
+
+            # A finished run whose container has already been removed has nothing
+            # left to learn from Docker. Without this the 30 s sweep re-inspects
+            # every run ever started, for every project, forever — the same
+            # daemon-flooding shape that caused the parallel-scan freeze.
+            settled = (state.status in (TrufflehogStatus.COMPLETED, TrufflehogStatus.ERROR)
+                       and state.container_removed)
+
+            if state.container_id and not settled:
                 try:
                     container = self.client.containers.get(state.container_id)
                     if container.status == "paused":
@@ -3438,37 +3713,71 @@ class ContainerManager:
                     elif container.status != "running":
                         exit_code = container.attrs.get("State", {}).get("ExitCode", -1)
                         if exit_code == 0:
-                            state.status = TrufflehogStatus.COMPLETED
+                            # A zero exit only means the WRAPPER finished. It
+                            # writes an artifact and exits cleanly even when the
+                            # scan itself failed — a clone that never happened
+                            # then reads as a completed run with no findings,
+                            # which is indistinguishable from a clean target.
+                            # The artifact carries the scan's own verdict.
+                            scan_error = self._trufflehog_artifact_error(
+                                state.project_id, state.source)
+                            if scan_error:
+                                state.status = TrufflehogStatus.ERROR
+                                state.error = scan_error
+                            else:
+                                state.status = TrufflehogStatus.COMPLETED
                             state.completed_at = datetime.now(timezone.utc)
                         else:
                             state.status = TrufflehogStatus.ERROR
                             state.error = f"Container exited with code {exit_code}"
                             state.completed_at = datetime.now(timezone.utc)
 
+                        # The CLEAN half of the split: the dirty container held no
+                        # Neo4j credentials, so the graph write happens here, once
+                        # the process that parsed untrusted bytes is gone.
+                        self._ingest_trufflehog(state)
+
                         try:
                             container.remove()
-                            logger.info(f"Auto-removed finished TruffleHog container for project {project_id}")
+                            state.container_removed = True
+                            logger.info(
+                                f"Auto-removed finished TruffleHog container for {project_id}/{source}")
                         except Exception as e:
                             logger.warning(f"Failed to auto-remove TruffleHog container: {e}")
                 except NotFound:
+                    # Already gone (removed by a concurrent poll, or by hand).
+                    state.container_removed = True
                     if state.status not in (TrufflehogStatus.COMPLETED, TrufflehogStatus.ERROR):
                         state.status = TrufflehogStatus.ERROR
                         state.error = "Container not found"
                 except APIError as e:
-                    logger.warning(f"Docker API error checking TruffleHog container for {project_id}: {e}")
+                    logger.warning(
+                        f"Docker API error checking TruffleHog container for {project_id}/{source}: {e}")
                     if state.status not in (TrufflehogStatus.COMPLETED, TrufflehogStatus.ERROR):
                         state.status = TrufflehogStatus.ERROR
                         state.error = f"Docker API error: {e}"
 
+            # Retry a terminal run's ingest. The first attempt runs on the poll
+            # that also removes the container, so without this a transient Neo4j
+            # blip would lose the findings for good — the artifact is on disk but
+            # nothing would ever read it again. Idempotent via state.ingested,
+            # and the status sweep polls every run periodically.
+            if (state.status in (TrufflehogStatus.COMPLETED, TrufflehogStatus.ERROR)
+                    and not state.ingested
+                    and state.ingest_attempts < MAX_TRUFFLEHOG_INGEST_ATTEMPTS):
+                self._ingest_trufflehog(state)
+
             return state
 
-        # Check if there's an orphan container
-        container_name = self._get_trufflehog_container_name(project_id)
+        # An orphan container from a crashed orchestrator still owns the run key.
+        container_name = self._get_trufflehog_container_name(project_id, source)
         try:
             container = self.client.containers.get(container_name)
             if container.status in ("running", "paused"):
                 return TrufflehogState(
                     project_id=project_id,
+                    source=source,
+                    run_id=source,
                     status=TrufflehogStatus.PAUSED if container.status == "paused" else TrufflehogStatus.RUNNING,
                     container_id=container.id,
                 )
@@ -3477,6 +3786,8 @@ class ContainerManager:
 
         return TrufflehogState(
             project_id=project_id,
+            source=source,
+            run_id=source,
             status=TrufflehogStatus.IDLE,
         )
 
@@ -4277,42 +4588,211 @@ exit $RC
         return sum(1 for st in self.supply_chain_states.values()
                    if st.status in (SupplyChainStatus.RUNNING, SupplyChainStatus.STARTING))
 
+    def _trufflehog_egress_check(self, source: str, config: dict) -> None:
+        """Refuse a start whose target resolves to an internal address (12.4).
+
+        Two layers, both required. This one runs orchestrator-side and fails the
+        request with a 400; the second is the isolated bridge the container runs
+        on, which means a TOCTOU re-resolve or an HTTP redirect to an internal
+        host at scan time still has no route to the host's loopback services.
+
+        Deny on the RESOLVED IP, not the name: `es.acme.io` pointing at
+        `169.254.169.254` or `127.0.0.1:7687` reads as perfectly in-scope. Fails
+        closed — unresolvable is a refusal, not a pass.
+        """
+        if os.environ.get("TRUFFLEHOG_EGRESS_GUARD", "").strip().lower() in ("0", "false", "off"):
+            logger.warning("[trufflehog] egress guard DISABLED by TRUFFLEHOG_EGRESS_GUARD")
+            return
+        extra_blocked = [
+            ip for ip in (os.environ.get("CAPTURE_BLOCKED_IPS", "") or "").split(",") if ip.strip()
+        ]
+        for host in th_sources.egress_hosts(source, config):
+            allowed, _pinned, reason = classify_host(host, extra_blocked)
+            if not allowed:
+                raise ValueError(
+                    f"Target '{host}' is not allowed ({reason}). TruffleHog sources may "
+                    f"not be pointed at RedAmon-internal or private addresses."
+                )
+
+    def _trufflehog_scope_check(self, project_id: str, source: str, config: dict) -> None:
+        """Refuse a target outside the project's authorised scope / ROE (12.5).
+
+        Composes with the egress guard rather than replacing it: for a network
+        source the two both apply, and for a name-only target (a docker image
+        ref, a GitHub org, an HF model) this is the only check there is. The hook
+        is injected by api.py, which owns the scope loader; with no checker wired
+        this is a no-op, matching the other scan types' behaviour when a project
+        declares no scope.
+        """
+        checker = getattr(self, "trufflehog_scope_checker", None)
+        if checker is None:
+            return
+        target = th_sources.describe_target(source, config)
+        if not target:
+            return
+        allowed, reason = checker(project_id, source, target)
+        if not allowed:
+            raise ValueError(f"Target '{target}' is outside the project scope ({reason})")
+
     async def start_trufflehog(
         self,
         project_id: str,
         user_id: str,
-        webapp_api_url: str,
         trufflehog_path: str,
+        source: str,
+        config: Optional[dict] = None,
+        common: Optional[dict] = None,
+        secrets: Optional[dict] = None,
     ) -> TrufflehogState:
-        """Start a TruffleHog scan container for a project"""
+        """Start ONE TruffleHog source for a project.
 
-        # Check if already running
-        current_state = await self.get_trufflehog_status(project_id)
-        if current_state.status in (TrufflehogStatus.RUNNING, TrufflehogStatus.PAUSED):
-            raise ValueError(f"TruffleHog scan already active for project {project_id}")
+        Parallelism rule (C3): a second run of the SAME source is refused; any
+        number of distinct sources run at once, gated only by the fleet-wide
+        memory governor and the per-user concurrency ceiling. There is
+        deliberately no trufflehog-specific parallelism cap.
 
-        # Memory admission (Part 1): reserve this scan's RAM envelope or reject.
-        await self._admit_scan("trufflehog", project_id, user_id=user_id)
+        The container is the DIRTY half of the split (12.3): isolated bridge,
+        cap_drop=ALL, read-only root, non-root, ONE source credential in env, and
+        no Neo4j credentials or scanner API key anywhere near it. Graph ingest
+        happens later, in `_ingest_trufflehog`, once this process is gone.
+        """
+        if th_sources is None:
+            raise ValueError(
+                f"TruffleHog source registry not available: {_TRUFFLEHOG_REGISTRY_ERROR}. "
+                "Is ./scanners/trufflehog_scan mounted into the orchestrator?"
+            )
 
-        # Clean up any existing container
-        container_name = self._get_trufflehog_container_name(project_id)
+        config = dict(config or {})
+        common = dict(common or {})
+        secrets = secrets or {}
+
+        # --- gates, all before any state or reservation exists so a refusal is
+        # a clean 400 that leaves nothing behind -------------------------------
         try:
-            old_container = self.client.containers.get(container_name)
-            old_container.remove(force=True)
+            src = th_sources.get_source(source)
+        except KeyError as e:
+            raise ValueError(str(e))
+        source = src.id
+
+        errors = th_sources.validate_config(source, config)
+        if errors:
+            raise ValueError("; ".join(errors))
+
+        missing = th_sources.missing_credentials(source, config, secrets)
+        if missing:
+            # Re-checked here and not only in the UI: a queued job can reach
+            # dispatch long after the operator cleared the key.
+            names = ", ".join(c.label for c in missing)
+            raise ValueError(
+                f"{src.label} requires {names}. Set it in Global Settings > API Keys > TruffleHog."
+            )
+
+        self._trufflehog_egress_check(source, config)
+        self._trufflehog_scope_check(project_id, source, config)
+
+        # Refresh from Docker first, so an orphan container from a crashed
+        # orchestrator is seen (this awaits, so it cannot be the claim itself).
+        current_state = await self.get_trufflehog_status(project_id, source)
+
+        # --- CLAIM THE RUN SLOT SYNCHRONOUSLY -------------------------------
+        # No `await` between the check and the assignment, so the whole block is
+        # atomic with respect to the event loop. With an await in between, two
+        # concurrent starts for the SAME source (a double-clicked button, or the
+        # queue dispatcher racing a manual start) would both pass the check, and
+        # the second would force-remove the first's container while the first's
+        # state object — and therefore its reservation key — was overwritten.
+        target = th_sources.describe_target(source, config)
+        runs = self.trufflehog_states.setdefault(project_id, {})
+        claimed = runs.get(source)
+        blocking = claimed.status if claimed else current_state.status
+        if blocking in (TrufflehogStatus.RUNNING, TrufflehogStatus.STARTING,
+                        TrufflehogStatus.PAUSED):
+            raise ValueError(
+                f"A {src.label} scan is already running for project {project_id}"
+            )
+        state = TrufflehogState(
+            project_id=project_id,
+            user_id=user_id,
+            source=source,
+            run_id=source,
+            target=target,
+            status=TrufflehogStatus.STARTING,
+            started_at=datetime.now(timezone.utc),
+        )
+        runs[source] = state
+        # --- end of the atomic region ---------------------------------------
+
+        try:
+            # Memory admission on the source-qualified kind; the reconcile key in
+            # _active_scan_keys is built the same way or the reaper frees this.
+            await self._admit_scan(self._trufflehog_kind(source), project_id, source,
+                                   user_id=user_id)
+        except Exception:
+            # Release the slot: a rejected admission must not leave a phantom
+            # STARTING run that blocks every later start of this source.
+            self._drop_trufflehog_run(project_id, source, state)
+            raise
+
+        container_name = self._get_trufflehog_container_name(project_id, source)
+        try:
+            self.client.containers.get(container_name).remove(force=True)
             logger.info(f"Removed old TruffleHog container {container_name}")
         except NotFound:
             pass
 
-        # Create new state
-        state = TrufflehogState(
-            project_id=project_id,
-            status=TrufflehogStatus.STARTING,
-            started_at=datetime.now(timezone.utc),
-        )
-        self.trufflehog_states[project_id] = state
+        # Resolved once, and kept for the error path: `state.error` is returned
+        # by the status API and rendered in the UI, and these values are NOT in
+        # the orchestrator's own environment, so redacting against os.environ
+        # alone would not catch a token echoed back in an exception message.
+        credential_env = self._trufflehog_credential_env(src, secrets)
 
         try:
-            # Ensure TruffleHog image exists
+            # NOTE: the graph is deliberately NOT cleared here. The scoped clear
+            # lives at the head of update_graph_from_trufflehog, so the previous
+            # run's findings survive until the new ones are ready to replace
+            # them. Clearing up front meant a spawn that failed (missing image,
+            # daemon error) destroyed the last good results and left nothing.
+            run_dir = self._trufflehog_run_dir(project_id, source)
+            run_dir.mkdir(parents=True, exist_ok=True)
+
+            # Remove the PREVIOUS run's artifact before this one starts. The
+            # container overwrites it within a second of starting, but a run that
+            # never gets that far (image missing, OOM-kill at startup) would
+            # otherwise leave the old file in place — and the terminal-state
+            # ingest below would publish it as if this run had produced it,
+            # attributing one target's findings to a scan of another.
+            stale = run_dir / "out.json"
+            try:
+                stale.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError as e:
+                logger.warning(f"[trufflehog] could not clear the previous {source} artifact: {e}")
+            job = {
+                "project_id": project_id,
+                "user_id": user_id,
+                "source": source,
+                "run_id": source,
+                "config": config,
+                "common": common,
+                "run_dir": "/work",
+                # Into the run dir, NOT the shared output dir. The container
+                # runs as a non-root uid with cap_drop=ALL, so it cannot write a
+                # host-owned directory; and giving a container that parses
+                # attacker-controlled bytes rw access to a dir the webapp serves
+                # is a bad trade for saving one copy. _publish_trufflehog_output
+                # moves the artifact once the run is over.
+                "output_file": "/work/out.json",
+            }
+            (run_dir / "job.json").write_text(json.dumps(job))
+            # World-readable: the container runs as a non-root uid that does not
+            # exist on the host, so a 0600 job file would be unreadable to it.
+            os.chmod(run_dir / "job.json", 0o644)
+            try:
+                os.chmod(run_dir, 0o777)
+            except OSError:
+                pass
+
             try:
                 self.client.images.get(self.trufflehog_image)
             except NotFound:
@@ -4324,129 +4804,217 @@ exit $RC
                     rm=True,
                 )
 
-            # Start container with environment variables
+            self._ensure_trufflehog_network()
+
+            scan_target_mounts = self._trufflehog_scan_root_mounts(source, config)
+            git_config_mount = self._trufflehog_git_config_mount(run_dir, scan_target_mounts)
+
             container = self.client.containers.run(
                 self.trufflehog_image,
-                mem_limit=self._container_mem_limit("trufflehog"),  # Memory governor (Part 4c)
-                pids_limit=self._container_pids_limit(),  # D1: fork-bomb ceiling
-                nano_cpus=self._container_cpu_limit(),  # D1: core-proportional CPU cap
-                **self._scanner_hardening(drop_caps=False),  # S3/E6: cap_drop deferred (residual; not verifiable here)
                 name=container_name,
                 detach=True,
-                network_mode="host",
+                network=self.trufflehog_network,
+                cap_drop=["ALL"],
+                read_only=True,
+                # The binary needs scratch for clones and archive extraction; a
+                # read-only root plus tmpfs gives it that without a writable
+                # layer that could persist into a later run.
+                tmpfs={"/tmp": "size=2g,exec", "/home/trufflehog": "size=256m"},
+                mem_limit=self._container_mem_limit(self._trufflehog_kind(source)),
+                pids_limit=self._container_pids_limit(),
+                nano_cpus=self._container_cpu_limit(),
                 environment={
-                    "PROJECT_ID": project_id,
-                    "USER_ID": user_id,
-                    "WEBAPP_API_URL": webapp_api_url,
-                    # V3: operator-approved extra tool images (empty = strict
-                    # shipped-only allowlist). Server-controlled; forwarded to the
-                    # recon pipeline so air-gapped/private-registry deployments work.
-                    "RECON_EXTRA_ALLOWED_IMAGES": os.environ.get("RECON_EXTRA_ALLOWED_IMAGES", ""),
                     "PYTHONUNBUFFERED": "1",
-                    # Forward Neo4j credentials from orchestrator environment
-                    "NEO4J_URI": os.environ.get("NEO4J_URI", "bolt://localhost:7687"),
-                    "NEO4J_USER": os.environ.get("NEO4J_USER", "neo4j"),
-                    "NEO4J_PASSWORD": os.environ.get("NEO4J_PASSWORD", ""),
-                    **self._scanner_env(),  # S3/E6: scoped scanner token
+                    "TRUFFLEHOG_JOB": "/work/job.json",
+                    # ONLY this source's credentials. No NEO4J_*, no scanner API
+                    # key, no webapp URL: a full RCE in here finds nothing but
+                    # the key the operator already pointed at the target.
+                    **credential_env,
                 },
                 volumes={
-                    # TruffleHog output (read-write, for saving results)
-                    f"{trufflehog_path}/output": {"bind": "/app/trufflehog_scan/output", "mode": "rw"},
-                    # Mount trufflehog_scan source for development (no rebuild needed)
-                    f"{trufflehog_path}": {"bind": "/app/trufflehog_scan", "mode": "rw"},
-                    # Mount graph_db module for Neo4j integration
-                    **self._graph_db_mount(sibling_host_path(parent_host_path(trufflehog_path), "graph_db"), baked_into_image=True),
+                    str(run_dir): {"bind": "/work", "mode": "rw"},
+                    # Source read-only, so a compromised scan cannot rewrite the
+                    # scanner and persist into every future run.
+                    f"{trufflehog_path}": {"bind": "/app/trufflehog_scan", "mode": "ro"},
+                    **scan_target_mounts,
+                    **git_config_mount,
                 },
                 command="python trufflehog_scan/main.py",
             )
 
             state.container_id = container.id
             state.status = TrufflehogStatus.RUNNING
-            logger.info(f"Started TruffleHog container {container.id} for project {project_id}")
+            # Auditability (12.9): who scanned WHAT with WHICH key. The credential
+            # FIELD NAMES only — never a value — so an operator can reconstruct a
+            # run from the logs without the log becoming a secret store.
+            used_keys = sorted(c.settings_key for c in src.credentials
+                               if str(secrets.get(c.settings_key) or "").strip())
+            logger.info(
+                f"Started TruffleHog {source} container {container.id} for project {project_id} "
+                f"(user: {user_id}, target: {target}, "
+                f"credentials: {', '.join(used_keys) if used_keys else 'none'})"
+            )
 
         except Exception as e:
             state.status = TrufflehogStatus.ERROR
-            state.error = str(e)
-            logger.error(f"Failed to start TruffleHog scan for {project_id}: {e}")
+            state.error = th_sources.redact(str(e), {**os.environ, **credential_env})
+            logger.error(f"Failed to start TruffleHog {source} for {project_id}: {e}")
 
         return state
 
-    async def pause_trufflehog(self, project_id: str) -> TrufflehogState:
-        """Pause a running TruffleHog scan process"""
-        state = await self.get_trufflehog_status(project_id)
+    def _trufflehog_credential_env(self, src, secrets: dict) -> dict:
+        """The env vars carrying this ONE source's credentials.
 
-        if state.status != TrufflehogStatus.RUNNING:
-            return state
+        Named exactly what TruffleHog documents for each flag ($GITHUB_TOKEN,
+        $ELASTICSEARCH_API_KEY, ...), so the binary reads them itself and no
+        token ever appears in the container's argv or process table.
+        """
+        env: dict[str, str] = {}
+        for cred in src.credentials:
+            value = str(secrets.get(cred.settings_key) or "").strip()
+            if value:
+                env[cred.env] = value
+        return env
 
-        if state.container_id:
-            try:
-                container = self.client.containers.get(state.container_id)
-                container.pause()
-                state.status = TrufflehogStatus.PAUSED
-                self.trufflehog_states[project_id] = state
-                logger.info(f"Paused TruffleHog container for project {project_id}")
-            except NotFound:
-                state.status = TrufflehogStatus.ERROR
-                state.error = "Container not found"
-            except APIError as e:
-                state.status = TrufflehogStatus.ERROR
-                state.error = f"Failed to pause: {e}"
+    def _trufflehog_scan_root_mounts(self, source: str, config: dict) -> dict:
+        """Read-only mounts for the `filesystem` source's allowlisted roots.
+
+        The scan root is a server-resolved allowlist entry, never an
+        operator-typed host path: a free-text path plus a scan container is a
+        file-disclosure primitive. A root with no configured host path is simply
+        not mounted, and the scan then finds an empty directory rather than
+        silently reading something else.
+        """
+        if source not in th_sources.SCAN_TARGET_DIRS:
+            return {}
+        host_path = self.trufflehog_scan_targets
+        if not host_path:
+            return {}
+        # The whole tree, read-only, at one fixed point. Read-only matters: it is
+        # the difference between a scan reading a fixture and a compromised scan
+        # rewriting the fixture every later run will read.
+        return {host_path: {"bind": th_sources.SCAN_TARGETS_MOUNT, "mode": "ro"}}
+
+    def _ingest_trufflehog(self, state: TrufflehogState) -> None:
+        """Read a finished run's findings JSON and write it to the graph.
+
+        The clean half of the dirty/clean split: this runs in the orchestrator,
+        which holds the Neo4j credentials the scan container deliberately did
+        not. Every string in the file is target-controlled, so the graph write
+        stays fully parameterised (never string-formatted into Cypher).
+
+        Idempotent and never raises: a failed ingest must not flip a completed
+        scan into an error state, and the status sweep calls this repeatedly.
+        """
+        if state.ingested or not state.source:
+            return
+        if state.ingest_attempts >= MAX_TRUFFLEHOG_INGEST_ATTEMPTS:
+            return
+        state.ingest_attempts += 1
+        if not state.user_id:
+            # Writing with an empty tenant key produces nodes no scoped read can
+            # ever see and no scoped clear can ever remove. Refuse before doing
+            # any work, so a tenant-less run cannot even publish an artifact.
+            logger.error(
+                f"[trufflehog] refusing to ingest {state.source} for {state.project_id}: "
+                "the run carries no user_id")
+            return
+        out_path = self._publish_trufflehog_output(state.project_id, state.source)
+        if out_path is None or not out_path.exists():
+            return
+        try:
+            data = json.loads(out_path.read_text())
+        except (OSError, ValueError) as e:
+            logger.warning(f"[trufflehog] unreadable findings for {state.source}: {e}")
+            return
+
+        try:
+            from graph_db import Neo4jClient
+        except ImportError:
+            logger.warning("[trufflehog] graph_db unavailable; skipping ingest")
+            return
+        # NEO4J_URI in this service's environment is NOT the orchestrator's own
+        # connection: it is forwarded verbatim to spawned recon containers, which
+        # run on the HOST network and so correctly say localhost. This process is
+        # on the compose network, where the same string reaches nothing.
+        neo4j_uri = (os.environ.get("ORCHESTRATOR_NEO4J_URI", "").strip()
+                     or "bolt://neo4j:7687")
+        try:
+            with Neo4jClient(uri=neo4j_uri) as client:
+                if not client.verify_connection():
+                    logger.warning("[trufflehog] Neo4j unreachable; skipping ingest")
+                    return
+                stats = client.update_graph_from_trufflehog(
+                    data, state.user_id, state.project_id,
+                )
+            state.ingested = True
+            state.findings_count = len(data.get("findings") or [])
+            logger.info(
+                f"[trufflehog] ingested {state.findings_count} {state.source} findings "
+                f"for {state.project_id}: {stats}"
+            )
+        except Exception as e:
+            if state.ingest_attempts >= MAX_TRUFFLEHOG_INGEST_ATTEMPTS:
+                # Say so once, loudly, naming the artifact — an operator can
+                # re-run the source, and the findings are still on disk.
+                logger.error(
+                    f"[trufflehog] ingest failed for {state.project_id}/{state.source} "
+                    f"after {state.ingest_attempts} attempts, giving up: {e}. "
+                    f"Findings remain at {self._trufflehog_output_path(state.project_id, state.source)}; "
+                    f"re-run the source to retry.")
+            else:
+                logger.warning(
+                    f"[trufflehog] ingest attempt {state.ingest_attempts} failed for "
+                    f"{state.source}: {e}")
+
+    async def stop_trufflehog(self, project_id: str, source: str, timeout: int = 10) -> TrufflehogState:
+        """Stop ONE source's run. Other sources in the same project keep going."""
+        state = await self.get_trufflehog_status(project_id, source)
+
+        if state.status in (TrufflehogStatus.RUNNING, TrufflehogStatus.STARTING,
+                            TrufflehogStatus.PAUSED):
+            state.status = TrufflehogStatus.STOPPING
+            if state.container_id:
+                def _kill(cid: str):
+                    container = self.client.containers.get(cid)
+                    if container.status == "paused":
+                        container.unpause()
+                    container.stop(timeout=timeout)
+                    container.remove()
+                try:
+                    await asyncio.to_thread(_kill, state.container_id)
+                    state.status = TrufflehogStatus.IDLE
+                    state.completed_at = datetime.now(timezone.utc)
+                    logger.info(f"Stopped TruffleHog {source} container for project {project_id}")
+                except NotFound:
+                    state.status = TrufflehogStatus.IDLE
+                except Exception as e:
+                    state.status = TrufflehogStatus.ERROR
+                    state.error = f"Failed to stop: {e}"
+
+        # Ingest whatever the run wrote before it was stopped: a partial result
+        # is still a result, and the incremental save means the file is valid.
+        await asyncio.to_thread(self._ingest_trufflehog, state)
+
+        self._drop_trufflehog_run(project_id, source, state)
 
         return state
 
-    async def resume_trufflehog(self, project_id: str) -> TrufflehogState:
-        """Resume a paused TruffleHog scan process"""
-        state = await self.get_trufflehog_status(project_id)
+    async def stop_all_trufflehog(self, project_id: str, timeout: int = 10) -> list[TrufflehogState]:
+        """Stop every source's run for a project.
 
-        if state.status != TrufflehogStatus.PAUSED:
-            return state
-
-        if state.container_id:
+        Project delete and project reset call this. A project-keyed single stop
+        would leave every source but one running, which is exactly the orphan the
+        run-keying introduces if nothing enumerates the nested dict.
+        """
+        runs = list(self.trufflehog_states.get(project_id, {}).keys())
+        out: list[TrufflehogState] = []
+        for source in runs:
             try:
-                container = self.client.containers.get(state.container_id)
-                container.unpause()
-                state.status = TrufflehogStatus.RUNNING
-                self.trufflehog_states[project_id] = state
-                logger.info(f"Resumed TruffleHog container for project {project_id}")
-            except NotFound:
-                state.status = TrufflehogStatus.ERROR
-                state.error = "Container not found"
-            except APIError as e:
-                state.status = TrufflehogStatus.ERROR
-                state.error = f"Failed to resume: {e}"
-
-        return state
-
-    async def stop_trufflehog(self, project_id: str, timeout: int = 10) -> TrufflehogState:
-        """Stop a running TruffleHog scan process"""
-        state = await self.get_trufflehog_status(project_id)
-
-        if state.status not in (TrufflehogStatus.RUNNING, TrufflehogStatus.PAUSED):
-            return state
-
-        state.status = TrufflehogStatus.STOPPING
-
-        if state.container_id:
-            try:
-                container = self.client.containers.get(state.container_id)
-                if container.status == "paused":
-                    container.unpause()
-                container.stop(timeout=timeout)
-                container.remove()
-                state.status = TrufflehogStatus.IDLE
-                state.completed_at = datetime.now(timezone.utc)
-                logger.info(f"Stopped TruffleHog container for project {project_id}")
-            except NotFound:
-                state.status = TrufflehogStatus.IDLE
+                out.append(await self.stop_trufflehog(project_id, source, timeout=timeout))
             except Exception as e:
-                state.status = TrufflehogStatus.ERROR
-                state.error = f"Failed to stop: {e}"
-
-        if project_id in self.trufflehog_states:
-            del self.trufflehog_states[project_id]
-
-        return state
-
+                logger.error(f"Error stopping TruffleHog {project_id}/{source}: {e}")
+        return out
     def _parse_trufflehog_log_line(self, line: str, current_phase: Optional[str], current_phase_num: Optional[int], timestamp: Optional[datetime] = None) -> TrufflehogLogEvent:
         """Parse a TruffleHog log line and detect phase changes"""
         if timestamp is None:
@@ -4487,13 +5055,18 @@ exit $RC
             level=level,
         )
 
-    async def stream_trufflehog_logs(self, project_id: str) -> AsyncGenerator[TrufflehogLogEvent, None]:
-        """Stream logs from a TruffleHog scan container"""
-        state = await self.get_trufflehog_status(project_id)
+    async def stream_trufflehog_logs(self, project_id: str, source: str) -> AsyncGenerator[TrufflehogLogEvent, None]:
+        """Stream logs from ONE source's TruffleHog container.
+
+        Every line is redacted before it leaves the orchestrator: the binary can
+        echo a composed clone URL carrying a token, and the log stream is a
+        user-facing SSE surface.
+        """
+        state = await self.get_trufflehog_status(project_id, source)
 
         if not state.container_id:
             yield TrufflehogLogEvent(
-                log="No TruffleHog container found for this project",
+                log=f"No TruffleHog {source} container found for this project",
                 timestamp=datetime.now(timezone.utc),
                 level="error",
             )
@@ -4573,15 +5146,18 @@ exit $RC
                                 except (ValueError, OverflowError):
                                     pass
 
+                        if th_sources is not None:
+                            log_text = th_sources.redact(log_text, dict(os.environ))
                         event = self._parse_trufflehog_log_line(log_text, current_phase, current_phase_num, timestamp=docker_ts)
 
                         if event.is_phase_start:
                             current_phase = event.phase
                             current_phase_num = event.phase_number
 
-                            if project_id in self.trufflehog_states:
-                                self.trufflehog_states[project_id].current_phase = current_phase
-                                self.trufflehog_states[project_id].phase_number = current_phase_num
+                            run = self.trufflehog_states.get(project_id, {}).get(source)
+                            if run is not None:
+                                run.current_phase = current_phase
+                                run.phase_number = current_phase_num
 
                         yield event
 
@@ -4607,5 +5183,15 @@ exit $RC
             )
 
     def get_trufflehog_running_count(self) -> int:
-        """Get count of running TruffleHog scan processes"""
-        return sum(1 for s in self.trufflehog_states.values() if s.status == TrufflehogStatus.RUNNING)
+        """Count of running TruffleHog runs across every source.
+
+        Feeds /health and the admission accounting the dispatcher reads. Walking
+        the outer dict only would count PROJECTS, so three parallel sources would
+        report as one and the queue would over-admit.
+        """
+        return sum(
+            1
+            for runs in self.trufflehog_states.values()
+            for st in runs.values()
+            if st.status in (TrufflehogStatus.RUNNING, TrufflehogStatus.STARTING)
+        )

@@ -1,0 +1,134 @@
+'use client'
+
+import { useId, useState } from 'react'
+import Link from 'next/link'
+import { Eye, EyeOff, ExternalLink } from 'lucide-react'
+import { SETTINGS_KEYS_HREF } from '@/lib/settingsLinks'
+import { credentialField, isSecretField } from '@/lib/credentialFields'
+import type { CredentialKeysApi } from '@/hooks/useCredentialKeys'
+import styles from './CredentialShortcut.module.css'
+
+interface CredentialShortcutProps {
+  /** The UserSettings column, e.g. 'trufflehogGithubToken'. */
+  settingsKey: string
+  /** Shared reader/writer, so one page does not fetch settings once per field. */
+  keys: CredentialKeysApi
+  /** Mandatory keys block a scan; optional ones only widen its reach. */
+  optional?: boolean
+  /** Drops the hint text, for dense surfaces like the Other Scans rows. */
+  compact?: boolean
+}
+
+/**
+ * An inline editor for a single Global Settings credential.
+ *
+ * The scan sections used to link out to /settings, which meant leaving a
+ * half-filled project form to go and set a token. This writes the same
+ * user-level setting in place.
+ *
+ * It can say whether a key is set and never what it is: the API masks secrets on
+ * read, so the box always starts empty and a save REPLACES rather than edits.
+ * The reveal toggle therefore only shows what the user is currently typing,
+ * which is what it is for - checking a pasted token.
+ */
+export function CredentialShortcut({
+  settingsKey,
+  keys,
+  optional = false,
+  compact = false,
+}: CredentialShortcutProps) {
+  const field = credentialField(settingsKey)
+  const inputId = useId()
+  const [draft, setDraft] = useState('')
+  const [visible, setVisible] = useState(false)
+  const [justSaved, setJustSaved] = useState(false)
+
+  // An unknown key would render an unlabelled box telling the user to set
+  // something it cannot name. credentialFields.test.ts makes this unreachable.
+  if (!field) return null
+
+  const secret = isSecretField(settingsKey)
+  const isSet = keys.isSet(settingsKey)
+  const busy = keys.saving === settingsKey
+  const blocking = !isSet && !optional
+
+  const commit = async () => {
+    const value = draft.trim()
+    if (!value || busy) return
+    const ok = await keys.save(settingsKey, value)
+    if (ok) {
+      setDraft('')
+      setVisible(false)
+      setJustSaved(true)
+    }
+  }
+
+  return (
+    <div className={`${styles.wrap} ${blocking ? styles.missing : ''}`}>
+      <div className={styles.head}>
+        <label htmlFor={inputId}>{field.label}</label>
+        <span className={`${styles.badge} ${styles.badgeGlobal}`}>Global setting</span>
+        {isSet ? (
+          <span className={`${styles.badge} ${styles.badgeSet}`}>Set</span>
+        ) : optional ? (
+          <span className={`${styles.badge} ${styles.badgeOptional}`}>Optional</span>
+        ) : (
+          <span className={`${styles.badge} ${styles.badgeMissing}`}>Required</span>
+        )}
+      </div>
+
+      <div className={styles.row}>
+        <input
+          id={inputId}
+          className="textInput"
+          type={secret && !visible ? 'password' : 'text'}
+          value={draft}
+          // The stored secret never reaches the browser, so the masked value can
+          // only be shown as a placeholder - it is not editable text.
+          placeholder={isSet ? keys.masked(settingsKey) || 'Stored' : `Paste your ${field.label}`}
+          autoComplete={secret ? 'new-password' : 'off'}
+          spellCheck={false}
+          disabled={busy}
+          onChange={e => { setDraft(e.target.value); setJustSaved(false) }}
+          onKeyDown={e => {
+            if (e.key === 'Enter') { e.preventDefault(); void commit() }
+          }}
+        />
+        {secret && (
+          <button
+            type="button"
+            className={styles.iconButton}
+            onClick={() => setVisible(v => !v)}
+            aria-label={visible ? 'Hide the value' : 'Show the value'}
+          >
+            {visible ? <EyeOff size={14} /> : <Eye size={14} />}
+          </button>
+        )}
+        <button
+          type="button"
+          className={styles.saveButton}
+          disabled={!draft.trim() || busy}
+          onClick={() => void commit()}
+        >
+          {busy ? 'Saving…' : isSet ? 'Replace' : 'Save'}
+        </button>
+      </div>
+
+      {justSaved && <p className={styles.saved}>Saved to Global Settings.</p>}
+      {keys.error && keys.saving === null && draft && (
+        <p className={styles.error}>{keys.error}</p>
+      )}
+
+      {!compact && <p className={styles.hint}>{field.hint}</p>}
+
+      <div className={styles.links}>
+        <Link href={SETTINGS_KEYS_HREF}>All keys in Global Settings</Link>
+        {field.signupUrl && (
+          <a href={field.signupUrl} target="_blank" rel="noopener noreferrer">
+            Get a token <ExternalLink size={10} />
+          </a>
+        )}
+      </div>
+    </div>
+  )
+}

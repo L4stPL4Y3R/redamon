@@ -151,6 +151,27 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         pdcpApiKey: maskSecret(settings.pdcpApiKey),
         ngrokAuthtoken: maskSecret(settings.ngrokAuthtoken),
         chiselAuth: maskSecret(settings.chiselAuth),
+        // TruffleHog per-source credentials. Unmasked they would be readable by
+        // anyone who can open the settings page.
+        trufflehogGithubToken: maskSecret(settings.trufflehogGithubToken),
+        trufflehogGitlabToken: maskSecret(settings.trufflehogGitlabToken),
+        trufflehogDockerToken: maskSecret(settings.trufflehogDockerToken),
+        trufflehogHuggingfaceToken: maskSecret(settings.trufflehogHuggingfaceToken),
+        trufflehogAwsAccessKeyId: maskSecret(settings.trufflehogAwsAccessKeyId),
+        trufflehogAwsSecretKey: maskSecret(settings.trufflehogAwsSecretKey),
+        trufflehogAwsSessionToken: maskSecret(settings.trufflehogAwsSessionToken),
+        trufflehogGcpServiceAccount: maskSecret(settings.trufflehogGcpServiceAccount),
+        trufflehogPostmanToken: maskSecret(settings.trufflehogPostmanToken),
+        trufflehogJenkinsUsername: maskSecret(settings.trufflehogJenkinsUsername),
+        trufflehogJenkinsPassword: maskSecret(settings.trufflehogJenkinsPassword),
+        trufflehogElasticUsername: maskSecret(settings.trufflehogElasticUsername),
+        trufflehogElasticPassword: maskSecret(settings.trufflehogElasticPassword),
+        trufflehogElasticApiKey: maskSecret(settings.trufflehogElasticApiKey),
+        trufflehogElasticServiceToken: maskSecret(settings.trufflehogElasticServiceToken),
+        trufflehogCircleciToken: maskSecret(settings.trufflehogCircleciToken),
+        trufflehogTravisciToken: maskSecret(settings.trufflehogTravisciToken),
+        trufflehogGitUsername: maskSecret(settings.trufflehogGitUsername),
+        trufflehogGitToken: maskSecret(settings.trufflehogGitToken),
       }
     }
 
@@ -214,7 +235,10 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     }
 
     const data: Record<string, string> = {}
-    const fields = ['githubAccessToken', 'githubEnterpriseHost', 'githubEnterpriseToken', 'tavilyApiKey', 'shodanApiKey', 'serpApiKey', 'nvdApiKey', 'vulnersApiKey', 'urlscanApiKey', 'censysApiToken', 'censysOrgId', 'fofaApiKey', 'otxApiKey', 'netlasApiKey', 'virusTotalApiKey', 'zoomEyeApiKey', 'criminalIpApiKey', 'quakeApiKey', 'hunterApiKey', 'publicWwwApiKey', 'hunterHowApiKey', 'googleApiKey', 'googleApiCx', 'onypheApiKey', 'driftnetApiKey', 'wpscanApiToken', 'pdcpApiKey', 'ngrokAuthtoken', 'chiselServerUrl', 'chiselAuth'] as const
+    const fields = ['githubAccessToken', 'githubEnterpriseHost', 'githubEnterpriseToken', 'tavilyApiKey', 'shodanApiKey', 'serpApiKey', 'nvdApiKey', 'vulnersApiKey', 'urlscanApiKey', 'censysApiToken', 'censysOrgId', 'fofaApiKey', 'otxApiKey', 'netlasApiKey', 'virusTotalApiKey', 'zoomEyeApiKey', 'criminalIpApiKey', 'quakeApiKey', 'hunterApiKey', 'publicWwwApiKey', 'hunterHowApiKey', 'googleApiKey', 'googleApiCx', 'onypheApiKey', 'driftnetApiKey', 'wpscanApiToken', 'pdcpApiKey', 'ngrokAuthtoken', 'chiselServerUrl', 'chiselAuth',
+      // TruffleHog per-source credentials. Absent from this list, a key is
+      // accepted by the form and silently never persisted.
+      'trufflehogGithubToken', 'trufflehogGitlabToken', 'trufflehogDockerToken', 'trufflehogHuggingfaceToken', 'trufflehogAwsAccessKeyId', 'trufflehogAwsSecretKey', 'trufflehogAwsSessionToken', 'trufflehogGcpServiceAccount', 'trufflehogPostmanToken', 'trufflehogJenkinsUsername', 'trufflehogJenkinsPassword', 'trufflehogElasticUsername', 'trufflehogElasticPassword', 'trufflehogElasticApiKey', 'trufflehogElasticServiceToken', 'trufflehogCircleciToken', 'trufflehogTravisciToken', 'trufflehogGitUsername', 'trufflehogGitToken'] as const
 
     for (const field of fields) {
       if (field in body) {

@@ -118,7 +118,7 @@ graph TD
 | `AUTH_SECRET` (JWT signing key) | Cryptographic key | **CRITICAL** | Session forgery / full UI auth bypass |
 | LLM provider API keys (`user_llm_providers`: `apiKey`, `awsAccessKeyId`, `awsSecretKey`, `awsBearerToken`) | Credentials | **CRITICAL** | Cloud/LLM billing abuse, lateral cloud access |
 | ~35 OSINT/recon service keys (`user_settings`: Shodan, Censys, VirusTotal, GitHub token, FOFA, Tavily, ngrok, etc.) | Credentials | **CRITICAL** | Third-party account abuse, data leakage |
-| Discovered secrets in graph (`GithubSecret`, `TrufflehogFinding`, `Secret` nodes) | Harvested credentials | **CRITICAL** | Target compromise; secondary breach |
+| Discovered secrets in graph (`GithubSecret`, `MultiscannerFinding`, `Secret` nodes) | Harvested credentials | **CRITICAL** | Target compromise; secondary breach |
 | Neo4j credentials (`NEO4J_PASSWORD`) | DB credential | **CRITICAL** | Full read/write of all engagement findings |
 | `INTERNAL_API_KEY` / `ORCHESTRATOR_API_KEY` | Service auth tokens | **CRITICAL** | Inter-service impersonation / scan orchestration |
 | GitHub access token (CodeFix agent, `cypherfix_codefix/tools/github_repo.py`) | Credential | **CRITICAL** | Push/PR to operator repos. Now supplied to git via `GIT_ASKPASS` (never embedded in the clone/push URL or `.git/config`) and **never injected into the build sandbox** |
@@ -238,7 +238,7 @@ graph LR
 
 **Notable flows:**
 - **Per-user LLM/OSINT keys** travel webapp DB → agent at runtime via `GET /api/users/{id}/llm-providers?internal=true` authenticated with `X-Internal-Key` (`INTERNAL_API_KEY`).
-- **Found secrets** flow target → secret scanners → Neo4j (`GithubSecret`/`TrufflehogFinding`/`Secret`) and `*/output/*.json` on disk.
+- **Found secrets** flow target → secret scanners → Neo4j (`GithubSecret`/`MultiscannerFinding`/`Secret`) and `*/output/*.json` on disk.
 - **Graph reads from the worker** are funneled through `agent /graph/exec`, which enforces read-only + tenant scoping; the worker holds no Neo4j credentials.
 - **Outbound to external LLM/OSINT providers** carries prompts, target context, and operator-supplied keys off-host.
 

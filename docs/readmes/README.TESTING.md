@@ -92,10 +92,15 @@ files, each `conftest.py` auto-marks by **filename**:
 - `live_*`, `*_live*`, `*_smoke*`, `smoke_*` -> **live** (self-skip when a stack is down)
 - everything else -> **unit**
 
-Override with an explicit `@pytest.mark.{unit,integration,live}` in the file.
+Override with an explicit `@pytest.mark.{unit,integration,live}`, on the file or
+on a single test inside it.
 
 The gate engine (`tooling/scripts/pytest_isolated.py`) infers the same tiers from the
-filename to pick which files to run, so the two must stay consistent.
+filename to pick which FILES to run, so the two must stay consistent - and it also
+passes the tier to pytest as `-m`, so a single test that has opted out of the tier
+its filename implies is honoured. Without that `-m`, filename selection alone
+cannot see inside a file: a wall-clock test marked `integration` still ran in the
+unit gate and failed whenever the parallel run loaded the host.
 
 ---
 

@@ -6,6 +6,8 @@ import { Toggle, WikiInfoButton } from '@/components/ui'
 import type { Project } from '@prisma/client'
 import styles from '../ProjectForm.module.css'
 import { NodeInfoTooltip } from '../NodeInfoTooltip'
+import { CredentialShortcut } from '@/components/settings/CredentialShortcut'
+import { useCredentialKeys } from '@/hooks/useCredentialKeys'
 import {
   HARVESTED_ECOSYSTEM,
   SUPPLY_CHAIN_ECOSYSTEMS,
@@ -29,6 +31,7 @@ interface SupplyChainReconSectionProps {
  * "Other Scans" tab; this section is only the pipeline tool.
  */
 export function SupplyChainReconSection({ data, updateField, onRun }: SupplyChainReconSectionProps) {
+  const keys = useCredentialKeys()
   const [isOpen, setIsOpen] = useState(true)
 
   const d = data as unknown as {
@@ -94,11 +97,28 @@ export function SupplyChainReconSection({ data, updateField, onRun }: SupplyChai
 
           {enabled && (
             <div className={styles.subSection}>
+              {/* Repository targets need a token; the recon-sourced package mining
+                  above does not. Optional for that reason, and set in place so a
+                  private-repo scan is not a round trip to /settings. The GHE pair
+                  is inseparable: the host is also the allowlist the token may be
+                  sent to, and neither half is usable alone. */}
+              <div className={styles.groupHeader}>
+                <h3 className={styles.subSectionTitle}>Credentials</h3>
+                <p className={styles.fieldHint}>
+                  Only needed to reach a private repository. Public repos clone anonymously.
+                </p>
+              </div>
+              <div className={styles.credentialStack}>
+                <CredentialShortcut settingsKey="githubAccessToken" keys={keys} optional />
+                <CredentialShortcut settingsKey="githubEnterpriseHost" keys={keys} optional />
+                <CredentialShortcut settingsKey="githubEnterpriseToken" keys={keys} optional />
+              </div>
+
               <h3 className={styles.subSectionTitle}>Configuration</h3>
 
               <div className={styles.fieldGroup}>
                 <label className={styles.fieldLabel}>Ecosystems</label>
-                <p className={styles.fieldHint} style={{ marginBottom: '0.5rem' }}>
+                <p className={styles.fieldHint}>
                   Select the ecosystems to report. Each one must be present in the offline database, populated with{' '}
                   <code>./redamon.sh supply-chain-sync npm</code> (one sync per ecosystem).
                 </p>

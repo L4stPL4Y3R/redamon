@@ -47,9 +47,13 @@ export const NODE_COLORS: Record<string, string> = {
   GithubSensitiveFile: '#5b8a72',  // Muted sage green - sensitive file (.env, config)
 
   // TRUFFLEHOG INTELLIGENCE (Teal-gray family - distinct from GitHub Hunt)
-  TrufflehogScan: '#334155',       // Slate-700 - scan container node
-  TrufflehogRepository: '#475569', // Slate-600 - repository node
-  TrufflehogFinding: '#8b5e3c',    // Muted bronze - secret finding (warm, distinct from GithubSecret purple)
+  MultiscannerScan: '#334155',       // Slate-700 - scan container node
+  MultiscannerRepository: '#475569', // Slate-600 - repository node
+  MultiscannerImage: '#0e7490',      // Cyan-700 - container images
+  MultiscannerModel: '#7e22ce',      // Purple-700 - AI assets (models/spaces/datasets)
+  MultiscannerBucket: '#a16207',     // Yellow-700 - object storage
+  MultiscannerEndpoint: '#3f6212',   // Lime-800 - service instances and scan roots
+  MultiscannerFinding: '#8b5e3c',    // Muted bronze - secret finding (warm, distinct from GithubSecret purple)
 
   // JS RECON SCANNER (Fuchsia - distinct from all other node families)
   JsReconFinding: '#c026d3',       // Fuchsia-600 - JS analysis finding

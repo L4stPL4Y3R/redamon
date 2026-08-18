@@ -318,13 +318,17 @@ class TestContainerManagerAPIError(unittest.TestCase):
 
         state = cm_mod.TrufflehogState(
             project_id='test',
+            source='docker',
+            run_id='docker',
             status=cm_mod.TrufflehogStatus.RUNNING,
             container_id='abc123',
         )
-        manager.trufflehog_states['test'] = state
+        # Run-keyed: {project_id: {source: state}}.
+        manager.trufflehog_states['test'] = {'docker': state}
         manager.client.containers.get.side_effect = cm_mod.APIError('500 Server Error')
 
-        result = asyncio.get_event_loop().run_until_complete(manager.get_trufflehog_status('test'))
+        result = asyncio.get_event_loop().run_until_complete(
+            manager.get_trufflehog_status('test', 'docker'))
         self.assertEqual(result.status, cm_mod.TrufflehogStatus.ERROR)
         self.assertIn('Docker API error', result.error)
 

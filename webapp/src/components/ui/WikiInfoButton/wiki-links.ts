@@ -99,7 +99,7 @@ export const SECTION_WIKI: Record<string, { page: string; anchor?: string }> = {
   CypherFixSettings:{ page: 'CypherFix-Automated-Remediation' },
   EndpointAiClassifier: { page: 'Adversarial-AI-Recon', anchor: 'endpoint-ai-classifier' },
   Github:           { page: 'GitHub-Secret-Hunting' },
-  Trufflehog:       { page: 'TruffleHog-Secret-Scanning' },
+  Trufflehog:       { page: 'Secret-Multiscanner' },
   // Supply-Chain L1 standalone scan (the Other Scans modal card). L2 recon uses SupplyChainRecon.
   SupplyChainScan:  { page: 'Supply-Chain-Scanning', anchor: 'layer-l1-the-supply-chain-scanner-other-scans' },
   GvmScan:          { page: 'GVM-Vulnerability-Scanning' },

@@ -38,13 +38,31 @@ export const SCAN_JOB_ENVELOPE_BYTES: Record<string, number> = {
   gvm: 2684354560,
   github_hunt: 805306368,
   trufflehog: 805306368,
+  // Source-qualified, mirroring the orchestrator: docker and huggingface
+  // decompress remote blobs and peak well above the git-based sources.
+  'trufflehog:docker': 1610612736,
+  'trufflehog:huggingface': 1610612736,
+  'trufflehog:s3': 1207959552,
+  'trufflehog:gcs': 1207959552,
   supply_chain: 1879048192,
   supply_chain_repo: 1879048192,
   _default: 2147483648,
 }
 
 export function envelopeForKind(kind: string): number {
-  return SCAN_JOB_ENVELOPE_BYTES[kind] ?? SCAN_JOB_ENVELOPE_BYTES._default
+  const exact = SCAN_JOB_ENVELOPE_BYTES[kind]
+  if (exact !== undefined) return exact
+  // A qualified kind ('trufflehog:github') with no entry of its own falls back
+  // to its BASE kind, not to _default — mirroring scan_job_envelope() in
+  // resource_governor.py. Without this, a source we deliberately left on the
+  // family envelope would be estimated at the 2 GB unknown-type figure here and
+  // at 768 MB by the ledger, and the queue would order jobs by a number the
+  // admission gate disagrees with.
+  if (kind.includes(':')) {
+    const base = SCAN_JOB_ENVELOPE_BYTES[kind.split(':')[0]]
+    if (base !== undefined) return base
+  }
+  return SCAN_JOB_ENVELOPE_BYTES._default
 }
 
 /**
@@ -57,7 +75,13 @@ export const FINGERPRINT_FIELDS: Record<string, readonly string[]> = {
   partial_recon: ['targetDomain', 'ipMode', 'targetIps', 'scanModules', 'targetGuardrailEnabled', 'stealthMode'],
   gvm: ['targetDomain', 'ipMode', 'targetIps', 'gvmScanConfig', 'gvmScanTargets'],
   github_hunt: ['githubTargetOrg', 'githubTargetRepos', 'githubScanMembers', 'githubScanGists', 'githubScanCommits'],
-  trufflehog: ['trufflehogGithubOrg', 'trufflehogGithubRepos', 'trufflehogOnlyVerified', 'trufflehogNoVerification'],
+  // Only the SHARED options still live on Project; the per-source targets moved
+  // to TrufflehogScanProfile and are folded in by the caller through `extra`
+  // (see resolveTrufflehogFingerprintExtra). Listing the old
+  // trufflehogGithubOrg/Repos columns here would hash a CONSTANT — the fields no
+  // longer exist, settingsFingerprint skips undefined ones, and the C-4
+  // re-confirmation guard would be silently disabled.
+  trufflehog: ['trufflehogNoVerification', 'trufflehogResultTypes', 'trufflehogIncludeDetectors', 'trufflehogExcludeDetectors'],
   supply_chain: ['supplyChainInputMode', 'supplyChainSbomFile', 'supplyChainRepoUrl', 'supplyChainRepoRef', 'supplyChainRepoScope', 'supplyChainDeepAnalysisEnabled'],
   supply_chain_repo: ['supplyChainInputMode', 'supplyChainSbomFile', 'supplyChainRepoUrl', 'supplyChainRepoRef', 'supplyChainRepoScope', 'supplyChainDeepAnalysisEnabled'],
   ai_attack: [],
@@ -90,11 +114,25 @@ function canonicalize(value: unknown): unknown {
  * object carrying the fields (typically a Prisma Project row); unknown/absent
  * fields are simply omitted, so a not-yet-added column never throws.
  */
-export function settingsFingerprint(kind: string, project: Record<string, unknown>): string {
+export function settingsFingerprint(
+  kind: string,
+  project: Record<string, unknown>,
+  /** Extra scan-steering settings that do not live on the Project row. Merged in
+   *  before hashing. TruffleHog needs this: its targets moved to a per-source
+   *  profile, and without them the hash covers only the shared options — so
+   *  re-pointing a Docker scan at a different namespace would not invalidate the
+   *  queued job. */
+  extra?: Record<string, unknown>,
+): string {
   const fields = FINGERPRINT_FIELDS[kind] ?? []
   const subset: Record<string, unknown> = {}
   for (const f of fields) {
     if (project[f] !== undefined) subset[f] = project[f]
+  }
+  if (extra) {
+    for (const [k, v] of Object.entries(extra)) {
+      if (v !== undefined) subset[k] = v
+    }
   }
   const canonical = JSON.stringify({ kind, settings: canonicalize(subset) })
   return createHash('sha256').update(canonical).digest('hex')

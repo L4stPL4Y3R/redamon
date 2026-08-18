@@ -68,7 +68,7 @@ export function ResourceEnumAiSection({ data, updateField, onRun }: ResourceEnum
           {masterOn && (
             <div className={styles.subSection}>
               <h3 className={styles.subSectionTitle}>AI Surface Classifiers</h3>
-              <p className={styles.fieldHint} style={{ marginBottom: '0.5rem' }}>
+              <p className={styles.fieldHint}>
                 All sub-classifiers default on. Master toggle above gates the whole pass. Each sub-classifier can be flipped independently when a specific annotation produces too much noise on a given target.
               </p>
 

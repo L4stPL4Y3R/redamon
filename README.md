@@ -23,7 +23,7 @@
 
 <p align="center">
   <a href="https://github.com/samugit83/redamon/stargazers"><img height="24" src="https://img.shields.io/github/stars/samugit83/redamon?style=flat&color=2E8B57&label=Stars" alt="GitHub Stars"/></a>
-  <img height="24" src="https://img.shields.io/badge/v6.10.0-release-2E8B57?style=flat" alt="Version 6.10.0"/>
+  <img height="24" src="https://img.shields.io/badge/v6.11.0-release-2E8B57?style=flat" alt="Version 6.11.0"/>
   <img height="24" src="https://img.shields.io/badge/WARNING-SECURITY%20TOOL-B22222?style=flat" alt="Security Tool Warning"/>
   <img height="24" src="https://img.shields.io/badge/LICENSE-MIT-4169A1?style=flat" alt="MIT License"/>
   <a href="docs/readmes/README.SECURITY_POSTURE.md"><img height="24" src="https://img.shields.io/badge/SECURE%20BY%20DESIGN-STRIDE%20THREAT%20MODELED-2E7D32?style=flat&logo=shield&logoColor=white" alt="Secure by Design, STRIDE Threat Modeled"/></a>
@@ -324,7 +324,7 @@ Tool images are built automatically on first run if they don't exist yet. The de
 | `recon/Dockerfile` | `docker compose --profile tools build recon` |
 | `scanners/gvm_scan/Dockerfile` | `docker compose --profile tools build vuln-scanner` |
 | `scanners/github_secret_hunt/Dockerfile` | `docker compose --profile tools build github-secret-hunter` |
-| `scanners/trufflehog_scan/Dockerfile` | `docker compose --profile tools build trufflehog-scanner` |
+| `scanners/trufflehog_scan/Dockerfile` (Secret Multiscanner) | `docker compose --profile tools build trufflehog-scanner` |
 | `scanners/baddns_scan/Dockerfile` or `scanners/baddns_scan/entrypoint.sh` | `docker compose --profile tools build baddns-scanner` |
 | `scanners/wcvs/Dockerfile` (web cache poisoning engine) | `docker compose --profile tools build wcvs` |
 | `scanners/supply_chain_scan/Dockerfile` (L1 scanner) | `docker compose --profile tools build supply-chain` |
@@ -440,7 +440,7 @@ The platform is built around six pillars:
 
 | Pillar | What it does |
 |--------|-------------|
-| **Reconnaissance Pipeline** | A **parallelized fan-out / fan-in** scanning pipeline that maps your target's entire attack surface (starting from a domain **or IP addresses / CIDR ranges**) from subdomain discovery (5 concurrent tools) through port scanning, Nmap service detection and NSE vulnerability scripts, HTTP probing, resource enumeration, and vulnerability detection. Independent modules run concurrently via `ThreadPoolExecutor`, graph DB updates happen in a background thread, and results are stored as a rich, queryable graph. Complemented by standalone GVM network scanning, GitHub secret hunting, and TruffleHog deep secret scanning modules. |
+| **Reconnaissance Pipeline** | A **parallelized fan-out / fan-in** scanning pipeline that maps your target's entire attack surface (starting from a domain **or IP addresses / CIDR ranges**) from subdomain discovery (5 concurrent tools) through port scanning, Nmap service detection and NSE vulnerability scripts, HTTP probing, resource enumeration, and vulnerability detection. Independent modules run concurrently via `ThreadPoolExecutor`, graph DB updates happen in a background thread, and results are stored as a rich, queryable graph. Complemented by standalone GVM network scanning, GitHub secret hunting, and Secret Multiscanner deep secret scanning modules. |
 | **AI Agent Orchestrator** | A LangGraph-based autonomous agent that reasons about the graph, selects security tools via MCP, transitions through informational / exploitation / post-exploitation phases, and can be steered in real-time via chat. |
 | **Attack Surface Graph** | A Neo4j knowledge graph with 17 node types and 20+ relationship types that serves as the single source of truth for every finding, and the primary data source the AI agent queries before every decision. |
 | **EvoGraph** | A persistent, evolutionary attack chain graph in Neo4j that tracks every step, finding, decision, and failure across the attack lifecycle, bridging the recon graph and enabling cross-session intelligence accumulation. |
@@ -763,9 +763,11 @@ Scans GitHub repositories, gists, and commit history for exposed secrets using *
 
 > **[Wiki: GitHub Secret Hunting](https://github.com/samugit83/redamon/wiki/GitHub-Secret-Hunting)**
 
-### TruffleHog Deep Secret Scanner
+### Secret Multiscanner
 
-Scans GitHub repositories for leaked credentials using **700+ detectors** with automatic verification of whether discovered secrets are still active. Powered by the TruffleHog engine (`trufflesecurity/trufflehog`), it detects API keys, passwords, tokens, certificates, and more across full commit history. Results are stored as `TrufflehogScan → TrufflehogRepository → TrufflehogFinding` nodes in the Neo4j graph. Both GitHub Hunt and TruffleHog are accessible from the **"Other Scans" modal** in the graph toolbar.
+Hunts live credentials across **14 kinds of target** with **1060 detectors**: git repositories, GitHub (including deleted commits), GitLab, Docker registries, Hugging Face, S3, GCS, a local filesystem, Jenkins, Elasticsearch, Postman, CircleCI and Travis CI. It goes one step past a regex scanner by calling the owning service's API with the credential it found, so a finding says whether the secret is **actually still live**, dead, or never checked. Each source is configured once per project and runs in **its own hardened container** (isolated network, read-only root, non-root, exactly one credential and no graph access), so different sources scan **in parallel**. Results are stored as `MultiscannerScan → MultiscannerRepository / Image / Model / Bucket / Endpoint → MultiscannerFinding` nodes and surface in the Red Zone secrets table, live findings first. Configure it in **project settings**, start it per source from the **"Other Scans" modal**.
+
+> **[Wiki: Secret Multiscanner](https://github.com/samugit83/redamon/wiki/Secret-Multiscanner)**
 
 ### Supply Chain / Malicious Package Detection
 
@@ -854,7 +856,7 @@ flowchart TB
         Recon[Recon Pipeline<br/>Docker Container]
         GVM[GVM/OpenVAS Scanner<br/>Network Vuln Assessment]
         GHHunt[GitHub Secret Hunter<br/>Credential Scanning]
-        TruffleHog[TruffleHog Scanner<br/>700+ Secret Detectors]
+        Multiscanner[Secret Multiscanner<br/>14 Sources · 1060 Detectors]
     end
 
     subgraph Data["💾 Data Layer"]
@@ -872,6 +874,7 @@ flowchart TB
 
     subgraph External["🌐 External APIs"]
         GitHubAPI[GitHub API<br/>Repos & Code Search]
+        SourceAPIs[Secret Sources<br/>GitLab · Docker · S3 · GCS<br/>Hugging Face · CI · ...]
     end
 
     subgraph Targets["🎯 Target Layer"]
@@ -888,11 +891,12 @@ flowchart TB
     ReconOrch -->|Docker SDK| Recon
     ReconOrch -->|Docker SDK| GVM
     ReconOrch -->|Docker SDK| GHHunt
-    ReconOrch -->|Docker SDK| TruffleHog
+    ReconOrch -->|Docker SDK, one per source| Multiscanner
+    ReconOrch -->|Multiscanner ingest| Neo4j
     Recon -->|Fetch Settings| Webapp
     GHHunt -->|GitHub API| GitHubAPI
-    TruffleHog -->|GitHub API| GitHubAPI
-    TruffleHog --> Neo4j
+    Multiscanner -->|GitHub API| GitHubAPI
+    Multiscanner --> SourceAPIs
     Agent -->|API| OpenAI
     Agent -->|API| Anthropic
     Agent -->|API| LocalLLM
@@ -937,7 +941,7 @@ flowchart TB
 | **CypherFix Agents** | Automated triage + code fix + GitHub PR | [README.CYPHERFIX_AGENTS.md](docs/readmes/README.CYPHERFIX_AGENTS.md) |
 | **Web Application** | Next.js dashboard for visualization and AI interaction | [README.WEBAPP.md](docs/readmes/README.WEBAPP.md) |
 | **GVM Scanner** | Greenbone/OpenVAS network vulnerability scanner (170K+ NVTs) | [README.GVM.md](docs/readmes/README.GVM.md) |
-| **TruffleHog Scanner** | Deep secret scanning with 700+ detectors and credential verification | n/a |
+| **Secret Multiscanner** | Deep secret scanning across 14 source kinds (git, GitHub, GitLab, Docker, Hugging Face, S3, GCS, filesystem, Jenkins, Elasticsearch, Postman, CI) with 1060 detectors, live-credential verification, and one hardened container per source running in parallel | [Wiki: Secret Multiscanner](https://github.com/samugit83/redamon/wiki/Secret-Multiscanner) |
 | **Supply-Chain Scanner** | Offline malicious/vulnerable package detection (OSV-Scanner + GuardDog + retire.js) with a hardened DIRTY/CLEAN split; 3 layers (agent tools, standalone SBOM scan, live-target recon) | [README.SUPPLY_CHAIN.md](docs/readmes/README.SUPPLY_CHAIN.md) |
 | **PostgreSQL Database** | Project settings, user accounts, configuration data | [README.POSTGRES.md](docs/readmes/README.POSTGRES.md) |
 | **Test Environments** | Intentionally vulnerable Docker containers for safe testing | [README.GPIGS.md](docs/readmes/README.GPIGS.md) |

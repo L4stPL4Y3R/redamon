@@ -71,7 +71,9 @@ function makeReportData(overrides: Partial<ReportData> = {}): ReportData {
     trufflehog: {
       totalFindings: 0,
       verifiedFindings: 0,
+      liveFindings: 0,
       repositories: 0,
+      sources: [],
       findings: [],
     },
     secrets: {
@@ -191,29 +193,61 @@ describe('Report Template Generation', () => {
 })
 
 describe('Conditional Section Rendering', () => {
-  test('TruffleHog section NOT rendered when no findings', () => {
+  test('Secret Multiscanner section NOT rendered when no findings', () => {
     const html = generateReportHtml(makeReportData(), null)
     expect(html).not.toContain('id="trufflehog"')
   })
 
-  test('TruffleHog section rendered when findings exist', () => {
+  test('Secret Multiscanner section rendered when findings exist', () => {
     const data = makeReportData({
       trufflehog: {
         totalFindings: 3,
         verifiedFindings: 1,
+        liveFindings: 1,
         repositories: 2,
+        sources: [
+          { source: 'github', target: 'org', status: 'completed', total: 2, live: 1, assets: 1 },
+          { source: 'docker', target: 'org/app:1.0', status: 'completed', total: 1, live: 0, assets: 1 },
+        ],
         findings: [
-          { detectorName: 'AWS', verified: true, redacted: 'AKIA...', repository: 'org/repo', file: '.env', commit: 'abc123', line: 5, link: null },
-          { detectorName: 'GitHub', verified: false, redacted: 'ghp_...', repository: 'org/repo', file: 'config.js', commit: 'def456', line: 10, link: null },
+          { detectorName: 'AWS', verified: true, validationStatus: 'validated', source: 'github', findingKind: 'secret', redacted: 'AKIA...', asset: 'org/repo', location: '.env', commit: 'abc123', line: 5, link: null, repository: 'org/repo', file: '.env' },
+          { detectorName: 'GitHub', verified: false, validationStatus: 'unvalidated', source: 'github', findingKind: 'secret', redacted: 'ghp_...', asset: 'org/repo', location: 'config.js', commit: 'def456', line: 10, link: null, repository: 'org/repo', file: 'config.js' },
+          { detectorName: 'AWS', verified: false, validationStatus: 'unverified', source: 'docker', findingKind: 'image_history', redacted: 'AKIA2...', asset: 'org/app:1.0', location: 'image-metadata:history:3:created-by', commit: '', line: 0, link: null, repository: 'org/app:1.0', file: 'image-metadata:history:3:created-by' },
         ],
       },
     })
     const html = generateReportHtml(data, null)
     expect(html).toContain('id="trufflehog"')
-    expect(html).toContain('TruffleHog Findings')
-    expect(html).toContain('VERIFIED')
+    expect(html).toContain('Secret Multiscanner Findings')
     expect(html).toContain('AWS')
     expect(html).toContain('AKIA...')
+    // A credential confirmed live by the owning API, not merely "verified".
+    expect(html).toContain('LIVE')
+    expect(html).toContain('confirmed LIVE by the owning service')
+    // "Never checked" must not read as "not live".
+    expect(html).toContain('Not checked')
+    expect(html).toContain('Not live')
+    // Several sources scan in parallel; the report breaks them out.
+    expect(html).toContain('By source')
+    expect(html).toContain('docker')
+    // A build-history finding has no real file path to show.
+    expect(html).toContain('Dockerfile (build history)')
+  })
+
+  test('Secret Multiscanner live count leads even when `verified` disagrees', () => {
+    // verifiedFindings is the raw TruffleHog bool; liveFindings is the
+    // normalised one. The alert must follow the normalised count.
+    const data = makeReportData({
+      trufflehog: {
+        totalFindings: 1, verifiedFindings: 0, liveFindings: 1, repositories: 1,
+        sources: [],
+        findings: [
+          { detectorName: 'AWS', verified: false, validationStatus: 'validated', source: 's3', findingKind: 'secret', redacted: 'AKIA...', asset: 'bkt', location: 'k', commit: '', line: 0, link: null, repository: 'bkt', file: 'k' },
+        ],
+      },
+    })
+    const html = generateReportHtml(data, null)
+    expect(html).toContain('1 credential(s) confirmed LIVE')
   })
 
   test('Secrets section NOT rendered when total=0', () => {
@@ -443,13 +477,13 @@ describe('Dynamic TOC Numbering', () => {
 
   test('TOC numbers shift when conditional sections are present', () => {
     const data = makeReportData({
-      trufflehog: { totalFindings: 1, verifiedFindings: 0, repositories: 1, findings: [] },
+      trufflehog: { totalFindings: 1, verifiedFindings: 0, liveFindings: 0, repositories: 1, sources: [], findings: [] },
       jsRecon: { totalFindings: 1, bySeverity: [], byType: [], findings: [] },
       otx: { totalPulses: 1, totalMalware: 0, enrichedIps: 0, adversaries: [], pulses: [], malware: [] },
     })
     const html = generateReportHtml(data, null)
     // Core: 1-7, then TruffleHog=8, JS Recon=9, OTX=10, Recommendations=11, Appendix=12
-    expect(html).toContain('8. TruffleHog Findings')
+    expect(html).toContain('8. Secret Multiscanner Findings')
     expect(html).toContain('9. JavaScript Reconnaissance')
     expect(html).toContain('10. OTX Threat Intelligence')
     expect(html).toContain('11. Recommendations')
@@ -463,7 +497,7 @@ describe('Dynamic TOC Numbering', () => {
         exploits: [],
         githubSecrets: { repos: 1, secrets: 3, sensitiveFiles: 1 },
       },
-      trufflehog: { totalFindings: 2, verifiedFindings: 1, repositories: 1, findings: [] },
+      trufflehog: { totalFindings: 2, verifiedFindings: 1, liveFindings: 1, repositories: 1, sources: [], findings: [] },
       secrets: { total: 5, bySeverity: [], bySource: [], byType: [], findings: [] },
       jsRecon: { totalFindings: 3, bySeverity: [], byType: [], findings: [] },
       otx: { totalPulses: 2, totalMalware: 1, enrichedIps: 0, adversaries: [], pulses: [], malware: [] },
@@ -476,7 +510,7 @@ describe('Dynamic TOC Numbering', () => {
     })
     const html = generateReportHtml(data, null)
     expect(html).toContain('GitHub Secrets')
-    expect(html).toContain('TruffleHog Findings')
+    expect(html).toContain('Secret Multiscanner Findings')
     expect(html).toContain('Secret Detection')
     expect(html).toContain('JavaScript Reconnaissance')
     expect(html).toContain('OTX Threat Intelligence')
@@ -502,9 +536,11 @@ describe('HTML Escaping / XSS Prevention', () => {
       trufflehog: {
         totalFindings: 1,
         verifiedFindings: 0,
+        liveFindings: 0,
         repositories: 1,
+        sources: [],
         findings: [
-          { detectorName: '<img onerror=alert(1)>', verified: false, redacted: null, repository: null, file: null, commit: null, line: null, link: null },
+          { detectorName: '<img onerror=alert(1)>', verified: false, validationStatus: 'unvalidated', source: 'github', findingKind: 'secret', redacted: null, asset: null, location: null, commit: null, line: null, link: null, repository: null, file: null },
         ],
       },
     })
@@ -567,7 +603,7 @@ describe('Section ID Consistency', () => {
         exploits: [],
         githubSecrets: { repos: 1, secrets: 1, sensitiveFiles: 0 },
       },
-      trufflehog: { totalFindings: 1, verifiedFindings: 0, repositories: 1, findings: [{ detectorName: 'test', verified: false, redacted: null, repository: null, file: null, commit: null, line: null, link: null }] },
+      trufflehog: { totalFindings: 1, verifiedFindings: 0, liveFindings: 0, repositories: 1, sources: [], findings: [{ detectorName: 'test', verified: false, validationStatus: 'unvalidated', source: 'github', findingKind: 'secret', redacted: null, asset: null, location: null, commit: null, line: null, link: null, repository: null, file: null }] },
       secrets: { total: 1, bySeverity: [], bySource: [], byType: [], findings: [{ secretType: 'test', severity: 'high', source: 'test', sourceUrl: null, sample: null, validationStatus: null, confidence: null, keyType: null }] },
       jsRecon: { totalFindings: 1, bySeverity: [], byType: [], findings: [{ findingType: 'test', severity: 'high', confidence: null, title: 'test', detail: null, evidence: null, sourceUrl: null }] },
       otx: { totalPulses: 1, totalMalware: 0, enrichedIps: 0, adversaries: [], pulses: [{ name: 'test', adversary: null, malwareFamilies: [], attackIds: [], tlp: null, targetedCountries: [], ipAddress: null }], malware: [] },
@@ -591,7 +627,7 @@ describe('Section ID Consistency', () => {
 describe('Appendix Tools Table', () => {
   test('lists new tools in appendix', () => {
     const html = generateReportHtml(makeReportData(), null)
-    expect(html).toContain('TruffleHog')
+    expect(html).toContain('Secret Multiscanner')
     expect(html).toContain('jsluice')
     expect(html).toContain('JS Recon')
     expect(html).toContain('AlienVault OTX')

@@ -54,15 +54,12 @@ interface GraphToolbarProps {
   hasGithubHuntData?: boolean
   isGithubHuntLogsOpen?: boolean
   // TruffleHog props
-  onStartTrufflehog?: () => void
-  onPauseTrufflehog?: () => void
-  onResumeTrufflehog?: () => void
-  onStopTrufflehog?: () => void
-  onDownloadTrufflehogJSON?: () => void
-  onToggleTrufflehogLogs?: () => void
-  trufflehogStatus?: TrufflehogStatus
+  // The toolbar only reflects whether SOMETHING TruffleHog is running (the Other
+  // Scans button's busy state). The per-source controls live in that modal, so
+  // the toolbar takes one aggregate flag instead of a project-level status it
+  // could no longer represent with several sources in flight.
+  isTrufflehogRunning?: boolean
   hasTrufflehogData?: boolean
-  isTrufflehogLogsOpen?: boolean
   // Partial Recon props (multi-run)
   activePartialRecons?: PartialReconState[]
   activePartialReconLogsDrawer?: string | null  // run_id of currently open logs drawer
@@ -145,15 +142,8 @@ export function GraphToolbar({
   hasGithubHuntData = false,
   isGithubHuntLogsOpen = false,
   // TruffleHog props
-  onStartTrufflehog,
-  onPauseTrufflehog,
-  onResumeTrufflehog,
-  onStopTrufflehog,
-  onDownloadTrufflehogJSON,
-  onToggleTrufflehogLogs,
-  trufflehogStatus = 'idle',
+  isTrufflehogRunning = false,
   hasTrufflehogData = false,
-  isTrufflehogLogsOpen = false,
   // Partial Recon props (multi-run)
   activePartialRecons = [],
   activePartialReconLogsDrawer = null,
@@ -199,12 +189,8 @@ export function GraphToolbar({
   const isGithubHuntRunning = isGithubHuntBusy || isGithubHuntStopping
   const isGithubHuntPaused = githubHuntStatus === 'paused'
   const isGithubHuntActive = isGithubHuntRunning || isGithubHuntPaused
-  const isTrufflehogBusy = trufflehogStatus === 'running' || trufflehogStatus === 'starting' || trufflehogStatus === 'pausing'
-  const isTrufflehogStopping = trufflehogStatus === 'stopping'
-  const isTrufflehogPausing = trufflehogStatus === 'pausing'
-  const isTrufflehogRunning = isTrufflehogBusy || isTrufflehogStopping
-  const isTrufflehogPaused = trufflehogStatus === 'paused'
-  const isTrufflehogActive = isTrufflehogRunning || isTrufflehogPaused
+  const isTrufflehogBusy = isTrufflehogRunning
+  const isTrufflehogActive = isTrufflehogRunning
   const hasActivePartialRecons = activePartialRecons.length > 0
 
   // Agent status derived values
@@ -454,12 +440,12 @@ export function GraphToolbar({
               </button>
             </div>
 
-            {/* Other Scans (GitHub Hunt + TruffleHog + Supply Chain) */}
+            {/* Other Scans (GitHub Hunt + Secret Multiscanner + Supply Chain) */}
             <div className={styles.actionGroup}>
               <button
                 className={`${styles.githubHuntButton} ${(isGithubHuntActive || isTrufflehogActive) ? styles.githubHuntButtonActive : ''}`}
                 onClick={onToggleOtherScansModal}
-                title="Other Scans (GitHub Hunt, TruffleHog, Supply Chain)"
+                title="Other Scans (GitHub Hunt, Secret Multiscanner, Supply Chain)"
               >
                 {(isGithubHuntRunning || isTrufflehogRunning) ? (
                   <Loader2 size={14} className={styles.spinner} />

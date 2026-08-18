@@ -1,4 +1,4 @@
-"""Supply-Chain Scan project settings (mirrors trufflehog_scan/project_settings.py).
+"""Supply-Chain Scan project settings (mirrors github_secret_hunt/project_settings.py).
 
 Fetches per-project supply-chain settings from the webapp API when PROJECT_ID +
 WEBAPP_API_URL are set; otherwise falls back to defaults for standalone use.

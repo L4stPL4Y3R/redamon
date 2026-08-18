@@ -90,13 +90,32 @@ export interface ExploitSuccess {
 
 export interface TrufflehogFindingRecord {
   detectorName: string
+  /** Raw TruffleHog bool. Prefer validationStatus: `verified: false` conflates
+   *  "the API said it is dead" with "we never checked". */
   verified: boolean
+  validationStatus: string | null
+  source: string | null
+  findingKind: string | null
   redacted: string | null
-  repository: string | null
-  file: string | null
+  /** Generalises the old `repository`: a repo, image, bucket, model or endpoint. */
+  asset: string | null
+  /** Generalises the old `file`: a file path, layer path, object key or URL. */
+  location: string | null
   commit: string | null
   line: number | null
   link: string | null
+  // Deprecated aliases, kept one release for templates not yet migrated.
+  repository: string | null
+  file: string | null
+}
+
+export interface TrufflehogSourceSummary {
+  source: string
+  target: string | null
+  status: string | null
+  total: number
+  live: number
+  assets: number
 }
 
 export interface SecretRecord {
@@ -286,7 +305,12 @@ export interface ReportData {
   trufflehog: {
     totalFindings: number
     verifiedFindings: number
+    /** Credentials CONFIRMED live by the owning API. The number an operator
+     *  acts on first, and the one a summary should lead with. */
+    liveFindings: number
     repositories: number
+    /** One row per scanned source; several run in parallel per project. */
+    sources: TrufflehogSourceSummary[]
     findings: TrufflehogFindingRecord[]
   }
 
@@ -1167,22 +1191,41 @@ async function queryAttackChains(session: any, pid: string) {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function queryTrufflehog(session: any, pid: string) {
+  // Untyped asset match `(a)` on purpose: assets carry one of five labels
+  // (Repository/Image/Model/Bucket/Endpoint) and naming one would silently drop
+  // every non-git source from the report.
   const summaryRes = await session.run(
-    `OPTIONAL MATCH (d:Domain {project_id: $pid})-[:HAS_TRUFFLEHOG_SCAN]->(ts:TrufflehogScan)
-     OPTIONAL MATCH (ts)-[:HAS_REPOSITORY]->(tr:TrufflehogRepository)
-     OPTIONAL MATCH (tr)-[:HAS_FINDING]->(tf:TrufflehogFinding)
+    `OPTIONAL MATCH (d:Domain {project_id: $pid})-[:HAS_MULTISCANNER_SCAN]->(ts:MultiscannerScan)
+     OPTIONAL MATCH (ts)-[:HAS_ASSET]->(a)
+     OPTIONAL MATCH (a)-[:HAS_FINDING]->(tf:MultiscannerFinding)
      RETURN count(DISTINCT tf) AS total,
             count(DISTINCT CASE WHEN tf.verified = true THEN tf END) AS verified,
-            count(DISTINCT tr) AS repos`,
+            count(DISTINCT CASE WHEN tf.validation_status = 'validated' THEN tf END) AS live,
+            count(DISTINCT a) AS assets`,
+    { pid }
+  )
+  const bySourceRes = await session.run(
+    `MATCH (d:Domain {project_id: $pid})-[:HAS_MULTISCANNER_SCAN]->(ts:MultiscannerScan)
+     OPTIONAL MATCH (ts)-[:HAS_ASSET]->(a)-[:HAS_FINDING]->(tf:MultiscannerFinding)
+     RETURN ts.source AS source, ts.target AS target, ts.status AS status,
+            count(DISTINCT tf) AS total,
+            count(DISTINCT CASE WHEN tf.validation_status = 'validated' THEN tf END) AS live,
+            count(DISTINCT a) AS assets
+     ORDER BY live DESC, total DESC`,
     { pid }
   )
   const findingsRes = await session.run(
-    `MATCH (d:Domain {project_id: $pid})-[:HAS_TRUFFLEHOG_SCAN]->()-[:HAS_REPOSITORY]->(tr:TrufflehogRepository)-[:HAS_FINDING]->(tf:TrufflehogFinding)
+    `MATCH (d:Domain {project_id: $pid})-[:HAS_MULTISCANNER_SCAN]->()-[:HAS_ASSET]->(a)-[:HAS_FINDING]->(tf:MultiscannerFinding)
      RETURN tf.detector_name AS detectorName, tf.verified AS verified,
-            tf.redacted AS redacted, tr.name AS repository,
-            tf.file AS file, tf.commit AS commit,
+            tf.validation_status AS validationStatus, tf.source AS source,
+            tf.finding_kind AS findingKind,
+            tf.redacted AS redacted, a.name AS asset,
+            tf.location AS location, tf.commit AS commit,
             tf.line AS line, tf.link AS link
-     ORDER BY CASE WHEN tf.verified = true THEN 0 ELSE 1 END, tf.detector_name
+     ORDER BY CASE tf.validation_status
+                WHEN 'validated' THEN 0 WHEN 'verify_error' THEN 1
+                WHEN 'unverified' THEN 2 ELSE 3 END,
+              tf.detector_name
      LIMIT 50`,
     { pid }
   )
@@ -1191,17 +1234,35 @@ async function queryTrufflehog(session: any, pid: string) {
   return {
     totalFindings: sumRec ? toNum(sumRec.get('total')) : 0,
     verifiedFindings: sumRec ? toNum(sumRec.get('verified')) : 0,
-    repositories: sumRec ? toNum(sumRec.get('repos')) : 0,
-    findings: findingsRes.records.map((r: any) => ({
-      detectorName: (r.get('detectorName') as string) || 'Unknown',
-      verified: r.get('verified') === true,
-      redacted: r.get('redacted') as string | null,
-      repository: r.get('repository') as string | null,
-      file: r.get('file') as string | null,
-      commit: r.get('commit') as string | null,
-      line: r.get('line') != null ? toNum(r.get('line')) : null,
-      link: r.get('link') as string | null,
+    liveFindings: sumRec ? toNum(sumRec.get('live')) : 0,
+    repositories: sumRec ? toNum(sumRec.get('assets')) : 0,
+    sources: bySourceRes.records.map((r: any) => ({
+      source: (r.get('source') as string) || 'unknown',
+      target: r.get('target') as string | null,
+      status: r.get('status') as string | null,
+      total: toNum(r.get('total')),
+      live: toNum(r.get('live')),
+      assets: toNum(r.get('assets')),
     })),
+    findings: findingsRes.records.map((r: any) => {
+      const asset = r.get('asset') as string | null
+      const location = r.get('location') as string | null
+      return {
+        detectorName: (r.get('detectorName') as string) || 'Unknown',
+        verified: r.get('verified') === true,
+        validationStatus: r.get('validationStatus') as string | null,
+        source: r.get('source') as string | null,
+        findingKind: r.get('findingKind') as string | null,
+        redacted: r.get('redacted') as string | null,
+        asset,
+        location,
+        commit: r.get('commit') as string | null,
+        line: r.get('line') != null ? toNum(r.get('line')) : null,
+        link: r.get('link') as string | null,
+        repository: asset,
+        file: location,
+      }
+    }),
   }
 }
 

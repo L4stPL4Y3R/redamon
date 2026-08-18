@@ -45,7 +45,32 @@ export async function GET(request: NextRequest) {
               bu.url                                    AS baseUrl,
               sd.name                                   AS subdomain,
               j.source_url                              AS jsFileUrl,
-              CASE WHEN j IS NOT NULL THEN 'JsReconFinding' ELSE 'Secret' END AS origin
+              CASE WHEN j IS NOT NULL THEN 'JsReconFinding' ELSE 'Secret' END AS origin,
+              null                                      AS trufflehogSource,
+              null                                      AS asset,
+              null                                      AS location
+       LIMIT ${rowCap()}`,
+      { pid: projectId }
+    )
+
+    // TruffleHog findings were graph-only until now: the operator had to open
+    // /graph to see a credential the scanner had CONFIRMED was live. They are a
+    // separate traversal rather than a second label on the node, because the
+    // graph renderer draws a node from labels[0] and dual-labelling would break
+    // it. The asset match is untyped `(a)` on purpose — assets carry one of five
+    // labels and naming one would drop every non-git source.
+    const thResult = await session.run(
+      `MATCH (tf:MultiscannerFinding {project_id: $pid})
+       OPTIONAL MATCH (a)-[:HAS_FINDING]->(tf)
+       RETURN tf.id                AS id,
+              tf.detector_name     AS secretType,
+              tf.redacted          AS valueSample,
+              tf.validation_status AS validationStatus,
+              tf.source            AS trufflehogSource,
+              tf.finding_kind      AS findingKind,
+              coalesce(a.name, tf.asset) AS asset,
+              tf.location          AS location,
+              tf.link              AS sourceUrl
        LIMIT ${rowCap()}`,
       { pid: projectId }
     )
@@ -68,6 +93,40 @@ export async function GET(request: NextRequest) {
       baseUrl: r.get('baseUrl') as string | null,
       subdomain: r.get('subdomain') as string | null,
       jsFileUrl: r.get('jsFileUrl') as string | null,
+      trufflehogSource: null as string | null,
+      asset: null as string | null,
+      location: null as string | null,
+    }))
+
+    rows.push(...thResult.records.map(r => {
+      const findingKind = r.get('findingKind') as string | null
+      const location = r.get('location') as string | null
+      return {
+        origin: 'MultiscannerFinding',
+        id: (r.get('id') as string) || '',
+        secretType: (r.get('secretType') as string) || 'unknown',
+        valueSample: r.get('valueSample') as string | null,
+        matchedText: null as string | null,
+        entropy: null as number | null,
+        confidence: null as string | number | null,
+        // A credential the owning API confirmed is LIVE is the most severe
+        // finding this table can hold; anything else is informational until
+        // someone checks it.
+        severity: r.get('validationStatus') === 'validated' ? 'critical' : 'medium',
+        sourceModule: `trufflehog:${r.get('trufflehogSource') ?? 'unknown'}`,
+        sourceUrl: r.get('sourceUrl') as string | null,
+        secretBaseUrl: null as string | null,
+        keyType: null as string | null,
+        detectionMethod: 'trufflehog',
+        validationStatus: r.get('validationStatus') as string | null,
+        baseUrl: null as string | null,
+        subdomain: null as string | null,
+        jsFileUrl: null as string | null,
+        trufflehogSource: r.get('trufflehogSource') as string | null,
+        asset: r.get('asset') as string | null,
+        // A build-history finding's path does not exist in the filesystem.
+        location: findingKind === 'image_history' ? 'Dockerfile (build history)' : location,
+      }
     }))
 
     // Priority weighting. `secret_type` in RedAmon is the pattern-family name
@@ -88,12 +147,17 @@ export async function GET(request: NextRequest) {
 
     // Prefer validated > format_validated > unvalidated, then by type priority,
     // then higher entropy first.
+    // Shared with SecretsTable's VALIDATION_CLASS. `verify_error` outranks
+    // `unvalidated`: the verify call failed, which is NOT proof the credential is
+    // dead. `unverified` (verification switched off) sits below both — nobody
+    // looked, so it must never read as "checked and safe".
     const VALIDATION_RANK: Record<string, number> = {
-      validated: 0, format_validated: 1, unvalidated: 2, skipped: 3, invalid: 4,
+      validated: 0, format_validated: 1, verify_error: 2, unvalidated: 3,
+      unverified: 4, skipped: 5, invalid: 6,
     }
     rows.sort((a, b) => {
-      const va = VALIDATION_RANK[a.validationStatus ?? 'unvalidated'] ?? 2
-      const vb = VALIDATION_RANK[b.validationStatus ?? 'unvalidated'] ?? 2
+      const va = VALIDATION_RANK[a.validationStatus ?? 'unvalidated'] ?? 3
+      const vb = VALIDATION_RANK[b.validationStatus ?? 'unvalidated'] ?? 3
       if (va !== vb) return va - vb
       const ta = typePriority(a.secretType)
       const tb = typePriority(b.secretType)

@@ -137,7 +137,6 @@ class TestStatusPollDoesNotBlockEventLoop:
     @pytest.mark.parametrize("poller,states_attr,state_cls,status_cls", [
         ("get_gvm_status", "gvm_states", GvmState, GvmStatus),
         ("get_github_hunt_status", "github_hunt_states", GithubHuntState, GithubHuntStatus),
-        ("get_trufflehog_status", "trufflehog_states", TrufflehogState, TrufflehogStatus),
     ])
     async def test_other_scan_type_pollers_keep_event_loop_responsive(
         self, manager, mock_docker_client, poller, states_attr, state_cls, status_cls
@@ -169,6 +168,42 @@ class TestStatusPollDoesNotBlockEventLoop:
         state = await getattr(manager, poller)("p")
         assert state.status == status_cls.RUNNING
         assert ticks >= 5, f"{poller} blocked the event loop (ticks={ticks})"
+        hb.cancel()
+
+    @pytest.mark.asyncio
+    async def test_trufflehog_poller_keeps_event_loop_responsive(self, manager, mock_docker_client):
+        """Same guarantee for the run-keyed TruffleHog poller.
+
+        It matters more here than for the single-run scan types: several sources
+        poll in parallel, so a Docker inspection on the event loop multiplies
+        across every live run instead of stalling one.
+        """
+        manager.trufflehog_states["p"] = {
+            "docker": TrufflehogState(
+                project_id="p", source="docker", run_id="docker",
+                status=TrufflehogStatus.RUNNING, container_id="c1",
+            )
+        }
+
+        def slow_get(_cid):
+            time.sleep(0.3)
+            c = MagicMock()
+            c.status = "running"
+            return c
+        mock_docker_client.containers.get.side_effect = slow_get
+
+        ticks = 0
+
+        async def heartbeat():
+            nonlocal ticks
+            for _ in range(200):
+                await asyncio.sleep(0.01)
+                ticks += 1
+
+        hb = asyncio.create_task(heartbeat())
+        state = await manager.get_trufflehog_status("p", "docker")
+        assert state.status == TrufflehogStatus.RUNNING
+        assert ticks >= 5, f"trufflehog poller blocked the event loop (ticks={ticks})"
         hb.cancel()
 
     @pytest.mark.asyncio

@@ -89,6 +89,39 @@ model UserLlmProvider {
   @@map("user_llm_providers")
 }
 
+/// One configured TruffleHog source for a project. Runs are keyed by source, so
+/// this row is also the run's identity: two Docker Hub scans cannot overlap,
+/// while Docker and HuggingFace run side by side.
+model TrufflehogScanProfile {
+  id           String  @id @default(cuid())
+  projectId    String  @map("project_id")
+  project      Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  /// git | github | github_experimental | gitlab | docker | huggingface
+  /// | s3 | gcs | filesystem | jenkins | elasticsearch | postman
+  /// | circleci | travisci
+  source       String
+  /// Operator label, e.g. "Docker Hub - acme prod"
+  label        String  @default("")
+  /// Source-specific targets and flags; shape defined by the source registry
+  /// (scanners/trufflehog_scan/sources.py and its TS mirror).
+  ///
+  /// NEVER holds a secret. Credentials are flat UserSettings.trufflehog* fields
+  /// selected by `source` and resolved at start time, because this row — and the
+  /// whole Project — is spread verbatim into project.json inside the downloadable
+  /// export zip, with no field allowlist. A token here would leak with the export.
+  config       Json    @default("{}")
+
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  /// Makes "one profile per source per project" a database invariant — the same
+  /// rule the runtime run key enforces.
+  @@unique([projectId, source])
+  @@index([projectId])
+  @@map("trufflehog_scan_profiles")
+}
+
 model UserSettings {
   id              String   @id @default(cuid())
   userId          String   @unique @map("user_id")
@@ -96,6 +129,33 @@ model UserSettings {
 
   // Tool API Keys
   githubAccessToken String @default("") @map("github_access_token")
+
+  // ---------- TruffleHog Secret Scanner credentials ----------
+  // Deliberately SEPARATE from githubAccessToken, which stays owned by GitHub
+  // Secret Hunt and Supply Chain. One credential per source per user: this
+  // matches every other key in the API Keys section, and the trade-off (two
+  // projects cannot each hold a different Docker Hub token) is accepted.
+  // These live on UserSettings, never on Project or a scan profile, because
+  // UserSettings is not part of the project export.
+  trufflehogGithubToken       String @default("") @map("trufflehog_github_token")
+  trufflehogGitlabToken       String @default("") @map("trufflehog_gitlab_token")
+  trufflehogDockerToken       String @default("") @map("trufflehog_docker_token")
+  trufflehogHuggingfaceToken  String @default("") @map("trufflehog_huggingface_token")
+  trufflehogAwsAccessKeyId    String @default("") @map("trufflehog_aws_access_key_id")
+  trufflehogAwsSecretKey      String @default("") @map("trufflehog_aws_secret_key")
+  trufflehogAwsSessionToken   String @default("") @map("trufflehog_aws_session_token")
+  trufflehogGcpServiceAccount String @default("") @map("trufflehog_gcp_service_account")
+  trufflehogPostmanToken      String @default("") @map("trufflehog_postman_token")
+  trufflehogJenkinsUsername   String @default("") @map("trufflehog_jenkins_username")
+  trufflehogJenkinsPassword   String @default("") @map("trufflehog_jenkins_password")
+  trufflehogElasticUsername   String @default("") @map("trufflehog_elastic_username")
+  trufflehogElasticPassword   String @default("") @map("trufflehog_elastic_password")
+  trufflehogElasticApiKey     String @default("") @map("trufflehog_elastic_api_key")
+  trufflehogElasticServiceToken String @default("") @map("trufflehog_elastic_service_token")
+  trufflehogCircleciToken     String @default("") @map("trufflehog_circleci_token")
+  trufflehogTravisciToken     String @default("") @map("trufflehog_travisci_token")
+  trufflehogGitUsername       String @default("") @map("trufflehog_git_username")
+  trufflehogGitToken          String @default("") @map("trufflehog_git_token")
   /// GitHub Enterprise (self-hosted / custom domain), e.g. "ghe.example.com".
   /// Empty = only github.com is reachable. This is the ALLOWLIST: a host typed
   /// into a scan input is accepted only when it matches this value, because the
@@ -326,14 +386,33 @@ model Project {
   githubOutputJson            Boolean  @default(true) @map("github_output_json")
 
   // ========== TRUFFLEHOG SECRET SCANNER ==========
+  // Per-SOURCE targets live on TrufflehogScanProfile (one row per configured
+  // source); only options that apply to every source stay here, so changing the
+  // concurrency does not invalidate a queued job for an unrelated source.
   trufflehogEnabled            Boolean  @default(false) @map("trufflehog_enabled")
-  trufflehogGithubOrg          String   @default("") @map("trufflehog_github_org")
-  trufflehogGithubRepos        String   @default("") @map("trufflehog_github_repos")
-  trufflehogOnlyVerified       Boolean  @default(false) @map("trufflehog_only_verified")
+  /// Which result statuses to report: a comma-separated subset of
+  /// verified,unverified,unknown,filtered_unverified. Replaces the old
+  /// trufflehogOnlyVerified boolean, which combined with trufflehogNoVerification
+  /// asked TruffleHog to report only verified results while forbidding it to
+  /// verify — zero findings, no error.
+  trufflehogResultTypes        String   @default("verified,unverified,unknown") @map("trufflehog_result_types")
+  /// Skip live verification entirely. When set, every finding lands
+  /// `unverified` (never checked), which is NOT the same as "not live".
   trufflehogNoVerification     Boolean  @default(false) @map("trufflehog_no_verification")
   trufflehogConcurrency        Int      @default(8) @map("trufflehog_concurrency")
   trufflehogIncludeDetectors   String   @default("") @map("trufflehog_include_detectors")
   trufflehogExcludeDetectors   String   @default("") @map("trufflehog_exclude_detectors")
+  trufflehogFilterEntropy      String   @default("") @map("trufflehog_filter_entropy")
+  trufflehogDetectorTimeout    String   @default("") @map("trufflehog_detector_timeout")
+  trufflehogMaxDecodeDepth     Int      @default(5) @map("trufflehog_max_decode_depth")
+  trufflehogForceSkipBinaries  Boolean  @default(false) @map("trufflehog_force_skip_binaries")
+  trufflehogForceSkipArchives  Boolean  @default(false) @map("trufflehog_force_skip_archives")
+  trufflehogArchiveMaxSize     String   @default("") @map("trufflehog_archive_max_size")
+  trufflehogArchiveMaxDepth    Int      @default(0) @map("trufflehog_archive_max_depth")
+  trufflehogArchiveTimeout     String   @default("") @map("trufflehog_archive_timeout")
+  trufflehogAllowVerificationOverlap Boolean @default(false) @map("trufflehog_allow_verification_overlap")
+  trufflehogDropUnverifiedJwt  Boolean  @default(false) @map("trufflehog_drop_unverified_jwt")
+  trufflehogProfiles           TrufflehogScanProfile[]
 
   // ========== SUPPLY-CHAIN SCAN (L1 "Other Scans") ==========
   // NOTE: there is deliberately no `supplyChainEnabled`. The scan is launched

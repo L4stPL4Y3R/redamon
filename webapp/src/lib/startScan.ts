@@ -10,6 +10,7 @@
  * mirroring its /api/.../start route body exactly.
  */
 import prisma from '@/lib/prisma'
+import { resolveTrufflehogStart } from '@/lib/trufflehogStart'
 import { orchestratorFetch } from '@/lib/orchestrator'
 import { normalizeOrchestratorStartError } from '@/lib/orchestratorError'
 import { startFullScan } from '@/lib/startFullScan'
@@ -36,7 +37,6 @@ export type StartScanPayload = Record<string, unknown>
 const SIMPLE_KIND_ENDPOINT: Record<string, { path: (p: string) => string; fallback: string }> = {
   gvm: { path: p => `/gvm/${p}/start`, fallback: 'Failed to start GVM scan' },
   github_hunt: { path: p => `/github-hunt/${p}/start`, fallback: 'Failed to start GitHub Secret Hunt' },
-  trufflehog: { path: p => `/trufflehog/${p}/start`, fallback: 'Failed to start TruffleHog scan' },
   supply_chain: { path: p => `/supply-chain/${p}/start`, fallback: 'Failed to start Supply-Chain scan' },
   // A per-repo batch item runs the supply-chain container; its repo config is
   // applied by the env-override layer in scanners/supply_chain_scan/project_settings.py.
@@ -57,7 +57,9 @@ const STOP_ENDPOINT: Record<string, (p: string, r: string) => string | null> = {
   full_recon: p => `/recon/${p}/stop`,
   gvm: p => `/gvm/${p}/stop`,
   github_hunt: p => `/github-hunt/${p}/stop`,
-  trufflehog: p => `/trufflehog/${p}/stop`,
+  // Run-keyed: the run id is the source. A project-level stop would kill
+  // whichever source the orchestrator happened to pick, or nothing at all.
+  trufflehog: (p, r) => (r ? `/trufflehog/${p}/${encodeURIComponent(r)}/stop` : null),
   supply_chain: p => `/supply-chain/${p}/stop`,
   supply_chain_repo: p => `/supply-chain/${p}/stop`,
   ai_attack: (p, r) => (r ? `/ai-attack-surface/${p}/${r}/stop` : null),
@@ -108,9 +110,21 @@ export async function dispatchStart(
 
   const project = await prisma.project.findUnique({
     where: { id: projectId },
-    select: { id: true, userId: true },
+    select: { id: true, userId: true, supplyChainInputMode: true },
   })
   if (!project) return { ok: false, status: 404, error: 'Project not found' }
+
+  // 'org' is not an input this scan can read: it means "enumerate the account
+  // and queue one scan per repo", which is a different kind (supply_chain_repo).
+  // Dispatching it anyway would spawn a container that dies looking for an SBOM.
+  if (kind === 'supply_chain' && project.supplyChainInputMode === 'org') {
+    return {
+      ok: false,
+      status: 400,
+      error: 'This project scans a GitHub organization. Queue the org batch from Other Scans '
+        + 'instead, or set an SBOM/repository input in project settings.',
+    }
+  }
 
   let path: string
   let body: Record<string, unknown>
@@ -133,6 +147,20 @@ export async function dispatchStart(
       body.repo_override_scope = typeof payload.scope === 'string' ? payload.scope : ''
       body.repo_override_deep = !!payload.deep_analysis
     }
+  } else if (kind === 'trufflehog') {
+    // A dedicated branch, not the simple one: a queued TruffleHog job carries
+    // its source (and the profile that defines the target) in the payload, and
+    // the simple branch forwards no payload at all — the job would dispatch with
+    // no source and run the wrong config.
+    const resolved = await resolveTrufflehogStart(projectId, {
+      profileId: typeof payload.profile_id === 'string' ? payload.profile_id : undefined,
+      source: typeof payload.source === 'string' ? payload.source : undefined,
+      webappUrl: WEBAPP_URL,
+    })
+    if (!resolved.ok) return { ok: false, status: resolved.status, error: resolved.error }
+    path = `/trufflehog/${projectId}/start`
+    fallback = 'Failed to start Secret Multiscanner scan'
+    body = resolved.body as unknown as Record<string, unknown>
   } else if (kind === 'ai_attack') {
     path = `/ai-attack-surface/${projectId}/start`
     fallback = 'Failed to start AI Attack Surface scan'

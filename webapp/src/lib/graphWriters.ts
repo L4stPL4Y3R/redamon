@@ -74,7 +74,6 @@ export async function describeSecondaryScanWriters(projectId: string): Promise<s
   const checks: Array<{ path: string; label: string }> = [
     { path: `/gvm/${projectId}/status`, label: 'a GVM vulnerability scan is running' },
     { path: `/github-hunt/${projectId}/status`, label: 'a GitHub Secret Hunt is running' },
-    { path: `/trufflehog/${projectId}/status`, label: 'a TruffleHog scan is running' },
     { path: `/supply-chain/${projectId}/status`, label: 'a supply-chain scan is running' },
   ]
 
@@ -91,6 +90,25 @@ export async function describeSecondaryScanWriters(projectId: string): Promise<s
       console.error(`[graphWriters] ${path} check failed (treating as busy):`, err)
       return `${label.replace(' is running', '')} status could not be verified`
     }
+  }
+
+  // TruffleHog: run-keyed since the multi-source migration, so the /all listing
+  // is the only view that sees every source. A project-level status would report
+  // one of N parallel runs and the graph would be rebuilt out from under the rest.
+  try {
+    const res = await orchestratorFetch(`${RECON_ORCHESTRATOR_URL}/trufflehog/${projectId}/all`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    })
+    if (!res.ok) return 'the Secret Multiscanner scan status could not be verified'
+    const data = await res.json()
+    const runs: Array<{ status?: string }> = Array.isArray(data?.runs) ? data.runs : []
+    if (runs.some(r => r.status && ACTIVE_SECONDARY_STATUSES.has(r.status))) {
+      return 'a Secret Multiscanner scan is running'
+    }
+  } catch (err) {
+    console.error('[graphWriters] trufflehog check failed (treating as busy):', err)
+    return 'the Secret Multiscanner scan status could not be verified'
   }
 
   // AI attack surface: run-list shaped, so check each run like partial recon.

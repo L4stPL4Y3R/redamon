@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { AlertTriangle, ArrowLeft } from 'lucide-react'
 import { Drawer, ExternalLink } from '@/components/ui'
+import { trufflehogDisplayFields } from '@/lib/trufflehogDisplay'
 import { GraphNode } from '../../types'
 import { getNodeColor, getNodeUrl } from '../../utils'
 import { renderPropertyValue } from '../../utils/renderPropertyValue'
@@ -76,6 +77,10 @@ export function NodeDrawer({
           if (aIsBottom && bIsBottom) return bottomKeys.indexOf(a) - bottomKeys.indexOf(b)
           return 0
         })
+    : []
+
+  const trufflehogFields = displayNode?.type === 'MultiscannerFinding'
+    ? trufflehogDisplayFields((displayNode.properties ?? {}) as Record<string, unknown>)
     : []
 
   const drawerTitle = node
@@ -163,6 +168,23 @@ export function NodeDrawer({
               </span>
             </div>
           </div>
+
+          {/* A Secret Multiscanner finding's asset/location/extra_data are generic on the
+              node — they must hold a repo AND an image AND a bucket. The
+              per-source display registry says what they MEAN, so the drawer
+              shows "Image / Layer / Tag" for a docker finding rather than three
+              unlabelled strings and a JSON blob. */}
+          {trufflehogFields.length > 0 && (
+            <div className={styles.section}>
+              <h3 className={styles.sectionTitleProperties}>Finding</h3>
+              {trufflehogFields.map(({ label, value }) => (
+                <div key={label} className={styles.propertyRow}>
+                  <span className={styles.propertyKey}>{label}</span>
+                  <span className={styles.propertyValue}>{value}</span>
+                </div>
+              ))}
+            </div>
+          )}
 
           <div className={styles.section}>
             <h3 className={styles.sectionTitleProperties}>Properties</h3>

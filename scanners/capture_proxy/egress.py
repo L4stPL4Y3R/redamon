@@ -10,7 +10,10 @@ Two layers:
   1. Internal denylist on the RESOLVED IP (not just the hostname) — RFC1918,
      loopback, link-local, CGNAT, reserved, multicast, unspecified, plus any
      explicitly configured RedAmon service IPs. Checking the resolved IP defeats
-     DNS-rebinding (an in-scope name pointing at 169.254.169.254 / 10.x).
+     DNS-rebinding (an in-scope name pointing at 169.254.169.254 / 10.x). That
+     classification lives in the dual-shipped ``ip_denylist`` module, shared
+     verbatim with the orchestrator's TruffleHog start guard so the two can
+     never drift into disagreeing about what "internal" means.
   2. Static hard-guardrail on the hostname (.gov/.mil/.edu/.int + exact list),
      via an injected checker so the addon can wire in the bundled hard_guardrail
      module without this module depending on it.
@@ -29,13 +32,24 @@ here for the actual upstream connection so a TOCTOU re-resolve can't slip past.
 """
 from __future__ import annotations
 
-import ipaddress
 import os
-import socket
 from dataclasses import dataclass
 from typing import Callable, List, Mapping, Optional, Tuple
 
-CGNAT = ipaddress.ip_network("100.64.0.0/10")
+# The IP classification is shared verbatim with the orchestrator. In the proxy
+# image the Dockerfile copies recon_orchestrator/ip_denylist.py to /app; outside
+# it (tests, tooling) the repo-root package path resolves the same file. One
+# file, two entry points — never a second hand-written denylist.
+try:
+    from ip_denylist import CGNAT, is_internal_ip, resolve_host
+except ImportError:
+    from recon_orchestrator.ip_denylist import CGNAT, is_internal_ip, resolve_host
+
+__all__ = [
+    "CGNAT", "DEFAULT_POLICY", "EgressPolicy", "POLICY_ENV", "check_egress",
+    "is_internal_ip", "policy_from_dict", "policy_from_env", "policy_to_dict",
+    "resolve_host",
+]
 
 
 @dataclass(frozen=True)
@@ -122,75 +136,6 @@ def policy_to_dict(policy: EgressPolicy) -> dict:
     """Serialise an EgressPolicy to the snake_case dict `policy_from_dict` reads.
     Used by the control plane when rendering the DB settings to the config file."""
     return {field: bool(getattr(policy, field)) for field in POLICY_ENV}
-
-
-def is_internal_ip(
-    ip_str: str,
-    extra_blocked: Optional[List[str]] = None,
-    policy: EgressPolicy = DEFAULT_POLICY,
-) -> bool:
-    """True if `ip_str` must not be reached through the capture proxy under
-    `policy`. Each address class is gated by its own policy flag; the explicit
-    `extra_blocked` denylist is ALWAYS enforced (never policy-gated)."""
-    try:
-        addr = ipaddress.ip_address(ip_str)
-    except ValueError:
-        return True  # unparseable -> fail closed (a resolved IP should always parse)
-    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
-        addr = addr.ipv4_mapped
-    # Each category is an INDEPENDENT check, so relaxing one (e.g. block_private
-    # to allow RFC1918) does not un-block another (127.0.0.1 is still caught by
-    # block_loopback even though it is also technically "private").
-    if policy.block_private and addr.is_private:
-        return True
-    if policy.block_loopback and addr.is_loopback:
-        return True
-    if policy.block_link_local and addr.is_link_local:
-        return True
-    if policy.block_reserved and addr.is_reserved:
-        return True
-    if policy.block_multicast and addr.is_multicast:
-        return True
-    if policy.block_unspecified and addr.is_unspecified:
-        return True
-    if policy.block_cgnat and addr in CGNAT:
-        return True
-    # Explicit RedAmon-service denylist: ALWAYS enforced, never policy-gated.
-    if extra_blocked:
-        for b in extra_blocked:
-            b = b.strip()
-            if not b:
-                continue
-            try:
-                if "/" in b:
-                    if addr in ipaddress.ip_network(b, strict=False):
-                        return True
-                elif addr == ipaddress.ip_address(b):
-                    return True
-            except ValueError:
-                continue
-    return False
-
-
-def resolve_host(host: str) -> List[str]:
-    """Resolve a hostname to every A/AAAA address. Bare IPs pass through."""
-    try:
-        ipaddress.ip_address(host)
-        return [host]
-    except ValueError:
-        pass
-    try:
-        infos = socket.getaddrinfo(host, None)
-    except Exception:
-        # OSError (unresolvable) OR UnicodeError (bad IDNA label) etc. — fail
-        # CLOSED: an empty list makes check_egress refuse the request.
-        return []
-    out: List[str] = []
-    for info in infos:
-        ip = info[4][0]
-        if ip not in out:
-            out.append(ip)
-    return out
 
 
 def check_egress(

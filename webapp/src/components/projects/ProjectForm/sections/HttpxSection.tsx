@@ -149,7 +149,7 @@ export function HttpxSection({ data, updateField, onRun }: HttpxSectionProps) {
 
           <div className={styles.subSection}>
             <h3 className={styles.subSectionTitle}>Response Probe Options</h3>
-            <p className={styles.fieldHint} style={{ marginBottom: '0.5rem' }}>Extract data from HTTP responses for analysis</p>
+            <p className={styles.fieldHint}>Extract data from HTTP responses for analysis</p>
             <div className={styles.toggleRow}>
               <div>
                 <span className={styles.toggleLabel}>Status Code</span>
@@ -313,7 +313,7 @@ export function HttpxSection({ data, updateField, onRun }: HttpxSectionProps) {
 
           <div className={styles.subSection}>
             <h3 className={styles.subSectionTitle}>Fingerprinting</h3>
-            <p className={styles.fieldHint} style={{ marginBottom: '0.5rem' }}>Unique identifiers for matching similar servers/services</p>
+            <p className={styles.fieldHint}>Unique identifiers for matching similar servers/services</p>
             <div className={styles.toggleRow}>
               <div>
                 <span className={styles.toggleLabel}>Favicon Hash</span>
@@ -353,7 +353,7 @@ export function HttpxSection({ data, updateField, onRun }: HttpxSectionProps) {
 
           <div className={styles.subSection}>
             <h3 className={styles.subSectionTitle}>AI Surface Recon</h3>
-            <p className={styles.fieldHint} style={{ marginBottom: '0.5rem' }}>
+            <p className={styles.fieldHint}>
               Annotate captured response data against AI vendor catalogues. All hooks are passive (no extra HTTP traffic) and write to BaseURL.is_ai_framework_detected / ai_framework_name / ai_frontend_product_guess.
             </p>
             <div className={styles.toggleRow}>

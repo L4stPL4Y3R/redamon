@@ -44,6 +44,7 @@ from models import (
     GithubHuntStartRequest,
     GithubHuntState,
     GithubHuntStatus,
+    TrufflehogListResponse,
     TrufflehogStartRequest,
     TrufflehogState,
     SupplyChainStartRequest,
@@ -411,6 +412,12 @@ async def lifespan(app: FastAPI):
     # supply_chain_common's host path (it runs off the scan-spawn path and so has
     # no recon_path argument of its own).
     container_manager.recon_host_path = RECON_PATH
+    # Host path of scanners/scan_targets, the only directory a TruffleHog scan
+    # container may read from disk. Resolved from the orchestrator's OWN mount
+    # (never a hardcoded or operator-typed path): compose binds the folder here,
+    # so Docker reports its host source. Unresolvable => not mounted, and the
+    # local-fixture sources find an empty directory rather than a guessed one.
+    container_manager.trufflehog_scan_targets = _host_mounts.get("/app/scan_targets", "")
     reaper = asyncio.create_task(_ai_attack_reaper())
     capture_reconciler = asyncio.create_task(_capture_config_reconcile())
     # Scan Timeline (Section 7.2): the scheduler worker lives here because the
@@ -580,12 +587,16 @@ async def system_active_scans():
         add("gvm", state)
     for state in cm.github_hunt_states.values():
         add("github_hunt", state)
-    for state in cm.trufflehog_states.values():
-        add("trufflehog", state)
     for state in cm.supply_chain_states.values():
         add("supply_chain", state)
 
     # Run-keyed: {project_id: {run_id: state}}.
+    for runs in cm.trufflehog_states.values():
+        for source, state in runs.items():
+            # run_id == source: the queue and the activity UI both key on it, and
+            # a project-keyed entry here would make N parallel runs look like one,
+            # over-admitting the queue while containers are still up.
+            add("trufflehog", state, run_id=source, tool_id=source)
     for runs in cm.partial_recon_states.values():
         for run_id, state in runs.items():
             add("partial_recon", state, run_id=run_id, tool_id=getattr(state, "tool_id", ""))
@@ -1747,29 +1758,28 @@ async def stream_github_hunt_logs(project_id: str):
 
 @app.post("/trufflehog/{project_id}/start", response_model=TrufflehogState)
 async def start_trufflehog(project_id: str, request: TrufflehogStartRequest):
-    """
-    Start a TruffleHog Secret Scanner for a project.
+    """Start ONE TruffleHog source for a project.
 
-    Requires recon data to already exist for target context.
+    The run key is the source, so two Docker Hub scans are refused while Docker
+    and HuggingFace run side by side. Admission is the fleet-wide governor: no
+    trufflehog-specific parallelism cap.
+
+    Every gate the container manager applies (config validation, the mandatory
+    credential check, the resolved-IP egress guard, the scope check) raises
+    ValueError and surfaces here as a 400 — none of them are client-side only.
     """
     if not container_manager:
         raise HTTPException(status_code=503, detail="Service not initialized")
-
-    # Check that recon data exists
-    from pathlib import Path
-    recon_file = Path("/app/recon/output") / f"recon_{project_id}.json"
-    if not recon_file.exists():
-        raise HTTPException(
-            status_code=400,
-            detail="Recon data required. Run reconnaissance first.",
-        )
 
     try:
         state = await container_manager.start_trufflehog(
             project_id=project_id,
             user_id=request.user_id,
-            webapp_api_url=_spawned_webapp_url(),
             trufflehog_path=TRUFFLEHOG_PATH,
+            source=request.source,
+            config=request.config,
+            common=request.common,
+            secrets=request.secrets,
         )
         return state
     except ValueError as e:
@@ -1779,60 +1789,62 @@ async def start_trufflehog(project_id: str, request: TrufflehogStartRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/trufflehog/{project_id}/status", response_model=TrufflehogState)
-async def get_trufflehog_status(project_id: str):
-    """Get current status of a TruffleHog scan process"""
-    if not container_manager:
-        raise HTTPException(status_code=503, detail="Service not initialized")
+@app.get("/trufflehog/{project_id}/all", response_model=TrufflehogListResponse)
+async def list_trufflehog(project_id: str):
+    """Every run for a project.
 
-    return await container_manager.get_trufflehog_status(project_id)
-
-
-@app.post("/trufflehog/{project_id}/stop", response_model=TrufflehogState)
-async def stop_trufflehog(project_id: str):
-    """Stop a running TruffleHog scan process"""
-    if not container_manager:
-        raise HTTPException(status_code=503, detail="Service not initialized")
-
-    state = await container_manager.stop_trufflehog(project_id)
-    return state
-
-
-@app.post("/trufflehog/{project_id}/pause", response_model=TrufflehogState)
-async def pause_trufflehog(project_id: str):
-    """Pause a running TruffleHog scan process"""
-    if not container_manager:
-        raise HTTPException(status_code=503, detail="Service not initialized")
-
-    state = await container_manager.pause_trufflehog(project_id)
-    return state
-
-
-@app.post("/trufflehog/{project_id}/resume", response_model=TrufflehogState)
-async def resume_trufflehog(project_id: str):
-    """Resume a paused TruffleHog scan process"""
-    if not container_manager:
-        raise HTTPException(status_code=503, detail="Service not initialized")
-
-    state = await container_manager.resume_trufflehog(project_id)
-    return state
-
-
-@app.get("/trufflehog/{project_id}/logs")
-async def stream_trufflehog_logs(project_id: str):
-    """
-    Stream logs from a TruffleHog scanner container using Server-Sent Events.
+    The webapp's queue reconcile, the version-save guard and the graph
+    activation guard read this. A project-level status endpoint can only ever
+    describe one of N parallel runs, so the others look idle to every caller —
+    which is how a version snapshot ends up taken mid-write.
     """
     if not container_manager:
         raise HTTPException(status_code=503, detail="Service not initialized")
+    runs = await container_manager.get_all_trufflehog_statuses(project_id)
+    return TrufflehogListResponse(project_id=project_id, runs=runs)
 
-    state = await container_manager.get_trufflehog_status(project_id)
+
+@app.post("/trufflehog/{project_id}/stop-all", response_model=TrufflehogListResponse)
+async def stop_all_trufflehog(project_id: str):
+    """Stop every source's run. Project delete and reset call this; a single
+    project-keyed stop would orphan every source but one."""
+    if not container_manager:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    runs = await container_manager.stop_all_trufflehog(project_id)
+    return TrufflehogListResponse(project_id=project_id, runs=runs)
+
+
+@app.get("/trufflehog/{project_id}/{source}/status", response_model=TrufflehogState)
+async def get_trufflehog_status(project_id: str, source: str):
+    """Status of one source's run"""
+    if not container_manager:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    return await container_manager.get_trufflehog_status(project_id, source)
+
+
+@app.post("/trufflehog/{project_id}/{source}/stop", response_model=TrufflehogState)
+async def stop_trufflehog(project_id: str, source: str):
+    """Stop one source's run; the project's other sources keep going"""
+    if not container_manager:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    return await container_manager.stop_trufflehog(project_id, source)
+
+
+@app.get("/trufflehog/{project_id}/{source}/logs")
+async def stream_trufflehog_logs(project_id: str, source: str):
+    """Stream one source's container logs over SSE."""
+    if not container_manager:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    state = await container_manager.get_trufflehog_status(project_id, source)
     if state.status == TrufflehogStatus.IDLE:
-        raise HTTPException(status_code=404, detail="No TruffleHog scan found for this project")
+        raise HTTPException(status_code=404, detail="No TruffleHog scan found for this source")
 
     async def event_generator():
         try:
-            async for event in container_manager.stream_trufflehog_logs(project_id):
+            async for event in container_manager.stream_trufflehog_logs(project_id, source):
                 yield {
                     "event": "log",
                     "data": json.dumps({
@@ -1851,11 +1863,13 @@ async def stream_trufflehog_logs(project_id: str):
                 "data": json.dumps({"error": str(e)}),
             }
 
-        final_state = await container_manager.get_trufflehog_status(project_id)
+        final_state = await container_manager.get_trufflehog_status(project_id, source)
         yield {
             "event": "complete",
             "data": json.dumps({
                 "status": final_state.status.value,
+                "source": final_state.source,
+                "findingsCount": final_state.findings_count,
                 "completedAt": final_state.completed_at.isoformat() if final_state.completed_at else None,
                 "error": final_state.error,
             }),

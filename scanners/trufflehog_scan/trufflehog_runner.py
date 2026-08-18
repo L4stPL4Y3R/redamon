@@ -1,194 +1,247 @@
-"""
-TruffleHog Runner - Executes TruffleHog binary and parses JSONL output
+"""TruffleHog runner — builds commands from the source registry and parses JSONL.
 
-Builds CLI commands from project settings, runs TruffleHog as a subprocess,
-and normalizes the JSONL output into the RedAmon findings format.
+One runner instance is one *run*: one project, one source, one output file. Two
+sources scanning the same project at the same time are two containers, two
+runners and two output files; nothing here is shared between them.
+
+The runner never writes to Neo4j. It is the dirty half of the dirty/clean split
+(12.3): it parses attacker-controlled bytes with one credential and no other
+secret in reach, and hands the orchestrator a JSON file. Graph ingest is a
+separate, clean step.
 """
+
+from __future__ import annotations
 
 import json
 import os
 import subprocess
 import tempfile
 import time
+import urllib.error
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+try:  # container path
+    from trufflehog_scan import findings as fnd
+    from trufflehog_scan import sources as reg
+    from trufflehog_scan.job_config import JobConfig
+except ImportError:  # standalone / test path
+    import findings as fnd
+    import sources as reg
+    from job_config import JobConfig
+
+#: Docker Hub tag listing, used only when "Scan all tags" is on. 100 per page is
+#: the API's max; the runner stops at `maxImages` regardless.
+_DOCKERHUB_TAGS_URL = "https://hub.docker.com/v2/repositories/{name}/tags?page_size=100"
+_DEFAULT_MAX_IMAGES = 25
+
 
 class TrufflehogRunner:
-    """Runs TruffleHog binary and collects findings."""
+    """Runs the TruffleHog binary for one source and collects findings."""
 
-    def __init__(
-        self,
-        token: str,
-        target_org: str = "",
-        target_repos: str = "",
-        project_id: str = "",
-        only_verified: bool = False,
-        no_verification: bool = False,
-        concurrency: int = 8,
-        include_detectors: str = "",
-        exclude_detectors: str = "",
-    ):
-        self.token = token
-        self.target_org = target_org
-        self.target_repos = target_repos
-        self.project_id = project_id
-        self.only_verified = only_verified
-        self.no_verification = no_verification
-        self.concurrency = concurrency
-        self.include_detectors = include_detectors
-        self.exclude_detectors = exclude_detectors
+    def __init__(self, job: JobConfig, binary: str = "trufflehog", env: Optional[dict] = None):
+        self.job = job
+        self.binary = binary
+        self.env = os.environ if env is None else env
+        self.source = reg.get_source(job.source)
 
-        # Output file
-        self.output_dir = Path(__file__).parent / "output"
+        self.output_file = job.output_file
+        self.output_dir = Path(self.output_file).parent
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.output_file = str(self.output_dir / f"trufflehog_{project_id}.json")
+        self.run_dir = Path(job.run_dir)
 
-        # Statistics
+        self.target = reg.describe_target(self.source.id, job.config)
+
         self.stats = {
             "total_findings": 0,
             "verified_findings": 0,
             "unverified_findings": 0,
+            "assets_scanned": 0,
+            # Kept alongside assets_scanned for one release so existing report
+            # queries that read repositories_scanned keep working (6.3).
             "repositories_scanned": 0,
+            "validated": 0,
+            "unvalidated": 0,
+            "verify_error": 0,
+            "unverified": 0,
             "detector_types": {},
+            "unknown_metadata_keys": [],
         }
 
-        # Collected findings
         self.findings: list[dict] = []
-        self._seen_repos: set[str] = set()
+        self._seen_assets: set[str] = set()
+        self._seen_dedup: set[str] = set()
+        self._start_time = ""
+        self._start_epoch = time.time()
+        self._exit_codes: list[int] = []
+        # TruffleHog reports a failed scan as a JSON record on STDOUT, in the
+        # same stream as the findings. Parsed and dropped, it left an errored run
+        # with no reason attached — and the container is auto-removed, so the log
+        # is gone too. Kept here and published on the artifact.
+        self._scan_errors: list[str] = []
 
-    def _build_common_flags(self) -> list[str]:
-        """Build common CLI flags for TruffleHog."""
-        flags = ["--json"]
+    # -- command construction -------------------------------------------------
 
-        if self.only_verified:
-            flags.append("--results=verified")
+    def _log(self, message: str) -> None:
+        """Every line the container prints goes through redaction.
 
-        if self.no_verification:
-            flags.append("--no-verification")
-
-        if self.concurrency > 0:
-            flags.extend(["--concurrency", str(self.concurrency)])
-
-        if self.include_detectors:
-            flags.extend(["--include-detectors", self.include_detectors])
-
-        if self.exclude_detectors:
-            flags.extend(["--exclude-detectors", self.exclude_detectors])
-
-        return flags
-
-    def _build_commands(self) -> list[list[str]]:
-        """Build the TruffleHog CLI commands to execute.
-
-        Priority: if specific repos are set, scan ONLY those repos (skip org-wide scan).
-        Org-wide scan only runs when no specific repos are configured.
+        The credential is in env and can reach a log line through a composed
+        clone URL where no ``--token=`` prefix precedes it, so redaction is
+        value-based, not flag-based.
         """
-        commands = []
-        common_flags = self._build_common_flags()
+        print(reg.redact(message, self.env), flush=True)
 
-        if self.target_repos:
-            # Specific repos take priority — scan only these, not the whole org
-            repos = [r.strip() for r in self.target_repos.split(",") if r.strip()]
-            for repo in repos:
-                # Ensure repo is a full URL
-                if not repo.startswith("http"):
-                    repo = f"https://github.com/{repo}"
-                cmd = [
-                    "trufflehog", "github",
-                    f"--repo={repo}",
-                    f"--token={self.token}",
-                ] + common_flags
-                commands.append(cmd)
-        elif self.target_org:
-            # No specific repos — scan entire organization
-            cmd = [
-                "trufflehog", "github",
-                f"--org={self.target_org}",
-                f"--token={self.token}",
-            ] + common_flags
-            commands.append(cmd)
+    def build_commands(self) -> list[list[str]]:
+        """One argv per TruffleHog invocation.
 
-        return commands
-
-    def _extract_source_meta(self, result: dict) -> dict:
-        """Extract source metadata from a TruffleHog finding.
-
-        SourceMetadata.Data can contain Github, Git, or Filesystem keys.
+        Normally a single command. Docker is the exception: "Scan all tags" and
+        "Scan all architectures" are *our* expansion, not a TruffleHog flag —
+        ``remote.Image()`` resolves one platform per reference — so each resolved
+        digest becomes its own invocation.
         """
-        source_data = result.get("SourceMetadata", {}).get("Data", {})
+        cfg = dict(self.job.config or {})
+        if self.source.id == "docker":
+            expanded = self._expand_docker_images(cfg)
+            if expanded is not None:
+                cfg["images"] = expanded
+        return [reg.build_command(
+            self.source.id, cfg, self.job.common, self.run_dir,
+            env=self.env, binary=self.binary,
+        )]
 
-        # Try Github first, then Git, then Filesystem
-        for key in ("Github", "Git", "Filesystem"):
-            if key in source_data:
-                meta = source_data[key]
-                return {
-                    "repository": meta.get("repository", meta.get("link", "")),
-                    "file": meta.get("file", meta.get("path", "")),
-                    "commit": meta.get("commit", ""),
-                    "line": meta.get("line", 0),
-                    "link": meta.get("link", ""),
-                    "email": meta.get("email", ""),
-                    "timestamp": meta.get("timestamp", ""),
-                    "visibility": meta.get("visibility", 0),
-                }
-
-        return {
-            "repository": "", "file": "", "commit": "", "line": 0,
-            "link": "", "email": "", "timestamp": "", "visibility": 0,
-        }
-
-    def _parse_finding(self, result: dict) -> Optional[dict]:
-        """Parse a single TruffleHog JSON result into normalized format."""
+    def _max_images(self) -> int:
+        raw = (self.job.config or {}).get("maxImages")
         try:
-            source_meta = self._extract_source_meta(result)
-            detector_name = result.get("DetectorName", "Unknown")
+            value = int(raw)
+        except (TypeError, ValueError):
+            return _DEFAULT_MAX_IMAGES
+        return value if value > 0 else _DEFAULT_MAX_IMAGES
 
-            finding = {
-                "detector_name": detector_name,
-                "detector_description": result.get("DetectorDescription", ""),
-                "verified": result.get("Verified", False),
-                "redacted": result.get("Redacted", ""),
-                "raw": result.get("Raw", ""),
-                "repository": source_meta["repository"],
-                "file": source_meta["file"],
-                "commit": source_meta["commit"],
-                "line": source_meta["line"],
-                "link": source_meta["link"],
-                "email": source_meta["email"],
-                "timestamp": source_meta["timestamp"],
-                "extra_data": json.dumps(result.get("ExtraData") or {}),
-            }
+    def _expand_docker_images(self, cfg: dict) -> Optional[list[str]]:
+        """Expand each image reference to per-tag / per-architecture digests.
 
-            # Update stats
-            self.stats["total_findings"] += 1
-            if finding["verified"]:
-                self.stats["verified_findings"] += 1
-            else:
-                self.stats["unverified_findings"] += 1
-
-            self.stats["detector_types"][detector_name] = (
-                self.stats["detector_types"].get(detector_name, 0) + 1
-            )
-
-            # Track unique repos
-            repo = finding["repository"]
-            if repo and repo not in self._seen_repos:
-                self._seen_repos.add(repo)
-                self.stats["repositories_scanned"] = len(self._seen_repos)
-
-            return finding
-
-        except Exception as e:
-            print(f"[!] Error parsing finding: {e}")
+        Every expansion multiplies the pull count directly, and Docker Hub allows
+        only 10 anonymous pulls per hour per IP, so this is off by default and
+        hard-capped by ``maxImages``. Fail-soft: a listing error leaves the
+        original reference in place rather than aborting the scan.
+        """
+        scan_all_tags = str(cfg.get("scanAllTags") or "").lower() in ("1", "true", "yes", "on") or cfg.get("scanAllTags") is True
+        scan_all_arch = str(cfg.get("scanAllArchitectures") or "").lower() in ("1", "true", "yes", "on") or cfg.get("scanAllArchitectures") is True
+        if not (scan_all_tags or scan_all_arch):
             return None
 
+        images = reg.as_list(cfg.get("images"))
+        if not images:
+            return None
+
+        cap = self._max_images()
+        out: list[str] = []
+        for ref in images:
+            if len(out) >= cap:
+                break
+            name = ref.split("@")[0].split(":")[0]
+            digests = self._list_dockerhub_digests(name, scan_all_arch)
+            if not digests:
+                out.append(ref)
+                continue
+            for d in digests:
+                if len(out) >= cap:
+                    break
+                out.append(f"{name}@{d}")
+
+        if len(out) >= cap:
+            self._log(f"[!] Image expansion capped at {cap} references (Max images)")
+        return out
+
+    def _list_dockerhub_digests(self, name: str, all_architectures: bool) -> list[str]:
+        """Manifest digests for a Docker Hub repository, one page (100 tags)."""
+        repo = name if "/" in name else f"library/{name}"
+        if repo.count("/") > 1 or "." in repo.split("/")[0]:
+            # Not Docker Hub (ghcr.io/..., registry.example.com/...); no listing API.
+            return []
+        url = _DOCKERHUB_TAGS_URL.format(name=repo)
+        try:
+            request = urllib.request.Request(url, headers={"Accept": "application/json"})
+            token = (self.env.get(reg.CRED_DOCKER.env) or "").strip()
+            if token:
+                request.add_header("Authorization", f"Bearer {token}")
+            with urllib.request.urlopen(request, timeout=30) as response:
+                payload = json.loads(response.read().decode())
+        except (urllib.error.URLError, OSError, ValueError, json.JSONDecodeError) as exc:
+            self._log(f"[~] Could not list tags for {repo}: {exc}")
+            return []
+
+        digests: list[str] = []
+        for result in payload.get("results", []):
+            if all_architectures:
+                for image in result.get("images") or []:
+                    d = image.get("digest")
+                    if d and d not in digests:
+                        digests.append(d)
+            d = result.get("digest")
+            if d and d not in digests:
+                digests.append(d)
+        return digests
+
+    # -- parsing --------------------------------------------------------------
+
+    def _on_unknown_meta(self, key: str) -> None:
+        if key not in self.stats["unknown_metadata_keys"]:
+            self.stats["unknown_metadata_keys"].append(key)
+            self._log(
+                f"[!] Unrecognised TruffleHog metadata key '{key}' — findings are kept "
+                f"with asset='unknown:{key}'. The source registry needs an entry for it."
+            )
+
+    def _parse_finding(self, result: dict) -> Optional[dict]:
+        try:
+            finding = fnd.normalise(
+                result,
+                self.source.id,
+                verification_enabled=self.job.verification_enabled,
+                on_unknown=self._on_unknown_meta,
+                default_asset=self.target,
+            )
+        except Exception as exc:
+            self._log(f"[!] Error parsing finding: {exc}")
+            return None
+
+        if not finding["detector_name"]:
+            return None
+
+        key = fnd.dedup_key(
+            self.source.id, finding["asset"], finding["location"],
+            finding["line"], finding["detector_name"],
+        )
+        if key in self._seen_dedup:
+            return None
+        self._seen_dedup.add(key)
+
+        self.stats["total_findings"] += 1
+        status = finding["validation_status"]
+        self.stats[status] = self.stats.get(status, 0) + 1
+        if finding["verified"]:
+            self.stats["verified_findings"] += 1
+        else:
+            self.stats["unverified_findings"] += 1
+
+        detector = finding["detector_name"]
+        self.stats["detector_types"][detector] = self.stats["detector_types"].get(detector, 0) + 1
+
+        asset = finding["asset"]
+        if asset and asset not in self._seen_assets:
+            self._seen_assets.add(asset)
+            self.stats["assets_scanned"] = len(self._seen_assets)
+            self.stats["repositories_scanned"] = len(self._seen_assets)
+
+        return finding
+
+    # -- execution ------------------------------------------------------------
+
     def _run_command(self, cmd: list[str]) -> None:
-        """Execute a single TruffleHog command and collect findings."""
-        # Log command without token
-        safe_cmd = [c if not c.startswith("--token=") else "--token=***" for c in cmd]
-        print(f"[*] Running: {' '.join(safe_cmd)}")
+        self._log(f"[*] Running: {reg.safe_command(cmd, self.env)}")
 
         try:
             process = subprocess.Popen(
@@ -197,106 +250,159 @@ class TrufflehogRunner:
                 stderr=subprocess.PIPE,
                 text=True,
                 bufsize=1,
+                cwd=str(self.run_dir) if self.run_dir.exists() else None,
             )
-
-            # Read JSONL output line by line
-            for line in process.stdout:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    result = json.loads(line)
-                    finding = self._parse_finding(result)
-                    if finding:
-                        self.findings.append(finding)
-                        # Log each finding
-                        verified_tag = " [VERIFIED]" if finding["verified"] else ""
-                        print(
-                            f"[+] Found: {finding['detector_name']}{verified_tag} "
-                            f"in {finding['file']} ({finding['repository']})"
-                        )
-                        # Save incrementally
-                        self._save_incremental()
-                except json.JSONDecodeError:
-                    # Not JSON — likely a status/progress message from TruffleHog
-                    if line.strip():
-                        print(f"[~] {line}")
-
-            # Wait for process to complete
-            process.wait()
-
-            # Read stderr
-            stderr_output = process.stderr.read()
-            if stderr_output:
-                for err_line in stderr_output.strip().split("\n"):
-                    if err_line.strip():
-                        print(f"[~] {err_line.strip()}")
-
-            if process.returncode != 0:
-                print(f"[!] TruffleHog exited with code {process.returncode}")
-
         except FileNotFoundError:
-            print("[!] ERROR: trufflehog binary not found. Ensure it is installed at /usr/local/bin/trufflehog")
+            self._log(f"[!] ERROR: {self.binary} binary not found")
             raise
-        except Exception as e:
-            print(f"[!] Error running TruffleHog: {e}")
-            raise
+
+        for line in process.stdout:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                result = json.loads(line)
+            except json.JSONDecodeError:
+                self._log(f"[~] {line}")
+                continue
+            if not isinstance(result, dict):
+                continue
+            if result.get("level") == "error":
+                self._record_scan_error(result)
+                continue
+            finding = self._parse_finding(result)
+            if finding:
+                self.findings.append(finding)
+                self._log(
+                    f"[+] Found: {finding['detector_name']} [{finding['validation_status']}] "
+                    f"in {finding['location'] or '(no location)'} ({finding['asset']})"
+                )
+                self._save_incremental()
+
+        process.wait()
+        self._exit_codes.append(process.returncode)
+
+        stderr_output = process.stderr.read()
+        if stderr_output:
+            for err_line in stderr_output.strip().split("\n"):
+                err_line = err_line.strip()
+                if not err_line:
+                    continue
+                # TruffleHog logs structured records here, error ones included.
+                # Parsed, they give the operator a sentence; unparsed they give a
+                # JSON blob, and dropped they give nothing at all.
+                record = None
+                if err_line.startswith("{"):
+                    try:
+                        record = json.loads(err_line)
+                    except json.JSONDecodeError:
+                        record = None
+                if isinstance(record, dict) and record.get("level") == "error":
+                    self._record_scan_error(record)
+                    continue
+                self._log(f"[~] {err_line}")
+
+        if process.returncode != 0:
+            self._log(f"[!] TruffleHog exited with code {process.returncode}")
+            if not self._scan_errors and stderr_output:
+                # Nothing structured anywhere: keep the tail of stderr so the run
+                # still says something more useful than "it failed".
+                tail = stderr_output.strip().splitlines()[-1][:400]
+                self._scan_errors.append(reg.redact(tail, self.env))
+
+    def _record_scan_error(self, record: dict) -> None:
+        """Keep a TruffleHog error record, redacted, for the artifact.
+
+        Redaction matters more here than in a finding: the message frequently
+        quotes the target, and for git that is a URI the credential was spliced
+        into.
+        """
+        msg = str(record.get("msg") or "").strip()
+        err = str(record.get("error") or "").strip()
+        text = f"{msg}: {err}" if msg and err else (err or msg)
+        if not text:
+            return
+        text = reg.redact(text, self.env)[:600]
+        if text not in self._scan_errors:
+            self._scan_errors.append(text)
+        self._log(f"[!] {text}")
 
     def _save_incremental(self) -> None:
-        """Save current results incrementally using atomic temp-file rename."""
-        output_data = self._build_output()
+        """Atomic temp-file rename, so the orchestrator never reads a half file."""
         try:
-            fd, tmp_path = tempfile.mkstemp(
-                dir=str(self.output_dir), suffix=".tmp"
-            )
-            with os.fdopen(fd, "w") as f:
-                json.dump(output_data, f, indent=2, default=str)
+            fd, tmp_path = tempfile.mkstemp(dir=str(self.output_dir), suffix=".tmp")
+            with os.fdopen(fd, "w") as fh:
+                json.dump(self._build_output(), fh, indent=2, default=str)
             os.replace(tmp_path, self.output_file)
-        except Exception as e:
-            print(f"[!] Error saving incremental results: {e}")
+            os.chmod(self.output_file, 0o644)
+        except Exception as exc:
+            self._log(f"[!] Error saving incremental results: {exc}")
 
-    def _build_output(self) -> dict:
-        """Build the final output JSON structure."""
+    def _build_output(self, status: str = "in_progress") -> dict:
         return {
-            "target": self.target_org or self.target_repos,
+            "source": self.source.id,
+            "source_label": self.source.label,
+            "asset_label": self.source.asset_label,
+            "asset_kind": self.source.asset_kind,
+            "run_id": self.job.run_id or self.source.id,
+            "target": self.target,
+            "verification_enabled": self.job.verification_enabled,
             "scan_start_time": self._start_time,
             "scan_end_time": datetime.now().isoformat(),
             "duration_seconds": round(time.time() - self._start_epoch, 2),
-            "status": "in_progress",
-            "statistics": self.stats.copy(),
+            "status": status,
+            # Present ONLY on a failed run, so a consumer can treat its presence
+            # as the signal. Gated on the status too: a multi-command source can
+            # have one invocation fail and still complete, and emitting `error`
+            # there would make a successful scan look failed.
+            **({"error": "; ".join(self._scan_errors)}
+               if self._scan_errors and status == "error" else {}),
+            "statistics": dict(self.stats),
             "findings": self.findings,
         }
 
     def run(self) -> list[dict]:
-        """Execute TruffleHog scan and return findings."""
         self._start_time = datetime.now().isoformat()
         self._start_epoch = time.time()
+        self.run_dir.mkdir(parents=True, exist_ok=True)
 
-        commands = self._build_commands()
-        if not commands:
-            print("[!] No scan targets configured")
-            return []
+        errors = reg.validate_config(self.source.id, self.job.config)
+        if errors:
+            for err in errors:
+                self._log(f"[!] {err}")
+            self._write_final("error")
+            raise ValueError("; ".join(errors))
 
-        target_desc = self.target_org or self.target_repos
-        print(f"[*] Scanning organization: {target_desc}")
-        print(f"[*] Total scan commands: {len(commands)}")
+        commands = self.build_commands()
+        self._log(f"[*] Source: {self.source.label} ({self.source.id})")
+        self._log(f"[*] Target: {self.target or '(none)'}")
+        self._log(f"[*] Verification: {'on' if self.job.verification_enabled else 'OFF (nothing is checked)'}")
+
+        # Write the envelope up front so a container that dies before the first
+        # finding still leaves a readable artifact for the ingest step.
+        self._save_incremental()
 
         for i, cmd in enumerate(commands, 1):
-            print(f"\n[*] Scanning repository set {i}/{len(commands)}...")
+            if len(commands) > 1:
+                self._log(f"\n[*] Invocation {i}/{len(commands)}")
             self._run_command(cmd)
 
-        # Save final results
-        output_data = self._build_output()
-        output_data["status"] = "completed"
-        output_data["scan_end_time"] = datetime.now().isoformat()
-        output_data["duration_seconds"] = round(time.time() - self._start_epoch, 2)
-
-        with open(self.output_file, "w") as f:
-            json.dump(output_data, f, indent=2, default=str)
-
-        print(f"\n[+] Final results saved to {self.output_file}")
+        # A non-zero exit with zero findings is a failed scan, not a clean one;
+        # recording it as `completed` would tell the operator "no secrets here".
+        failed = all(code != 0 for code in self._exit_codes) if self._exit_codes else True
+        status = "error" if failed and not self.findings else "completed"
+        self._write_final(status)
         return self.findings
 
+    def _write_final(self, status: str) -> None:
+        output = self._build_output(status)
+        with open(self.output_file, "w") as fh:
+            json.dump(output, fh, indent=2, default=str)
+        try:
+            os.chmod(self.output_file, 0o644)
+        except OSError:
+            pass
+        self._log(f"\n[+] Results saved to {self.output_file} (status={status})")
+
     def save_results(self) -> str:
-        """Save final results and return path."""
         return self.output_file

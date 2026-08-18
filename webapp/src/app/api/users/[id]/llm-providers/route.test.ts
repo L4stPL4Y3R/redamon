@@ -16,6 +16,7 @@ import { NextRequest } from 'next/server'
 
 const mockFindMany = vi.fn()
 const mockCreate = vi.fn()
+const mockUserFindUnique = vi.fn()
 const mockGetSession = vi.fn()
 const mockIsInternal = vi.fn()
 
@@ -24,6 +25,9 @@ vi.mock('@/lib/prisma', () => ({
     userLlmProvider: {
       findMany: (...args: unknown[]) => mockFindMany(...args),
       create: (...args: unknown[]) => mockCreate(...args),
+    },
+    user: {
+      findUnique: (...args: unknown[]) => mockUserFindUnique(...args),
     },
   },
 }))
@@ -55,6 +59,7 @@ const params = (id: string) => ({ params: Promise.resolve({ id }) })
 beforeEach(() => {
   mockFindMany.mockReset().mockResolvedValue([PROVIDER])
   mockCreate.mockReset().mockResolvedValue({ ...PROVIDER })
+  mockUserFindUnique.mockReset().mockResolvedValue({ id: 'victim' })
   mockGetSession.mockReset()
   mockIsInternal.mockReset()
 })
@@ -191,5 +196,45 @@ describe('POST /api/users/[id]/llm-providers — I1 ownership', () => {
     const res = await POST(postReq('victim', NEW_PROVIDER), params('victim'))
     expect(res.status).toBe(401)
     expect(mockCreate).not.toHaveBeenCalled()
+  })
+})
+
+// Issue #173: an admin whose browser held a stale `redamon-current-user` wrote
+// providers against a user id that no longer existed. The admin bypass let the
+// request through, prisma raised P2003 on user_llm_providers_user_id_fkey and the
+// catch-all turned it into an opaque 500 ("Failed to save provider" in the UI).
+describe('POST /api/users/[id]/llm-providers — ghost user id (#173)', () => {
+  test('admin writes to a user id that does not exist → 404, no write, no 500', async () => {
+    mockIsInternal.mockReturnValue(false)
+    mockGetSession.mockResolvedValue({ userId: 'admin1', role: 'admin' })
+    mockUserFindUnique.mockResolvedValue(null)
+
+    const res = await POST(postReq('ghost', NEW_PROVIDER), params('ghost'))
+
+    expect(res.status).toBe(404)
+    expect(mockCreate).not.toHaveBeenCalled()
+    expect((await res.json()).error).toContain('User not found')
+  })
+
+  test('user deleted between the check and the insert (P2003) → 404, not 500', async () => {
+    mockIsInternal.mockReturnValue(false)
+    mockGetSession.mockResolvedValue({ userId: 'victim', role: 'user' })
+    mockUserFindUnique.mockResolvedValue({ id: 'victim' })
+    mockCreate.mockRejectedValue(Object.assign(new Error('FK violated'), { code: 'P2003' }))
+
+    const res = await POST(postReq('victim', NEW_PROVIDER), params('victim'))
+
+    expect(res.status).toBe(404)
+    expect((await res.json()).error).toContain('User not found')
+  })
+
+  test('the existence check runs AFTER the ownership gate (no id probing)', async () => {
+    mockIsInternal.mockReturnValue(false)
+    mockGetSession.mockResolvedValue({ userId: 'attacker', role: 'user' })
+
+    const res = await POST(postReq('victim', NEW_PROVIDER), params('victim'))
+
+    expect(res.status).toBe(403)
+    expect(mockUserFindUnique).not.toHaveBeenCalled()
   })
 })

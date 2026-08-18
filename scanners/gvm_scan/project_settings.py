@@ -41,6 +41,17 @@ DEFAULT_GVM_SETTINGS: dict[str, Any] = {
     # Poll interval for checking scan status (seconds)
     'POLL_INTERVAL': 30,
 
+    # Give up on a task that reports NO progress at all for this long (seconds).
+    # A task whose scanner is not actually running is accepted by gvmd and sits at
+    # 0%/-1% until TASK_TIMEOUT, so without this a scannerless stack burns the full
+    # 4h on every target in turn (issue #174: ospd-openvas was never started
+    # because its VT-feed loader had been killed). Not mapped from the webapp API -
+    # a diagnostic bound, not a user-facing scan option. 0 disables the watchdog.
+    # A genuinely slow target CAN sit at 0% for a long time (a full IANA port
+    # sweep against a filtered host), so it is tunable via GVM_NO_PROGRESS_TIMEOUT
+    # rather than only in code - see _ENV_OVERRIDES.
+    'NO_PROGRESS_TIMEOUT': 1800,  # 30 min
+
     # Readiness wait before a scan gives up on gvmd. A gvmd (re)start re-imports
     # ALL feeds; the scan configs ("Full and fast", ...) come from the Data Objects
     # feed, which is gated behind the heavy SCAP CVE import and can take the better
@@ -52,6 +63,29 @@ DEFAULT_GVM_SETTINGS: dict[str, Any] = {
     # Cleanup targets and tasks after scan completion
     'CLEANUP_AFTER_SCAN': True,
 }
+
+
+# Settings an operator may pin per-deployment, as {setting: env var}. These are
+# NOT project settings: they are diagnostic bounds that must be adjustable on a
+# host without a webapp round-trip (and without editing code). Empty or
+# unparseable values keep the default, so a stray export can never disable a
+# protection by accident.
+_ENV_OVERRIDES = {
+    'NO_PROGRESS_TIMEOUT': 'GVM_NO_PROGRESS_TIMEOUT',
+}
+
+
+def _apply_env_overrides(settings: dict[str, Any]) -> dict[str, Any]:
+    """Overlay operator env pins onto a settings dict, in place."""
+    for key, env_name in _ENV_OVERRIDES.items():
+        raw = os.environ.get(env_name, '').strip()
+        if not raw:
+            continue
+        try:
+            settings[key] = int(raw)
+        except ValueError:
+            logger.warning(f"{env_name}={raw!r} is not an integer; keeping {key}={settings.get(key)}")
+    return settings
 
 
 def fetch_gvm_settings(project_id: str, webapp_url: str) -> dict[str, Any]:
@@ -70,7 +104,10 @@ def fetch_gvm_settings(project_id: str, webapp_url: str) -> dict[str, Any]:
     url = f"{webapp_url.rstrip('/')}/api/projects/{project_id}"
     logger.info(f"Fetching GVM settings from {url}")
 
-    _internal_headers = {"X-Internal-Key": os.environ.get("INTERNAL_API_KEY", "")}
+    # S3/E6: scanners receive the SCOPED SCANNER_API_KEY; fall back to the master
+    # INTERNAL_API_KEY only on pre-secret installs. The webapp accepts either.
+    _internal_headers = {"X-Internal-Key": (os.environ.get("SCANNER_API_KEY")
+                                            or os.environ.get("INTERNAL_API_KEY", ""))}
     response = requests.get(url, timeout=30, headers=_internal_headers)
     response.raise_for_status()
     project = response.json()
@@ -101,9 +138,9 @@ def get_settings() -> dict[str, Any]:
     """
     global _settings
     if _settings is not None:
-        return _settings
+        return _apply_env_overrides(_settings)
     logger.info("Using DEFAULT_GVM_SETTINGS (no project loaded yet)")
-    return DEFAULT_GVM_SETTINGS.copy()
+    return _apply_env_overrides(DEFAULT_GVM_SETTINGS.copy())
 
 
 # Singleton settings instance

@@ -19,9 +19,13 @@
  *     not contain the sequences git itself rejects
  */
 
-import { GITHUB_DOT_COM, isValidGithubHost } from '@/lib/github/ownerTarget'
+import { GITHUB_DOT_COM, isValidGithubHost, parseOwnerTarget } from '@/lib/github/ownerTarget'
 
-export const SUPPLY_CHAIN_INPUT_MODES = ['upload', 'github'] as const
+// 'org' does not run this project's single scan - it queues one scan per repo
+// in an account - but it IS a persisted mode: the Other Scans card reads it to
+// decide which action to offer, and a mode that cannot be saved left the card
+// showing a Start button that could never be enabled.
+export const SUPPLY_CHAIN_INPUT_MODES = ['upload', 'github', 'org'] as const
 export type SupplyChainInputMode = (typeof SUPPLY_CHAIN_INPUT_MODES)[number]
 
 // GitHub allows alphanumerics, '-', '_', '.' in owner/repo. Length-capped so a
@@ -137,6 +141,20 @@ export function validateSupplyChainInput(
   if ('supplyChainRepoRef' in data) {
     if (!isValidGitRef(data.supplyChainRepoRef)) {
       return 'Branch/tag/commit contains characters git does not allow'
+    }
+  }
+
+  // The org batch enumerates this account server-side and clones what it finds,
+  // so the same allowlist applies: a bare login, or a URL on a host the operator
+  // registered. Empty clears it.
+  if ('supplyChainOrgName' in data) {
+    const raw = data.supplyChainOrgName
+    if (typeof raw !== 'string') {
+      return 'supplyChainOrgName must be a string'
+    }
+    if (raw.trim() && !parseOwnerTarget(raw, allowedHosts)) {
+      const hosts = allowedHosts.join(' or ')
+      return `Organization must be an account name, or its https URL on ${hosts}`
     }
   }
 

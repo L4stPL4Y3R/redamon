@@ -16,7 +16,7 @@ import {
 } from '@/lib/scanSnapshot'
 import { rotateToNextVersion } from '@/lib/scanTimeline'
 import { isActivationInProgress } from '@/lib/activationLock'
-import { describeScanWriters } from '@/lib/graphWriters'
+import { describeScanWriters, describeSecondaryScanWriters } from '@/lib/graphWriters'
 import { applyRetentionSafe } from '@/lib/scanRetention'
 import { sanitizeVersionLabel } from '@/lib/scanVersionLabel'
 
@@ -96,7 +96,12 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       { status: 409 }
     )
   }
-  const busy = await describeScanWriters(id)
+  // Both guards: describeScanWriters covers full/partial recon, and the
+  // secondary one covers the scans that also stream findings into the live graph
+  // (13.2). Saving a version while a TruffleHog source is mid-write captures a
+  // partial subgraph — a bug that predates the multi-source work and worsens
+  // with parallel runs.
+  const busy = (await describeScanWriters(id)) ?? (await describeSecondaryScanWriters(id))
   if (busy) {
     return NextResponse.json(
       {

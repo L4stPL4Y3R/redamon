@@ -473,9 +473,13 @@ Registered in `agentic/prompts/tool_registry.py`; phase-gated in
 
 ## Layer L1 - Standalone scan (Other Scans)
 
-The operator uploads an SBOM / lockfile and starts a scan from the **Other Scans**
-modal. The orchestrator spawns a CLEAN writer container that runs a static,
-offline osv-scanner pass and MERGEs the results into the graph.
+The operator configures the input - an uploaded SBOM / lockfile, a GitHub
+repository, or an organization to batch - in **Project Settings -> Other Scans ->
+Supply Chain Scanner**, then starts the scan from the card of the same name in
+the **Other Scans** modal (the card holds the run controls only, and Start is
+disabled until an input is configured). The orchestrator spawns a CLEAN writer
+container that runs a static, offline osv-scanner pass and MERGEs the results
+into the graph.
 
 ```mermaid
 sequenceDiagram
@@ -486,7 +490,7 @@ sequenceDiagram
     participant OSVDB as redamon-osv-db (ro)
     participant NEO as Neo4j
 
-    UI->>WEBROUTE: upload SBOM (-> supply_chain_uploads volume)
+    UI->>WEBROUTE: upload SBOM in Project Settings (-> supply_chain_uploads volume)
     UI->>WEBROUTE: POST start
     WEBROUTE->>ORCH: POST /supply-chain/PID/start
     ORCH->>ORCH: _admit_scan (memory governor, 1.75 GB envelope)
@@ -825,7 +829,7 @@ budgeted: GuardDog runs the packages sequentially, so that knob bounds wall-cloc
 | **Memory governor** | Fully accounted, see [Memory accounting](#memory-accounting): per-scan envelopes for L1 and the supply-chain partial, a `supply_chain_analyzer` **tool** envelope shared by all three analyzer spawn paths, ledger admission for L3 GuardDog, and byte-budgeted import-mining caps. Details in [README.MEMORY_GOVERNOR.md](README.MEMORY_GOVERNOR.md). |
 | **docker-broker** | The two images + the `redamon-osv-db` volume are allowlisted; a look-alike image is denied. |
 | **Neo4j / graph_db** | `SupplyChainMixin` is added to `Neo4jClient`; two `CREATE CONSTRAINT`s in `graph_db/schema.py`. The agent's `query_graph` sees `Package` / `MalPackageFinding` like any other node. |
-| **Webapp** | Prisma fields (`supplyChain*`, `supplyChainRecon*`); `/api/supply-chain/[projectId]/*` proxy routes + SBOM upload; `useSupplyChainStatus` / `useSupplyChainSSE` hooks; a Supply Chain card in the Other Scans modal (with a logs drawer) and a Supply Chain settings section. |
+| **Webapp** | Prisma fields (`supplyChain*`, `supplyChainRecon*`); `/api/supply-chain/[projectId]/*` proxy routes + SBOM upload; `useSupplyChainStatus` / `useSupplyChainSSE` hooks; a Supply Chain card in the Other Scans modal (run controls + logs drawer) and the Supply Chain Scanner settings section that owns its input. |
 | **Graph tables** | The **Supply-Chain SCA** table (`/api/analytics/redzone/supplyChainSca`) reads this model directly: three sheets (Verdicts / Packages / Advisories) over `Package`, `MalPackageFinding` and `Vulnerability {source:'osv'}`. Not to be confused with **JS Dep Signals** (formerly labelled "Supply-Chain"), which reads `JsReconFinding` nodes. See [the table section](#the-supply-chain-sca-table). |
 | **Settings (5 layers)** | Prisma default -> `recon/project_settings.py` (L2) / `scanners/supply_chain_scan/project_settings.py` (L1) -> `/defaults` -> webapp section, using the `x_enabled` / `xEnabled` / `X_ENABLED` naming. |
 | **redamon.sh** | `supply-chain-sync` populates the DB; `TOOL_IMAGES` + `cmd_update` build/rebuild the two images; `cmd_install`/`up` build them via `--profile tools`. |

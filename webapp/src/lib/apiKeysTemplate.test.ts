@@ -29,7 +29,8 @@ describe('buildTemplate', () => {
     // GitHub Enterprise host + its own token travel with the keys file.
     expect(keyFields).toContain('githubEnterpriseHost')
     expect(keyFields).toContain('githubEnterpriseToken')
-    expect(keyFields.length).toBe(27)
+    // 27 general API keys + 19 TruffleHog per-source credentials.
+    expect(keyFields.length).toBe(46)
   })
 
   test('generates a template with all tunneling fields', () => {
@@ -977,7 +978,7 @@ describe('buildTemplate — edge cases', () => {
     const t = buildTemplate({ shodanApiKey: 'val', unknownThing: 'ignored' }, {})
     expect(t.keys.shodanApiKey).toBe('val')
     expect(t.keys).not.toHaveProperty('unknownThing')
-    expect(Object.keys(t.keys).length).toBe(27)
+    expect(Object.keys(t.keys).length).toBe(46)
   })
 
   test('ignores unknown fields in currentTunneling input', () => {
@@ -995,7 +996,7 @@ describe('buildTemplate — edge cases', () => {
 
   test('template keys count matches UserSettings key fields', () => {
     const t = buildTemplate({}, {})
-    expect(Object.keys(t.keys).length).toBe(27)
+    expect(Object.keys(t.keys).length).toBe(46)
   })
 
   test('template tunneling count matches UserSettings tunnel fields', () => {

@@ -88,8 +88,6 @@ them explains why they are what they are.
 - [0 - How the Pieces Fit](#0---how-the-pieces-fit) - the layout, the symlinks, what is generated
 - [1 - How Skills Load](#1---how-skills-load) - anatomy of an AGENTS.md, and an annotated skill
 - [2 - Where a Rule Belongs](#2---where-a-rule-belongs)
-- [2A - Client Variants: Which AGENTS.md, and When](#2a---client-variants-which-agentsmd-and-when) - the
-  per-variant tier, and why the directory is the trigger rather than `CLIENT_NAME`
 - [3 - When To Create a Skill](#3---when-to-create-a-skill)
 - [4 - When To Update](#4---when-to-update)
 - [5 - The Update Procedure](#5---the-update-procedure)
@@ -155,22 +153,22 @@ STEP 3 - report three lists:
                (a registry to append to, a required decorator, a chokepoint
                that must not be bypassed). Say which file it belongs in:
                AGENTS.md CRITICAL RULES if it breaks silently during
-               unrelated work, a skill otherwise. If the diff is confined to
-               one client_variants/<name>/, the rule goes in THAT variant's
-               AGENTS.md or a skill scoped to it, never the root file, unless
-               you can show the constraint binds the other variants too.
+               unrelated work, a skill otherwise.
   DEFERRED   - anything describing code not merged yet.
 
 Only include a rule if it is checkable by reading a diff and you can name
 the failure it prevents. All three lists being empty is a normal result.
+
+If I then ask you to apply any of this - in my own words rather than the
+prompt below - read "The Skill Writing Contract" in
+readmes/skills_management/SKILLS_MANAGEMENT.md BEFORE editing anything.
 ```
 
 Then, for what you accept:
 
 ```
-Apply items {N}. Follow "The Skill Writing Contract" (end of the Practice
-section in docs/readmes/skills_management/SKILLS_MANAGEMENT.md) before writing
-anything into a skill.
+Apply items {N}. Follow "The Skill Writing Contract" (end of the Practice section in
+readmes/skills_management/SKILLS_MANAGEMENT.md) before writing anything into a skill.
 
 - rules going in a skill: edit skills/{name}/SKILL.md, keep the edit under
   15 lines, prefer replacing an existing rule over adding a section, bump
@@ -195,14 +193,11 @@ Commit on this branch as docs(skills): <summary>. No Co-Authored-By trailer.
 Run ./skills/skill-sync/assets/drift-audit.sh.
 
 Follow "The Skill Writing Contract" (end of the Practice section in
-docs/readmes/skills_management/SKILLS_MANAGEMENT.md) before writing anything
-into a skill.
+readmes/skills_management/SKILLS_MANAGEMENT.md) before writing anything into a skill.
 
-The audit covers skills/ AND every AGENTS.md, including the ones under
-client_variants/. Treat a ROOT AGENTS.md hit as the most urgent: it is in
-context on every turn, so a stale line there misleads every agent on every
-task. A variant AGENTS.md hit is next, and misleads everyone working in
-that variant.
+The audit covers skills/ AND every AGENTS.md. Treat an AGENTS.md hit as
+MORE urgent: those rules are always in context, so a stale one misleads
+every agent on every task.
 
 PATH DRIFT - for each STALE line, decide which applies:
   the file moved            -> update the path
@@ -217,8 +212,8 @@ changed this week:
   git diff --name-only HEAD@{7.days.ago}..HEAD
 For each, grep for every symbol it names in prose or code blocks (class
 names, function names, settings keys, environment variables, management
-commands) and report any that no longer exist. Do not sweep every skill in
-skills/; this runs weekly and must stay cheap.
+commands) and report any that no longer exist. Do not sweep all 38 skills;
+this runs weekly and must stay cheap.
 
 Report first. Do not edit until I confirm. Clean weeks are the normal
 result: say "no drift" and stop.
@@ -253,17 +248,11 @@ STEP 2 - decide where it goes, in two sentences:
   - an agent would break it during UNRELATED work -> one line in the
     matching AGENTS.md CRITICAL RULES
   - otherwise -> propose a new skill and justify the distinct trigger
-  Then decide the SCOPE, which is a separate question: is this true for the
-  whole platform, or for one client_variants/<name>/ only? A rule that names
-  one variant's files, templates or conventions is variant-scoped. Put it in
-  that variant's AGENTS.md or a skill with scope: [<name>]. Never in both,
-  and never in the root file "so everyone sees it".
 
 STEP 3 - propose the exact wording and WAIT for my approval before editing.
 Follow "The Skill Writing Contract" (end of the Practice section in
-docs/readmes/skills_management/SKILLS_MANAGEMENT.md). In particular: checkable by
-reading a diff, anchored to a real file, verified against the code before
-writing, prohibition first.
+readmes/skills_management/SKILLS_MANAGEMENT.md). In particular: checkable by reading a diff, anchored to a real file, verified
+against the code before writing, prohibition first.
 
 After approval: bump metadata.version, run
 ./skills/skill-sync/assets/sync.sh, show me both diffs. Do not commit yet.
@@ -303,10 +292,7 @@ lines, plus a skill for the rest.
 
 If it passes, read the real code, then propose ONLY:
   - the skill name, and why the naming convention picks it
-  - the exact "Trigger:" clause, and metadata.scope. If every rule names
-    files under one client_variants/<name>/, the scope is [<name>] and not
-    [root]; say so explicitly, and say whether that variant already has an
-    AGENTS.md for the rows to land in (section 2A)
+  - the exact "Trigger:" clause, and metadata.scope
   - a numbered list of the rules it would carry, one line each, with the
     file that proves each one was a real failure
 Stop there and wait.
@@ -318,14 +304,12 @@ Then, once you approve the shape:
 Write skills/{name}/SKILL.md from the approved rule list.
 
 Follow "The Skill Writing Contract" (end of the Practice section in
-docs/readmes/skills_management/SKILLS_MANAGEMENT.md) in full. It governs what goes
-in, what stays out, and how rules are worded.
+readmes/skills_management/SKILLS_MANAGEMENT.md) in full. It governs what goes in, what stays out, and how rules are worded.
 
 Additional rules that apply only when creating a NEW skill:
   - frontmatter: name, description with a literal "Trigger:" clause,
     license, metadata.author, metadata.version, metadata.scope,
-    metadata.auto_invoke. Nothing else: an unrecognised top-level key is
-    rejected by the loader
+    metadata.auto_invoke, allowed-tools
   - body order: When to Use, Critical Rules, Patterns, Commands, Resources
   - anything over ~40 lines of code or config goes in assets/, linked
   - pointers to local docs go in references/
@@ -362,12 +346,6 @@ Then report:
               (belongs in AGENTS.md CRITICAL RULES), or an AGENTS.md rule
               that only matters inside one domain (belongs in a skill).
               Always-loaded context is the scarcest resource here
-  WRONG SCOPE - a skill whose rules all name files under one
-              client_variants/<name>/ but which is scoped [root], so every
-              variant pays for it; or the reverse, a genuinely
-              platform-wide rule scoped to one variant, so nine sessions
-              never see it. Check scope against the paths the rules cite,
-              not against the skill's name
   OVERSIZE  - over 400 lines, with a proposed split ALONG A TRIGGER
               BOUNDARY, never by topic
   UNDERSIZE - under ~20 lines, which should be folded into the skill that
@@ -380,6 +358,9 @@ Then report:
 
 Rank by how likely each is to cause a wrong action, not by untidiness.
 A quarter with nothing to report is a good quarter, not a failed audit.
+
+If I then ask you to fix any of it, read "The Skill Writing Contract" in
+readmes/skills_management/SKILLS_MANAGEMENT.md BEFORE editing anything.
 ```
 
 ---
@@ -424,10 +405,6 @@ PASS C - uncovered subsystems. This is usually the biggest finding.
      matches: an SDK check named iam_user_mfa_enabled is not coverage of an
      MFA subsystem. Say which matches you rejected and why.
   4. Give each a size (file count) so I can judge whether it earns a skill.
-  5. Treat every client_variants/<name>/ as a subsystem in its own right,
-     and report its coverage separately. A rule stated for the platform is
-     NOT coverage of a variant's own conventions, and the largest variants
-     are where uncovered conventions accumulate fastest.
 
 PASS D - churn classification, to set priority only:
   git log --since="{PERIOD}" --name-only --pretty=format: master \
@@ -447,10 +424,8 @@ Ordered by how likely it is to cause a wrong action today, not by size.
 
 One run per scope.
 
-Run once for each scope that phase 1 flagged as worth auditing. Scopes are the ones declared in skill
-metadata: `root`, one per component, and one per client variant that has its own rule file. Audit a
-variant scope against that variant's directory only; a rule there is allowed to contradict another
-variant, and reporting that as a finding wastes the pass.
+Run once for each scope that phase 1 flagged as worth auditing. Scopes are the components declared in
+skill metadata, one per component plus `root`.
 
 ```
 Audit the skills for scope {SCOPE} against the code as it stands TODAY.
@@ -490,8 +465,7 @@ bad edit is easy to find and undo.
 Apply the {CATEGORY} findings for scope {SCOPE}. Only that category.
 
 Follow "The Skill Writing Contract" (end of the Practice section in
-docs/readmes/skills_management/SKILLS_MANAGEMENT.md) before writing anything
-into a skill.
+readmes/skills_management/SKILLS_MANAGEMENT.md) before writing anything into a skill.
 
 - edit skills/{name}/SKILL.md only; never .claude/skills, never the
   AGENTS.md auto-invoke tables
@@ -627,21 +601,19 @@ repository/
 │       └── drift-audit.sh ......... weekly detection
 │
 ├── <component-a>/
-│   ├── AGENTS.md .................. loaded when a file in here enters the session
+│   ├── AGENTS.md .................. ALWAYS loaded when working in here
 │   ├── CLAUDE.md -> AGENTS.md
 │   └── src/ ...
 │
-└── client_variants/<name>/ ........ one per variant that has earned one
-    ├── AGENTS.md .................. loaded when a file in here enters the session
+└── <component-b>/
+    ├── AGENTS.md
     ├── CLAUDE.md -> AGENTS.md
-    └── ...
+    └── src/ ...
 ```
 
-Two rules the layout encodes. **The root `AGENTS.md` is always in context**, so what it contains is
-permanently expensive and must be rationed. **Skills are never in context until selected**, so a
-skill can be as long as the subject genuinely needs. A nested `AGENTS.md` sits between the two: free
-until a file in its directory enters the session, permanent for the rest of that session. Section 2A
-covers the per-variant use of that middle tier.
+Two rules the layout encodes. **`AGENTS.md` files are always in context** - one at the root, one per
+component - so what they contain is permanently expensive and must be rationed. **Skills are never
+in context until selected**, so a skill can be as long as the subject genuinely needs.
 
 `CLAUDE.md` is not a second file. Different agent tools look for different filenames, so each
 `AGENTS.md` has a symlink beside it. One copy on disk means the two names cannot disagree:
@@ -688,7 +660,7 @@ the matching file:
 
 A skill declares `scope` and `auto_invoke` in its frontmatter; nothing else decides where its rows
 land. **The declaration is the source; the table is a build artifact.** You change when a skill
-applies by editing the skill and re-running [sync.sh](../../../skills/skill-sync/assets/sync.sh), never
+applies by editing the skill and re-running [sync.sh](../../skills/skill-sync/assets/sync.sh), never
 by editing the table.
 
 ### The Third Tier: Rules That Cannot Wait to Be Selected
@@ -721,9 +693,8 @@ Three layers, and most mistakes come from confusing them.
 
 | Layer | Loaded | Cost | Holds |
 | --- | --- | --- | --- |
-| The `AGENTS.md` at the repository root | **Always**, every turn | Permanent context | The few rules that must never be missed anywhere |
-| A nested `AGENTS.md`, one per component or client variant | When a file in that directory enters the session | Nothing until then | The few rules that must never be missed **in there** |
-| The `### Auto-invoke Skills` table inside an AGENTS.md | With the file that holds it | One line per skill | **Routing**: action to skill name |
+| One `AGENTS.md` at the repository root, plus one per component | **Always**, every turn | Permanent context | The few rules that must never be missed |
+| The `### Auto-invoke Skills` table inside each AGENTS.md | Always | One line per skill | **Routing**: action to skill name |
 | `skills/{name}/SKILL.md` body | Only when invoked | Free until used | The payload |
 
 Only the frontmatter `description` and the auto-invoke row sit in context by default. **The
@@ -735,7 +706,7 @@ description never loads, which is the most common failure of all.
 * **Edit `skills/{name}/SKILL.md`.** That is the only copy.
 * `.claude/skills` is a **symlink** to `skills/`. Never edit through it.
 * The auto-invoke tables in every `AGENTS.md` are **generated output**. Never hand-edit them; they
-  are regenerated from skill metadata by [sync.sh](../../../skills/skill-sync/assets/sync.sh), which reads
+  are regenerated from skill metadata by [sync.sh](../../skills/skill-sync/assets/sync.sh), which reads
   `$REPO_ROOT/skills` only.
 
 ### Why Both `AGENTS.md` and `CLAUDE.md` Exist
@@ -809,16 +780,12 @@ metadata:
   scope: [<scope>]                   # one or more component scope names; "root" is repo-wide
   auto_invoke:                       # string or list; becomes the AGENTS.md rows
     - "<action phrase, as it should read in the table>"
+allowed-tools: Read, Edit, Write, Glob, Grep, Bash
 ---
 ```
 
 `scope` decides **which** AGENTS.md gets the row. `auto_invoke` decides **what the row says**.
 A skill missing either is invisible to routing: it exists, and nothing ever loads it.
-
-**The top-level keys are a closed set.** Only `name`, `description`, `license`, `metadata`,
-`argument-hint`, `compatibility`, `disable-model-invocation` and `user-invocable` are recognised;
-anything else is rejected, `allowed-tools` included. Everything this system needs beyond `name` and
-`description` goes under `metadata`, which is free-form.
 
 
 ### A Complete Skill, Annotated
@@ -841,6 +808,7 @@ metadata:
   auto_invoke:                        # each entry becomes one table row
     - "Working on sessions, tokens, or sign-in flows"
     - "Adding endpoints under the platform namespace"
+allowed-tools: Read, Edit, Write, Glob, Grep, Bash
 ---
 
 ## When to Use                        <- and what to use INSTEAD for adjacent work
@@ -892,7 +860,6 @@ often, and it is not a matter of taste.
 | The rule... | Goes in | Because |
 | --- | --- | --- |
 | Breaks silently during **unrelated** work and is invisible in local code | `AGENTS.md` for that scope | It has to be in context before the agent knows it needs it |
-| Breaks silently during unrelated work, but **only inside one client variant** | `client_variants/<name>/AGENTS.md` | Same reason, paid only in sessions that touch that variant. See 2A |
 | Only matters once you are already working in that domain | `skills/{name}/SKILL.md` | Loading it on demand costs nothing until it is needed |
 | Decides **whether** a skill loads at all | Frontmatter `Trigger:` and `metadata.auto_invoke` | That is the routing surface |
 | Is a table mapping actions to skills | Nowhere: run `sync.sh` | It is build output |
@@ -900,118 +867,6 @@ often, and it is not a matter of taste.
 
 Always-loaded context is expensive and permanent. A rule earns a place in `AGENTS.md` only if an
 agent could plausibly break it while doing something else entirely. Everything else is a skill.
-
----
-
-## 2A - Client Variants: Which AGENTS.md, and When
-
-One codebase serves several clients. Each `client_variants/<name>/` is a Django app selected at
-runtime by the `CLIENT_NAME` environment variable, and each ships from its own `prod/clientvar-*`
-branch. A rule that is true for [client_variants/stante/](../../client_variants/stante/) is usually
-false, or meaningless, for the other nine.
-
-### The Trigger Is the Directory, Not `CLIENT_NAME`
-
-**Nothing in an agent harness reads `CLIENT_NAME`.** It is read by Django at runtime, in
-[params.py](../../params.py); there is no conditional-include directive that could act on it, and no
-supported way to make a rule file load "only when `CLIENT_NAME=stante`".
-
-There is no need for one. A nested `AGENTS.md` loads when a file in its directory enters the session,
-which is a **better** trigger than the environment variable: it is true whether you are running that
-variant, comparing two of them, or working on a branch that deploys a third. Working on
-`client_variants/stante/views_database.py` loads stante's rules; working on fideiussioni does not.
-When `CLIENT_NAME=pmag` and every variant is installed, each one still loads only as you reach it,
-which is cheaper and more accurate than injecting all ten at once.
-
-### The Three Tiers, Per Variant
-
-| Where | Loaded | Use it for |
-| --- | --- | --- |
-| Root [AGENTS.md](../../../AGENTS.md) CRITICAL RULES | always | Only rules true for **every** variant. Never a per-client rule |
-| `client_variants/<name>/AGENTS.md` CRITICAL RULES | when a file in that variant is opened | Rules an agent breaks while doing something else **inside that variant** |
-| A skill with `metadata.scope: [<name>]` | when its trigger matches | Everything else about that variant |
-
-A skill scoped to a variant has its auto-invoke rows written into that variant's `AGENTS.md` and
-nowhere else. The root table does not grow.
-
-### What Earns a Variant Its Own AGENTS.md
-
-The same bar as any other rule file, applied per client. Most variants never reach it: a variant of a
-handful of files has nothing an agent gets wrong by default. A variant earns one when it has its own
-conventions that contradict the platform default, its own component library, or its own domain
-vocabulary, and an agent has already gotten one of them wrong. Until then, nothing.
-
-### The Procedure
-
-```bash
-# 1. Create the rule file and the symlink. CRITICAL RULES starts EMPTY.
-cp docs/readmes/skills_management/templates/AGENTS.template.md client_variants/<name>/AGENTS.md
-ln -s AGENTS.md client_variants/<name>/CLAUDE.md
-
-# 2. Route the scope. One line per variant that has an AGENTS.md, in SCOPE_DIRS
-#    at the top of skills/skill-sync/assets/sync.sh:
-#        [<name>]="client_variants/<name>"
-#    A scope with no entry is reported by sync.sh and routes nowhere.
-
-# 3. Declare the scope in each variant skill's frontmatter, then regenerate.
-#        metadata:
-#          scope: [<name>]
-./skills/skill-sync/assets/sync.sh --dry-run
-./skills/skill-sync/assets/sync.sh
-```
-
-[drift-audit.sh](../../../skills/skill-sync/assets/drift-audit.sh) picks up a variant `AGENTS.md`
-with no configuration: its `find -maxdepth 3` already reaches `client_variants/<name>/AGENTS.md`, and
-`ROOTS=(.)` resolves the paths it cites. Step 2 is the only edit to shared machinery in the whole
-arrangement.
-
-### Where a Variant Skill's Body Lives
-
-| Placement | Routed by | Choose it when |
-| --- | --- | --- |
-| `skills/<name>-<topic>/SKILL.md` with `scope: [<name>]` | `sync.sh`, into that variant's table | Default. Bodies stay in one place, one audit sweeps them all |
-| `client_variants/<name>/.claude/skills/<topic>/SKILL.md` | the directory itself, listed with a `client_variants/<name>:` prefix | The skill must travel with the variant's own branch, or its name collides with another variant's |
-
-Directory-scoped skills are **not** routed by `sync.sh` and get no auto-invoke row. Pick one
-mechanism per skill, never both.
-
-### What It Costs
-
-Every installed skill is listed to the agent by name and one-line description, wherever its body
-lives. That listing is the only permanent cost:
-
-| | Always in context | Only in that variant |
-| --- | --- | --- |
-| Skill name and description | yes, one line per skill | no |
-| Skill body, 100 to 200 lines | no, loaded on match | no |
-| Auto-invoke row | no, when scoped to the variant | yes |
-| The variant's CRITICAL RULES | no | yes |
-
-Ten variant skills cost about ten lines of permanent context. The expensive parts stay out until the
-work reaches that folder.
-
-### Prohibitions
-
-- **NEVER** put a per-client rule in the root `AGENTS.md`. It reaches nine variants that cannot use
-  it, on every turn, forever.
-- **NEVER** write `scope: [root, <name>]`. The same rule in two tables is the duplication the
-  contract forbids; pick the one file it belongs in.
-- **NEVER** leave a variant's `CLAUDE.md` untracked or gitignored. A rule file that exists on one
-  developer's disk is invisible to review and to everyone else, which is the failure this whole
-  system exists to prevent. Track the `AGENTS.md`, symlink `CLAUDE.md` beside it.
-- **NEVER** generate anything into a tracked file from `CLIENT_NAME`. The rule files are committed
-  and shared; output that depends on one developer's environment turns every session into a diff.
-  Generated per-variant artifacts belong in gitignored paths only.
-- **NEVER** duplicate a rule across two variants. If it is true for both, it is a platform rule:
-  root scope, stated once. If two variants genuinely need the same wording for different reasons,
-  say so in one line and pick one owner.
-
-### Subagents Are the Exception
-
-`.claude/agents/*.md` is flat and global: an agent definition has no scope field and no directory
-form, so every subagent is visible in every session. That is the one place where selecting on
-`CLIENT_NAME` is worth a script, and it is safe only because its output goes to a gitignored
-directory. Do not build it before there is a per-variant subagent worth having.
 
 ---
 
@@ -1047,7 +902,7 @@ slightly harder to select correctly.
 | It is a one-off, however painful | Write it in the commit message or a readme |
 | It is trivial or self-explanatory | Nothing |
 | It is under roughly 20 lines of rules | Add them to an existing skill **with the same trigger** |
-| It is process for work in flight | A readme under [docs/readmes/](../) |
+| It is process for work in flight | A readme under [readmes/](.) or [my_readmes/](../../my_readmes/) |
 | It restates framework or language defaults | Nothing; the model already knows |
 | You cannot name a failure it prevents | Nothing yet. Wait until it goes wrong a second time |
 | It would break silently in unrelated work | One line in the right `AGENTS.md`, not a skill |
@@ -1086,7 +941,6 @@ Does an existing skill share the trigger?
 | --- | --- | --- |
 | Generic, any project | `{technology}` | `pytest`, `typescript`, `playwright` |
 | Project-specific | `{project}-{component}` | `acme-api`, `acme-ui` |
-| Client-variant-specific | `{variant}-{topic}` | `stante-search-card`, `stante-db-page` |
 | Testing | `{project}-test-{component}` | `acme-test-api`, `acme-test-sdk` |
 | Workflow or action | `{action}-{target}` | `skill-creator`, `skill-sync` |
 
@@ -1097,7 +951,7 @@ skills/{skill-name}/
 └── references/       Optional. Pointers to LOCAL docs the agent should read. Never web URLs.
 ```
 
-If you are tempted to paste a 200-line config into `SKILL.md`, it belongs in `docs/assets/`. If you are
+If you are tempted to paste a 200-line config into `SKILL.md`, it belongs in `assets/`. If you are
 tempted to summarise an existing document, link it from `references/` instead.
 
 ---
@@ -1131,7 +985,7 @@ thing that catches it. Use Action 5, widened to the whole area the programme tou
 
 In-flight process: branch names, "we are currently on phase 2.5", container policies for one
 programme, reporting formats for one series of pull requests. That belongs in a readme under
-[docs/readmes/](../), and it expires.
+[readmes/](.) or [my_readmes/](../../my_readmes/), and it expires.
 
 ### Delete or Merge When
 
@@ -1221,7 +1075,7 @@ branch with judgment.
 Every skill cites real paths and symbols. The check is simply: does this commit touch anything a
 skill mentions? Deterministic, no model, and advisory only. It never blocks a commit.
 
-The script is [skills/skill-sync/assets/citation-check.sh](../../../skills/skill-sync/assets/citation-check.sh).
+The script is [skills/skill-sync/assets/citation-check.sh](../../skills/skill-sync/assets/citation-check.sh).
 It takes a changed-file list, skips `skills/` and documentation, greps every `SKILL.md` for each
 path and basename, prints what matched, and always exits 0.
 
@@ -1236,25 +1090,22 @@ Same grep, opposite intent. With no argument it reads `git diff --cached`, so ru
 outside a commit prints nothing - that is correct behaviour, not a broken script. Pass a range when
 you want it at review time.
 
-**In this repository** there is no hook manager. It is registered inside the tracked
-[hooks/pre-commit](../../../tooling/hooks/pre-commit) as an `EXIT` trap, and propagated to `.git/hooks/`
-by [hooks/install-hooks.sh](../../../tooling/hooks/install-hooks.sh):
+It is registered in [.pre-commit-config.yaml](../../.pre-commit-config.yaml) under the existing
+`repo: local` block:
 
-```bash
-_skill_citation_check() {
-  local rc=$?
-  local script="$PROJECT_ROOT/skills/skill-sync/assets/citation-check.sh"
-  if [ "$rc" -eq 0 ] && [ -x "$script" ]; then
-    "$script" || true
-  fi
-  return "$rc"
-}
-trap _skill_citation_check EXIT
+```yaml
+      - id: skill-citation-check
+        name: "Skills - citation check (advisory)"
+        entry: ./skills/skill-sync/assets/citation-check.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+        verbose: true
+        priority: 90
 ```
 
-A trap rather than a call appended at the bottom of the file, because that hook has three
-early `exit 0` paths an appended call would skip. The trap runs on every path, runs last, and
-never changes the hook's exit status.
+`verbose: true` is required, otherwise the output is hidden on success. `priority: 90` runs it last,
+after the formatters, so the notice is the final thing on screen.
 
 **Expected volume**: a handful of times per week, not per commit. If it fires on nearly every commit
 your skills are citing too broadly and should name specific files rather than directories.
@@ -1272,12 +1123,12 @@ hook in `.claude/settings.json` matching `Bash` calls containing `git commit`. U
 The citation hook catches changes as they happen. The drift audit catches everything that slipped
 through, including changes made outside a commit you were watching.
 
-The script is [skills/skill-sync/assets/drift-audit.sh](../../../skills/skill-sync/assets/drift-audit.sh).
+The script is [skills/skill-sync/assets/drift-audit.sh](../../skills/skill-sync/assets/drift-audit.sh).
 It extracts every markdown link target and backticked repository path from every `SKILL.md` and
 checks that each one still resolves. `--skill <name>` limits it to one skill.
 
-**Why it tries several roots.** Skills cite paths relative to a *component* root rather than the
-repository root. A skill may cite `base_views.py` as `api/base_views.py` when
+**Why it tries several roots.** Skills cite paths relative to a *component* root, not the repository
+root rather than the repository root. A skill may cite `base_views.py` as `api/base_views.py` when
 the file actually lives at `api/src/main/api/base_views.py`, because that is how it is referred to
 inside that component. A reference counts as live if it resolves under the skill's own directory or
 under any configured component root. **The `ROOTS` array at the top of the script is the one thing to edit when installing this
@@ -1397,9 +1248,6 @@ Everything here has actually happened. None of it is a bug.
 | Drift audit flags files that plainly exist | `ROOTS` does not include your component roots. Skills cite paths relative to a component, not the repository | Edit the `ROOTS` array at the top of the script |
 | Drift audit is clean but a skill is still wrong | It checks paths, not symbols or claims | Symbol drift is Action 2's second pass; wrong claims are Action 6 phase 2 |
 | The agent ignored a skill that clearly applies | The `Trigger:` names an intention rather than an observable condition | Rewrite it around paths, symbols and commands; rerun `sync.sh` |
-| A variant skill's rows land nowhere, and `sync.sh` warns about the scope | The scope has no entry in `SCOPE_DIRS` | Add `[<name>]="client_variants/<name>"` and rerun |
-| A variant's `AGENTS.md` rules were not applied | No file in that variant entered the session, so it was never loaded | Working behaviour. A rule needed before any variant file is opened is platform-wide and belongs at the root |
-| A rule is right for stante and wrong for fideiussioni | It is scoped `[root]` | Move it to the variant scope; see 2A |
 | The agent followed a rule that is no longer true | Exactly the failure this system exists for | Action 2 finds it if a path moved; Action 6.2 if the claim rotted |
 | Two skills give contradictory answers | Overlapping triggers, or a rule stated in both a skill and an `AGENTS.md` | Action 5 reports both as OVERLAP and DUPLICATE |
 | An action produced a huge rewrite | The report step was skipped | Rerun with the report prompt; never accept an edit you did not see proposed |
@@ -1455,7 +1303,7 @@ Before accepting an agent's edit, check the following. Most rejected edits fail 
 # Regenerate the AGENTS.md auto-invoke tables from skill metadata
 ./skills/skill-sync/assets/sync.sh --dry-run
 ./skills/skill-sync/assets/sync.sh
-./skills/skill-sync/assets/sync.sh --scope stante   # one AGENTS.md only
+./skills/skill-sync/assets/sync.sh --scope api      # one AGENTS.md only
 
 # Verify every path cited by every skill still resolves
 ./skills/skill-sync/assets/drift-audit.sh
@@ -1471,11 +1319,9 @@ git log -1 --format='%ad  %s' -- skills/<skill-name>/SKILL.md
 grep -L "auto_invoke" skills/*/SKILL.md
 ```
 
-**Related**: [AGENTS.md](../../../AGENTS.md) for the repository-wide rules, the generated
-auto-invoke table and the full skill catalogue; [skills/skill-sync/assets/](../../../skills/skill-sync/assets/)
-for the three scripts themselves. This installation has no `skill-creator` or `skill-sync`
-skill: the authoring conventions live in this document and in
-[templates/SKILL.template.md](templates/SKILL.template.md).
+**Related**: [skills/skill-creator/SKILL.md](../../skills/skill-creator/SKILL.md) for authoring
+conventions, [skills/skill-sync/SKILL.md](../../skills/skill-sync/SKILL.md) for the sync mechanism,
+[AGENTS.md](../../AGENTS.md) for the repository-wide rules and the full skill index.
 
 ---
 
@@ -1802,6 +1648,7 @@ The frontmatter, which decides whether the skill is ever loaded:
       scope: [{scope}]                 # which AGENTS.md gets the rows
       auto_invoke:                     # each entry becomes one table row
         - "{action phrase}"
+    allowed-tools: Read, Edit, Write, Glob, Grep, Bash
     ---
 
     ## When to Use          - and what to use INSTEAD for adjacent work

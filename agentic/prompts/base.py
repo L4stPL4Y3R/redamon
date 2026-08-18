@@ -1887,29 +1887,58 @@ Web cache poisoning properties (source="cache_poisoning"):
 - retry_possible (boolean), phase (string)
 - created_at (datetime)
 
-### TruffleHog Secret Scanner Nodes (Hierarchy: Domain -> TrufflehogScan -> TrufflehogRepository -> TrufflehogFinding)
+### Secret Multiscanner Nodes (Hierarchy: Domain -> MultiscannerScan -> <asset> -> MultiscannerFinding)
 
-**TrufflehogScan** - Scan metadata for a TruffleHog secret scan run
-- target (string): scan target (e.g. GitHub org name)
+Secret Multiscanner scans 14 different SOURCES (git repos, Docker images, HuggingFace
+models, S3/GCS buckets, Jenkins, Elasticsearch, Postman, CircleCI, TravisCI,
+filesystem). Each source is a SEPARATE scan node and they run in parallel, so a
+project can hold several MultiscannerScan nodes at once. Filter by `source` when
+the user asks about one of them.
+
+**MultiscannerScan** - Scan metadata for ONE source's run
+- source (string): "git", "github", "github_experimental", "gitlab", "docker",
+  "huggingface", "s3", "gcs", "filesystem", "jenkins", "elasticsearch",
+  "postman", "circleci", "travisci"
+- source_label (string): display name, e.g. "Docker registry"
+- target (string): what was scanned (org name, image ref, bucket, URL)
+- verification_enabled (boolean): false means NOTHING was checked against a live API
 - scan_start_time (string), scan_end_time (string): timestamps
 - duration_seconds (float): scan duration
-- status (string): "completed", "failed", "unknown"
+- status (string): "completed", "error", "unknown"
 - total_findings (integer), verified_findings (integer), unverified_findings (integer)
-- repositories_scanned (integer)
+- validated_findings (integer): findings confirmed LIVE by the owning API
+- assets_scanned (integer) — `repositories_scanned` is a deprecated alias
 
-**TrufflehogRepository** - A repository scanned by TruffleHog
-- name (string): repository name (e.g. "org/repo-name")
+**Asset nodes** - one label per asset SHAPE, all with the same properties:
+`MultiscannerRepository` (git/github/gitlab), `MultiscannerImage` (docker),
+`MultiscannerModel` (huggingface), `MultiscannerBucket` (s3/gcs),
+`MultiscannerEndpoint` (jenkins/elasticsearch/postman/circleci/travisci/filesystem)
+- name (string): the human identifier — "org/repo", "ns/image:tag", "user/model",
+  bucket name, or instance URL
+- source (string), asset_kind (string): "repository" | "image" | "model" | "bucket" | "endpoint"
+- scan_id (string): the MultiscannerScan it belongs to
 
-**TrufflehogFinding** - A secret found by TruffleHog in a repository
+**MultiscannerFinding** - A secret found by Secret Multiscanner
+- source (string): which source found it
 - detector_name (string): detector type (e.g. "AWS", "GitHub", "PrivateKey", "Slack")
 - detector_description (string): human-readable detector description
-- verified (boolean): whether the secret was verified as active
+- validation_status (string): THE attribute that matters.
+  * "validated"    = the owning API confirmed the credential is LIVE (act on this)
+  * "unvalidated"  = verification ran, the API said it is not live
+  * "verify_error" = the verify call itself failed — NOT proof it is dead
+  * "unverified"   = verification was switched off — never checked, NOT safe
+  Never treat "unverified" as "not live"; it means nobody looked.
+- verified (boolean): the raw Secret Multiscanner bool; prefer validation_status
+- finding_kind (string): "secret", or "image_history" for a secret baked into a
+  Docker image's build history (RUN/ENV directive), whose location is a synthetic
+  path, not a real file
 - redacted (string): redacted secret value
-- repository (string): repository name where found
-- file (string): file path within the repository
-- commit (string): git commit hash
-- line (integer): line number in file
+- asset (string): the asset it was found in (`repository` is a deprecated alias)
+- location (string): file path, layer path, object key or URL (`file` is a deprecated alias)
+- commit (string): git commit hash — empty for non-git sources
+- line (integer): line number
 - link (string): URL to the finding location
+- extra_data (string): JSON blob of per-source extras (Docker Tag/Layer, HF revision, ...)
 - timestamp (string): commit timestamp
 - extra_data (string): JSON string with additional detector-specific data
 
@@ -2185,10 +2214,11 @@ hostname directly (nuclei vulns aren't linked to Domain/Subdomain via HAS_VULNER
 - `(c:CVE)-[:HAS_CWE]->(m:MitreData)` - CVE has CWE weakness
 - `(m:MitreData)-[:HAS_CAPEC]->(cap:Capec)` - CWE has CAPEC attack pattern
 
-### TruffleHog Secret Scanner Relationships
-- `(d:Domain)-[:HAS_TRUFFLEHOG_SCAN]->(ts:TrufflehogScan)` - Domain has TruffleHog scan
-- `(ts:TrufflehogScan)-[:HAS_REPOSITORY]->(tr:TrufflehogRepository)` - Scan scanned repository
-- `(tr:TrufflehogRepository)-[:HAS_FINDING]->(tf:TrufflehogFinding)` - Repository has secret finding
+### Secret Multiscanner Relationships
+- `(d:Domain)-[:HAS_MULTISCANNER_SCAN]->(ts:MultiscannerScan)` - Domain has Secret Multiscanner scan
+- `(ts:MultiscannerScan)-[:HAS_ASSET]->(a)` - Scan covered this asset (a is one of
+  MultiscannerRepository / MultiscannerImage / MultiscannerModel / MultiscannerBucket / MultiscannerEndpoint)
+- `(a)-[:HAS_FINDING]->(tf:MultiscannerFinding)` - Asset holds this secret finding
 - `(b:BaseURL)-[:DEPENDS_ON]->(p:Package)` - Live target serves this dependency (Supply-Chain Recon)
 - `(gr:GithubRepository)-[:DEPENDS_ON]->(p:Package)` - Repository depends on this package (Supply-Chain scan, repo input)
 - `(d:SbomDocument)-[:DEPENDS_ON]->(p:Package)` - An UPLOADED SBOM/lockfile listed this package (Supply-Chain scan, upload input). `d.name` is the filename
@@ -2363,27 +2393,40 @@ RETURN b.url, count(s) AS secret_count, collect(s.secret_type) AS types
 ORDER BY secret_count DESC
 ```
 
-### TruffleHog Secrets (Secrets Found in Git Repositories)
+### Secret Multiscanner Secrets (14 sources: git, Docker, HuggingFace, S3/GCS, Jenkins, ...)
 ```cypher
-// All TruffleHog findings (verified secrets)
-MATCH (d:Domain)-[:HAS_TRUFFLEHOG_SCAN]->(ts:TrufflehogScan)-[:HAS_REPOSITORY]->(tr:TrufflehogRepository)-[:HAS_FINDING]->(tf:TrufflehogFinding)
-WHERE tf.verified = true
-RETURN tr.name AS repository, tf.detector_name, tf.file, tf.line, tf.redacted
+// LIVE credentials across every source — the highest-value query here
+MATCH (tf:MultiscannerFinding {validation_status: 'validated'})
+RETURN tf.source, tf.asset, tf.location, tf.detector_name, tf.redacted
 LIMIT 500
 
-// TruffleHog scan summary
-MATCH (ts:TrufflehogScan)
-RETURN ts.target, ts.status, ts.total_findings, ts.verified_findings, ts.repositories_scanned
+// Full chain, any source
+MATCH (d:Domain)-[:HAS_MULTISCANNER_SCAN]->(ts:MultiscannerScan)-[:HAS_ASSET]->(a)-[:HAS_FINDING]->(tf:MultiscannerFinding)
+RETURN ts.source AS source, a.name AS asset, tf.detector_name, tf.location, tf.validation_status
+LIMIT 500
 
-// TruffleHog findings grouped by detector type
-MATCH (tf:TrufflehogFinding)
-RETURN tf.detector_name, count(tf) AS finding_count, sum(CASE WHEN tf.verified THEN 1 ELSE 0 END) AS verified_count
-ORDER BY finding_count DESC
+// One source only (e.g. the Docker registry scan)
+MATCH (ts:MultiscannerScan {source: 'docker'})-[:HAS_ASSET]->(img:MultiscannerImage)-[:HAS_FINDING]->(tf:MultiscannerFinding)
+RETURN img.name AS image, tf.detector_name, tf.location, tf.validation_status
 
-// TruffleHog findings in a specific repository
-MATCH (tr:TrufflehogRepository)-[:HAS_FINDING]->(tf:TrufflehogFinding)
-WHERE tr.name CONTAINS "repo-name"
-RETURN tf.detector_name, tf.file, tf.line, tf.verified, tf.redacted
+// Scan summary per source
+MATCH (ts:MultiscannerScan)
+RETURN ts.source, ts.target, ts.status, ts.total_findings, ts.validated_findings, ts.assets_scanned
+
+// Findings grouped by detector, with the LIVE count
+MATCH (tf:MultiscannerFinding)
+RETURN tf.detector_name, count(tf) AS finding_count,
+       sum(CASE WHEN tf.validation_status = 'validated' THEN 1 ELSE 0 END) AS live_count
+ORDER BY live_count DESC, finding_count DESC
+
+// Secrets baked into a Docker image's build history (no real file path)
+MATCH (tf:MultiscannerFinding {finding_kind: 'image_history'})
+RETURN tf.asset AS image, tf.detector_name, tf.redacted
+
+// Findings in a specific asset (repo, image, bucket, model, endpoint)
+MATCH (a)-[:HAS_FINDING]->(tf:MultiscannerFinding)
+WHERE a.name CONTAINS "acme"
+RETURN tf.source, tf.detector_name, tf.location, tf.line, tf.validation_status, tf.redacted
 ```
 
 ### JS Recon Findings
@@ -2412,7 +2455,7 @@ RETURN file.title as js_file, e.method, e.path, e.category, e.endpoint_type
 ```
 
 ### ALL Secrets (Web + Git Repository + JS Recon + Uploads)
-When user asks about "secrets" broadly, query Secret nodes (from JS file nodes and BaseURL), TrufflehogFinding nodes, AND JsReconFinding nodes:
+When user asks about "secrets" broadly, query Secret nodes (from JS file nodes and BaseURL), MultiscannerFinding nodes, AND JsReconFinding nodes:
 ```cypher
 // Combined view of all secrets from all sources
 MATCH (b:BaseURL)-[:HAS_SECRET]->(s:Secret)
@@ -2421,7 +2464,7 @@ UNION ALL
 MATCH (file:JsReconFinding {finding_type: 'js_file'})-[:HAS_SECRET]->(s:Secret)
 RETURN 'JS File: ' + file.title as source, s.secret_type as type, s.source as tool, s.source_url as location, s.severity as severity
 UNION ALL
-MATCH (tf:TrufflehogFinding)
+MATCH (tf:MultiscannerFinding)
 RETURN 'Git Repository' as source, tf.detector_name as type, 'trufflehog' as tool, tf.repository + '/' + tf.file as location, CASE WHEN tf.verified THEN 'high' ELSE 'medium' END as severity
 UNION ALL
 MATCH (jf:JsReconFinding)
@@ -2545,7 +2588,7 @@ LIMIT 100
 
 // Secrets/credentials/tokens for a host (live web resources via JS recon).
 // Subdomain backlink is optional (some BaseURLs aren't linked to a Subdomain).
-// For repository-scanned secrets, also query TrufflehogFinding (see sections above).
+// For repository-scanned secrets, also query MultiscannerFinding (see sections above).
 MATCH (b:BaseURL)
 OPTIONAL MATCH (b)-[:HAS_JS_FILE]->(js:JsReconFinding)-[:HAS_SECRET]->(sec:Secret)
 OPTIONAL MATCH (b)<-[:HAS_BASE_URL|HAS_BASEURL]-(s:Subdomain)
@@ -2572,9 +2615,9 @@ LIMIT 500
    - Vulnerability nodes = scanner findings (nuclei, gvm, security_check)
    - CVE nodes = known CVEs linked to detected technologies
    - Use UNION ALL to combine results from both node types
-2. **CRITICAL - Query Secret, TrufflehogFinding, AND JsReconFinding nodes** when user asks about "secrets":
+2. **CRITICAL - Query Secret, MultiscannerFinding, AND JsReconFinding nodes** when user asks about "secrets":
    - Secret nodes = secrets found in live web resources (JS files, configs) via jsluice or js_recon
-   - TrufflehogFinding nodes = secrets found in git repositories via TruffleHog
+   - MultiscannerFinding nodes = secrets found in git repositories via Secret Multiscanner
    - JsReconFinding nodes = non-secret JS findings (dependency confusion, source maps, DOM sinks, frameworks)
    - Use UNION ALL to combine results from all node types
 3. **Always use LIMIT** to restrict results (default: 500), increase for special cases.

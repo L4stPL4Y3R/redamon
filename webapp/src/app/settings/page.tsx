@@ -6,6 +6,9 @@ import { Plus, Pencil, Trash2, Loader2, Eye, EyeOff, Upload, Download, Swords, R
 import { useProject } from '@/providers/ProjectProvider'
 import { useAuth } from '@/providers/AuthProvider'
 import { useVersionCheck } from '@/hooks/useVersionCheck'
+// Shared with the inline shortcuts the scan sections render, so a key cannot be
+// described one way here and another way on the card that asks for it.
+import { TRUFFLEHOG_KEY_FIELDS } from '@/lib/credentialFields'
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard'
 import { LlmProviderForm } from '@/components/settings/LlmProviderForm'
 import McpServersTab from '@/components/settings/mcp/McpServersTab'
@@ -1349,11 +1352,30 @@ export default function SettingsPage() {
           <div className={styles.emptyState}><Loader2 size={16} className={styles.spin} /> Loading...</div>
         ) : (
           <div className={styles.settingsGrid}>
+            <KeyGroup
+              id="trufflehog-keys"
+              title="Secret Multiscanner"
+              hint="One key per source. A source whose key is mandatory cannot start until it is set; the scan card says which one is missing. Keys are stored per user and are never included in a project export."
+            />
+            {TRUFFLEHOG_KEY_FIELDS.map(field => (
+              <SecretField
+                key={field.name}
+                label={field.label}
+                hint={field.hint}
+                signupUrl={field.signupUrl}
+                badges={['Secret Multiscanner', field.source]}
+                value={(settings as unknown as Record<string, string>)[field.name] ?? ''}
+                visible={!!visibleFields[field.name]}
+                onToggle={() => toggleFieldVisibility(field.name)}
+                onChange={v => updateSetting(field.name as keyof typeof settings, v)}
+              />
+            ))}
+
             <SecretField
               label="GitHub Access Token"
-              hint="Required for GitHub Secret Hunt and TruffleHog, and for Supply Chain scans of a private repository (public repos clone anonymously). Use repo scope for private repos, or a fine-grained token for specific repos only"
+              hint="Required for GitHub Secret Hunt, and for Supply Chain scans of a private repository (public repos clone anonymously). Use repo scope for private repos, or a fine-grained token for specific repos only. NOT used by Secret Multiscanner — it has its own GitHub token in the Secret Multiscanner section above."
               signupUrl="https://github.com/settings/tokens"
-              badges={['GitHub Secret Hunt', 'TruffleHog', 'Supply Chain']}
+              badges={['GitHub Secret Hunt', 'Supply Chain']}
               value={settings.githubAccessToken}
               visible={!!visibleFields.githubAccessToken}
               onToggle={() => toggleFieldVisibility('githubAccessToken')}
@@ -2272,6 +2294,26 @@ function SystemSection() {
 }
 
 // Badge color mapping
+/**
+ * The TruffleHog key group (Appendix D). Ordered mandatory-always first, then
+ * conditional, then optional, so the keys an operator is most likely to need
+ * before any scan will run are at the top.
+ *
+ * The `hint` wording matches the start gate exactly, so the settings page and
+ * the scan card can never disagree about whether a key is required.
+ */
+
+/** A header that opens a group of related keys. The `id` is the deep-link anchor
+ *  the scan card points at when it says which key to set. */
+function KeyGroup({ id, title, hint }: { id: string; title: string; hint: string }) {
+  return (
+    <div id={id} style={{ gridColumn: '1 / -1', marginTop: '8px' }}>
+      <h3 style={{ fontSize: '14px', fontWeight: 600, margin: '0 0 4px' }}>{title}</h3>
+      <p className="formHint" style={{ margin: 0 }}>{hint}</p>
+    </div>
+  )
+}
+
 const BADGE_STYLES: Record<string, React.CSSProperties> = {
   'AI Agent': {
     display: 'inline-block',
@@ -2309,7 +2351,7 @@ const BADGE_STYLES: Record<string, React.CSSProperties> = {
     verticalAlign: 'middle',
     letterSpacing: '0.02em',
   },
-  'TruffleHog': {
+  'Secret Multiscanner': {
     display: 'inline-block',
     fontSize: '10px',
     fontWeight: 600,
@@ -2321,6 +2363,36 @@ const BADGE_STYLES: Record<string, React.CSSProperties> = {
     verticalAlign: 'middle',
     letterSpacing: '0.02em',
   },
+  // 'Supply Chain' was used as a badge without ever being defined here, so it
+  // rendered in the AI-Agent blue fallback. Define every badge you add.
+  'Supply Chain': {
+    display: 'inline-block',
+    fontSize: '10px',
+    fontWeight: 600,
+    padding: '1px 6px',
+    borderRadius: '4px',
+    background: 'rgba(234, 179, 8, 0.12)',
+    color: '#a16207',
+    marginLeft: '6px',
+    verticalAlign: 'middle',
+    letterSpacing: '0.02em',
+  },
+  // Per-source micro-badges: which TruffleHog source each key feeds.
+  ...Object.fromEntries(
+    ['git', 'github', 'gitlab', 'docker', 'huggingface', 's3', 'gcs',
+     'jenkins', 'elasticsearch', 'postman', 'circleci', 'travisci'].map(source => [source, {
+      display: 'inline-block',
+      fontSize: '10px',
+      fontWeight: 500,
+      padding: '1px 6px',
+      borderRadius: '4px',
+      background: 'var(--bg-tertiary)',
+      color: 'var(--text-secondary)',
+      marginLeft: '4px',
+      verticalAlign: 'middle',
+      letterSpacing: '0.02em',
+    } as React.CSSProperties]),
+  ),
 }
 
 // Reusable secret field component

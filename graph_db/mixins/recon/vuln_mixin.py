@@ -8,6 +8,7 @@ from datetime import datetime
 from urllib.parse import urlparse, parse_qs
 
 from graph_db.cpe_resolver import _is_ip_address
+from graph_db.mixins.recon.scope import build_host_scope, host_in_scope
 
 class VulnMixin:
     def _find_cwes_with_capec(self, cwe_node: dict, results: list):
@@ -202,21 +203,14 @@ class VulnMixin:
             stats["errors"].append("No vuln_scan data found in recon_data")
             return stats
 
-        # Get target subdomains from scan scope - only create nodes for these
-        target_subdomains = set(recon_data.get("subdomains", []))
-        target_domain = recon_data.get("domain", "")
-
-        # Also include the main domain if no subdomains specified
-        if target_domain and not target_subdomains:
-            target_subdomains.add(target_domain)
+        # Only create nodes for hosts inside the scan scope. In IP mode the
+        # scope is the IP literals, not the dashed placeholder names that end
+        # up in recon_data["subdomains"] -- see build_host_scope.
+        target_hosts = build_host_scope(recon_data)
 
         def is_in_scope(hostname: str) -> bool:
-            """Check if a hostname is within the scan scope (target subdomains)."""
-            if not target_subdomains:
-                return True  # No filter if no subdomains defined
-            # Remove port if present
-            host_only = hostname.split(":")[0] if ":" in hostname else hostname
-            return host_only in target_subdomains
+            """Check if a hostname is within the scan scope."""
+            return host_in_scope(hostname, target_hosts)
 
         with self.driver.session() as session:
             # Ensure schema is initialized

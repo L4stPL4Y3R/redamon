@@ -245,7 +245,7 @@ export function ScanScheduleTable({ projectId }: ScanScheduleTableProps) {
             this schedule-keyed table; they are in the Scan queue section below. */}
         <p className={styles.hint}>
           Schedules run the <strong>full recon pipeline</strong> only. The other scans
-          (GVM, GitHub hunt, TruffleHog, supply chain, AI attack surface) and partial
+          (GVM, GitHub hunt, Secret Multiscanner, supply chain, AI attack surface) and partial
           recon are started by hand from their own cards and cannot be scheduled here.
           <br />
           A scheduled run that cannot start on time is queued and runs automatically
