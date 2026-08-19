@@ -182,6 +182,13 @@ GITHUB_HUNT_PHASE_PATTERNS = [
 # How many times a finished run's graph ingest is retried before giving up. The
 # 30 s sweep would otherwise retry a permanently-failing ingest forever, each
 # attempt copying the artifact and opening a fresh Neo4j connection.
+#: The non-root identity the scan image runs as
+#: (scanners/trufflehog_scan/Dockerfile `useradd --uid 10001 ... trufflehog`).
+#: The spawn needs it to hand the home-directory tmpfs to the right owner; if
+#: the Dockerfile's user ever changes, both must move together.
+TRUFFLEHOG_CONTAINER_USER = "trufflehog"
+TRUFFLEHOG_CONTAINER_UID = 10001
+
 MAX_TRUFFLEHOG_INGEST_ATTEMPTS = int(os.environ.get("TRUFFLEHOG_INGEST_ATTEMPTS", "5"))
 
 # How long a finished run stays in the state dict before it is pruned. Must stay
@@ -4634,6 +4641,32 @@ exit $RC
         if not allowed:
             raise ValueError(f"Target '{target}' is outside the project scope ({reason})")
 
+    def _trufflehog_tmpfs(self) -> dict:
+        """Writable scratch for a scan container whose root filesystem is read-only.
+
+        TruffleHog needs somewhere to clone into and extract archives to, and a
+        tmpfs gives it that without a writable layer that could persist into a
+        later run.
+
+        The uid/gid/mode on the HOME entry are load-bearing, not tidiness.
+        Docker mounts a tmpfs root-owned 0755 unless told otherwise (only /tmp
+        gets the 1777 default), and this mount SHADOWS the image's
+        /home/trufflehog, which `useradd --create-home` had correctly given to
+        the scan uid. Without them the scan user cannot write its own home, and
+        `github_experimental` dies on "failed to create .trufflehog folder in
+        user's home directory" - object discovery caches repository objects
+        there, which is also what its --delete-cached-data flag exists to clean
+        up afterwards. No other source touches $HOME, so the missing options
+        broke exactly one source and read like a scanner bug rather than a
+        mount bug.
+        """
+        home = f"/home/{TRUFFLEHOG_CONTAINER_USER}"
+        return {
+            "/tmp": "size=2g,exec",
+            home: (f"size=256m,uid={TRUFFLEHOG_CONTAINER_UID},"
+                   f"gid={TRUFFLEHOG_CONTAINER_UID},mode=0700"),
+        }
+
     async def start_trufflehog(
         self,
         project_id: str,
@@ -4816,10 +4849,7 @@ exit $RC
                 network=self.trufflehog_network,
                 cap_drop=["ALL"],
                 read_only=True,
-                # The binary needs scratch for clones and archive extraction; a
-                # read-only root plus tmpfs gives it that without a writable
-                # layer that could persist into a later run.
-                tmpfs={"/tmp": "size=2g,exec", "/home/trufflehog": "size=256m"},
+                tmpfs=self._trufflehog_tmpfs(),
                 mem_limit=self._container_mem_limit(self._trufflehog_kind(source)),
                 pids_limit=self._container_pids_limit(),
                 nano_cpus=self._container_cpu_limit(),
