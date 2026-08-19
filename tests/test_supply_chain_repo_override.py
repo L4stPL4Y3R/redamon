@@ -109,7 +109,10 @@ class TestEnterpriseHostAndCredential(unittest.TestCase):
 
     GHE = "ghe.example.com"
     USER = {
-        "githubAccessToken": "ghp_dotcom",
+        # Supply Chain holds its own github.com PAT, separate from the GitHub
+        # Secret Hunt one, so a scope change to either cannot widen the other.
+        "supplyChainGithubToken": "ghp_dotcom",
+        "githubAccessToken": "ghp_secret_hunt_must_not_be_used",
         "githubEnterpriseHost": GHE,
         "githubEnterpriseToken": "ghp_ghe",
     }

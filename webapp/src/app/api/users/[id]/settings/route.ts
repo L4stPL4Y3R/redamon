@@ -58,6 +58,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     if (!settings) {
       return NextResponse.json({
         githubAccessToken: '',
+        supplyChainGithubToken: '',
         githubEnterpriseHost: '',
         githubEnterpriseToken: '',
         tavilyApiKey: '',
@@ -122,6 +123,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       settings = {
         ...settings,
         githubAccessToken: maskSecret(settings.githubAccessToken),
+        supplyChainGithubToken: maskSecret(settings.supplyChainGithubToken),
         // The host is not a secret (the operator has to read it back to confirm
         // what is allowlisted); its token is.
         githubEnterpriseToken: maskSecret(settings.githubEnterpriseToken),
@@ -235,7 +237,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     }
 
     const data: Record<string, string> = {}
-    const fields = ['githubAccessToken', 'githubEnterpriseHost', 'githubEnterpriseToken', 'tavilyApiKey', 'shodanApiKey', 'serpApiKey', 'nvdApiKey', 'vulnersApiKey', 'urlscanApiKey', 'censysApiToken', 'censysOrgId', 'fofaApiKey', 'otxApiKey', 'netlasApiKey', 'virusTotalApiKey', 'zoomEyeApiKey', 'criminalIpApiKey', 'quakeApiKey', 'hunterApiKey', 'publicWwwApiKey', 'hunterHowApiKey', 'googleApiKey', 'googleApiCx', 'onypheApiKey', 'driftnetApiKey', 'wpscanApiToken', 'pdcpApiKey', 'ngrokAuthtoken', 'chiselServerUrl', 'chiselAuth',
+    const fields = ['githubAccessToken', 'supplyChainGithubToken', 'githubEnterpriseHost', 'githubEnterpriseToken', 'tavilyApiKey', 'shodanApiKey', 'serpApiKey', 'nvdApiKey', 'vulnersApiKey', 'urlscanApiKey', 'censysApiToken', 'censysOrgId', 'fofaApiKey', 'otxApiKey', 'netlasApiKey', 'virusTotalApiKey', 'zoomEyeApiKey', 'criminalIpApiKey', 'quakeApiKey', 'hunterApiKey', 'publicWwwApiKey', 'hunterHowApiKey', 'googleApiKey', 'googleApiCx', 'onypheApiKey', 'driftnetApiKey', 'wpscanApiToken', 'pdcpApiKey', 'ngrokAuthtoken', 'chiselServerUrl', 'chiselAuth',
       // TruffleHog per-source credentials. Absent from this list, a key is
       // accepted by the form and silently never persisted.
       'trufflehogGithubToken', 'trufflehogGitlabToken', 'trufflehogDockerToken', 'trufflehogHuggingfaceToken', 'trufflehogAwsAccessKeyId', 'trufflehogAwsSecretKey', 'trufflehogAwsSessionToken', 'trufflehogGcpServiceAccount', 'trufflehogPostmanToken', 'trufflehogJenkinsUsername', 'trufflehogJenkinsPassword', 'trufflehogElasticUsername', 'trufflehogElasticPassword', 'trufflehogElasticApiKey', 'trufflehogElasticServiceToken', 'trufflehogCircleciToken', 'trufflehogTravisciToken', 'trufflehogGitUsername', 'trufflehogGitToken'] as const
@@ -469,6 +471,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({
       ...settings,
       githubAccessToken: maskSecret(settings.githubAccessToken),
+      supplyChainGithubToken: maskSecret(settings.supplyChainGithubToken),
       githubEnterpriseToken: maskSecret(settings.githubEnterpriseToken),
       tavilyApiKey: maskSecret(settings.tavilyApiKey),
       shodanApiKey: maskSecret(settings.shodanApiKey),

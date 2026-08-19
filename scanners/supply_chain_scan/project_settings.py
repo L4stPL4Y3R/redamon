@@ -109,7 +109,7 @@ def fetch_supply_chain_settings(project_id: str, webapp_url: str) -> dict[str, A
                 # an unrecognised host gets NO token rather than the wrong one
                 # (the clone then fails the host allowlist anyway).
                 if host == 'github.com':
-                    settings['GITHUB_ACCESS_TOKEN'] = user_settings.get('githubAccessToken') or ''
+                    settings['GITHUB_ACCESS_TOKEN'] = user_settings.get('supplyChainGithubToken') or ''
                 elif ghe_host and host == ghe_host:
                     settings['GITHUB_ACCESS_TOKEN'] = user_settings.get('githubEnterpriseToken') or ''
                 else:

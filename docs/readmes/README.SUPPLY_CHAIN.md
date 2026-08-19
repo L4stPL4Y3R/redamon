@@ -883,7 +883,7 @@ only an OSV `MAL-` id is.
   (`parseOwnerTarget`) accepts github.com plus the single `UserSettings.githubEnterpriseHost`
   the operator registered, and `repo_clone.parse_repo_target` re-checks the same
   allowlist inside the container. Credentials are selected **by host**
-  (`githubAccessToken` vs `githubEnterpriseToken`), so neither token can reach the
+  (`supplyChainGithubToken` vs `githubEnterpriseToken`), so neither token can reach the
   other server; an unrecognised host gets none. The host travels to the scan as
   `SUPPLY_CHAIN_REPO_OVERRIDE_HOST` (batch item) and is surfaced as
   `SUPPLY_CHAIN_GITHUB_HOST`, with the allowlist as `SUPPLY_CHAIN_GHE_HOST`.

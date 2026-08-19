@@ -128,7 +128,15 @@ model UserSettings {
   user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   // Tool API Keys
+  /// github.com PAT for GitHub Secret Hunt, and for Tradecraft Lookup fetching
+  /// a resource from GitHub. Supply Chain has its own (below): the two scan a
+  /// different set of repositories and an operator has to be able to give them
+  /// different scopes, or revoke one without stopping the other.
   githubAccessToken String @default("") @map("github_access_token")
+  /// github.com PAT for Supply Chain scans of a private repository. Backfilled
+  /// from githubAccessToken when this column was added, so a working setup did
+  /// not stop working on upgrade.
+  supplyChainGithubToken String @default("") @map("supply_chain_github_token")
 
   // ---------- TruffleHog Secret Scanner credentials ----------
   // Deliberately SEPARATE from githubAccessToken, which stays owned by GitHub

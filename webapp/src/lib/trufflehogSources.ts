@@ -444,6 +444,12 @@ export function validateTrufflehogConfig(sourceId: string, config: Record<string
   return errors
 }
 
+/** Sources that never scan anonymously, whatever the config says. */
+const ALWAYS_AUTHENTICATED_SOURCES = ['github', 'github_experimental', 'gitlab', 'postman', 'circleci', 'travisci']
+
+/** Sources where the config decides: a public image or bucket needs no key. */
+const CONFIG_DEPENDENT_SOURCES = ['docker', 's3', 'gcs', 'git']
+
 /**
  * Whether a credential is mandatory for this source WITH THIS CONFIG.
  *
@@ -455,7 +461,7 @@ export function trufflehogCredentialRequired(sourceId: string, config: Record<st
   const src = getTrufflehogSource(sourceId)
   if (!src) return false
   const cfg = config || {}
-  if (['github', 'github_experimental', 'gitlab', 'postman', 'circleci', 'travisci'].includes(src.id)) return true
+  if (ALWAYS_AUTHENTICATED_SOURCES.includes(src.id)) return true
   if (src.id === 'docker') return Boolean(asText(cfg.namespace)) || asBool(cfg.includePrivate)
   if (src.id === 's3') return !asBool(cfg.cloudEnvironment)
   if (src.id === 'gcs') return !(asBool(cfg.withoutAuth) || asBool(cfg.cloudEnvironment))
@@ -482,6 +488,33 @@ export function resolveMissingCredentials(
   return src.credentials
     .filter(c => !c.optional)
     .filter(c => !asText((settings || {})[c.settingsKey]))
+}
+
+/**
+ * How badly one credential is needed, independent of any single scan config.
+ *
+ * 'required'    - no scan of its source can start without it.
+ * 'conditional' - mandatory only for some configs (a Docker namespace, an S3
+ *                 scan without cloud IAM), so it cannot be presented as either.
+ * 'optional'    - widens what a scan reaches; never blocks one.
+ *
+ * Derived from the same two facts the Start gate uses, so a chip in Global
+ * Settings cannot claim a key is optional while the scan card refuses to run
+ * without it.
+ */
+export type CredentialRequirement = 'required' | 'conditional' | 'optional'
+
+export function trufflehogCredentialRequirement(settingsKey: string): CredentialRequirement {
+  let strongest: CredentialRequirement = 'optional'
+  for (const src of Object.values(TRUFFLEHOG_SOURCES)) {
+    const cred = src.credentials.find(c => c.settingsKey === settingsKey)
+    // A key its own source calls optional is never mandatory for that source,
+    // whatever trufflehogCredentialRequired() says about the source as a whole.
+    if (!cred || cred.optional) continue
+    if (ALWAYS_AUTHENTICATED_SOURCES.includes(src.id)) return 'required'
+    if (CONFIG_DEPENDENT_SOURCES.includes(src.id)) strongest = 'conditional'
+  }
+  return strongest
 }
 
 /** Every UserSettings column this feature reads. Used by the start route to

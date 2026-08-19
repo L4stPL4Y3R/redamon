@@ -59,7 +59,7 @@ beforeEach(() => {
   h.guardProject.mockResolvedValue(null)
   h.effectiveUser.mockResolvedValue({ userId: 'u1' })
   h.projectFindUnique.mockResolvedValue(PROJECT)
-  h.userSettingsFindUnique.mockResolvedValue({ githubAccessToken: 'ghp_x' })
+  h.userSettingsFindUnique.mockResolvedValue({ supplyChainGithubToken: 'ghp_x' })
   h.listOwnerRepos.mockResolvedValue(REPOS)
   let n = 0
   h.batchCreate.mockResolvedValue({ id: 'batch1' })
@@ -121,7 +121,7 @@ test('zero repos is a 400, no batch', async () => {
 
 test('a GHE target enumerates that host with the GHE token, and stamps it on the rows', async () => {
   h.userSettingsFindUnique.mockResolvedValue({
-    githubAccessToken: 'ghp_dotcom',
+    supplyChainGithubToken: 'ghp_dotcom',
     githubEnterpriseHost: 'ghe.example.com',
     githubEnterpriseToken: 'ghp_ghe',
   })
@@ -144,7 +144,7 @@ test('a GHE target enumerates that host with the GHE token, and stamps it on the
 
 test('an unconfigured host is refused before any fetch, and says why', async () => {
   h.userSettingsFindUnique.mockResolvedValue({
-    githubAccessToken: 'ghp_dotcom', githubEnterpriseHost: '', githubEnterpriseToken: '',
+    supplyChainGithubToken: 'ghp_dotcom', githubEnterpriseHost: '', githubEnterpriseToken: '',
   })
   const res = await POST(post({ org: 'https://ghe.evil.example/orgs/acme' }), sp('p1'))
   expect(res.status).toBe(400)
@@ -155,14 +155,17 @@ test('an unconfigured host is refused before any fetch, and says why', async () 
 
 test('a github.com target still uses the github.com token even when a GHE host is configured', async () => {
   h.userSettingsFindUnique.mockResolvedValue({
-    githubAccessToken: 'ghp_dotcom',
+    supplyChainGithubToken: 'ghp_dotcom',
     githubEnterpriseHost: 'ghe.example.com',
     githubEnterpriseToken: 'ghp_ghe',
+    // Secret Hunt's token is a different credential and must not be reached for.
+    githubAccessToken: 'ghp_secret_hunt',
   })
   await POST(post({ org: 'acme' }), sp('p1'))
   const opts = h.listOwnerRepos.mock.calls[0][1]
   expect(opts.host).toBe('github.com')
   expect(opts.token).toBe('ghp_dotcom')
+  expect(opts.token).not.toBe('ghp_secret_hunt')
 })
 
 test('a bare name keeps defaulting to github.com and stamps host on the batch', async () => {

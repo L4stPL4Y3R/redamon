@@ -98,10 +98,11 @@ class TestCredentialFieldWiring(unittest.TestCase):
         self.assertEqual(ts_keys, CREDENTIAL_FIELDS)
 
     def test_the_github_secret_hunt_token_stays_separate(self):
-        """githubAccessToken is owned by GitHub Secret Hunt and Supply Chain.
-        TruffleHog has its own, so a scope change to one cannot silently widen
-        the other."""
+        """Three github.com PATs, one per consumer: Secret Hunt, Supply Chain
+        and the Secret Multiscanner. A scope change to one cannot silently
+        widen another, and revoking one leaves the others scanning."""
         self.assertNotIn("githubAccessToken", CREDENTIAL_FIELDS)
+        self.assertNotIn("supplyChainGithubToken", CREDENTIAL_FIELDS)
         self.assertIn("trufflehogGithubToken", CREDENTIAL_FIELDS)
 
 

@@ -1,16 +1,31 @@
 /**
  * API Keys template generation, validation, and import logic.
  *
+ * The template is filled in by a human in an editor, so its field names are the
+ * LABELS the API Keys tab shows ("Secret Multiscanner GitHub Token"), not the
+ * database columns behind them ("trufflehogGithubToken"). A column name leaks an
+ * internal spelling - and an old product name - into a file an operator has to
+ * read. apiKeysTemplate.test.ts reads the settings page and the credential
+ * catalogue and fails if any label here drifts from what is rendered.
+ *
+ * Import still accepts the legacy column names, so a template downloaded before
+ * this change keeps working.
+ *
  * All functions are pure (no side effects) so they can be unit-tested
  * without a DOM or React environment.
  */
 
+import { credentialField } from './credentialFields'
+
 const MAX_FILE_SIZE = 100 * 1024 // 100 KB
 
 const ALLOWED_KEY_FIELDS = [
+  // GitHub & Supply Chain
   'githubAccessToken',
+  'supplyChainGithubToken',
   'githubEnterpriseHost',
   'githubEnterpriseToken',
+  // Search, OSINT and vulnerability data
   'tavilyApiKey',
   'shodanApiKey',
   'serpApiKey',
@@ -35,9 +50,9 @@ const ALLOWED_KEY_FIELDS = [
   'googleApiCx',
   'onypheApiKey',
   'driftnetApiKey',
-  // TruffleHog Secret Scanner, one key per source. A field missing here is
-  // silently DROPPED on import, so offline key entry would appear to work and
-  // then leave the scan blocked on a key the operator believes they set.
+  // Secret Multiscanner, one key per source. A field missing here is silently
+  // DROPPED on import, so offline key entry would appear to work and then leave
+  // the scan blocked on a key the operator believes they set.
   'trufflehogGithubToken',
   'trufflehogGitlabToken',
   'trufflehogDockerToken',
@@ -72,8 +87,59 @@ const ALLOWED_ROTATION_TOOLS = [
   'pdcp',
 ] as const
 
-const ALLOWED_KEY_SET = new Set<string>(ALLOWED_KEY_FIELDS)
-const ALLOWED_TUNNEL_SET = new Set<string>(ALLOWED_TUNNEL_FIELDS)
+/**
+ * Labels for the keys the API Keys tab renders inline. The keys that live in a
+ * credential drawer take their label from the catalogue instead, so there is
+ * exactly one place to change any given one.
+ */
+const INLINE_KEY_LABELS: Record<string, string> = {
+  tavilyApiKey: 'Tavily API Key',
+  shodanApiKey: 'Shodan API Key',
+  serpApiKey: 'SerpAPI Key',
+  wpscanApiToken: 'WPScan API Token',
+  pdcpApiKey: 'PDCP API Key',
+  nvdApiKey: 'NVD API Key',
+  vulnersApiKey: 'Vulners API Key',
+  urlscanApiKey: 'URLScan API Key',
+  censysApiToken: 'Censys API Token',
+  censysOrgId: 'Censys Organization ID',
+  fofaApiKey: 'FOFA API Key',
+  otxApiKey: 'AlienVault OTX Key',
+  netlasApiKey: 'Netlas API Key',
+  virusTotalApiKey: 'VirusTotal API Key',
+  zoomEyeApiKey: 'ZoomEye API Key',
+  criminalIpApiKey: 'Criminal IP API Key',
+  quakeApiKey: 'Quake API Key',
+  hunterApiKey: 'Hunter API Key',
+  publicWwwApiKey: 'PublicWWW API Key',
+  hunterHowApiKey: 'HunterHow API Key',
+  googleApiKey: 'Google Custom Search API Key',
+  googleApiCx: 'Google Custom Search CX',
+  onypheApiKey: 'Onyphe API Key',
+  driftnetApiKey: 'Driftnet API Key',
+  ngrokAuthtoken: 'ngrok Auth Token',
+  chiselServerUrl: 'Chisel Server URL',
+  chiselAuth: 'Chisel Auth',
+}
+
+/** The name a field appears under in the template: what Settings calls it. */
+export function templateKeyLabel(field: string): string {
+  return credentialField(field)?.label ?? INLINE_KEY_LABELS[field] ?? field
+}
+
+/** Label (and legacy column name) -> column, for reading a filled-in template. */
+function labelIndex(fields: readonly string[]): Map<string, string> {
+  const index = new Map<string, string>()
+  for (const field of fields) {
+    index.set(field, field)
+    index.set(templateKeyLabel(field), field)
+  }
+  return index
+}
+
+const KEY_BY_TEMPLATE_NAME = labelIndex(ALLOWED_KEY_FIELDS)
+const TUNNEL_BY_TEMPLATE_NAME = labelIndex(ALLOWED_TUNNEL_FIELDS)
+
 const ALLOWED_ROTATION_SET = new Set<string>(ALLOWED_ROTATION_TOOLS)
 
 // ---------------------------------------------------------------------------
@@ -93,12 +159,12 @@ export function buildTemplate(
 ): ApiKeysTemplate {
   const keys: Record<string, string> = {}
   for (const field of ALLOWED_KEY_FIELDS) {
-    keys[field] = currentKeys[field] ?? ''
+    keys[templateKeyLabel(field)] = currentKeys[field] ?? ''
   }
 
   const tunneling: Record<string, string> = {}
   for (const field of ALLOWED_TUNNEL_FIELDS) {
-    tunneling[field] = currentTunneling[field] ?? ''
+    tunneling[templateKeyLabel(field)] = currentTunneling[field] ?? ''
   }
 
   const rotation: Record<string, { extraKeys: string[]; rotateEveryN: number } | { _comment: string }> = {
@@ -109,7 +175,7 @@ export function buildTemplate(
   }
 
   return {
-    _instructions: 'Fill in your API keys below. Leave empty strings for keys you don\'t use. For key rotation, add multiple keys to the array. Upload this file back to RedAmon at Settings > API Keys & Tunneling.',
+    _instructions: 'Fill in your API keys below. Each name is the one shown in Settings > API Keys. Leave empty strings for keys you don\'t use. For key rotation, add multiple keys to the array. Upload this file back to RedAmon at Settings > API Keys & Tunneling.',
     keys,
     rotation,
     tunneling,
@@ -193,14 +259,15 @@ export function validateAndParse(raw: string, fileSize: number): ParsedImport | 
     const keysObj = obj.keys as Record<string, unknown>
     for (const [field, value] of Object.entries(keysObj)) {
       if (field.startsWith('_')) continue
-      if (!ALLOWED_KEY_SET.has(field)) {
+      const column = KEY_BY_TEMPLATE_NAME.get(field)
+      if (!column) {
         return { message: `Unknown key field: "${field}". Only recognized API key fields are accepted.` }
       }
       if (typeof value !== 'string') {
         return { message: `Key "${field}" must be a string, got ${typeof value}.` }
       }
       if (value && !isMasked(value)) {
-        result.keys[field] = value
+        result.keys[column] = value
         result.keyCount++
       }
     }
@@ -214,14 +281,15 @@ export function validateAndParse(raw: string, fileSize: number): ParsedImport | 
     const tunObj = obj.tunneling as Record<string, unknown>
     for (const [field, value] of Object.entries(tunObj)) {
       if (field.startsWith('_')) continue
-      if (!ALLOWED_TUNNEL_SET.has(field)) {
+      const column = TUNNEL_BY_TEMPLATE_NAME.get(field)
+      if (!column) {
         return { message: `Unknown tunneling field: "${field}".` }
       }
       if (typeof value !== 'string') {
         return { message: `Tunneling field "${field}" must be a string, got ${typeof value}.` }
       }
       if (value && !isMasked(value)) {
-        result.tunneling[field] = value
+        result.tunneling[column] = value
         result.tunnelingCount++
       }
     }

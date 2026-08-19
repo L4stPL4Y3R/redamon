@@ -12,6 +12,12 @@
  * accepted by the form and silently never persisted.
  */
 
+import {
+  TRUFFLEHOG_SOURCES,
+  trufflehogCredentialRequirement,
+  type CredentialRequirement,
+} from './trufflehogSources'
+
 export interface CredentialField {
   /** The UserSettings column, camelCase. */
   name: string
@@ -23,6 +29,11 @@ export interface CredentialField {
    * configuration values (a hostname) that are not credentials.
    */
   secret?: boolean
+  /** The group this key is rendered under in Global Settings. */
+  source?: string
+  /** Overrides the generic "Enter <label>" placeholder where a sample value
+   *  says more than the label repeated (a hostname, an id format). */
+  placeholder?: string
 }
 
 /** TruffleHog's per-source keys. `source` is the source id it belongs to. */
@@ -109,20 +120,35 @@ export const TRUFFLEHOG_KEY_FIELDS: (CredentialField & { source: string })[] = [
   },
 ]
 
-/** GitHub Secret Hunt and Supply Chain share these; TruffleHog deliberately does not. */
+/**
+ * The github.com and GitHub Enterprise credentials, one per consumer.
+ *
+ * Secret Hunt and Supply Chain each hold their own github.com PAT: they scan a
+ * different set of repositories, and an operator has to be able to scope them
+ * differently or revoke one without stopping the other. The Enterprise PAT is
+ * deliberately NOT split the same way - it is one credential for one server,
+ * and its whole point is that it never leaves that server.
+ */
 export const SHARED_SCANNER_KEY_FIELDS: CredentialField[] = [
   {
-    name: 'githubAccessToken', label: 'GitHub Access Token',
+    name: 'githubAccessToken', label: 'GitHub Secret Hunt Token', source: 'github-secret-hunt',
     signupUrl: 'https://github.com/settings/tokens',
-    hint: 'Required for GitHub Secret Hunt, and for Supply Chain scans of a private repository (public repos clone anonymously). Use repo scope for private repos, or a fine-grained token for specific repos only. NOT used by Secret Multiscanner — it has its own GitHub token.',
+    hint: 'Required for GitHub Secret Hunt, which searches public GitHub for secrets mentioning your target. Also used by Tradecraft Lookup to fetch a resource from GitHub. A read-only token is enough; unauthenticated GitHub search is rate-limited to the point of being unusable.',
+  },
+  {
+    name: 'supplyChainGithubToken', label: 'Supply Chain GitHub Token', source: 'supply-chain',
+    signupUrl: 'https://github.com/settings/tokens',
+    hint: 'Only for Supply Chain scans of a PRIVATE repository - public repos clone anonymously. Use repo scope, or a fine-grained token limited to the repositories you are allowed to scan. For a repo on your own GitHub Enterprise server, the Enterprise token below is used instead.',
   },
   {
     name: 'githubEnterpriseHost', label: 'GitHub Enterprise Host', secret: false,
+    source: 'github-enterprise', placeholder: 'ghe.example.com',
     hint: 'Optional. A self-hosted or custom-domain GitHub Enterprise server, hostname only (no https://, port or path). This is also the allowlist: a Supply Chain target may name this host and github.com, nothing else.',
   },
   {
     name: 'githubEnterpriseToken', label: 'GitHub Enterprise Token',
-    hint: 'The PAT for the GitHub Enterprise Host. Kept separate from the GitHub Access Token on purpose: an Enterprise credential is never sent to github.com, and vice versa.',
+    source: 'github-enterprise',
+    hint: 'The PAT for the host above. Kept separate from both github.com tokens on purpose: an Enterprise credential is never sent to github.com, and a github.com credential is never sent to an internal server.',
   },
 ]
 
@@ -147,4 +173,93 @@ export function credentialField(name: string): CredentialField | undefined {
 /** A field is a masked secret unless it explicitly opts out. */
 export function isSecretField(name: string): boolean {
   return credentialField(name)?.secret !== false
+}
+
+/**
+ * The label with the scanner name taken off the front.
+ *
+ * The stored label has to name its scanner, because the inline shortcut renders
+ * it inside a project form where nothing else says which scanner wants the key.
+ * Under a header that already says "Secret Multiscanner", repeating it 19 times
+ * is the noise the grouping exists to remove.
+ */
+export function shortCredentialLabel(label: string): string {
+  return label.replace(/^Secret Multiscanner /, '')
+}
+
+export interface KeyGroupSpec {
+  /** Group id, also the anchor: `<drawer id>-<source>`. */
+  source: string
+  label: string
+  /** Other sources reading the same keys - the GitHub token feeds two. */
+  alsoUsedBy: string[]
+  /** The strongest requirement in the group, which is what the header shows. */
+  requirement: CredentialRequirement
+  fields: (CredentialField & { requirement: CredentialRequirement })[]
+}
+
+const REQUIREMENT_RANK: Record<CredentialRequirement, number> = {
+  required: 2, conditional: 1, optional: 0,
+}
+
+/**
+ * The Secret Multiscanner keys grouped by the source they authenticate.
+ *
+ * Order follows TRUFFLEHOG_KEY_FIELDS, which is deliberate: the keys that block
+ * a scan outright are declared first and so stay at the top of the drawer.
+ */
+export function trufflehogKeyGroups(): KeyGroupSpec[] {
+  const groups = new Map<string, KeyGroupSpec>()
+
+  for (const field of TRUFFLEHOG_KEY_FIELDS) {
+    const requirement = trufflehogCredentialRequirement(field.name)
+    let group = groups.get(field.source)
+    if (!group) {
+      group = {
+        source: field.source,
+        label: TRUFFLEHOG_SOURCES[field.source]?.label ?? field.source,
+        alsoUsedBy: [],
+        requirement: 'optional',
+        fields: [],
+      }
+      groups.set(field.source, group)
+    }
+    group.fields.push({ ...field, requirement })
+    if (REQUIREMENT_RANK[requirement] > REQUIREMENT_RANK[group.requirement]) {
+      group.requirement = requirement
+    }
+  }
+
+  for (const group of groups.values()) {
+    const keys = new Set(group.fields.map(f => f.name))
+    group.alsoUsedBy = Object.values(TRUFFLEHOG_SOURCES)
+      .filter(s => s.id !== group.source && s.credentials.some(c => keys.has(c.settingsKey)))
+      .map(s => s.label)
+  }
+
+  return [...groups.values()]
+}
+
+/**
+ * The github.com / GitHub Enterprise keys, grouped by what consumes them.
+ *
+ * Static rather than derived: unlike a Secret Multiscanner source, no registry
+ * declares these, and the requirement of each is a property of the scanner that
+ * reads it. Secret Hunt cannot run at all without its token; Supply Chain only
+ * needs one for a private repository.
+ */
+const GITHUB_GROUPS: { source: string; label: string; requirement: CredentialRequirement }[] = [
+  { source: 'github-secret-hunt', label: 'GitHub Secret Hunt', requirement: 'required' },
+  { source: 'supply-chain', label: 'Supply Chain', requirement: 'conditional' },
+  { source: 'github-enterprise', label: 'GitHub Enterprise', requirement: 'optional' },
+]
+
+export function githubKeyGroups(): KeyGroupSpec[] {
+  return GITHUB_GROUPS.map(spec => ({
+    ...spec,
+    alsoUsedBy: [],
+    fields: SHARED_SCANNER_KEY_FIELDS
+      .filter(f => f.source === spec.source)
+      .map(f => ({ ...f, requirement: spec.requirement })),
+  }))
 }

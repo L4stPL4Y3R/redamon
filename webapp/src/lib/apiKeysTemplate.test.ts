@@ -5,38 +5,48 @@
  */
 
 import { describe, test, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import {
   buildTemplate,
   templateToJson,
   validateAndParse,
   isValidationError,
+  templateKeyLabel,
 } from './apiKeysTemplate'
+import { credentialField } from './credentialFields'
 
 // ---------------------------------------------------------------------------
 // Template generation
 // ---------------------------------------------------------------------------
 
 describe('buildTemplate', () => {
-  test('generates a template with all expected key fields', () => {
+  // The file is filled in by hand, so it is named the way the UI is: a column
+  // name would ask an operator to know an internal spelling.
+  test('names every field the way Settings labels it', () => {
     const t = buildTemplate({}, {})
     const keyFields = Object.keys(t.keys)
-    expect(keyFields).toContain('githubAccessToken')
-    expect(keyFields).toContain('shodanApiKey')
-    expect(keyFields).toContain('tavilyApiKey')
-    expect(keyFields).toContain('driftnetApiKey')
-    expect(keyFields).toContain('wpscanApiToken')
-    expect(keyFields).toContain('pdcpApiKey')
+    expect(keyFields).toContain('GitHub Secret Hunt Token')
+    expect(keyFields).toContain('Supply Chain GitHub Token')
+    expect(keyFields).toContain('Shodan API Key')
+    expect(keyFields).toContain('Tavily API Key')
+    expect(keyFields).toContain('Driftnet API Key')
+    expect(keyFields).toContain('WPScan API Token')
+    expect(keyFields).toContain('PDCP API Key')
     // GitHub Enterprise host + its own token travel with the keys file.
-    expect(keyFields).toContain('githubEnterpriseHost')
-    expect(keyFields).toContain('githubEnterpriseToken')
-    // 27 general API keys + 19 TruffleHog per-source credentials.
-    expect(keyFields.length).toBe(46)
+    expect(keyFields).toContain('GitHub Enterprise Host')
+    expect(keyFields).toContain('GitHub Enterprise Token')
+    // The word 'trufflehog' is the old product name and appears nowhere.
+    expect(keyFields).toContain('Secret Multiscanner GitHub Token')
+    expect(keyFields.join(' ').toLowerCase()).not.toContain('trufflehog')
+    // 28 general API keys + 19 Secret Multiscanner per-source credentials.
+    expect(keyFields.length).toBe(47)
   })
 
   test('generates a template with all tunneling fields', () => {
     const t = buildTemplate({}, {})
     expect(Object.keys(t.tunneling)).toEqual(
-      expect.arrayContaining(['ngrokAuthtoken', 'chiselServerUrl', 'chiselAuth'])
+      expect.arrayContaining(['ngrok Auth Token', 'Chisel Server URL', 'Chisel Auth'])
     )
   })
 
@@ -52,12 +62,12 @@ describe('buildTemplate', () => {
 
   test('uses current key values when provided', () => {
     const t = buildTemplate({ shodanApiKey: '••••1234' }, {})
-    expect(t.keys.shodanApiKey).toBe('••••1234')
+    expect(t.keys['Shodan API Key']).toBe('••••1234')
   })
 
   test('defaults missing fields to empty string', () => {
     const t = buildTemplate({}, {})
-    expect(t.keys.githubAccessToken).toBe('')
+    expect(t.keys['GitHub Secret Hunt Token']).toBe('')
   })
 
   test('includes instructions string', () => {
@@ -76,8 +86,8 @@ describe('templateToJson', () => {
   test('round-trips through parse correctly', () => {
     const t = buildTemplate({ shodanApiKey: 'test123' }, { chiselServerUrl: 'http://vps:9090' })
     const parsed = JSON.parse(templateToJson(t))
-    expect(parsed.keys.shodanApiKey).toBe('test123')
-    expect(parsed.tunneling.chiselServerUrl).toBe('http://vps:9090')
+    expect(parsed.keys['Shodan API Key']).toBe('test123')
+    expect(parsed.tunneling['Chisel Server URL']).toBe('http://vps:9090')
   })
 })
 
@@ -586,7 +596,7 @@ describe('full round-trip: download → fill → import', () => {
 
     const postImportSettings = { ...result.keys, shodanApiKey: '••••_KEY' }
     const newTemplate = buildTemplate(postImportSettings, {})
-    expect(newTemplate.keys.shodanApiKey).toBe('••••_KEY')
+    expect(newTemplate.keys['Shodan API Key']).toBe('••••_KEY')
 
     const reImport = validateAndParse(templateToJson(newTemplate), 5000)
     expect(isValidationError(reImport)).toBe(false)
@@ -976,14 +986,14 @@ describe('validateAndParse — validation gap documentation', () => {
 describe('buildTemplate — edge cases', () => {
   test('ignores unknown fields in currentKeys input', () => {
     const t = buildTemplate({ shodanApiKey: 'val', unknownThing: 'ignored' }, {})
-    expect(t.keys.shodanApiKey).toBe('val')
+    expect(t.keys['Shodan API Key']).toBe('val')
     expect(t.keys).not.toHaveProperty('unknownThing')
-    expect(Object.keys(t.keys).length).toBe(46)
+    expect(Object.keys(t.keys).length).toBe(47)
   })
 
   test('ignores unknown fields in currentTunneling input', () => {
     const t = buildTemplate({}, { ngrokAuthtoken: 'tok', badField: 'ignored' })
-    expect(t.tunneling.ngrokAuthtoken).toBe('tok')
+    expect(t.tunneling['ngrok Auth Token']).toBe('tok')
     expect(t.tunneling).not.toHaveProperty('badField')
     expect(Object.keys(t.tunneling).length).toBe(3)
   })
@@ -996,11 +1006,108 @@ describe('buildTemplate — edge cases', () => {
 
   test('template keys count matches UserSettings key fields', () => {
     const t = buildTemplate({}, {})
-    expect(Object.keys(t.keys).length).toBe(46)
+    expect(Object.keys(t.keys).length).toBe(47)
   })
 
   test('template tunneling count matches UserSettings tunnel fields', () => {
     const t = buildTemplate({}, {})
     expect(Object.keys(t.tunneling).length).toBe(3)
+  })
+})
+
+/**
+ * The template is the offline twin of the API Keys tab. Two ways it silently
+ * lies: a field the form has and the file does not (the operator fills in
+ * everything, imports, and the missing key is still unset), and a name that no
+ * longer matches what the form calls it (they fill in the wrong box, or none).
+ */
+describe('template covers the form exactly', () => {
+  const PAGE = join(process.cwd(), 'src/app/settings/page.tsx')
+  const SETTINGS_ROUTE = join(process.cwd(), 'src/app/api/users/[id]/settings/route.ts')
+
+  /** Every column the settings PUT handler is willing to write. */
+  function writableSettingsFields(): string[] {
+    const src = readFileSync(SETTINGS_ROUTE, 'utf8')
+    const m = src.match(/const fields = \[([\s\S]*?)\] as const/)
+    if (!m) throw new Error('writable `fields` array not found - update this test')
+    return [...m[1].matchAll(/'([A-Za-z0-9_]+)'/g)].map(x => x[1])
+  }
+
+  /** column -> label, for the keys the page renders as a SecretField itself. */
+  function renderedLabels(): Record<string, string> {
+    const src = readFileSync(PAGE, 'utf8')
+    const out: Record<string, string> = {}
+    for (const [, body] of src.matchAll(/<SecretField\b([\s\S]*?)\/>/g)) {
+      const label = body.match(/label="([^"]+)"/)
+      const key = body.match(/updateSetting\('([A-Za-z0-9_]+)'/)
+      if (label && key) out[key[1]] = label[1]
+    }
+    return out
+  }
+
+  const template = buildTemplate({}, {})
+  const templateNames = new Set([...Object.keys(template.keys), ...Object.keys(template.tunneling)])
+
+  test('every key the settings form can save is in the template', () => {
+    for (const column of writableSettingsFields()) {
+      expect(
+        templateNames.has(templateKeyLabel(column)),
+        `'${column}' is saveable in Settings but absent from the template, so filling the file in would silently not set it`,
+      ).toBe(true)
+    }
+  })
+
+  test('every template name is the label the form shows', () => {
+    const rendered = renderedLabels()
+    for (const [column, label] of Object.entries(rendered)) {
+      expect(templateKeyLabel(column), `'${column}' is labelled differently in the template`).toBe(label)
+    }
+    // The drawer-rendered keys take their label straight from the catalogue.
+    expect(templateKeyLabel('trufflehogGithubToken')).toBe(credentialField('trufflehogGithubToken')!.label)
+    expect(templateKeyLabel('supplyChainGithubToken')).toBe('Supply Chain GitHub Token')
+  })
+
+  test('no two keys collide on one template name', () => {
+    const names = [...Object.keys(template.keys), ...Object.keys(template.tunneling)]
+    expect(new Set(names).size).toBe(names.length)
+  })
+
+  // A template downloaded before the rename is still on someone's disk.
+  test('a legacy template written with column names still imports', () => {
+    const legacy = JSON.stringify({
+      keys: { trufflehogGithubToken: 'ghp_legacy', githubAccessToken: 'ghp_old' },
+      tunneling: { ngrokAuthtoken: 'ng_legacy' },
+    })
+    const result = validateAndParse(legacy, 500)
+    expect(isValidationError(result)).toBe(false)
+    if (isValidationError(result)) return
+    expect(result.keys.trufflehogGithubToken).toBe('ghp_legacy')
+    expect(result.keys.githubAccessToken).toBe('ghp_old')
+    expect(result.tunneling.ngrokAuthtoken).toBe('ng_legacy')
+  })
+
+  test('a label-named template imports to the right columns', () => {
+    const filled = JSON.stringify({
+      keys: {
+        'Secret Multiscanner GitHub Token': 'ghp_multi',
+        'GitHub Secret Hunt Token': 'ghp_hunt',
+        'Supply Chain GitHub Token': 'ghp_sc',
+      },
+      tunneling: { 'ngrok Auth Token': 'ng_new' },
+    })
+    const result = validateAndParse(filled, 500)
+    expect(isValidationError(result)).toBe(false)
+    if (isValidationError(result)) return
+    expect(result.keys).toEqual({
+      trufflehogGithubToken: 'ghp_multi',
+      githubAccessToken: 'ghp_hunt',
+      supplyChainGithubToken: 'ghp_sc',
+    })
+    expect(result.tunneling.ngrokAuthtoken).toBe('ng_new')
+  })
+
+  test('a name that is neither a label nor a column is still rejected', () => {
+    const result = validateAndParse(JSON.stringify({ keys: { 'Made Up Token': 'x' } }), 200)
+    expect(isValidationError(result)).toBe(true)
   })
 })

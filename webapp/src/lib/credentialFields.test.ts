@@ -19,11 +19,18 @@ import { join } from 'node:path'
 import {
   TRUFFLEHOG_KEY_FIELDS,
   SHARED_SCANNER_KEY_FIELDS,
+  githubKeyGroups,
   CREDENTIAL_FIELD_NAMES,
   credentialField,
   isSecretField,
+  shortCredentialLabel,
+  trufflehogKeyGroups,
 } from './credentialFields'
-import { TRUFFLEHOG_SOURCES } from './trufflehogSources'
+import {
+  TRUFFLEHOG_SOURCES,
+  resolveMissingCredentials,
+  trufflehogCredentialRequirement,
+} from './trufflehogSources'
 
 const SETTINGS_ROUTE = join(process.cwd(), 'src/app/api/users/[id]/settings/route.ts')
 
@@ -98,7 +105,104 @@ describe('credential catalogue', () => {
   test('the shared scanner keys cover GitHub Secret Hunt and Supply Chain', () => {
     const names = SHARED_SCANNER_KEY_FIELDS.map(f => f.name)
     expect(names).toContain('githubAccessToken')
+    expect(names).toContain('supplyChainGithubToken')
     expect(names).toContain('githubEnterpriseHost')
     expect(names).toContain('githubEnterpriseToken')
+  })
+
+  // Three github.com PATs, one per consumer. Sharing one meant a scope change
+  // for Supply Chain silently widened what Secret Hunt could reach, and
+  // revoking it stopped both.
+  test('Secret Hunt and Supply Chain hold different columns', () => {
+    const groups = githubKeyGroups()
+    const byId = Object.fromEntries(groups.map(g => [g.source, g]))
+    expect(byId['github-secret-hunt'].fields.map(f => f.name)).toEqual(['githubAccessToken'])
+    expect(byId['supply-chain'].fields.map(f => f.name)).toEqual(['supplyChainGithubToken'])
+    // The Enterprise PAT is one credential for one server and is NOT split.
+    expect(byId['github-enterprise'].fields.map(f => f.name))
+      .toEqual(['githubEnterpriseHost', 'githubEnterpriseToken'])
+  })
+
+  test('every GitHub key lands in exactly one group', () => {
+    const grouped = githubKeyGroups().flatMap(g => g.fields.map(f => f.name))
+    expect(grouped.sort()).toEqual(SHARED_SCANNER_KEY_FIELDS.map(f => f.name).sort())
+  })
+
+  test('only Secret Hunt is required: it cannot run unauthenticated at all', () => {
+    const byId = Object.fromEntries(githubKeyGroups().map(g => [g.source, g.requirement]))
+    expect(byId['github-secret-hunt']).toBe('required')
+    // Public repos clone anonymously, so a Supply Chain token is conditional.
+    expect(byId['supply-chain']).toBe('conditional')
+    expect(byId['github-enterprise']).toBe('optional')
+  })
+})
+
+/**
+ * The grouped rendering in Global Settings. What it can get wrong is not
+ * cosmetic: a key that lands in no group is a key the page stops offering, and
+ * a group chipped "Optional" over a key the Start gate blocks on tells the user
+ * to skip the one thing standing between them and a scan.
+ */
+describe('Secret Multiscanner key groups', () => {
+  test('every key lands in exactly one group, and no key is dropped', () => {
+    const grouped = trufflehogKeyGroups().flatMap(g => g.fields.map(f => f.name))
+    expect(new Set(grouped).size).toBe(grouped.length)
+    expect(grouped.sort()).toEqual(TRUFFLEHOG_KEY_FIELDS.map(f => f.name).sort())
+  })
+
+  test('a key the Start gate can block a scan on is never chipped Optional', () => {
+    // One config per source that makes its credential mandatory; the docker /
+    // s3 / gcs entries are the configs trufflehogCredentialRequired() keys on.
+    const BLOCKING: [string, Record<string, unknown>][] = [
+      ['github', {}], ['github_experimental', {}], ['gitlab', {}], ['postman', {}],
+      ['circleci', {}], ['travisci', {}], ['docker', { namespace: 'acme' }],
+      ['s3', {}], ['gcs', {}],
+    ]
+    for (const [sourceId, config] of BLOCKING) {
+      const missing = resolveMissingCredentials(sourceId, config, {})
+      expect(missing.length, `'${sourceId}' has no mandatory credential to check`).toBeGreaterThan(0)
+      for (const cred of missing) {
+        expect(
+          trufflehogCredentialRequirement(cred.settingsKey),
+          `'${cred.settingsKey}' blocks a ${sourceId} scan but is chipped optional`,
+        ).not.toBe('optional')
+      }
+    }
+  })
+
+  test('a source that scans unauthenticated chips its keys Optional', () => {
+    for (const key of ['trufflehogHuggingfaceToken', 'trufflehogJenkinsUsername',
+      'trufflehogElasticApiKey', 'trufflehogGitToken', 'trufflehogAwsSessionToken']) {
+      expect(trufflehogCredentialRequirement(key), key).toBe('optional')
+    }
+  })
+
+  test('a config-dependent key is neither required nor optional', () => {
+    for (const key of ['trufflehogDockerToken', 'trufflehogAwsAccessKeyId', 'trufflehogGcpServiceAccount']) {
+      expect(trufflehogCredentialRequirement(key), key).toBe('conditional')
+    }
+  })
+
+  // The GitHub token feeds two sources. A user who set it for GitHub and then
+  // sees "GitHub deleted commits" ask for a token has no way to know it is the
+  // same one unless the group says so.
+  test('a group names the other sources reading its keys', () => {
+    const github = trufflehogKeyGroups().find(g => g.source === 'github')!
+    expect(github.alsoUsedBy).toContain('GitHub deleted commits')
+    const gitlab = trufflehogKeyGroups().find(g => g.source === 'gitlab')!
+    expect(gitlab.alsoUsedBy).toEqual([])
+  })
+
+  test('a group takes the strongest requirement of its keys', () => {
+    const s3 = trufflehogKeyGroups().find(g => g.source === 's3')!
+    // The session token alone is optional; the group still has to say the
+    // access key is not.
+    expect(s3.fields.map(f => f.requirement)).toContain('optional')
+    expect(s3.requirement).toBe('conditional')
+  })
+
+  test('the label loses its scanner prefix and nothing else', () => {
+    expect(shortCredentialLabel('Secret Multiscanner GitHub Token')).toBe('GitHub Token')
+    expect(shortCredentialLabel('GitHub Access Token')).toBe('GitHub Access Token')
   })
 })

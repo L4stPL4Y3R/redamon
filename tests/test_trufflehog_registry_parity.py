@@ -205,8 +205,12 @@ class TestCredentialGateParity(unittest.TestCase):
         the source keeps this in the Python gate; the vitest suite exercises the
         function itself."""
         text = ts_source()
-        fn = text[text.index("export function trufflehogCredentialRequired"):]
-        fn = fn[:fn.index("\n}")]
+        # The source lists live in constants above the function so the
+        # requirement chip in Global Settings can reuse them, so the rules
+        # region is those constants through the end of the function.
+        start = text.index("const ALWAYS_AUTHENTICATED_SOURCES")
+        fn = text[start:]
+        fn = fn[:fn.index("\n}", fn.index("export function trufflehogCredentialRequired"))]
         always = {"github", "github_experimental", "gitlab", "postman", "circleci", "travisci"}
         for source_id in always:
             self.assertIn(f"'{source_id}'", fn, f"{source_id} missing from the always-required list")

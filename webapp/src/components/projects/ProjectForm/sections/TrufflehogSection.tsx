@@ -672,7 +672,7 @@ function FieldInput({
         </div>
         {/* The label is a sibling span, not a <label>, so without this the
             switch has no accessible name: a screen reader announces "switch,
-            off" for all thirteen of them. */}
+            off" for every one of the 23 toggles across the 14 sources. */}
         <Toggle
           checked={Boolean(value)}
           onChange={onChange}

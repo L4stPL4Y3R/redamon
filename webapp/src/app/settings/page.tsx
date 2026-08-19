@@ -8,7 +8,8 @@ import { useAuth } from '@/providers/AuthProvider'
 import { useVersionCheck } from '@/hooks/useVersionCheck'
 // Shared with the inline shortcuts the scan sections render, so a key cannot be
 // described one way here and another way on the card that asks for it.
-import { TRUFFLEHOG_KEY_FIELDS } from '@/lib/credentialFields'
+import { CredentialDrawer } from '@/components/settings/CredentialDrawer'
+import { githubKeyGroups, trufflehogKeyGroups } from '@/lib/credentialFields'
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard'
 import { LlmProviderForm } from '@/components/settings/LlmProviderForm'
 import McpServersTab from '@/components/settings/mcp/McpServersTab'
@@ -25,6 +26,7 @@ import type { ParsedImport } from '@/lib/apiKeysTemplate'
 
 interface UserSettings {
   githubAccessToken: string
+  supplyChainGithubToken: string
   githubEnterpriseHost: string
   githubEnterpriseToken: string
   tavilyApiKey: string
@@ -82,6 +84,7 @@ interface UserSettings {
 
 const EMPTY_SETTINGS: UserSettings = {
   githubAccessToken: '',
+  supplyChainGithubToken: '',
   githubEnterpriseHost: '',
   githubEnterpriseToken: '',
   tavilyApiKey: '',
@@ -572,6 +575,7 @@ export default function SettingsPage() {
         const data = await resp.json()
         setSettings({
           githubAccessToken: data.githubAccessToken || '',
+          supplyChainGithubToken: data.supplyChainGithubToken || '',
           githubEnterpriseHost: data.githubEnterpriseHost || '',
           githubEnterpriseToken: data.githubEnterpriseToken || '',
           tavilyApiKey: data.tavilyApiKey || '',
@@ -695,6 +699,7 @@ export default function SettingsPage() {
         const data = await resp.json()
         setSettings({
           githubAccessToken: data.githubAccessToken || '',
+          supplyChainGithubToken: data.supplyChainGithubToken || '',
           githubEnterpriseHost: data.githubEnterpriseHost || '',
           githubEnterpriseToken: data.githubEnterpriseToken || '',
           tavilyApiKey: data.tavilyApiKey || '',
@@ -1352,68 +1357,32 @@ export default function SettingsPage() {
           <div className={styles.emptyState}><Loader2 size={16} className={styles.spin} /> Loading...</div>
         ) : (
           <div className={styles.settingsGrid}>
-            <KeyGroup
+            {/* Each drawer carries its own anchor and title, so neither needs
+                a KeyGroup header above it. */}
+            <CredentialDrawer
+              id="github-keys"
+              title="GitHub &amp; Supply Chain"
+              intro="One token per consumer. Secret Hunt and Supply Chain scan a different set of repositories, so they hold separate github.com tokens: scope them differently, or revoke one without stopping the other. A GitHub Enterprise repository uses the Enterprise token instead, which is never sent to github.com."
+              groups={githubKeyGroups()}
+              value={name => (settings as unknown as Record<string, string>)[name] ?? ''}
+              isSet={name => !!(settings as unknown as Record<string, string>)[name]}
+              visible={name => !!visibleFields[name]}
+              onToggleVisibility={toggleFieldVisibility}
+              onChange={(name, v) => updateSetting(name as keyof typeof settings, v)}
+            />
+
+            <CredentialDrawer
               id="trufflehog-keys"
               title="Secret Multiscanner"
-              hint="One key per source. A source whose key is mandatory cannot start until it is set; the scan card says which one is missing. Keys are stored per user and are never included in a project export."
+              intro="One key per source. A source whose key is mandatory cannot start until it is set; the scan card says which one is missing. Keys are stored per user and are never included in a project export."
+              groups={trufflehogKeyGroups()}
+              value={name => (settings as unknown as Record<string, string>)[name] ?? ''}
+              isSet={name => !!(settings as unknown as Record<string, string>)[name]}
+              visible={name => !!visibleFields[name]}
+              onToggleVisibility={toggleFieldVisibility}
+              onChange={(name, v) => updateSetting(name as keyof typeof settings, v)}
             />
-            {TRUFFLEHOG_KEY_FIELDS.map(field => (
-              <SecretField
-                key={field.name}
-                label={field.label}
-                hint={field.hint}
-                signupUrl={field.signupUrl}
-                badges={['Secret Multiscanner', field.source]}
-                value={(settings as unknown as Record<string, string>)[field.name] ?? ''}
-                visible={!!visibleFields[field.name]}
-                onToggle={() => toggleFieldVisibility(field.name)}
-                onChange={v => updateSetting(field.name as keyof typeof settings, v)}
-              />
-            ))}
 
-            <SecretField
-              label="GitHub Access Token"
-              hint="Required for GitHub Secret Hunt, and for Supply Chain scans of a private repository (public repos clone anonymously). Use repo scope for private repos, or a fine-grained token for specific repos only. NOT used by Secret Multiscanner — it has its own GitHub token in the Secret Multiscanner section above."
-              signupUrl="https://github.com/settings/tokens"
-              badges={['GitHub Secret Hunt', 'Supply Chain']}
-              value={settings.githubAccessToken}
-              visible={!!visibleFields.githubAccessToken}
-              onToggle={() => toggleFieldVisibility('githubAccessToken')}
-              onChange={v => updateSetting('githubAccessToken', v)}
-            />
-            {/* Host + its PAT side by side: neither is usable without the other,
-                and stacked they read as two independent settings. */}
-            <div className={styles.settingsRow}>
-              <div className="formGroup">
-                <label className="formLabel">
-                  GitHub Enterprise Host
-                  <span style={BADGE_STYLES['Supply Chain'] || BADGE_STYLES['AI Agent']}>
-                    Supply Chain
-                  </span>
-                </label>
-                <input
-                  className="textInput"
-                  type="text"
-                  placeholder="ghe.example.com"
-                  value={settings.githubEnterpriseHost}
-                  onChange={e => updateSetting('githubEnterpriseHost', e.target.value)}
-                />
-                <p className="formHint">
-                  Optional. A self-hosted or custom-domain GitHub Enterprise server, hostname
-                  only (no https://, port or path). This is also the allowlist: a Supply Chain
-                  target may name this host and github.com, nothing else.
-                </p>
-              </div>
-              <SecretField
-                label="GitHub Enterprise Token"
-                hint="The PAT for the GitHub Enterprise Host beside it. Kept separate from the GitHub Access Token on purpose: an Enterprise credential is never sent to github.com, and vice versa"
-                badges={['Supply Chain']}
-                value={settings.githubEnterpriseToken}
-                visible={!!visibleFields.githubEnterpriseToken}
-                onToggle={() => toggleFieldVisibility('githubEnterpriseToken')}
-                onChange={v => updateSetting('githubEnterpriseToken', v)}
-              />
-            </div>
             <SecretField
               label="Tavily API Key"
               hint="Enables web_search tool for CVE research and exploit lookups"
@@ -1530,16 +1499,6 @@ export default function SettingsPage() {
               visible={!!visibleFields.censysOrgId}
               onToggle={() => toggleFieldVisibility('censysOrgId')}
               onChange={v => updateSetting('censysOrgId', v)}
-            />
-            <SecretField
-              label="Censys Personal API Token"
-              hint="Personal Access Token from your Censys account - alternative to API ID + Secret. Takes precedence when both are set."
-              signupUrl="https://accounts.censys.io/settings/personal-access-tokens"
-              badges={['Recon Pipeline']}
-              value={settings.censysApiToken}
-              visible={!!visibleFields.censysApiToken}
-              onToggle={() => toggleFieldVisibility('censysApiToken')}
-              onChange={v => updateSetting('censysApiToken', v)}
             />
             <SecretField
               label="FOFA API Key"
@@ -2293,27 +2252,6 @@ function SystemSection() {
   )
 }
 
-// Badge color mapping
-/**
- * The TruffleHog key group (Appendix D). Ordered mandatory-always first, then
- * conditional, then optional, so the keys an operator is most likely to need
- * before any scan will run are at the top.
- *
- * The `hint` wording matches the start gate exactly, so the settings page and
- * the scan card can never disagree about whether a key is required.
- */
-
-/** A header that opens a group of related keys. The `id` is the deep-link anchor
- *  the scan card points at when it says which key to set. */
-function KeyGroup({ id, title, hint }: { id: string; title: string; hint: string }) {
-  return (
-    <div id={id} style={{ gridColumn: '1 / -1', marginTop: '8px' }}>
-      <h3 style={{ fontSize: '14px', fontWeight: 600, margin: '0 0 4px' }}>{title}</h3>
-      <p className="formHint" style={{ margin: 0 }}>{hint}</p>
-    </div>
-  )
-}
-
 const BADGE_STYLES: Record<string, React.CSSProperties> = {
   'AI Agent': {
     display: 'inline-block',
@@ -2339,61 +2277,9 @@ const BADGE_STYLES: Record<string, React.CSSProperties> = {
     verticalAlign: 'middle',
     letterSpacing: '0.02em',
   },
-  'GitHub Secret Hunt': {
-    display: 'inline-block',
-    fontSize: '10px',
-    fontWeight: 600,
-    padding: '1px 6px',
-    borderRadius: '4px',
-    background: 'rgba(139, 92, 246, 0.12)',
-    color: '#8b5cf6',
-    marginLeft: '6px',
-    verticalAlign: 'middle',
-    letterSpacing: '0.02em',
-  },
-  'Secret Multiscanner': {
-    display: 'inline-block',
-    fontSize: '10px',
-    fontWeight: 600,
-    padding: '1px 6px',
-    borderRadius: '4px',
-    background: 'rgba(139, 92, 246, 0.12)',
-    color: '#8b5cf6',
-    marginLeft: '6px',
-    verticalAlign: 'middle',
-    letterSpacing: '0.02em',
-  },
-  // 'Supply Chain' was used as a badge without ever being defined here, so it
-  // rendered in the AI-Agent blue fallback. Define every badge you add.
-  'Supply Chain': {
-    display: 'inline-block',
-    fontSize: '10px',
-    fontWeight: 600,
-    padding: '1px 6px',
-    borderRadius: '4px',
-    background: 'rgba(234, 179, 8, 0.12)',
-    color: '#a16207',
-    marginLeft: '6px',
-    verticalAlign: 'middle',
-    letterSpacing: '0.02em',
-  },
-  // Per-source micro-badges: which TruffleHog source each key feeds.
-  ...Object.fromEntries(
-    ['git', 'github', 'gitlab', 'docker', 'huggingface', 's3', 'gcs',
-     'jenkins', 'elasticsearch', 'postman', 'circleci', 'travisci'].map(source => [source, {
-      display: 'inline-block',
-      fontSize: '10px',
-      fontWeight: 500,
-      padding: '1px 6px',
-      borderRadius: '4px',
-      background: 'var(--bg-tertiary)',
-      color: 'var(--text-secondary)',
-      marginLeft: '4px',
-      verticalAlign: 'middle',
-      letterSpacing: '0.02em',
-    } as React.CSSProperties]),
-  ),
-}
+    // A badge with no entry here renders in the AI-Agent blue fallback. Define
+  // every badge you add.
+  }
 
 // Reusable secret field component
 function SecretField({

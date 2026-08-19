@@ -50,7 +50,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     // read from the request body.
     const settings = await prisma.userSettings.findUnique({
       where: { userId: eff.userId },
-      select: { githubAccessToken: true, githubEnterpriseHost: true, githubEnterpriseToken: true },
+      select: { supplyChainGithubToken: true, githubEnterpriseHost: true, githubEnterpriseToken: true },
     }).catch(() => null)
 
     const allowed = allowedGithubHosts(settings?.githubEnterpriseHost)
@@ -71,7 +71,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     // api.github.com, nor a github.com PAT to an internal server. Optional in
     // both cases: public repos enumerate anonymously.
     const token = (host === GITHUB_DOT_COM
-      ? settings?.githubAccessToken
+      ? settings?.supplyChainGithubToken
       : settings?.githubEnterpriseToken) || undefined
 
     const orgRef = project.supplyChainOrgRef || ''

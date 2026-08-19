@@ -250,6 +250,31 @@ Server-mismatch variants (when nginx / a reverse proxy fronts the app):
 
 Capture the first oracle hit, record the exact payload form, and move on.
 
+#### 4A-ter. Identical failures across encodings = a STRIPPING SANITIZER, not a whitelist
+
+If several *different* traversal encodings all collapse to the EXACT SAME
+soft-negative (same body, same length, same status), do NOT conclude "the app
+whitelists / uses basename() / only resolves inside a fixed directory." Identical
+responses across distinct payload families are the FINGERPRINT of a server-side
+sanitizer that removes traversal tokens from your input before using it -- the
+sink is very often still fully traversable once you defeat the stripper. This is
+a signal to ENUMERATE the stripper's blind spots, never to abandon the sink.
+
+A common weakness is that such sanitizers run only ONCE over the string (they do
+not re-scan their own output), so a payload whose *residue* after a single removal
+still resolves to a traversal step slips through -- which is exactly why one crafted
+form can succeed where the plain families all failed. Do not try to reason out
+"which" filter it is; enumerate against it:
+- Fire the FULL bypass corpus from the reference table (every encoding, separator,
+  fold, nesting, double-decode and OS variant it lists) as ONE wave against a known
+  OUT-OF-BASE proof file (e.g. `/etc/hosts` or `/etc/passwd`) -- do not stop at the
+  first family that returns the soft-negative.
+- Diff the responses and keep any token whose response DIFFERS from the baseline;
+  that survivor is your working escape. Treat a size/status change from the
+  soft-negative as a HIT to confirm, not noise.
+Only once the whole corpus is on record and every form returned the identical
+soft-negative may you entertain "whitelist / basename" as the explanation.
+
 #### 4A-bis. Classify the sink: INCLUDE/execute vs STREAM/read (MANDATORY before you decide RCE is "unnecessary")
 
 Reading a NON-code file (`/etc/passwd`, `/etc/hosts`) proves traversal but does NOT tell
@@ -519,6 +544,10 @@ Escape being blocked is NOT sufficient grounds to abandon a file-serving sink or
 to switch skills. Before you conclude "no file-read vulnerability here", ALL of
 the following must be on record for each confirmed sink:
 - [ ] Escape attempted with at least the encoding families in the reference table.
+- [ ] If several distinct traversal encodings all returned the IDENTICAL soft-negative,
+      that was treated as a stripping-sanitizer signature (not a whitelist), and the
+      full bypass-corpus sweep-and-diff (Step 4A-ter) is on record before any
+      "whitelist / basename" conclusion.
 - [ ] In-base normalisation behaviour recorded (does `dir/../dir/known` return
       200 while `dir/../../x` returns 404? -> arbitrary-IN-BASE read primitive,
       keep going via Step 4E).

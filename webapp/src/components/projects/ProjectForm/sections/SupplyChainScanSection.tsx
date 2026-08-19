@@ -401,7 +401,7 @@ export function SupplyChainScanSection({
                 </p>
               </div>
               <div className={styles.credentialStack}>
-                <CredentialShortcut settingsKey="githubAccessToken" keys={keys} optional />
+                <CredentialShortcut settingsKey="supplyChainGithubToken" keys={keys} optional />
                 <CredentialShortcut settingsKey="githubEnterpriseHost" keys={keys} optional />
                 <CredentialShortcut settingsKey="githubEnterpriseToken" keys={keys} optional />
               </div>
