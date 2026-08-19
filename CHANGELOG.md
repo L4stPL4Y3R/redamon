@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.11.1] - 2026-08-19
+
+### Added
+
+- **Per-source credential drawers on the API Keys settings tab**, grouping the flat credential list into collapsible "GitHub & Supply Chain" and "Secret Multiscanner" cards that summarise what is set and what is missing ([c24694fe]).
+
+### Changed
+
+- **The Supply Chain GitHub token is split from GitHub Secret Hunt's** (`supplyChainGithubToken`), so the two scanners no longer share one PAT and can be scoped and revoked independently; the new column is backfilled from the old one so existing setups keep working ([c24694fe]).
+
+### Fixed
+
+- **The Secret Multiscanner's `github_experimental` (deleted-commit) source could not run at all**, dying with `mkdir /home/trufflehog/.trufflehog: permission denied`: a root-owned `0755` tmpfs mount shadowed the non-root scan user's home, so the mount meant to make `$HOME` writable is what made it unwritable. The home tmpfs is now owned by the scan uid ([51e34adc]).
+- **Two Censys inputs on the settings form wrote to the same field**, so typing in one rewrote the other; the duplicate is removed ([c24694fe]).
+
 ## [6.11.0] - 2026-08-18
 
 ### Added
