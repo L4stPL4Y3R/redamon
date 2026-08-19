@@ -82,6 +82,22 @@ class TestArgvPerSource(unittest.TestCase):
         self.assertIn("--object-discovery", argv)
         self.assertIn("--repo=acme/api", argv)
 
+    def test_github_experimental_optional_fields(self):
+        # Both are hard to observe from a live scan - a raised threshold only
+        # bites when short SHAs actually collide, and the cache flag is disk
+        # hygiene - so the argv shape is pinned here instead.
+        argv = self.build("github_experimental", {
+            "repo": "acme/api", "collisionThreshold": 8, "deleteCachedData": True})
+        self.assertIn("--collision-threshold=8", argv)
+        self.assertIn("--delete-cached-data", argv)
+
+    def test_github_experimental_omits_the_optional_fields_when_unset(self):
+        # The off direction. A number field that emitted --collision-threshold=
+        # with an empty value would make the binary reject the whole command.
+        argv = self.build("github_experimental", {"repo": "acme/api"})
+        self.assertFalse([a for a in argv if a.startswith("--collision-threshold")])
+        self.assertNotIn("--delete-cached-data", argv)
+
     def test_docker_images_and_namespace(self):
         argv = self.build("docker", {"images": ["nginx:1.25", "redis:7"], "namespace": "acme"})
         self.assertIn("--image=nginx:1.25", argv)

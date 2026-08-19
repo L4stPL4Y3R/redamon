@@ -36,22 +36,32 @@ function b64url(input: Buffer | string): string {
     .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_')
 }
 
-export function mintToken(userId: string, role = 'admin'): string {
+/**
+ * `ttlSeconds` defaults to an hour, which is fine for a spec that finishes in
+ * seconds and wrong for one that does not. A Secret Multiscanner
+ * `github_experimental` scan runs 95-105 minutes, so a test driving one outlives
+ * the default token: every `page.request` call starts answering 401 at the
+ * 60-minute mark, `expect.poll` sees a guarded sentinel rather than a status,
+ * and the test finally fails on a timeout that looks exactly like a scanner
+ * that never finished. Pass a TTL that covers the whole run.
+ */
+export function mintToken(userId: string, role = 'admin', ttlSeconds = 3600): string {
   const now = Math.floor(Date.now() / 1000)
   const header = b64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
   const payload = b64url(JSON.stringify({
-    sub: userId, role, iat: now, exp: now + 3600,
+    sub: userId, role, iat: now, exp: now + ttlSeconds,
   }))
   const data = `${header}.${payload}`
   const sig = b64url(createHmac('sha256', authSecret()).update(data).digest())
   return `${data}.${sig}`
 }
 
-export async function signIn(context: BrowserContext, userId: string, baseURL: string) {
+export async function signIn(context: BrowserContext, userId: string, baseURL: string,
+                             ttlSeconds = 3600) {
   const url = new URL(baseURL)
   await context.addCookies([{
     name: AUTH_COOKIE_NAME,
-    value: mintToken(userId),
+    value: mintToken(userId, 'admin', ttlSeconds),
     domain: url.hostname,
     path: '/',
     httpOnly: true,
