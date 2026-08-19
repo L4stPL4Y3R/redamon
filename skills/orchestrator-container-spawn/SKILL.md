@@ -40,6 +40,19 @@ For the no-`env_file` knob rule, see the recon_orchestrator
 - **NEVER add `security_opt: no-new-privileges` to these spawns.** It breaks
   `execve` for non-root users inside the recon image (reverted once already):
   [container_manager.py:939](../../recon_orchestrator/container_manager.py#L939).
+- **NEVER add a `tmpfs` mount without `uid`/`gid`/`mode` when the container runs
+  as a NON-ROOT user and the mount lands on a path that user must write.** Docker
+  mounts a tmpfs **root-owned 0755** unless told otherwise (only `/tmp` gets the
+  1777 default), and the mount SHADOWS whatever the image built at that path - so
+  a tmpfs added to *give* a non-root user writable scratch is what *takes it
+  away*. This shipped: the TruffleHog spawn's `/home/trufflehog` tmpfs hid the
+  home dir `useradd --create-home` had given uid 10001, and `github_experimental`
+  died on "failed to create .trufflehog folder in user's home directory" while
+  the other thirteen sources were fine, because it is the only one that writes to
+  `$HOME`. Build the spec in
+  [`_trufflehog_tmpfs()`](../../recon_orchestrator/container_manager.py#L4644),
+  not inline, and size-cap every entry - an uncapped tmpfs is host RAM a hostile
+  archive can exhaust.
 - **ALWAYS apply hardening through `_scanner_hardening()`**
   ([container_manager.py:567](../../recon_orchestrator/container_manager.py#L567)),
   not ad-hoc per spawn, so all three spawn sites stay consistent.
