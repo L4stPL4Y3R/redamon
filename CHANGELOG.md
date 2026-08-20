@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.11.2] - 2026-08-20
+
+### Added
+
+- **Unseen-row badges on every graph table tab.** Each tab in the table selector carries a count of the rows written since that user last opened it, with the reconciled total beside the selector. Watermarks are per user, per project and per tab, stamped from the graph's clock so a fast browser clock cannot hide the next scan's findings, and a user with no stored watermark is seeded to "now" rather than shown twenty four-digit counts on upgrade day. A badge counts the rows its tab **would show**, by invoking that tab's own route, so a badge and an empty table can never disagree ([66af1f7e], [68eace17]).
+- **A sortable `Updated` column on every table backed by the graph.** All ~40 Red Zone sheets, every JS Recon sub-table, All Nodes, the Node Inspector, and the five tables outside the Red Zone (Chain Findings, AI Attack Surface findings, CypherFix remediation, Recon Delta, Version Manager). Always present, newest-first on load, filterable and exported. One shared module owns the descriptor, cell, header and sort so the sheets cannot drift apart; a cross-cutting smoke test fails the build if a new sheet or route drops it ([7cd98aa0], [ba188048], [55e716ef]).
+- **The Secrets page shows every source of credentials RedAmon found**, not two of them. `GithubSecret`, `GithubSensitiveFile` and agent-recovered `ChainFinding` credentials join `:Secret` and `:MultiscannerFinding`; on one project that is 293 rows where 8 were visible. Credentials the agent actually logged in with rank top of the table ([b4bd1675]).
+- **Start a scan from its own settings section.** GVM, GitHub Secret Hunt, Secret Multiscanner and Supply Chain each get Update Settings / Start to Scan on their header; starting saves in place and lands on that scan's logs, which previously opened *underneath* the modal and made the start look inert ([991792c5]).
+- **End-to-end coverage of the Secret Multiscanner GitLab source** against a live account: a create-only fixture builder, a 26-case parameter matrix asserting on published artifacts, a finding-by-finding Neo4j comparison, and a Playwright spec driving every parameter from the form ([98c75b94]).
+
+### Changed
+
+- **`updated_at` is stamped on every node write**, completing the sweep so the `Updated` column is never blank for a row a scan just produced. A plain `SET`, never `ON CREATE SET`: the column means "last written", and frozen at first write it would report a months-old finding as current ([cb79a4f0]).
+- **CVE, MitreData and Capec are documented as global reference nodes.** The schema doc still claimed every node carries `user_id` + `project_id`, which stopped being true when the reference labels were unstamped; the three rules that follow had each already been violated in code ([a264fcec]).
+
+### Fixed
+
+- **A recon re-run deleted every other scanner's data.** `clear_project_data` was a bare `MATCH (n) WHERE n.user_id AND n.project_id DETACH DELETE n`, so re-running recon wiped the GitHub Secret Hunt results, the Secret Multiscanner findings, the supply-chain packages (1638 OSV vulnerabilities on one dev box), the GVM results and the agent's attack chains, with no error anywhere. Every clear is now scoped to the scan that owns the data, excluding other subsystems both by label and by `source` on the labels recon shares, `Vulnerability` above all ([062eee5c]).
+- **A stopped GitHub Secret Hunt threw away everything it had found.** Every stop arrives as SIGTERM and Python's default handler exits on the spot, so neither `save_results()` nor the Neo4j write ever ran: a stack restart killed a 58-minute scan and turned 14 repos, 4250 files and 799 findings into zero graph nodes. SIGINT was already handled, which hid it, since Ctrl-C saved and a restart did not ([da9bcfdc]).
+- **The column filter panel sheared off its right-hand controls.** A 320px `overflow:hidden` dropdown wrapped a 340px panel, so the "not" checkbox and the kind badges sat on or past the edge, and the two boxes disagreed on max-height. The dropdown is now a pure positioning wrapper and the panel owns its width, chrome and scrolling ([3ee32f56]).
+- **`--include-repos` is a conjunction of two globs**, applied by TruffleHog to `group/project` while enumerating and again to the clone URL, so a pattern matching one form silently scanned nothing ([98c75b94]).
+- **The day-to-day test runner reported a failure the real gate never saw.** `run_tests.sh` built `PYTHONPATH` without `/repo/services`, so `knowledge_base` resolved as an empty namespace package and a healthy test died at collection ([70a55ab7]).
+
 ## [6.11.1] - 2026-08-19
 
 ### Added
