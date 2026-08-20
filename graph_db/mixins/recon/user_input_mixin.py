@@ -38,6 +38,7 @@ class UserInputMixin:
                     ui.created_at = datetime(),
                     ui.user_id = $user_id,
                     ui.project_id = $project_id
+                SET ui.updated_at = datetime()
                 """,
                 id=node_id,
                 input_type=user_input_data.get("input_type", "subdomains"),

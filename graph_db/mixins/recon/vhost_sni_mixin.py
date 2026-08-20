@@ -277,6 +277,7 @@ class VhostSniMixin:
                         MERGE (s:Subdomain {name: $host, user_id: $uid, project_id: $pid})
                         ON CREATE SET s.source = 'vhost_sni_enum',
                                       s.created_at = datetime()
+                        SET s.updated_at = datetime()
                         MERGE (s)-[:HAS_BASEURL]->(b)
                         RETURN count(b) AS created
                         """,

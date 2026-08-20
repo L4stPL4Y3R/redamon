@@ -226,7 +226,8 @@ class SupplyChainMixin:
                                 WHEN p.source IS NULL OR p.source IN $overridable
                                 THEN $source ELSE p.source END,
                             p.source_path = coalesce($source_path, p.source_path),
-                            p.last_seen = datetime()
+                            p.last_seen = datetime(),
+                            p.updated_at = datetime()
                         """,
                         purl=purl, uid=user_id, pid=project_id,
                         ecosystem=pkg.get("ecosystem"), name=pkg.get("name"),
@@ -311,11 +312,13 @@ class SupplyChainMixin:
                             mf.incident_remediation = $incident_remediation,
                             mf.incident_status = $incident_status,
                             mf.incident_feed_revised = $incident_feed_revised
+                        SET mf.updated_at = datetime()
                         WITH mf
                         MERGE (p:Package {purl: $purl, user_id: $uid, project_id: $pid})
                         ON CREATE SET p.first_seen = datetime(), p.name = $pname,
                                       p.ecosystem = $peco, p.source = 'finding'
                         SET p.last_seen = datetime()
+                        SET p.updated_at = datetime()
                         MERGE (p)-[:FLAGGED_AS]->(mf)
                         """,
                         fid=fid, uid=user_id, pid=project_id, purl=purl,
@@ -378,6 +381,7 @@ class SupplyChainMixin:
                         ON CREATE SET p.first_seen = datetime(), p.name = $pname,
                                       p.ecosystem = $peco, p.source = 'finding'
                         SET p.last_seen = datetime()
+                        SET p.updated_at = datetime()
                         MERGE (p)-[:HAS_VULNERABILITY]->(v)
                         """,
                         advisory=advisory, uid=user_id, pid=project_id, purl=purl,

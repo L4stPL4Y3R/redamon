@@ -142,6 +142,7 @@ class CacheMixin:
                             project_id: $project_id
                         })
                         SET v += $props
+                        SET v.updated_at = datetime()
                         """,
                         id=vuln_id, user_id=user_id, project_id=project_id, props=vuln_props,
                     )
@@ -166,6 +167,7 @@ class CacheMixin:
                         })
                           ON CREATE SET e.source = 'cache_poisoning',
                                         e.created_at = datetime()
+                        SET e.updated_at = datetime()
                         MERGE (bu)-[:HAS_ENDPOINT]->(e)
                         MERGE (e)-[:HAS_VULNERABILITY]->(v)
                         MERGE (bu)-[:HAS_VULNERABILITY]->(v)

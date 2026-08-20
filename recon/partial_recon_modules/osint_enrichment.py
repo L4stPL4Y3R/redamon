@@ -156,6 +156,7 @@ def run_shodan(config: dict) -> None:
                                         ON CREATE SET i.version = $version,
                                                       i.source = 'partial_recon_user_input',
                                                       i.created_at = datetime()
+                                        SET i.updated_at = datetime()
                                         WITH i
                                         MATCH (s:Subdomain {name: $sub, user_id: $uid, project_id: $pid})
                                         MERGE (s)-[:RESOLVES_TO]->(i)
@@ -177,6 +178,7 @@ def run_shodan(config: dict) -> None:
                                               ui.values = $ips,
                                               ui.created_at = datetime(),
                                               ui.tool = 'Shodan'
+                                SET ui.updated_at = datetime()
                                 MERGE (d)-[:HAS_USER_INPUT]->(ui)
                                 """,
                                 domain=domain, uid=user_id, pid=project_id,
@@ -190,6 +192,7 @@ def run_shodan(config: dict) -> None:
                                     ON CREATE SET i.version = $version,
                                                   i.source = 'partial_recon_user_input',
                                                   i.created_at = datetime()
+                                    SET i.updated_at = datetime()
                                     WITH i
                                     MATCH (ui:UserInput {id: $ui_id, user_id: $uid, project_id: $pid})
                                     MERGE (ui)-[:PRODUCED]->(i)
@@ -589,6 +592,7 @@ def run_osint_enrichment(config: dict) -> None:
                                 ON CREATE SET ui.source = 'OsintEnrichment',
                                               ui.created_at = datetime(),
                                               ui.label = 'Custom IPs for OSINT enrichment'
+                                SET ui.updated_at = datetime()
                                 MERGE (d)-[:HAS_USER_INPUT]->(ui)
                                 """,
                                 uid=user_id, pid=project_id, ui_id=user_input_id,
@@ -608,6 +612,7 @@ def run_osint_enrichment(config: dict) -> None:
                                         """
                                         MATCH (ui:UserInput {id: $ui_id, user_id: $uid, project_id: $pid})
                                         MERGE (ip:IP {address: $addr, user_id: $uid, project_id: $pid})
+                                        SET ip.updated_at = datetime()
                                         MERGE (ui)-[:PRODUCED]->(ip)
                                         """,
                                         uid=user_id, pid=project_id, ui_id=user_input_id, addr=ip_addr,
@@ -628,7 +633,9 @@ def run_osint_enrichment(config: dict) -> None:
                                     sess.run(
                                         """
                                         MERGE (s:Subdomain {name: $sub, user_id: $uid, project_id: $pid})
+                                        SET s.updated_at = datetime()
                                         MERGE (ip:IP {address: $addr, user_id: $uid, project_id: $pid})
+                                        SET ip.updated_at = datetime()
                                         MERGE (s)-[:RESOLVES_TO]->(ip)
                                         """,
                                         uid=user_id, pid=project_id, sub=ip_attach_to, addr=ip_addr,

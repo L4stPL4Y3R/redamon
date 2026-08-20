@@ -199,6 +199,7 @@ class GraphQLMixin:
                           ON CREATE SET e.source = 'graphql_scan',
                                         e.created_at = datetime()
                         SET e += $props
+                        SET e.updated_at = datetime()
                         MERGE (bu)-[:HAS_ENDPOINT]->(e)
                         RETURN e.path as path, e.is_graphql as was_graphql
                         """,
@@ -321,6 +322,7 @@ class GraphQLMixin:
                             project_id: $project_id
                         })
                         SET v += $props
+                        SET v.updated_at = datetime()
                         RETURN v.id as id
                         """,
                         id=vuln_id,
@@ -364,6 +366,7 @@ class GraphQLMixin:
                           ON CREATE SET e.source = 'graphql_scan',
                                         e.is_graphql = true,
                                         e.created_at = datetime()
+                        SET e.updated_at = datetime()
                         MERGE (bu)-[:HAS_ENDPOINT]->(e)
                         MERGE (e)-[:HAS_VULNERABILITY]->(v)
                         """,
@@ -404,6 +407,7 @@ class GraphQLMixin:
                                     project_id: $project_id
                                 })
                                 SET v += $props
+                                SET v.updated_at = datetime()
                                 RETURN v.id as id
                                 """,
                                 id=sensitive_vuln_id,
@@ -440,6 +444,7 @@ class GraphQLMixin:
                                       ON CREATE SET e.source = 'graphql_scan',
                                                     e.is_graphql = true,
                                                     e.created_at = datetime()
+                                    SET e.updated_at = datetime()
                                     MERGE (bu)-[:HAS_ENDPOINT]->(e)
                                     MERGE (e)-[:HAS_VULNERABILITY]->(v)
                                     """,

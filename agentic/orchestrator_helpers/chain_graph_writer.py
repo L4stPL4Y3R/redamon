@@ -471,6 +471,7 @@ def _write_step(
         s.agent_name        = $agent_name,
         s.fireteam_id       = $fireteam_id,
         s.created_at        = datetime()
+    SET s.updated_at        = datetime()
     """
     params = {
         "step_id": step_id,
@@ -752,6 +753,7 @@ def _write_finding(
         fireteam_id:  $fireteam_id,
         created_at:   datetime()
     })
+    SET f.updated_at = datetime()
     MERGE (s)-[:PRODUCED]->(f)
     RETURN f.finding_id AS fid
     """
@@ -1014,6 +1016,7 @@ def _write_failure(
         phase:          $phase,
         created_at:     datetime()
     })
+    SET fl.updated_at = datetime()
     WITH fl
     MATCH (s:ChainStep {step_id: $step_id})
     MERGE (s)-[:FAILED_WITH]->(fl)
@@ -1101,6 +1104,7 @@ def _write_decision(
         iteration:     $iteration,
         created_at:    datetime()
     })
+    SET d.updated_at = datetime()
     """
     params = {
         "decision_id": decision_id,
@@ -1258,6 +1262,7 @@ def _write_exploit_success(
         MATCH (s:ChainStep {step_id: $step_id})
         CREATE (f:ChainFinding $props)
         SET f.created_at = datetime()
+        SET f.updated_at = datetime()
         MERGE (s)-[:PRODUCED]->(f)
         RETURN f.finding_id AS fid
         """

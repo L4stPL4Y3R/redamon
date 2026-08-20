@@ -176,6 +176,7 @@ class Neo4jLoader:
                 cypher = (
                     f"MERGE (c:KBChunk {{chunk_id: $chunk_id}}) "
                     f"SET c += $props "
+                    f"SET c.updated_at = datetime() "
                     f"SET c:{node_label} "
                 )
                 try:

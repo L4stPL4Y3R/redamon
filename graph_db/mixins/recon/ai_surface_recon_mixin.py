@@ -96,6 +96,7 @@ class AiSurfaceReconMixin:
             session.run(
                 """
                 MERGE (b:BaseURL {url: $baseurl, user_id: $uid, project_id: $pid})
+                SET b.updated_at = datetime()
                 MERGE (e:Endpoint {path: $path, method: 'GET', baseurl: $baseurl,
                                    user_id: $uid, project_id: $pid})
                 SET e.user_id = $uid, e.project_id = $pid,
@@ -129,6 +130,7 @@ class AiSurfaceReconMixin:
             session.run(
                 """
                 MERGE (b:BaseURL {url: $baseurl, user_id: $uid, project_id: $pid})
+                SET b.updated_at = datetime()
                 MERGE (e:Endpoint {path: $path, method: 'POST', baseurl: $baseurl,
                                    user_id: $uid, project_id: $pid})
                 SET e.user_id = $uid, e.project_id = $pid,
@@ -200,6 +202,7 @@ class AiSurfaceReconMixin:
                 SET t.category = $cat, t.source = 'ai-surface-recon', t.updated_at = datetime()
                 WITH t
                 MERGE (b:BaseURL {url: $baseurl, user_id: $uid, project_id: $pid})
+                SET b.updated_at = datetime()
                 MERGE (e:Endpoint {path: $path, method: 'GET', baseurl: $baseurl,
                                    user_id: $uid, project_id: $pid})
                 ON CREATE SET e.source = 'ai_surface_recon', e.updated_at = datetime()

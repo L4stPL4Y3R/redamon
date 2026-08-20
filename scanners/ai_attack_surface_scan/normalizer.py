@@ -224,6 +224,7 @@ def _ensure_target_node(session, finding: Finding, vid: str,
             MERGE (ip:IP {address: $host, user_id: $uid, project_id: $pid})
               ON CREATE SET ip.source = 'ai_attack_target', ip.ai_attack_synthetic = true,
                             ip.created_at = datetime()
+            SET ip.updated_at = datetime()
             MERGE (ip)-[:HAS_VULNERABILITY]->(v)
             """,
             id=vid, host=host, uid=user_id, pid=project_id,
