@@ -49,7 +49,8 @@ export async function GET(request: NextRequest) {
               size(baseurlsClean)                 AS baseUrlCount,
               size(ipsClean)                      AS ipCount,
               sevClean                            AS severities,
-              cveIds[0..5]                        AS topCveIds
+              cveIds[0..5]                        AS topCveIds,
+              t.updated_at                        AS updatedAt
        ORDER BY kevCount DESC, maxCvss DESC, cveCount DESC
        LIMIT ${rowCap()}`,
       { pid: projectId }
@@ -65,6 +66,7 @@ export async function GET(request: NextRequest) {
       ipCount: toNum(r.get('ipCount')),
       severities: (r.get('severities') as string[]) || [],
       topCveIds: (r.get('topCveIds') as string[]) || [],
+      updatedAt: r.get('updatedAt') ?? null,
     }))
 
     return NextResponse.json({ rows, meta: { totalRows: rows.length } })

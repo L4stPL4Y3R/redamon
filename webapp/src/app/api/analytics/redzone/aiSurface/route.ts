@@ -37,7 +37,7 @@ export async function GET(request: NextRequest) {
               ep.ai_framework_name AS framework,
               ep.ai_frontend_product_guess AS frontend,
               ep.ai_tool_schema_ref AS schemaRef,
-              ep.source AS source
+              ep.source AS source, ep.updated_at AS updatedAt
        ORDER BY ep.ai_interface_type, ep.baseurl, ep.path LIMIT ${rowCap()}`,
       { pid })
 
@@ -53,7 +53,7 @@ export async function GET(request: NextRequest) {
               ep.ai_mcp_prompt_count AS promptCount,
               ep.ai_mcp_caps AS capabilities,
               ep.ai_mcp_auth_required AS authRequired,
-              ep.ai_mcp_tools_hash AS toolsHash
+              ep.ai_mcp_tools_hash AS toolsHash, ep.updated_at AS updatedAt
        ORDER BY ep.baseurl LIMIT ${rowCap()}`,
       { pid })
 
@@ -63,7 +63,7 @@ export async function GET(request: NextRequest) {
        OPTIONAL MATCH (x)-[r]->(t) WHERE type(r) IN ['USES_TECHNOLOGY','HAS_TECHNOLOGY']
        RETURN t.name AS name, t.category AS category, t.version AS version,
               [d IN collect(DISTINCT r.detected_by) WHERE d IS NOT NULL] AS detectedBy,
-              count(DISTINCT x) AS attachedTo
+              count(DISTINCT x) AS attachedTo, t.updated_at AS updatedAt
        ORDER BY t.category, t.name LIMIT ${rowCap()}`,
       { pid })
 
@@ -73,7 +73,7 @@ export async function GET(request: NextRequest) {
        OPTIONAL MATCH (p:Port)-[r:HAS_TECHNOLOGY]->(t)
        OPTIONAL MATCH (ip:IP)-[:HAS_PORT]->(p)
        RETURN t.name AS name, ip.address AS host, p.number AS port,
-              coalesce(r.detected_by, t.source) AS detectedBy
+              coalesce(r.detected_by, t.source) AS detectedBy, t.updated_at AS updatedAt
        ORDER BY t.name LIMIT ${rowCap()}`,
       { pid })
 
@@ -81,8 +81,10 @@ export async function GET(request: NextRequest) {
     const models = await session.run(
       `MATCH (ep:Endpoint {project_id: $pid}) WHERE ep.ai_model_ids IS NOT NULL
        UNWIND ep.ai_model_ids AS modelId
-       RETURN DISTINCT modelId AS modelId, ep.ai_model_family_guess AS family,
-              ep.baseurl AS baseUrl, ep.path AS sourceEndpoint
+       WITH modelId, ep.ai_model_family_guess AS family,
+            ep.baseurl AS baseUrl, ep.path AS sourceEndpoint,
+            max(ep.updated_at) AS updatedAt
+       RETURN modelId, family, baseUrl, sourceEndpoint, updatedAt
        ORDER BY modelId LIMIT ${rowCap()}`,
       { pid })
 
@@ -94,6 +96,7 @@ export async function GET(request: NextRequest) {
         latencyMs: toNum(r.get('latencyMs')), ragIngest: r.get('ragIngest'),
         framework: r.get('framework'), frontend: r.get('frontend'),
         schemaRef: r.get('schemaRef'), source: r.get('source'),
+        updatedAt: r.get('updatedAt') ?? null,
       })),
       mcpServers: mcp.records.map((r: { get: (key: string) => unknown }) => ({
         baseUrl: r.get('baseUrl'), path: r.get('path'), serverName: r.get('serverName'),
@@ -102,18 +105,22 @@ export async function GET(request: NextRequest) {
         promptCount: toNum(r.get('promptCount')),
         capabilities: (r.get('capabilities') as string[]) || [],
         authRequired: r.get('authRequired'), toolsHash: r.get('toolsHash'),
+        updatedAt: r.get('updatedAt') ?? null,
       })),
       technologies: tech.records.map((r: { get: (key: string) => unknown }) => ({
         name: r.get('name'), category: r.get('category'), version: r.get('version'),
         detectedBy: (r.get('detectedBy') as string[]) || [], attachedTo: toNum(r.get('attachedTo')),
+        updatedAt: r.get('updatedAt') ?? null,
       })),
       vectorDbs: vdb.records.map((r: { get: (key: string) => unknown }) => ({
         name: r.get('name'), host: r.get('host'), port: toNum(r.get('port')),
         detectedBy: r.get('detectedBy'),
+        updatedAt: r.get('updatedAt') ?? null,
       })),
       models: models.records.map((r: { get: (key: string) => unknown }) => ({
         modelId: r.get('modelId'), family: r.get('family'),
         baseUrl: r.get('baseUrl'), sourceEndpoint: r.get('sourceEndpoint'),
+        updatedAt: r.get('updatedAt') ?? null,
       })),
     }
 

@@ -5,6 +5,12 @@ import { RedZoneTableShell } from './RedZoneTableShell'
 import { useRedZoneTable } from './useRedZoneTable'
 import type { RedZoneExportConfig } from './exportCsv'
 import { useRedZoneFilters, type RedZoneFilterColumn } from './useRedZoneFilters'
+import {
+  UPDATED_AT_COLUMN,
+  UpdatedAtCell,
+  UpdatedAtTh,
+  useUpdatedAtSort,
+} from './updatedAt'
 import { ExternalLink } from '@/components/ui'
 import { capecToUrl, cveToUrl, cweToUrl } from '@/lib/url-utils'
 import {
@@ -39,6 +45,8 @@ interface KillChainRow {
   capecId: string | null
   capecName: string | null
   capecSeverity: string | null
+  /** Graph `updated_at` of the node this row is built from. */
+  updatedAt: unknown
 }
 
 const PAGE_SIZE = 100
@@ -63,6 +71,7 @@ const COLUMNS: RedZoneFilterColumn[] = [
   { key: 'cweName', header: 'CWE Name' },
   { key: 'capecId', header: 'CAPEC' },
   { key: 'capecName', header: 'CAPEC Name' },
+  UPDATED_AT_COLUMN,
 ]
 
 interface Props { projectId: string | null }
@@ -77,18 +86,19 @@ export const KillChainTable = memo(function KillChainTable({ projectId }: Props)
   const { filteredRows: filtered, filterUi } = useRedZoneFilters({
     rows: searched, columns: COLUMNS, projectId, slug: 'killChain',
   })
-  const sliced = useMemo(() => filtered.slice(0, limit), [filtered, limit])
+  const { sortedRows, sortDir, toggleSort } = useUpdatedAtSort(filtered)
+  const sliced = useMemo(() => sortedRows.slice(0, limit), [sortedRows, limit])
 
   const exportConfig = useMemo<RedZoneExportConfig | undefined>(() =>
     rows.length > 0
       ? {
-          rows: filtered,
+          rows: sortedRows,
           sheetName: 'Kill-Chain',
           fileSlug: 'redzone-kill-chain',
           columns: COLUMNS,
         }
       : undefined,
-    [filtered, rows.length],
+    [sortedRows, rows.length],
   )
 
   const kevCount = (data?.meta?.kevCount as number | undefined) ?? 0
@@ -124,6 +134,7 @@ export const KillChainTable = memo(function KillChainTable({ projectId }: Props)
             <th>KEV</th>
             <th>CWE</th>
             <th>CAPEC</th>
+            <UpdatedAtTh dir={sortDir} onToggle={toggleSort} />
           </tr>
         </thead>
         <tbody>
@@ -166,6 +177,7 @@ export const KillChainTable = memo(function KillChainTable({ projectId }: Props)
                   </span>
                 ) : <span className={rowStyles.nullCell}>-</span>}
               </td>
+              <td><UpdatedAtCell value={r.updatedAt} /></td>
             </tr>
           ))}
         </tbody>

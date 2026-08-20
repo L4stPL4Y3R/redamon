@@ -6,6 +6,12 @@ import { useRedZoneTable } from './useRedZoneTable'
 import type { RedZoneExportConfig } from './exportCsv'
 import { useRedZoneFilters, type RedZoneFilterColumn } from './useRedZoneFilters'
 import {
+  UPDATED_AT_COLUMN,
+  UpdatedAtCell,
+  UpdatedAtTh,
+  useUpdatedAtSort,
+} from './updatedAt'
+import {
   SeverityBadge,
   Mono,
   Truncated,
@@ -18,7 +24,8 @@ import { redactSecret } from './redact'
 import rowStyles from './RedZoneTableRow.module.css'
 
 interface SecretRow {
-  origin: 'Secret' | 'JsReconFinding' | 'MultiscannerFinding' | string
+  origin: 'Secret' | 'JsReconFinding' | 'MultiscannerFinding'
+    | 'GithubSecret' | 'GithubSensitiveFile' | 'ChainFinding' | string
   id: string
   secretType: string
   valueSample: string | null
@@ -39,6 +46,8 @@ interface SecretRow {
   trufflehogSource: string | null
   asset: string | null
   location: string | null
+  /** Graph `updated_at` of the node this row is built from. */
+  updatedAt: unknown
 }
 
 const PAGE_SIZE = 100
@@ -94,6 +103,7 @@ const COLUMNS: RedZoneFilterColumn[] = [
   { key: 'jsFileUrl', header: 'Parent JS File' },
   { key: 'baseUrl', header: 'BaseURL' },
   { key: 'subdomain', header: 'Subdomain' },
+  UPDATED_AT_COLUMN,
 ]
 
 interface Props { projectId: string | null }
@@ -108,18 +118,19 @@ export const SecretsTable = memo(function SecretsTable({ projectId }: Props) {
   const { filteredRows: filtered, filterUi } = useRedZoneFilters({
     rows: searched, columns: COLUMNS, projectId, slug: 'secrets',
   })
-  const sliced = useMemo(() => filtered.slice(0, limit), [filtered, limit])
+  const { sortedRows, sortDir, toggleSort } = useUpdatedAtSort(filtered)
+  const sliced = useMemo(() => sortedRows.slice(0, limit), [sortedRows, limit])
 
   const exportConfig = useMemo<RedZoneExportConfig | undefined>(() =>
     rows.length > 0
       ? {
-          rows: filtered.map(r => ({ ...r, valueSample: redactSecret(r.valueSample), matchedText: redactSecret(r.matchedText) })),
+          rows: sortedRows.map(r => ({ ...r, valueSample: redactSecret(r.valueSample), matchedText: redactSecret(r.matchedText) })),
           sheetName: 'Secrets',
           fileSlug: 'redzone-secrets',
           columns: COLUMNS,
         }
       : undefined,
-    [filtered, rows.length],
+    [sortedRows, rows.length],
   )
 
   return (
@@ -136,7 +147,7 @@ export const SecretsTable = memo(function SecretsTable({ projectId }: Props) {
       error={error}
       rowCount={rows.length}
       filteredRowCount={filtered.length}
-      emptyLabel="No leaked secrets found. Run js_recon or resource_enum to discover credentials."
+      emptyLabel="No leaked secrets found. Run js_recon, resource_enum, the Secret Multiscanner or a GitHub Secret Hunt to discover credentials."
     >
       <table className={rowStyles.table}>
         <thead>
@@ -154,6 +165,7 @@ export const SecretsTable = memo(function SecretsTable({ projectId }: Props) {
             <th>Location</th>
             <th>Source URL</th>
             <th>Subdomain</th>
+            <UpdatedAtTh dir={sortDir} onToggle={toggleSort} />
           </tr>
         </thead>
         <tbody>
@@ -167,13 +179,14 @@ export const SecretsTable = memo(function SecretsTable({ projectId }: Props) {
               <td><SeverityBadge severity={normalizeSeverity(r.severity)} /></td>
               <td><ValidationChip status={r.validationStatus} /></td>
               <td><span className={rowStyles.listChip}>{r.origin}</span></td>
-              <td>{r.trufflehogSource
-                ? <span className={rowStyles.listChip}>{r.trufflehogSource}</span>
+              <td>{r.trufflehogSource || r.sourceModule
+                ? <span className={rowStyles.listChip}>{r.trufflehogSource || r.sourceModule}</span>
                 : <span className={rowStyles.nullCell}>-</span>}</td>
               <td><Truncated text={r.asset} max={180} /></td>
               <td><Truncated text={r.location} max={180} /></td>
               <td><UrlCell url={r.sourceUrl} max={260} /></td>
               <td>{r.subdomain ? <HostCell host={r.subdomain} /> : <Truncated text={r.subdomain} max={180} />}</td>
+              <td><UpdatedAtCell value={r.updatedAt} /></td>
             </tr>
           ))}
         </tbody>

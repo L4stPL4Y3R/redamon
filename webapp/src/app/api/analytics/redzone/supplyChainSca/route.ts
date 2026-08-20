@@ -87,6 +87,7 @@ export async function GET(request: NextRequest) {
               coalesce(f.aliases, [])       AS aliases,
               toString(f.first_seen)        AS firstSeen,
               toString(f.last_seen)         AS lastSeen,
+              toString(coalesce(f.updated_at, f.last_seen, f.first_seen)) AS updatedAt,
               // Incident context from the supplychainattack.org catalog. Null on
               // every finding when the intel volume was never synced, which is
               // why the UI renders the detail row conditionally rather than
@@ -126,6 +127,7 @@ export async function GET(request: NextRequest) {
               p.source_path AS sourcePath,
               toString(p.first_seen) AS firstSeen,
               toString(p.last_seen)  AS lastSeen,
+              toString(coalesce(p.updated_at, p.last_seen, p.first_seen)) AS updatedAt,
               baseUrls, repos, sboms,
               size([f IN findings WHERE f.verdict = 'malicious']) AS maliciousCount,
               size([f IN findings WHERE f.verdict = 'suspicious'
@@ -207,6 +209,7 @@ export async function GET(request: NextRequest) {
         incidentRemediation: toStrList(r.get('incidentRemediation')),
         incidentStatus: (r.get('incidentStatus') as string) ?? null,
         incidentFeedRevised: (r.get('incidentFeedRevised') as string) ?? null,
+        updatedAt: (r.get('updatedAt') as string) ?? null,
       })),
       packages: packages.records.map((r: Neo4jRecord) => ({
         purl: (r.get('purl') as string) || '',
@@ -225,6 +228,7 @@ export async function GET(request: NextRequest) {
         notAnalysedCount: toNum(r.get('notAnalysedCount')),
         advisoryCount: toNum(r.get('advisoryCount')),
         advisorySeverities: toStrList(r.get('advisorySeverities')),
+        updatedAt: (r.get('updatedAt') as string) ?? null,
       })),
       advisories: advisories.records.map((r: Neo4jRecord) => ({
         advisoryId: (r.get('advisoryId') as string) || '',

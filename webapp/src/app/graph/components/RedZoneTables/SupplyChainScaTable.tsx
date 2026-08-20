@@ -3,6 +3,7 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useState } from 'react'
 import { RedZoneTableShell } from './RedZoneTableShell'
 import { useRedZoneFilters } from './useRedZoneFilters'
+import { UPDATED_AT_COLUMN, UpdatedAtCell, UpdatedAtTh, useUpdatedAtSort } from './updatedAt'
 import type { RedZoneExportConfig } from './exportCsv'
 import {
   SeverityBadge, Mono, Truncated, NumCell, ListCell, LinkedListCell, filterRowsByText,
@@ -55,6 +56,8 @@ interface VerdictRow {
   incidentRemediation: string[]
   incidentStatus: string | null
   incidentFeedRevised: string | null
+  /** Newest of the finding's last_seen / first_seen. */
+  updatedAt: string | null
 }
 
 interface PackageRow {
@@ -74,6 +77,7 @@ interface PackageRow {
   notAnalysedCount: number
   advisoryCount: number
   advisorySeverities: string[]
+  updatedAt: string | null
 }
 
 interface AdvisoryRow {
@@ -335,6 +339,7 @@ const EXPORT_COLUMNS: Record<SheetKey, { key: string; header: string }[]> = {
     { key: 'incidentRemediation', header: 'Remediation' },
     { key: 'incidentUrl', header: 'Incident URL' },
     { key: 'incidentFeedRevised', header: 'Feed Revision' },
+    UPDATED_AT_COLUMN,
   ],
   packages: [
     { key: 'name', header: 'Package' },
@@ -352,6 +357,7 @@ const EXPORT_COLUMNS: Record<SheetKey, { key: string; header: string }[]> = {
     { key: 'sboms', header: 'SBOM File' },
     { key: 'firstSeen', header: 'First Seen' },
     { key: 'lastSeen', header: 'Last Seen' },
+    UPDATED_AT_COLUMN,
   ],
   advisories: [
     { key: 'advisoryId', header: 'Advisory' },
@@ -369,7 +375,7 @@ const EXPORT_COLUMNS: Record<SheetKey, { key: string; header: string }[]> = {
     { key: 'repos', header: 'Repository' },
     { key: 'sboms', header: 'SBOM File' },
     { key: 'firstSeen', header: 'First Seen' },
-    { key: 'updatedAt', header: 'Updated' },
+    UPDATED_AT_COLUMN,
   ],
 }
 
@@ -440,7 +446,8 @@ export const SupplyChainScaTable = memo(function SupplyChainScaTable({ projectId
   const { filteredRows: filtered, filterUi } = useRedZoneFilters({
     rows: searched, columns: EXPORT_COLUMNS[active], projectId, slug: 'supplyChainSca', sheet: active,
   })
-  const sliced = useMemo(() => filtered.slice(0, limit), [filtered, limit])
+  const { sortedRows, sortDir, toggleSort } = useUpdatedAtSort(filtered)
+  const sliced = useMemo(() => sortedRows.slice(0, limit), [sortedRows, limit])
 
   const selectSheet = useCallback((key: SheetKey) => {
     setActive(key); setSearch(''); setLimit(PAGE_SIZE)
@@ -448,7 +455,7 @@ export const SupplyChainScaTable = memo(function SupplyChainScaTable({ projectId
 
   const exportConfig = useMemo<RedZoneExportConfig | undefined>(() =>
     filtered.length > 0
-      ? { rows: filtered, sheetName: SHEET_LABEL[active], fileSlug: `supply-chain-sca-${active}`, columns: EXPORT_COLUMNS[active] }
+      ? { rows: sortedRows, sheetName: SHEET_LABEL[active], fileSlug: `supply-chain-sca-${active}`, columns: EXPORT_COLUMNS[active] }
       : undefined,
     [filtered, active])
 
@@ -519,6 +526,7 @@ export const SupplyChainScaTable = memo(function SupplyChainScaTable({ projectId
               <th>Verdict</th><th>Sev</th><th>Advisory / Rule</th><th>Package</th>
               <th>Version</th><th>Eco</th><th>Tool</th><th>Origin</th>
               <th>Anchor</th><th>Title</th><th>Detail</th><th>Incident</th>
+              <UpdatedAtTh dir={sortDir} onToggle={toggleSort} />
             </tr>
           </thead>
           <tbody>
@@ -540,6 +548,7 @@ export const SupplyChainScaTable = memo(function SupplyChainScaTable({ projectId
                   <td><Truncated text={r.title} max={240} /></td>
                   <td><Truncated text={r.detail} max={240} /></td>
                   <td><IncidentToggle row={r} open={!!expanded[r.findingId]} onToggle={toggleIncident} /></td>
+                  <td><UpdatedAtCell value={r.updatedAt} /></td>
                 </tr>
                 {expanded[r.findingId] && <IncidentDetailRow row={r} />}
               </Fragment>
@@ -553,6 +562,7 @@ export const SupplyChainScaTable = memo(function SupplyChainScaTable({ projectId
               <th>Status</th><th>Package</th><th>Version</th><th>Eco</th>
               <th>Harvest</th><th>Origin</th><th>Anchor</th>
               <th>Mal</th><th>Susp</th><th>Unchecked</th><th>Advisories</th><th>Worst</th>
+              <UpdatedAtTh dir={sortDir} onToggle={toggleSort} />
             </tr>
           </thead>
           <tbody>
@@ -574,6 +584,7 @@ export const SupplyChainScaTable = memo(function SupplyChainScaTable({ projectId
                     ? <SeverityBadge severity={worstSeverity(r.advisorySeverities)} />
                     : <span className={rowStyles.nullCell}>-</span>}
                 </td>
+                <td><UpdatedAtCell value={r.updatedAt} /></td>
               </tr>
             ))}
           </tbody>
@@ -585,6 +596,7 @@ export const SupplyChainScaTable = memo(function SupplyChainScaTable({ projectId
               <th>Advisory</th><th>Sev</th><th>CVSS</th><th>Package</th>
               <th>Version</th><th>Eco</th><th>Origin</th><th>Anchor</th>
               <th>Title</th><th>Description</th>
+              <UpdatedAtTh dir={sortDir} onToggle={toggleSort} />
             </tr>
           </thead>
           <tbody>
@@ -600,6 +612,7 @@ export const SupplyChainScaTable = memo(function SupplyChainScaTable({ projectId
                 <td><AnchorCell row={r} /></td>
                 <td><Truncated text={r.title} max={240} /></td>
                 <td><Truncated text={r.description} max={280} /></td>
+                <td><UpdatedAtCell value={r.updatedAt} /></td>
               </tr>
             ))}
           </tbody>

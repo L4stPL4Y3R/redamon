@@ -90,7 +90,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
              jf.cloud_asset_type AS cloudAssetType,
              jf.times_seen AS timesSeen,
              jf.sample_urls AS sampleUrls,
-             jf.potential_idor AS potentialIdor
+             jf.potential_idor AS potentialIdor,
+             jf.updated_at AS updatedAt
       `,
       { pid: projectId }
     )
@@ -109,7 +110,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
              s.confidence AS confidence,
              s.detection_method AS detection_method,
              s.validation_status AS validation_status,
-             s.validation_info AS validation_info
+             s.validation_info AS validation_info,
+             s.updated_at AS updatedAt
       `,
       { pid: projectId }
     )
@@ -127,7 +129,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
              e.endpoint_type AS type,
              e.category AS category,
              e.baseurl AS base_url,
-             jf.source_url AS source_js
+             jf.source_url AS source_js,
+             e.updated_at AS updatedAt
       `,
       { pid: projectId }
     )
@@ -157,6 +160,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         source_url: record.get('sourceUrl'),
         base_url: record.get('baseUrl'),
         finding_type: type,
+        updatedAt: record.get('updatedAt') ?? null,
       }
 
       switch (type) {
@@ -202,6 +206,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             category: 'unknown',
             source_url: base.source_url,
             context: base.detail,
+            updatedAt: base.updatedAt,
           })
           break
         case 'internal_ip':
@@ -210,6 +215,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             type: base.evidence || 'private',
             source_url: base.source_url,
             context: base.detail,
+            updatedAt: base.updatedAt,
           })
           break
         case 'object_reference':
@@ -219,6 +225,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             source_url: base.source_url,
             context: base.detail,
             potential_idor: record.get('potentialIdor') ?? false,
+            updatedAt: base.updatedAt,
           })
           break
         case 'cloud_asset':
@@ -227,6 +234,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             type: record.get('cloudAssetType') || 'cloud_asset',
             url: base.title,
             source_url: base.source_url,
+            updatedAt: base.updatedAt,
           })
           break
         case 'external_domain': {
@@ -236,6 +244,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             source: 'js_recon',
             urls: record.get('sampleUrls') || [],
             times_seen: typeof ts === 'object' && ts !== null && 'low' in ts ? ts.low : (ts ?? 1),
+            updatedAt: base.updatedAt,
           })
           break
         }
@@ -260,6 +269,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         confidence: r.get('confidence'),
         detection_method: r.get('detection_method'),
         validation,
+        updatedAt: r.get('updatedAt') ?? null,
       }
     })
 
@@ -272,6 +282,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       category: r.get('category'),
       base_url: r.get('base_url'),
       source_js: r.get('source_js') || '',
+      updatedAt: r.get('updatedAt') ?? null,
     }))
 
     // Check if any data exists (any of the persisted finding types)

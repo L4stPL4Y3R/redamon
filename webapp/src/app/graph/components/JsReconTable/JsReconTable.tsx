@@ -7,6 +7,14 @@ import styles from './JsReconTable.module.css'
 import { ColumnFilterButton, ActiveFilterChips } from '../ColumnFilterPanel'
 import { useRedZoneFilters, type RedZoneFilterColumn } from '../RedZoneTables/useRedZoneFilters'
 import {
+  UPDATED_AT_COLUMN,
+  UpdatedAtCell,
+  UpdatedAtTh,
+  sortByUpdatedAt,
+  useUpdatedAtSortDir,
+  type SortDir,
+} from '../RedZoneTables/updatedAt'
+import {
   timestampSlug,
   downloadStreaming,
   streamCsvChunks,
@@ -71,6 +79,7 @@ const TAB_FILTER_COLUMNS: Record<string, RedZoneFilterColumn[]> = {
     { key: 'validation.status', header: 'Validation' },
     { key: 'confidence', header: 'Confidence' },
     { key: 'line_number', header: 'Line' },
+    UPDATED_AT_COLUMN,
   ],
   endpoints: [
     { key: 'severity', header: 'Severity' },
@@ -81,6 +90,7 @@ const TAB_FILTER_COLUMNS: Record<string, RedZoneFilterColumn[]> = {
     { key: 'category', header: 'Category' },
     { key: 'base_url', header: 'BaseURL' },
     { key: 'source_js', header: 'Source JS' },
+    UPDATED_AT_COLUMN,
   ],
   dependencies: [
     { key: 'severity', header: 'Severity' },
@@ -89,6 +99,7 @@ const TAB_FILTER_COLUMNS: Record<string, RedZoneFilterColumn[]> = {
     { key: 'scope', header: 'Scope' },
     { key: 'npm_exists', header: 'On npm' },
     { key: 'confidence', header: 'Confidence' },
+    UPDATED_AT_COLUMN,
   ],
   sourcemaps: [
     { key: 'severity', header: 'Severity' },
@@ -98,6 +109,7 @@ const TAB_FILTER_COLUMNS: Record<string, RedZoneFilterColumn[]> = {
     { key: 'accessible', header: 'Accessible' },
     { key: 'discovery_method', header: 'Discovery' },
     { key: 'files_count', header: 'Files' },
+    UPDATED_AT_COLUMN,
   ],
 }
 
@@ -125,19 +137,19 @@ function getCol(row: any, col: string): unknown {
 
 function buildJsReconSheets(data: JsReconData): JsReconSheet[] {
   return [
-    { name: 'Secrets', rows: data.secrets || [], columns: ['severity', 'name', 'redacted_value', 'matched_text', 'category', 'source_url', 'line_number', 'context', 'detection_method', 'validation.status', 'confidence', 'validator_ref'] },
-    { name: 'Endpoints', rows: data.endpoints || [], columns: ['severity', 'method', 'path', 'full_url', 'type', 'category', 'base_url', 'source_js', 'parameters', 'line_number'] },
-    { name: 'Dependencies', rows: data.dependencies || [], columns: ['severity', 'finding_type', 'package_name', 'scope', 'npm_exists', 'confidence', 'title', 'detail', 'recommendation', 'source_urls'] },
-    { name: 'Source Maps', rows: data.source_maps || [], columns: ['severity', 'finding_type', 'js_url', 'map_url', 'accessible', 'discovery_method', 'files_count', 'source_files', 'secrets_in_source', 'secrets'] },
-    { name: 'DOM Sinks', rows: data.dom_sinks || [], columns: ['severity', 'finding_type', 'type', 'pattern', 'description', 'source_url', 'line', 'confidence'] },
-    { name: 'Frameworks', rows: data.frameworks || [], columns: ['name', 'version', 'severity', 'finding_type', 'source_url', 'confidence'] },
-    { name: 'Dev Comments', rows: data.dev_comments || [], columns: ['severity', 'type', 'content', 'source_url', 'line', 'confidence'] },
-    { name: 'Cloud Assets', rows: data.cloud_assets || [], columns: ['provider', 'type', 'url', 'source_url'] },
-    { name: 'Emails', rows: data.emails || [], columns: ['email', 'category', 'source_url', 'context'] },
-    { name: 'IPs', rows: data.ip_addresses || [], columns: ['ip', 'type', 'source_url', 'context'] },
-    { name: 'Object Refs', rows: data.object_references || [], columns: ['type', 'value', 'source_url', 'context', 'potential_idor'] },
+    { name: 'Secrets', rows: data.secrets || [], columns: ['severity', 'name', 'redacted_value', 'matched_text', 'category', 'source_url', 'line_number', 'context', 'detection_method', 'validation.status', 'confidence', 'validator_ref', 'updatedAt'] },
+    { name: 'Endpoints', rows: data.endpoints || [], columns: ['severity', 'method', 'path', 'full_url', 'type', 'category', 'base_url', 'source_js', 'parameters', 'line_number', 'updatedAt'] },
+    { name: 'Dependencies', rows: data.dependencies || [], columns: ['severity', 'finding_type', 'package_name', 'scope', 'npm_exists', 'confidence', 'title', 'detail', 'recommendation', 'source_urls', 'updatedAt'] },
+    { name: 'Source Maps', rows: data.source_maps || [], columns: ['severity', 'finding_type', 'js_url', 'map_url', 'accessible', 'discovery_method', 'files_count', 'source_files', 'secrets_in_source', 'secrets', 'updatedAt'] },
+    { name: 'DOM Sinks', rows: data.dom_sinks || [], columns: ['severity', 'finding_type', 'type', 'pattern', 'description', 'source_url', 'line', 'confidence', 'updatedAt'] },
+    { name: 'Frameworks', rows: data.frameworks || [], columns: ['name', 'version', 'severity', 'finding_type', 'source_url', 'confidence', 'updatedAt'] },
+    { name: 'Dev Comments', rows: data.dev_comments || [], columns: ['severity', 'type', 'content', 'source_url', 'line', 'confidence', 'updatedAt'] },
+    { name: 'Cloud Assets', rows: data.cloud_assets || [], columns: ['provider', 'type', 'url', 'source_url', 'updatedAt'] },
+    { name: 'Emails', rows: data.emails || [], columns: ['email', 'category', 'source_url', 'context', 'updatedAt'] },
+    { name: 'IPs', rows: data.ip_addresses || [], columns: ['ip', 'type', 'source_url', 'context', 'updatedAt'] },
+    { name: 'Object Refs', rows: data.object_references || [], columns: ['type', 'value', 'source_url', 'context', 'potential_idor', 'updatedAt'] },
     { name: 'Subdomains', rows: (data.discovered_subdomains || []).map(s => ({ subdomain: s })), columns: ['subdomain'] },
-    { name: 'External Domains', rows: data.external_domains || [], columns: ['domain', 'times_seen'] },
+    { name: 'External Domains', rows: data.external_domains || [], columns: ['domain', 'times_seen', 'updatedAt'] },
   ]
 }
 
@@ -312,6 +324,7 @@ export const JsReconTable = memo(function JsReconTable({
   // sit here rather than beside the JSX that uses them.
   const filterColumns = TAB_FILTER_COLUMNS[activeTab] ?? NO_COLUMNS
   const rowsForTab = tabRows(data, activeTab)
+  const { sortDir, toggleSort } = useUpdatedAtSortDir()
   const { filteredRows, filterUi } = useRedZoneFilters({
     rows: rowsForTab,
     columns: filterColumns,
@@ -374,12 +387,12 @@ export const JsReconTable = memo(function JsReconTable({
 
       {/* Content */}
       <div className={styles.tableWrapper}>
-        {activeTab === 'secrets' && <SecretsTable rows={filteredRows} search={search} limit={limit} />}
-        {activeTab === 'endpoints' && <EndpointsTable rows={filteredRows} search={search} limit={limit} />}
-        {activeTab === 'dependencies' && <DepsTable rows={filteredRows} search={search} limit={limit} />}
-        {activeTab === 'sourcemaps' && <SourceMapsTable rows={filteredRows} search={search} limit={limit} />}
-        {activeTab === 'security' && <SecurityTable data={data} search={search} limit={limit} />}
-        {activeTab === 'surface' && <SurfaceTable data={data} search={search} limit={limit} />}
+        {activeTab === 'secrets' && <SecretsTable rows={filteredRows} search={search} limit={limit} sortDir={sortDir} onToggleSort={toggleSort} />}
+        {activeTab === 'endpoints' && <EndpointsTable rows={filteredRows} search={search} limit={limit} sortDir={sortDir} onToggleSort={toggleSort} />}
+        {activeTab === 'dependencies' && <DepsTable rows={filteredRows} search={search} limit={limit} sortDir={sortDir} onToggleSort={toggleSort} />}
+        {activeTab === 'sourcemaps' && <SourceMapsTable rows={filteredRows} search={search} limit={limit} sortDir={sortDir} onToggleSort={toggleSort} />}
+        {activeTab === 'security' && <SecurityTable data={data} search={search} limit={limit} sortDir={sortDir} onToggleSort={toggleSort} />}
+        {activeTab === 'surface' && <SurfaceTable data={data} search={search} limit={limit} sortDir={sortDir} onToggleSort={toggleSort} />}
       </div>
 
       {/* Pagination */}
@@ -443,12 +456,12 @@ function CopyButton({ text }: { text: string }) {
   )
 }
 
-function SecretsTable({ rows, search, limit }: { rows: readonly any[]; search: string; limit: number }) {
-  const filtered = sortSecrets(filterRows(rows, search)).slice(0, limit)
+function SecretsTable({ rows, search, limit, sortDir, onToggleSort }: { rows: readonly any[]; search: string; limit: number; sortDir: SortDir; onToggleSort: () => void }) {
+  const filtered = sortByUpdatedAt(sortSecrets(filterRows(rows, search)), sortDir).slice(0, limit)
   if (!filtered.length) return <div className={styles.stateContainer}>No secrets found.</div>
   return (
     <table className={styles.table}>
-      <thead><tr><th>Severity</th><th>Type</th><th>Redacted Value</th><th>Source</th><th>Validation</th><th>Confidence</th></tr></thead>
+      <thead><tr><th>Severity</th><th>Type</th><th>Redacted Value</th><th>Source</th><th>Validation</th><th>Confidence</th><UpdatedAtTh dir={sortDir} onToggle={onToggleSort} /></tr></thead>
       <tbody>
         {filtered.map((s, i) => (
           <tr key={s.id || i}>
@@ -461,6 +474,7 @@ function SecretsTable({ rows, search, limit }: { rows: readonly any[]; search: s
             <td className={styles.truncate} title={s.source_url}><ExternalLink href={s.source_url}>{s.source_url}</ExternalLink></td>
             <td>{valBadge(s.validation?.status)}</td>
             <td>{s.confidence}</td>
+            <td><UpdatedAtCell value={s.updatedAt} /></td>
           </tr>
         ))}
       </tbody>
@@ -468,12 +482,12 @@ function SecretsTable({ rows, search, limit }: { rows: readonly any[]; search: s
   )
 }
 
-function EndpointsTable({ rows, search, limit }: { rows: readonly any[]; search: string; limit: number }) {
+function EndpointsTable({ rows, search, limit, sortDir, onToggleSort }: { rows: readonly any[]; search: string; limit: number; sortDir: SortDir; onToggleSort: () => void }) {
   const filtered = filterRows(rows, search).slice(0, limit)
   if (!filtered.length) return <div className={styles.stateContainer}>No endpoints extracted.</div>
   return (
     <table className={styles.table}>
-      <thead><tr><th>Severity</th><th>Method</th><th>Path</th><th>Type</th><th>Category</th><th>Source</th></tr></thead>
+      <thead><tr><th>Severity</th><th>Method</th><th>Path</th><th>Type</th><th>Category</th><th>Source</th><UpdatedAtTh dir={sortDir} onToggle={onToggleSort} /></tr></thead>
       <tbody>
         {filtered.map((ep, i) => (
           <tr key={ep.id || i}>
@@ -483,6 +497,7 @@ function EndpointsTable({ rows, search, limit }: { rows: readonly any[]; search:
             <td>{ep.type}</td>
             <td>{ep.category}</td>
             <td className={styles.truncate} title={ep.source_js}><ExternalLink href={ep.source_js}>{ep.source_js}</ExternalLink></td>
+            <td><UpdatedAtCell value={ep.updatedAt} /></td>
           </tr>
         ))}
       </tbody>
@@ -490,12 +505,12 @@ function EndpointsTable({ rows, search, limit }: { rows: readonly any[]; search:
   )
 }
 
-function DepsTable({ rows, search, limit }: { rows: readonly any[]; search: string; limit: number }) {
+function DepsTable({ rows, search, limit, sortDir, onToggleSort }: { rows: readonly any[]; search: string; limit: number; sortDir: SortDir; onToggleSort: () => void }) {
   const filtered = filterRows(rows, search).slice(0, limit)
   if (!filtered.length) return <div className={styles.stateContainer}>No dependency confusion findings.</div>
   return (
     <table className={styles.table}>
-      <thead><tr><th>Severity</th><th>Package</th><th>Scope</th><th>On npm?</th><th>Detail</th></tr></thead>
+      <thead><tr><th>Severity</th><th>Package</th><th>Scope</th><th>On npm?</th><th>Detail</th><UpdatedAtTh dir={sortDir} onToggle={onToggleSort} /></tr></thead>
       <tbody>
         {filtered.map((d, i) => (
           <tr key={d.id || i}>
@@ -504,6 +519,7 @@ function DepsTable({ rows, search, limit }: { rows: readonly any[]; search: stri
             <td>{d.scope}</td>
             <td>{d.npm_exists ? 'Yes' : 'No'}</td>
             <td className={styles.truncate} title={d.detail}>{d.title}</td>
+            <td><UpdatedAtCell value={d.updatedAt} /></td>
           </tr>
         ))}
       </tbody>
@@ -511,12 +527,12 @@ function DepsTable({ rows, search, limit }: { rows: readonly any[]; search: stri
   )
 }
 
-function SourceMapsTable({ rows, search, limit }: { rows: readonly any[]; search: string; limit: number }) {
+function SourceMapsTable({ rows, search, limit, sortDir, onToggleSort }: { rows: readonly any[]; search: string; limit: number; sortDir: SortDir; onToggleSort: () => void }) {
   const filtered = filterRows(rows, search).slice(0, limit)
   if (!filtered.length) return <div className={styles.stateContainer}>No source maps discovered.</div>
   return (
     <table className={styles.table}>
-      <thead><tr><th>JS File</th><th>Map URL</th><th>Accessible</th><th>Files</th><th>Secrets</th><th>Discovery</th></tr></thead>
+      <thead><tr><th>JS File</th><th>Map URL</th><th>Accessible</th><th>Files</th><th>Secrets</th><th>Discovery</th><UpdatedAtTh dir={sortDir} onToggle={onToggleSort} /></tr></thead>
       <tbody>
         {filtered.map((sm, i) => (
           <tr key={sm.id || i}>
@@ -526,6 +542,7 @@ function SourceMapsTable({ rows, search, limit }: { rows: readonly any[]; search
             <td>{sm.files_count || 0}</td>
             <td>{sm.secrets_in_source || 0}</td>
             <td>{sm.discovery_method}</td>
+            <td><UpdatedAtCell value={sm.updatedAt} /></td>
           </tr>
         ))}
       </tbody>
@@ -533,11 +550,11 @@ function SourceMapsTable({ rows, search, limit }: { rows: readonly any[]; search
   )
 }
 
-function SecurityTable({ data, search, limit }: { data: JsReconData; search: string; limit: number }) {
-  const frameworks = filterRows(data.frameworks || [], search)
-  const sinks = filterRows(data.dom_sinks || [], search)
-  const comments = filterRows(data.dev_comments || [], search)
-  const refs = filterRows(data.object_references || [], search)
+function SecurityTable({ data, search, limit, sortDir, onToggleSort }: { data: JsReconData; search: string; limit: number; sortDir: SortDir; onToggleSort: () => void }) {
+  const frameworks = sortByUpdatedAt(filterRows(data.frameworks || [], search), sortDir)
+  const sinks = sortByUpdatedAt(filterRows(data.dom_sinks || [], search), sortDir)
+  const comments = sortByUpdatedAt(filterRows(data.dev_comments || [], search), sortDir)
+  const refs = sortByUpdatedAt(filterRows(data.object_references || [], search), sortDir)
 
   if (!frameworks.length && !sinks.length && !comments.length && !refs.length)
     return <div className={styles.stateContainer}>No security pattern findings.</div>
@@ -555,9 +572,9 @@ function SecurityTable({ data, search, limit }: { data: JsReconData; search: str
         <>
           <div className={styles.sectionTitle}>Frameworks ({frameworks.length})</div>
           <table className={styles.table}>
-            <thead><tr><th>Framework</th><th>Version</th><th>Source</th></tr></thead>
+            <thead><tr><th>Framework</th><th>Version</th><th>Source</th><UpdatedAtTh dir={sortDir} onToggle={onToggleSort} /></tr></thead>
             <tbody>{frameworks.slice(0, fwLimit).map((f, i) => (
-              <tr key={f.id || i}><td>{f.name}</td><td>{f.version || '-'}</td><td className={styles.truncate} title={f.source_url}><ExternalLink href={f.source_url}>{f.source_url}</ExternalLink></td></tr>
+              <tr key={f.id || i}><td>{f.name}</td><td>{f.version || '-'}</td><td className={styles.truncate} title={f.source_url}><ExternalLink href={f.source_url}>{f.source_url}</ExternalLink></td><td><UpdatedAtCell value={f.updatedAt} /></td></tr>
             ))}</tbody>
           </table>
         </>
@@ -566,7 +583,7 @@ function SecurityTable({ data, search, limit }: { data: JsReconData; search: str
         <>
           <div className={styles.sectionTitle}>DOM Sinks ({sinks.length})</div>
           <table className={styles.table}>
-            <thead><tr><th>Severity</th><th>Type</th><th>Pattern</th><th>Source</th><th>Line</th></tr></thead>
+            <thead><tr><th>Severity</th><th>Type</th><th>Pattern</th><th>Source</th><th>Line</th><UpdatedAtTh dir={sortDir} onToggle={onToggleSort} /></tr></thead>
             <tbody>{sinks.slice(0, sinkLimit).map((s, i) => (
               <tr key={s.id || i}>
                 <td>{sevBadge(s.severity)}</td>
@@ -574,6 +591,7 @@ function SecurityTable({ data, search, limit }: { data: JsReconData; search: str
                 <td className={styles.truncate} title={s.pattern}><code className={styles.mono}>{s.pattern}</code></td>
                 <td className={styles.truncate} title={s.source_url}><ExternalLink href={s.source_url}>{s.source_url}</ExternalLink></td>
                 <td>{s.line}</td>
+                <td><UpdatedAtCell value={s.updatedAt} /></td>
               </tr>
             ))}</tbody>
           </table>
@@ -583,7 +601,7 @@ function SecurityTable({ data, search, limit }: { data: JsReconData; search: str
         <>
           <div className={styles.sectionTitle}>Developer Comments ({comments.length})</div>
           <table className={styles.table}>
-            <thead><tr><th>Severity</th><th>Type</th><th>Content</th><th>Source</th><th>Line</th></tr></thead>
+            <thead><tr><th>Severity</th><th>Type</th><th>Content</th><th>Source</th><th>Line</th><UpdatedAtTh dir={sortDir} onToggle={onToggleSort} /></tr></thead>
             <tbody>{comments.slice(0, cmtLimit).map((c, i) => (
               <tr key={c.id || i}>
                 <td>{sevBadge(c.severity)}</td>
@@ -591,6 +609,7 @@ function SecurityTable({ data, search, limit }: { data: JsReconData; search: str
                 <td className={styles.truncate} title={c.content}>{c.content}</td>
                 <td className={styles.truncate} title={c.source_url}><ExternalLink href={c.source_url}>{c.source_url}</ExternalLink></td>
                 <td>{c.line}</td>
+                <td><UpdatedAtCell value={c.updatedAt} /></td>
               </tr>
             ))}</tbody>
           </table>
@@ -600,9 +619,9 @@ function SecurityTable({ data, search, limit }: { data: JsReconData; search: str
         <>
           <div className={styles.sectionTitle}>Object References / IDOR ({refs.length})</div>
           <table className={styles.table}>
-            <thead><tr><th>Type</th><th>Value</th><th>Source</th></tr></thead>
+            <thead><tr><th>Type</th><th>Value</th><th>Source</th><UpdatedAtTh dir={sortDir} onToggle={onToggleSort} /></tr></thead>
             <tbody>{refs.slice(0, refLimit).map((r, i) => (
-              <tr key={i}><td>{r.type}</td><td><code className={styles.mono}>{r.value}</code></td><td className={styles.truncate} title={r.source_url}><ExternalLink href={r.source_url}>{r.source_url}</ExternalLink></td></tr>
+              <tr key={i}><td>{r.type}</td><td><code className={styles.mono}>{r.value}</code></td><td className={styles.truncate} title={r.source_url}><ExternalLink href={r.source_url}>{r.source_url}</ExternalLink></td><td><UpdatedAtCell value={r.updatedAt} /></td></tr>
             ))}</tbody>
           </table>
         </>
@@ -611,12 +630,12 @@ function SecurityTable({ data, search, limit }: { data: JsReconData; search: str
   )
 }
 
-function SurfaceTable({ data, search, limit }: { data: JsReconData; search: string; limit: number }) {
+function SurfaceTable({ data, search, limit, sortDir, onToggleSort }: { data: JsReconData; search: string; limit: number; sortDir: SortDir; onToggleSort: () => void }) {
   const subs = (data.discovered_subdomains || []).filter(s => !search || s.toLowerCase().includes(search.toLowerCase()))
-  const cloud = filterRows(data.cloud_assets || [], search)
-  const emails = filterRows(data.emails || [], search)
-  const ips = filterRows(data.ip_addresses || [], search)
-  const extDomains = filterRows(data.external_domains || [], search)
+  const cloud = sortByUpdatedAt(filterRows(data.cloud_assets || [], search), sortDir)
+  const emails = sortByUpdatedAt(filterRows(data.emails || [], search), sortDir)
+  const ips = sortByUpdatedAt(filterRows(data.ip_addresses || [], search), sortDir)
+  const extDomains = sortByUpdatedAt(filterRows(data.external_domains || [], search), sortDir)
 
   if (!subs.length && !cloud.length && !emails.length && !ips.length && !extDomains.length)
     return <div className={styles.stateContainer}>No attack surface data found.</div>
@@ -635,9 +654,9 @@ function SurfaceTable({ data, search, limit }: { data: JsReconData; search: stri
         <>
           <div className={styles.sectionTitle}>New Subdomains ({subs.length})</div>
           <table className={styles.table}>
-            <thead><tr><th>Subdomain</th></tr></thead>
+            <thead><tr><th>Subdomain</th><th>Updated</th></tr></thead>
             <tbody>{subs.slice(0, subsLimit).map(s => (
-              <tr key={s}><td><code className={styles.mono}>{s}</code></td></tr>
+              <tr key={s}><td><code className={styles.mono}>{s}</code></td><td><UpdatedAtCell value={undefined} /></td></tr>
             ))}</tbody>
           </table>
         </>
@@ -646,9 +665,9 @@ function SurfaceTable({ data, search, limit }: { data: JsReconData; search: stri
         <>
           <div className={styles.sectionTitle}>Cloud Assets ({cloud.length})</div>
           <table className={styles.table}>
-            <thead><tr><th>Provider</th><th>Type</th><th>URL</th><th>Source</th></tr></thead>
+            <thead><tr><th>Provider</th><th>Type</th><th>URL</th><th>Source</th><UpdatedAtTh dir={sortDir} onToggle={onToggleSort} /></tr></thead>
             <tbody>{cloud.slice(0, cloudLimit).map((a, i) => (
-              <tr key={i}><td>{a.provider}</td><td>{a.type}</td><td className={styles.truncate} title={a.url}><code className={styles.mono}><ExternalLink href={a.url}>{a.url}</ExternalLink></code></td><td className={styles.truncate} title={a.source_url}><ExternalLink href={a.source_url}>{a.source_url}</ExternalLink></td></tr>
+              <tr key={i}><td>{a.provider}</td><td>{a.type}</td><td className={styles.truncate} title={a.url}><code className={styles.mono}><ExternalLink href={a.url}>{a.url}</ExternalLink></code></td><td className={styles.truncate} title={a.source_url}><ExternalLink href={a.source_url}>{a.source_url}</ExternalLink></td><td><UpdatedAtCell value={a.updatedAt} /></td></tr>
             ))}</tbody>
           </table>
         </>
@@ -657,9 +676,9 @@ function SurfaceTable({ data, search, limit }: { data: JsReconData; search: stri
         <>
           <div className={styles.sectionTitle}>Email Addresses ({emails.length})</div>
           <table className={styles.table}>
-            <thead><tr><th>Email</th><th>Source</th></tr></thead>
+            <thead><tr><th>Email</th><th>Source</th><UpdatedAtTh dir={sortDir} onToggle={onToggleSort} /></tr></thead>
             <tbody>{emails.slice(0, emailsLimit).map((e, i) => (
-              <tr key={i}><td>{e.email}</td><td className={styles.truncate} title={e.source_url}><ExternalLink href={e.source_url}>{e.source_url}</ExternalLink></td></tr>
+              <tr key={i}><td>{e.email}</td><td className={styles.truncate} title={e.source_url}><ExternalLink href={e.source_url}>{e.source_url}</ExternalLink></td><td><UpdatedAtCell value={e.updatedAt} /></td></tr>
             ))}</tbody>
           </table>
         </>
@@ -668,9 +687,9 @@ function SurfaceTable({ data, search, limit }: { data: JsReconData; search: stri
         <>
           <div className={styles.sectionTitle}>Internal IPs ({ips.length})</div>
           <table className={styles.table}>
-            <thead><tr><th>IP</th><th>Type</th><th>Source</th></tr></thead>
+            <thead><tr><th>IP</th><th>Type</th><th>Source</th><UpdatedAtTh dir={sortDir} onToggle={onToggleSort} /></tr></thead>
             <tbody>{ips.slice(0, ipsLimit).map((ip, i) => (
-              <tr key={i}><td><code className={styles.mono}>{ip.ip}</code></td><td>{ip.type}</td><td className={styles.truncate} title={ip.source_url}><ExternalLink href={ip.source_url}>{ip.source_url}</ExternalLink></td></tr>
+              <tr key={i}><td><code className={styles.mono}>{ip.ip}</code></td><td>{ip.type}</td><td className={styles.truncate} title={ip.source_url}><ExternalLink href={ip.source_url}>{ip.source_url}</ExternalLink></td><td><UpdatedAtCell value={ip.updatedAt} /></td></tr>
             ))}</tbody>
           </table>
         </>
@@ -679,9 +698,9 @@ function SurfaceTable({ data, search, limit }: { data: JsReconData; search: stri
         <>
           <div className={styles.sectionTitle}>External Domains ({extDomains.length})</div>
           <table className={styles.table}>
-            <thead><tr><th>Domain</th><th>Times Seen</th></tr></thead>
+            <thead><tr><th>Domain</th><th>Times Seen</th><UpdatedAtTh dir={sortDir} onToggle={onToggleSort} /></tr></thead>
             <tbody>{extDomains.slice(0, extLimit).map((d, i) => (
-              <tr key={i}><td><code className={styles.mono}>{d.domain}</code></td><td>{d.times_seen}</td></tr>
+              <tr key={i}><td><code className={styles.mono}>{d.domain}</code></td><td>{d.times_seen}</td><td><UpdatedAtCell value={d.updatedAt} /></td></tr>
             ))}</tbody>
           </table>
         </>

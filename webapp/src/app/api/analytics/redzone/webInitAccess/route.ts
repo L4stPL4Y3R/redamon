@@ -78,7 +78,8 @@ export async function GET(request: NextRequest) {
               size(allEps)                           AS totalEndpointCount,
               size(authEps)                          AS authEndpointCount,
               [x IN vulnTags WHERE x IS NOT NULL]    AS vulnTags,
-              [h IN secHeaders WHERE h IS NOT NULL]  AS securityHeadersPresent
+              [h IN secHeaders WHERE h IS NOT NULL]  AS securityHeadersPresent,
+              bu.updated_at                          AS updatedAt
        ORDER BY size([x IN vulnTags WHERE x IS NOT NULL]) DESC, size(authEps) DESC
        LIMIT ${rowCap()}`,
       {
@@ -111,6 +112,7 @@ export async function GET(request: NextRequest) {
         vulnTags,
         headerGrid,
         grade,
+        updatedAt: (r.get('updatedAt') ?? null) as unknown,
       }
     })
 

@@ -6,6 +6,12 @@ import { useRedZoneTable } from './useRedZoneTable'
 import type { RedZoneExportConfig } from './exportCsv'
 import { useRedZoneFilters, type RedZoneFilterColumn } from './useRedZoneFilters'
 import {
+  UPDATED_AT_COLUMN,
+  UpdatedAtCell,
+  UpdatedAtTh,
+  useUpdatedAtSort,
+} from './updatedAt'
+import {
   Mono,
   Truncated,
   ListCell,
@@ -32,6 +38,8 @@ interface NetInitAccessRow {
   asn: string | null
   country: string | null
   isp: string | null
+  /** Graph `updated_at` of the node this row is built from. */
+  updatedAt: unknown
 }
 
 const PAGE_SIZE = 100
@@ -74,6 +82,7 @@ const COLUMNS: RedZoneFilterColumn[] = [
   { key: 'asn', header: 'ASN' },
   { key: 'country', header: 'Country' },
   { key: 'isp', header: 'ISP' },
+  UPDATED_AT_COLUMN,
 ]
 
 interface Props { projectId: string | null }
@@ -88,18 +97,19 @@ export const NetInitAccessTable = memo(function NetInitAccessTable({ projectId }
   const { filteredRows: filtered, filterUi } = useRedZoneFilters({
     rows: searched, columns: COLUMNS, projectId, slug: 'netInitAccess',
   })
-  const sliced = useMemo(() => filtered.slice(0, limit), [filtered, limit])
+  const { sortedRows, sortDir, toggleSort } = useUpdatedAtSort(filtered)
+  const sliced = useMemo(() => sortedRows.slice(0, limit), [sortedRows, limit])
 
   const exportConfig = useMemo<RedZoneExportConfig | undefined>(() =>
     rows.length > 0
       ? {
-          rows: filtered,
+          rows: sortedRows,
           sheetName: 'Net-Init-Access',
           fileSlug: 'redzone-net-init-access',
           columns: COLUMNS,
         }
       : undefined,
-    [filtered, rows.length],
+    [sortedRows, rows.length],
   )
 
   return (
@@ -129,6 +139,7 @@ export const NetInitAccessTable = memo(function NetInitAccessTable({ projectId }
             <th>Findings</th>
             <th>CDN</th>
             <th>ASN / Country</th>
+            <UpdatedAtTh dir={sortDir} onToggle={toggleSort} />
           </tr>
         </thead>
         <tbody>
@@ -153,6 +164,7 @@ export const NetInitAccessTable = memo(function NetInitAccessTable({ projectId }
               <td>
                 <Truncated text={[r.asn, r.country].filter(Boolean).join(' · ')} max={140} />
               </td>
+              <td><UpdatedAtCell value={r.updatedAt} /></td>
             </tr>
           ))}
         </tbody>

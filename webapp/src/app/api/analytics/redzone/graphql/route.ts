@@ -44,7 +44,8 @@ export async function GET(request: NextRequest) {
               ep.graphql_last_error                   AS lastError,
               ep.sensitive_fields_sample              AS sensitiveFieldsSample,
               collect(DISTINCT coalesce(v.vulnerability_type, v.graphql_cop_key, v.title)) AS vulnTypes,
-              collect(DISTINCT v.severity)            AS vulnSeverities
+              collect(DISTINCT v.severity)            AS vulnSeverities,
+              ep.updated_at                           AS updatedAt
        ORDER BY
          CASE WHEN ep.graphql_introspection_enabled = true THEN 0 ELSE 1 END,
          CASE WHEN ep.graphql_graphiql_exposed = true THEN 0 ELSE 1 END,
@@ -74,6 +75,7 @@ export async function GET(request: NextRequest) {
       sensitiveFieldsSample: r.get('sensitiveFieldsSample') as string | null,
       vulnTypes: ((r.get('vulnTypes') as string[]) || []).filter(Boolean),
       vulnSeverities: ((r.get('vulnSeverities') as string[]) || []).filter(Boolean),
+      updatedAt: r.get('updatedAt') ?? null,
     }))
 
     return NextResponse.json({ rows, meta: { totalRows: rows.length } })

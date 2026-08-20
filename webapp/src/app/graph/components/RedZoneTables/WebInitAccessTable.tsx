@@ -6,6 +6,12 @@ import { useRedZoneTable } from './useRedZoneTable'
 import type { RedZoneExportConfig } from './exportCsv'
 import { useRedZoneFilters, type RedZoneFilterColumn } from './useRedZoneFilters'
 import {
+  UPDATED_AT_COLUMN,
+  UpdatedAtCell,
+  UpdatedAtTh,
+  useUpdatedAtSort,
+} from './updatedAt'
+import {
   Mono,
   Truncated,
   ListCell,
@@ -29,6 +35,8 @@ interface WebInitAccessRow {
   vulnTags: string[]
   headerGrid: Record<string, boolean>
   grade: string
+  /** Graph `updated_at` of the node this row is built from. */
+  updatedAt: unknown
 }
 
 const PAGE_SIZE = 100
@@ -84,6 +92,7 @@ const COLUMNS: RedZoneFilterColumn[] = [
   { key: 'X-Content-Type-Options', header: 'X-Content-Type-Options' },
   { key: 'Referrer-Policy', header: 'Referrer-Policy' },
   { key: 'Permissions-Policy', header: 'Permissions-Policy' },
+  UPDATED_AT_COLUMN,
 ]
 
 interface Props { projectId: string | null }
@@ -98,11 +107,12 @@ export const WebInitAccessTable = memo(function WebInitAccessTable({ projectId }
   const { filteredRows: filtered, filterUi } = useRedZoneFilters({
     rows: searched, columns: COLUMNS, projectId, slug: 'webInitAccess',
   })
-  const sliced = useMemo(() => filtered.slice(0, limit), [filtered, limit])
+  const { sortedRows, sortDir, toggleSort } = useUpdatedAtSort(filtered)
+  const sliced = useMemo(() => sortedRows.slice(0, limit), [sortedRows, limit])
 
   const exportConfig = useMemo<RedZoneExportConfig | undefined>(() => {
     if (rows.length === 0) return undefined
-    const flat = filtered.map(r => ({
+    const flat = sortedRows.map(r => ({
       baseUrl: r.baseUrl,
       subdomain: r.subdomain,
       scheme: r.scheme,
@@ -120,6 +130,7 @@ export const WebInitAccessTable = memo(function WebInitAccessTable({ projectId }
       'X-Content-Type-Options': r.headerGrid['X-Content-Type-Options'],
       'Referrer-Policy': r.headerGrid['Referrer-Policy'],
       'Permissions-Policy': r.headerGrid['Permissions-Policy'],
+      updatedAt: r.updatedAt,
     }))
     return {
       rows: flat,
@@ -127,7 +138,7 @@ export const WebInitAccessTable = memo(function WebInitAccessTable({ projectId }
       fileSlug: 'redzone-web-init-access',
       columns: COLUMNS,
     }
-  }, [filtered, rows.length])
+  }, [sortedRows, rows.length])
 
   return (
     <RedZoneTableShell
@@ -155,6 +166,7 @@ export const WebInitAccessTable = memo(function WebInitAccessTable({ projectId }
             {HEADER_CHECKS.map(h => <th key={h} title={h}>{HEADER_SHORT[h]}</th>)}
             <th>Vuln Tags</th>
             <th>Server</th>
+            <UpdatedAtTh dir={sortDir} onToggle={toggleSort} />
           </tr>
         </thead>
         <tbody>
@@ -175,6 +187,7 @@ export const WebInitAccessTable = memo(function WebInitAccessTable({ projectId }
               ))}
               <td><ListCell items={r.vulnTags} max={3} /></td>
               <td><Truncated text={r.server} max={120} /></td>
+              <td><UpdatedAtCell value={r.updatedAt} /></td>
             </tr>
           ))}
         </tbody>

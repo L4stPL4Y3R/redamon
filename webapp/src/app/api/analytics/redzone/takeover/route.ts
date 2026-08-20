@@ -36,7 +36,8 @@ export async function GET(request: NextRequest) {
               v.evidence            AS evidence,
               v.first_seen          AS firstSeen,
               v.last_seen           AS lastSeen,
-              v.detected_at         AS detectedAt
+              v.detected_at         AS detectedAt,
+              v.updated_at          AS updatedAt
        ORDER BY
          CASE v.verdict WHEN 'confirmed' THEN 0 WHEN 'likely' THEN 1 ELSE 2 END,
          v.confidence DESC
@@ -60,6 +61,7 @@ export async function GET(request: NextRequest) {
       firstSeen: r.get('firstSeen') as string | null,
       lastSeen: r.get('lastSeen') as string | null,
       detectedAt: r.get('detectedAt') as string | null,
+      updatedAt: r.get('updatedAt') ?? null,
     }))
 
     const summary = {

@@ -1,3 +1,5 @@
+import { formatNeo4jDateTime } from './formatters'
+
 export function timestampSlug(): string {
   return new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')
 }
@@ -37,12 +39,25 @@ export function downloadBlobParts(parts: BlobPart[], filename: string, mimeType:
 export function flattenCellValue(raw: unknown): string {
   if (raw == null) return ''
   if (Array.isArray(raw)) {
-    return raw
-      .map(v => (typeof v === 'object' && v !== null ? safeStringify(v) : String(v)))
-      .join(', ')
+    return raw.map(v => flattenScalar(v)).join(', ')
   }
-  if (typeof raw === 'object') return safeStringify(raw)
-  return String(raw)
+  return flattenScalar(raw)
+}
+
+/**
+ * A Neo4j temporal is an object, so the generic object branch would put
+ * `{"year":{"low":2026,...}}` in a CSV cell for every `updated_at` the tables
+ * now export. It goes through the same formatter the cell renders with, so a
+ * downloaded row reads exactly like the row on screen.
+ */
+function flattenScalar(v: unknown): string {
+  if (v === null || v === undefined) return ''
+  if (typeof v === 'object') {
+    const temporal = formatNeo4jDateTime(v)
+    if (temporal !== null) return temporal
+    return safeStringify(v)
+  }
+  return String(v)
 }
 
 function safeStringify(value: unknown): string {

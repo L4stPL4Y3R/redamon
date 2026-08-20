@@ -8,9 +8,23 @@ import {
   Mono, Truncated, UrlCell, NumCell, BoolChip, ListCell, SeverityBadge, filterRowsByText,
 } from './formatters'
 import { normalizeSeverity } from './types'
+import {
+  UPDATED_AT_HEADER,
+  UPDATED_AT_KEY,
+  UpdatedAtCell,
+  UpdatedAtTh,
+  useUpdatedAtSort,
+} from './updatedAt'
 import rowStyles from './RedZoneTableRow.module.css'
 
-type CellKind = 'url' | 'mono' | 'text' | 'bool' | 'num' | 'list' | 'sev'
+type CellKind = 'url' | 'mono' | 'text' | 'bool' | 'num' | 'list' | 'sev' | 'date'
+
+/**
+ * Appended to every sheet at render time rather than written into each of the
+ * eleven `SheetDef`s: the column is not a property of any one sheet, it is the
+ * one column every sheet is guaranteed to have.
+ */
+const UPDATED_AT_CELL: ColumnDef = { key: UPDATED_AT_KEY, header: UPDATED_AT_HEADER, kind: 'date' }
 
 interface ColumnDef { key: string; header: string; kind: CellKind; max?: number }
 interface SheetDef { key: string; label: string; columns: ColumnDef[]; empty: string }
@@ -32,6 +46,7 @@ function renderCell(kind: CellKind, value: unknown, max?: number) {
     case 'num': return <NumCell value={value as number | null} />
     case 'list': return <ListCell items={(value as string[]) || []} max={max ?? 4} />
     case 'sev': return <SeverityBadge severity={normalizeSeverity(value as string)} />
+    case 'date': return <UpdatedAtCell value={value} />
     default: return <Truncated text={value == null ? '' : String(value)} max={max ?? 200} />
   }
 }
@@ -63,24 +78,26 @@ const MultiSheetTable = memo(function MultiSheetTable({ projectId, slug, title, 
   useEffect(() => { fetchData() }, [fetchData])
 
   const sheet = sheets.find(s => s.key === active) ?? sheets[0]
+  const columns = useMemo(() => [...sheet.columns, UPDATED_AT_CELL], [sheet])
   const allRows = useMemo(() => (data?.sheets?.[sheet.key] as Record<string, unknown>[]) ?? [], [data, sheet.key])
   const searched = useMemo(() => filterRowsByText(allRows, search), [allRows, search])
   // Each sheet has its own columns, so it filters - and remembers its filters -
   // independently of its siblings.
   const filterColumns = useMemo(
-    () => sheet.columns.map(c => ({ key: c.key, header: c.header })),
-    [sheet],
+    () => columns.map(c => ({ key: c.key, header: c.header })),
+    [columns],
   )
   const { filteredRows: filtered, filterUi } = useRedZoneFilters({
     rows: searched, columns: filterColumns, projectId, slug, sheet: sheet.key,
   })
+  const { sortedRows, sortDir, toggleSort } = useUpdatedAtSort(filtered)
 
   const exportConfig = useMemo<RedZoneExportConfig | undefined>(() =>
     filtered.length > 0
-      ? { rows: filtered, sheetName: sheet.label, fileSlug: `${slug}-${sheet.key}`,
+      ? { rows: sortedRows, sheetName: sheet.label, fileSlug: `${slug}-${sheet.key}`,
           columns: filterColumns }
       : undefined,
-    [filtered, sheet, slug, filterColumns])
+    [filtered.length, sortedRows, sheet, slug, filterColumns])
 
   const counts = (data?.sheets ?? {}) as Record<string, unknown[]>
   const meta = sheets.map(s => `${s.label}: ${counts[s.key]?.length ?? 0}`).join(' · ')
@@ -125,12 +142,18 @@ const MultiSheetTable = memo(function MultiSheetTable({ projectId, slug, title, 
     >
       <table className={rowStyles.table}>
         <thead>
-          <tr>{sheet.columns.map(c => <th key={c.key}>{c.header}</th>)}</tr>
+          <tr>
+            {columns.map(c => (
+              c.key === UPDATED_AT_KEY
+                ? <UpdatedAtTh key={c.key} dir={sortDir} onToggle={toggleSort} />
+                : <th key={c.key}>{c.header}</th>
+            ))}
+          </tr>
         </thead>
         <tbody>
-          {filtered.map((r, i) => (
+          {sortedRows.map((r, i) => (
             <tr key={i}>
-              {sheet.columns.map(c => <td key={c.key}>{renderCell(c.kind, r[c.key], c.max)}</td>)}
+              {columns.map(c => <td key={c.key}>{renderCell(c.kind, r[c.key], c.max)}</td>)}
             </tr>
           ))}
         </tbody>

@@ -1780,7 +1780,8 @@ async function queryAiSurface(session: any, pid: string) {
             v.ai_payload_class AS payloadClass, v.ai_transcript_ref AS transcriptRef,
             v.evidence AS evidence, v.ai_probe_pack_version AS probePackVersion,
             coalesce(parent.baseurl, parent.url, parent.name, v.ai_target_url) AS target,
-            parent.path AS endpointPath
+            parent.path AS endpointPath,
+            v.updated_at AS updatedAt
      ORDER BY v.ai_asr DESC
      LIMIT 2000`,
     { pid }
@@ -1798,6 +1799,7 @@ async function queryAiSurface(session: any, pid: string) {
     probePackVersion: (r.get('probePackVersion') as string) || null,
     target: (r.get('target') as string) || null,
     endpointPath: (r.get('endpointPath') as string) || null,
+    updatedAt: r.get('updatedAt') ?? null,
   }))
   const attackFindings = corroborateAttackFindings(rawAttack)
   const attackToolsRun = [...new Set(rawAttack.map(r => r.source).filter(Boolean))].sort()

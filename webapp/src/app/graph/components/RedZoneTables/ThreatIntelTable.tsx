@@ -5,6 +5,12 @@ import { RedZoneTableShell } from './RedZoneTableShell'
 import { useRedZoneTable } from './useRedZoneTable'
 import type { RedZoneExportConfig } from './exportCsv'
 import { useRedZoneFilters, type RedZoneFilterColumn } from './useRedZoneFilters'
+import {
+  UPDATED_AT_COLUMN,
+  UpdatedAtCell,
+  UpdatedAtTh,
+  useUpdatedAtSort,
+} from './updatedAt'
 import { ExternalLink } from '@/components/ui'
 import { isHttpUrl, resolveLinkable } from '@/lib/url-utils'
 import {
@@ -61,6 +67,8 @@ interface ThreatIntelRow {
   incidentSummary?: string | null
   incidentFeedRevised?: string | null
   incidentVectors?: string[]
+  /** Graph `updated_at` of the node this row is built from. */
+  updatedAt: unknown
 }
 
 const PAGE_SIZE = 100
@@ -120,6 +128,7 @@ const COLUMNS: RedZoneFilterColumn[] = [
   { key: 'incidentVectors', header: 'Attack Vectors' },
   { key: 'incidentUrl', header: 'Incident URL' },
   { key: 'incidentFeedRevised', header: 'Feed Revision' },
+  UPDATED_AT_COLUMN,
 ]
 
 interface Props { projectId: string | null }
@@ -134,18 +143,19 @@ export const ThreatIntelTable = memo(function ThreatIntelTable({ projectId }: Pr
   const { filteredRows: filtered, filterUi } = useRedZoneFilters({
     rows: searched, columns: COLUMNS, projectId, slug: 'threatIntel',
   })
-  const sliced = useMemo(() => filtered.slice(0, limit), [filtered, limit])
+  const { sortedRows, sortDir, toggleSort } = useUpdatedAtSort(filtered)
+  const sliced = useMemo(() => sortedRows.slice(0, limit), [sortedRows, limit])
 
   const exportConfig = useMemo<RedZoneExportConfig | undefined>(() =>
     rows.length > 0
       ? {
-          rows: filtered,
+          rows: sortedRows,
           sheetName: 'Threat-Intel',
           fileSlug: 'redzone-threat-intel',
           columns: COLUMNS,
         }
       : undefined,
-    [filtered, rows.length],
+    [sortedRows, rows.length],
   )
 
   return (
@@ -179,6 +189,7 @@ export const ThreatIntelTable = memo(function ThreatIntelTable({ projectId }: Pr
             <th>Proxy/Tor/VPN</th>
             <th>Tags</th>
             <th>Contacted host</th>
+            <UpdatedAtTh dir={sortDir} onToggle={toggleSort} />
           </tr>
         </thead>
         <tbody>
@@ -230,6 +241,7 @@ export const ThreatIntelTable = memo(function ThreatIntelTable({ projectId }: Pr
                   </span>
                 ) : <span className={rowStyles.nullCell}>-</span>}
               </td>
+              <td><UpdatedAtCell value={r.updatedAt} /></td>
             </tr>
           ))}
         </tbody>

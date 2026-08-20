@@ -7,6 +7,12 @@ import { normalizeSeverity } from './types'
 import type { RedZoneExportConfig } from './exportCsv'
 import { useRedZoneFilters, type RedZoneFilterColumn } from './useRedZoneFilters'
 import {
+  UPDATED_AT_COLUMN,
+  UpdatedAtCell,
+  UpdatedAtTh,
+  useUpdatedAtSort,
+} from './updatedAt'
+import {
   SeverityBadge,
   Mono,
   Truncated,
@@ -34,6 +40,8 @@ interface WcpRow {
   crossVantage: boolean | null
   pocLink: string | null
   curlVerify: string | null
+  /** Graph `updated_at` of the node this row is built from. */
+  updatedAt: unknown
 }
 
 const PAGE_SIZE = 100
@@ -57,6 +65,7 @@ const COLUMNS: RedZoneFilterColumn[] = [
   { key: 'crossVantage', header: 'Cross-vantage' },
   { key: 'pocLink', header: 'PoC link' },
   { key: 'curlVerify', header: 'curl PoC' },
+  UPDATED_AT_COLUMN,
 ]
 
 interface Props { projectId: string | null }
@@ -71,18 +80,19 @@ export const WebCachePoisonTable = memo(function WebCachePoisonTable({ projectId
   const { filteredRows: filtered, filterUi } = useRedZoneFilters({
     rows: searched, columns: COLUMNS, projectId, slug: 'webCachePoison',
   })
-  const sliced = useMemo(() => filtered.slice(0, limit), [filtered, limit])
+  const { sortedRows, sortDir, toggleSort } = useUpdatedAtSort(filtered)
+  const sliced = useMemo(() => sortedRows.slice(0, limit), [sortedRows, limit])
 
   const exportConfig = useMemo<RedZoneExportConfig | undefined>(() =>
     rows.length > 0
       ? {
-          rows: filtered,
+          rows: sortedRows,
           sheetName: 'WebCachePoisoning',
           fileSlug: 'redzone-web-cache-poisoning',
           columns: COLUMNS,
         }
       : undefined,
-    [filtered, rows.length],
+    [sortedRows, rows.length],
   )
 
   const confirmed = rows.filter(r => r.tier === 'Confirmed').length
@@ -119,6 +129,7 @@ export const WebCachePoisonTable = memo(function WebCachePoisonTable({ projectId
             <th>Mode</th>
             <th>Conf</th>
             <th>PoC</th>
+            <UpdatedAtTh dir={sortDir} onToggle={toggleSort} />
           </tr>
         </thead>
         <tbody>
@@ -137,6 +148,7 @@ export const WebCachePoisonTable = memo(function WebCachePoisonTable({ projectId
                   ? <a href={r.pocLink} target="_blank" rel="noreferrer" title={r.curlVerify || r.pocLink}>PoC</a>
                   : <Truncated text={r.curlVerify} max={40} />}
               </td>
+              <td><UpdatedAtCell value={r.updatedAt} /></td>
             </tr>
           ))}
         </tbody>

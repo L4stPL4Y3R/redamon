@@ -45,7 +45,8 @@ export async function GET(request: NextRequest) {
               baseurlsClean[0..10]           AS baseurls,
               null                           AS asn,
               null                           AS country,
-              null                           AS ipAddress
+              null                           AS ipAddress,
+              cert.updated_at                AS updatedAt
        ORDER BY size(allHosts) DESC
        LIMIT ${rowCap()}`,
       { pid: projectId }
@@ -58,11 +59,12 @@ export async function GET(request: NextRequest) {
        WHERE ip.asn IS NOT NULL AND ip.asn <> ''
        OPTIONAL MATCH (sd:Subdomain)-[:RESOLVES_TO]->(ip)
        WITH ip.asn AS asnKey,
+            max(ip.updated_at)                                     AS asnUpdatedAt,
             collect(DISTINCT ip.country)                           AS countries,
             collect(DISTINCT coalesce(ip.isp, ip.organization))    AS orgs,
             collect(DISTINCT ip.address)                           AS ipAddrs,
             collect(DISTINCT sd.name)                              AS subs
-       WITH asnKey,
+       WITH asnKey, asnUpdatedAt,
             [x IN countries WHERE x IS NOT NULL] AS countriesClean,
             [x IN orgs WHERE x IS NOT NULL]      AS orgsClean,
             [x IN ipAddrs WHERE x IS NOT NULL]   AS ipsClean,
@@ -80,7 +82,8 @@ export async function GET(request: NextRequest) {
               ipsClean[0..10]                 AS baseurls,
               asnKey                          AS asn,
               countriesClean[0]               AS country,
-              null                            AS ipAddress
+              null                            AS ipAddress,
+              asnUpdatedAt                    AS updatedAt
        ORDER BY size(subsClean) DESC
        LIMIT ${rowCap()}`,
       { pid: projectId }
@@ -105,7 +108,8 @@ export async function GET(request: NextRequest) {
               []                              AS baseurls,
               ip.asn                          AS asn,
               ip.country                      AS country,
-              ip.address                      AS ipAddress
+              ip.address                      AS ipAddress,
+              ip.updated_at                   AS updatedAt
        ORDER BY size(subsClean) DESC
        LIMIT ${rowCap()}`,
       { pid: projectId }
@@ -125,6 +129,7 @@ export async function GET(request: NextRequest) {
       asn: r.get('asn') as string | null,
       country: r.get('country') as string | null,
       ipAddress: r.get('ipAddress') as string | null,
+      updatedAt: (r.get('updatedAt') ?? null) as unknown,
     })
 
     const rows = [

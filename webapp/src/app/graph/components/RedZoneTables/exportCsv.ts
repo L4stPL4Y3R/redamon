@@ -1,3 +1,4 @@
+import { formatNeo4jDateTime } from '../../utils/formatters'
 import {
   timestampSlug,
   downloadStreaming,
@@ -36,7 +37,10 @@ function* lazyDictRowsForJson(rows: readonly object[], columns: readonly RedZone
     const out: Record<string, unknown> = {}
     for (const col of columns) {
       const v = (row as Record<string, unknown>)[col.key]
-      out[col.header] = v ?? null
+      // A Neo4j temporal would serialise as a nested {year:{low..}} object and
+      // make the JSON export disagree with the CSV and with the cell.
+      const temporal = typeof v === 'object' && v !== null ? formatNeo4jDateTime(v) : null
+      out[col.header] = temporal ?? v ?? null
     }
     yield out
   }

@@ -56,7 +56,8 @@ export async function GET(request: NextRequest) {
               [x IN pulseAdversaries WHERE x IS NOT NULL] AS pulseAdversaries,
               pulseCount                                  AS pulseCount,
               [x IN malwareHashes WHERE x IS NOT NULL]    AS malwareHashes,
-              malwareCount                                AS malwareCount
+              malwareCount                                AS malwareCount,
+              d.updated_at                                AS updatedAt
        ORDER BY pulseCount DESC, vtMaliciousCount DESC, criminalipAbuseCount DESC
        LIMIT ${rowCap()}`,
       { pid: projectId }
@@ -112,7 +113,8 @@ export async function GET(request: NextRequest) {
               [x IN pulseAdversaries WHERE x IS NOT NULL]  AS pulseAdversaries,
               pulseCount                                   AS pulseCount,
               [x IN malwareHashes WHERE x IS NOT NULL]     AS malwareHashes,
-              malwareCount                                 AS malwareCount
+              malwareCount                                 AS malwareCount,
+              ip.updated_at                                AS updatedAt
        ORDER BY pulseCount DESC, vtMaliciousCount DESC
        LIMIT ${rowCap()}`,
       { pid: projectId }
@@ -151,6 +153,7 @@ export async function GET(request: NextRequest) {
       pulseCount: toNum(r.get('pulseCount')),
       malwareHashes: (r.get('malwareHashes') as string[]) || [],
       malwareCount: toNum(r.get('malwareCount')),
+      updatedAt: (r.get('updatedAt') ?? null) as unknown,
     })
 
     const mapIpRow = (r: any) => ({
@@ -186,6 +189,7 @@ export async function GET(request: NextRequest) {
       pulseCount: toNum(r.get('pulseCount')),
       malwareHashes: (r.get('malwareHashes') as string[]) || [],
       malwareCount: toNum(r.get('malwareCount')),
+      updatedAt: (r.get('updatedAt') ?? null) as unknown,
     })
 
     // BaseURL-side hits: supply-chain incident correlation (A2). A different
@@ -205,7 +209,8 @@ export async function GET(request: NextRequest) {
               tp.sca_status                AS incidentStatus,
               tp.sca_summary               AS incidentSummary,
               tp.sca_feed_revised          AS incidentFeedRevised,
-              coalesce(tp.tags, [])        AS incidentVectors
+              coalesce(tp.tags, [])        AS incidentVectors,
+              coalesce(u.updated_at, tp.updated_at) AS updatedAt
        ORDER BY u.url, c.matched_host
        LIMIT ${rowCap()}`,
       { pid: projectId }
@@ -242,6 +247,7 @@ export async function GET(request: NextRequest) {
       incidentSummary: (r.get('incidentSummary') as string) || null,
       incidentFeedRevised: (r.get('incidentFeedRevised') as string) || null,
       incidentVectors: (r.get('incidentVectors') as string[]) || [],
+      updatedAt: (r.get('updatedAt') ?? null) as unknown,
     })
 
     const rows = [

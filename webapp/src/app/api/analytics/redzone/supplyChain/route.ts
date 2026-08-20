@@ -57,7 +57,8 @@ export async function GET(request: NextRequest) {
               j.discovered_at       AS discoveredAt,
               baseurl.url           AS baseUrl,
               subdomain             AS subdomain,
-              parent.source_url     AS parentJsUrl
+              parent.source_url     AS parentJsUrl,
+              j.updated_at          AS updatedAt
        ORDER BY
          CASE j.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1
            WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END,
@@ -84,6 +85,7 @@ export async function GET(request: NextRequest) {
       baseUrl: (r.get('baseUrl') as string | null) ?? r.get('baseUrlProp') as string | null,
       subdomain: r.get('subdomain') as string | null,
       parentJsUrl: r.get('parentJsUrl') as string | null,
+      updatedAt: r.get('updatedAt') ?? null,
     }))
 
     const byType: Record<string, number> = {}

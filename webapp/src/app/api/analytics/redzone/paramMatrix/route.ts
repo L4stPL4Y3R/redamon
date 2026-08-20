@@ -52,7 +52,8 @@ export async function GET(request: NextRequest) {
               v.fuzzing_method                        AS fuzzingMethod,
               v.fuzzing_position                      AS fuzzingPosition,
               coalesce(v.matched_at, v.url)           AS matchedAt,
-              v.cvss_score                            AS cvssScore
+              v.cvss_score                            AS cvssScore,
+              coalesce(v.updated_at, p.updated_at)    AS updatedAt
        ORDER BY
          CASE v.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1
            WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END,
@@ -86,6 +87,7 @@ export async function GET(request: NextRequest) {
       fuzzingPosition: r.get('fuzzingPosition') as string | null,
       matchedAt: r.get('matchedAt') as string | null,
       cvssScore: r.get('cvssScore') as number | null,
+      updatedAt: r.get('updatedAt') ?? null,
     }))
 
     const injectableCount = rows.filter(r => r.isInjectable).length

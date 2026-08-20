@@ -45,7 +45,8 @@ export async function GET(request: NextRequest) {
               v.cache_buster              AS cacheBuster,
               v.cross_vantage             AS crossVantage,
               v.poc_link                  AS pocLink,
-              v.curl_verify               AS curlVerify
+              v.curl_verify               AS curlVerify,
+              v.updated_at                AS updatedAt
        ORDER BY v.cvss_score DESC, v.confidence DESC
        LIMIT ${rowCap()}`,
       { pid: projectId }
@@ -69,6 +70,7 @@ export async function GET(request: NextRequest) {
       crossVantage: r.get('crossVantage') as boolean | null,
       pocLink: r.get('pocLink') as string | null,
       curlVerify: r.get('curlVerify') as string | null,
+      updatedAt: r.get('updatedAt') ?? null,
     }))
 
     const tiers = rows.reduce<Record<string, number>>((acc, r) => {

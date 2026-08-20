@@ -62,7 +62,8 @@ export async function GET(request: NextRequest) {
               ip.cdn_name                             AS cdnName,
               ip.asn                                  AS asn,
               ip.country                              AS country,
-              coalesce(ip.isp, ip.organization)       AS isp
+              coalesce(ip.isp, ip.organization)       AS isp,
+              coalesce(p.updated_at, ip.updated_at)   AS updatedAt
        LIMIT ${rowCap()}`,
       { pid: projectId, ports: sensitivePorts, vulnTypes: NET_VULN_TYPES }
     )
@@ -86,7 +87,8 @@ export async function GET(request: NextRequest) {
               ip.cdn_name                             AS cdnName,
               ip.asn                                  AS asn,
               ip.country                              AS country,
-              coalesce(ip.isp, ip.organization)       AS isp
+              coalesce(ip.isp, ip.organization)       AS isp,
+              coalesce(v.updated_at, ip.updated_at)   AS updatedAt
        LIMIT ${rowCap()}`,
       { pid: projectId, vulnTypes: NET_VULN_TYPES }
     )
@@ -111,6 +113,7 @@ export async function GET(request: NextRequest) {
         asn: r.get('asn') as string | null,
         country: r.get('country') as string | null,
         isp: r.get('isp') as string | null,
+        updatedAt: (r.get('updatedAt') ?? null) as unknown,
       }
     }
 

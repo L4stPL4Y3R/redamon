@@ -65,7 +65,8 @@ export async function GET(request: NextRequest) {
               [x IN nsVals  WHERE x IS NOT NULL]  AS nsRecords,
               [x IN txtVals WHERE x IS NOT NULL]  AS txtRecords,
               [x IN soaVals WHERE x IS NOT NULL]  AS soaRecords,
-              [x IN vulnTagsRaw WHERE x IS NOT NULL] AS vulnTags
+              [x IN vulnTagsRaw WHERE x IS NOT NULL] AS vulnTags,
+              d.updated_at                        AS updatedAt
        ORDER BY d.name`,
       { pid: projectId, dnsTypes: DNS_VULN_TYPES }
     )
@@ -126,6 +127,7 @@ export async function GET(request: NextRequest) {
         spfMissing,
         dmarcMissing,
         dnssecMissing,
+        updatedAt: (r.get('updatedAt') ?? null) as unknown,
       }
     })
 

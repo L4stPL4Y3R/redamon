@@ -69,7 +69,8 @@ export async function GET(request: NextRequest) {
               externalDomainsClean           AS externalDomains,
               size(externalDomainsClean)     AS externalDomainCount,
               danglingSubsClean              AS danglingSubs,
-              size(danglingSubsClean)        AS danglingSubCount
+              size(danglingSubsClean)        AS danglingSubCount,
+              d.updated_at                   AS updatedAt
        ORDER BY
          size(historicResolutionsClean) + size(externalDomainsClean) + size(danglingSubsClean) DESC,
          d.name
@@ -131,6 +132,7 @@ export async function GET(request: NextRequest) {
         danglingSubs: (r.get('danglingSubs') as string[]) || [],
         danglingSubCount: toNum(r.get('danglingSubCount')),
         lastResolutionDate,
+        updatedAt: (r.get('updatedAt') ?? null) as unknown,
       }
     })
 

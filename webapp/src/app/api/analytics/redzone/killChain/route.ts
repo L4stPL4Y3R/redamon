@@ -51,7 +51,8 @@ export async function GET(request: NextRequest) {
               m.cwe_name        AS cweName,
               cap.capec_id      AS capecId,
               cap.name          AS capecName,
-              cap.severity      AS capecSeverity
+              cap.severity      AS capecSeverity,
+              coalesce(tech.updated_at, p.updated_at, ip.updated_at, s.updated_at) AS updatedAt
        ORDER BY cisaKev DESC, cvss DESC
        LIMIT ${rowCap()}`,
       { pid: projectId }
@@ -76,6 +77,7 @@ export async function GET(request: NextRequest) {
       capecId: r.get('capecId') as string | null,
       capecName: r.get('capecName') as string | null,
       capecSeverity: r.get('capecSeverity') as string | null,
+      updatedAt: r.get('updatedAt') ?? null,
     }))
 
     return NextResponse.json({

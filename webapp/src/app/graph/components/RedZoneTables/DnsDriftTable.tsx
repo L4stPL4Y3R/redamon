@@ -6,6 +6,12 @@ import { useRedZoneTable } from './useRedZoneTable'
 import type { RedZoneExportConfig } from './exportCsv'
 import { useRedZoneFilters, type RedZoneFilterColumn } from './useRedZoneFilters'
 import {
+  UPDATED_AT_COLUMN,
+  UpdatedAtCell,
+  UpdatedAtTh,
+  useUpdatedAtSort,
+} from './updatedAt'
+import {
   Truncated,
   ListCell,
   NumCell,
@@ -46,6 +52,8 @@ interface DnsDriftRow {
   danglingSubs: string[]
   danglingSubCount: number
   lastResolutionDate: string | null
+  /** Graph `updated_at` of the node this row is built from. */
+  updatedAt: unknown
 }
 
 const PAGE_SIZE = 50
@@ -68,6 +76,7 @@ const COLUMNS: RedZoneFilterColumn[] = [
   { key: 'externalDomains', header: 'External Domains' },
   { key: 'danglingSubCount', header: 'Dangling Subdomain Count' },
   { key: 'danglingSubs', header: 'Dangling Subdomains' },
+  UPDATED_AT_COLUMN,
 ]
 
 interface Props { projectId: string | null }
@@ -82,11 +91,12 @@ export const DnsDriftTable = memo(function DnsDriftTable({ projectId }: Props) {
   const { filteredRows: filtered, filterUi } = useRedZoneFilters({
     rows: searched, columns: COLUMNS, projectId, slug: 'dnsDrift',
   })
-  const sliced = useMemo(() => filtered.slice(0, limit), [filtered, limit])
+  const { sortedRows, sortDir, toggleSort } = useUpdatedAtSort(filtered)
+  const sliced = useMemo(() => sortedRows.slice(0, limit), [sortedRows, limit])
 
   const exportConfig = useMemo<RedZoneExportConfig | undefined>(() => {
     if (rows.length === 0) return undefined
-    const flat = filtered.map(r => ({
+    const flat = sortedRows.map(r => ({
       domain: r.domain,
       historicIpCount: r.historicIpCount,
       historicIps: r.historicResolutions.map(h => h.address).filter(Boolean).join(', '),
@@ -102,6 +112,7 @@ export const DnsDriftTable = memo(function DnsDriftTable({ projectId }: Props) {
       externalDomains: r.externalDomains.map(e => e.domain).join(', '),
       danglingSubCount: r.danglingSubCount,
       danglingSubs: r.danglingSubs.join(', '),
+      updatedAt: r.updatedAt,
     }))
     return {
       rows: flat,
@@ -109,7 +120,7 @@ export const DnsDriftTable = memo(function DnsDriftTable({ projectId }: Props) {
       fileSlug: 'redzone-dns-drift',
       columns: COLUMNS,
     }
-  }, [filtered, rows.length])
+  }, [sortedRows, rows.length])
 
   return (
     <RedZoneTableShell
@@ -138,6 +149,7 @@ export const DnsDriftTable = memo(function DnsDriftTable({ projectId }: Props) {
             <th>Last hist. seen</th>
             <th>External sightings</th>
             <th>Dangling subs</th>
+            <UpdatedAtTh dir={sortDir} onToggle={toggleSort} />
           </tr>
         </thead>
         <tbody>
@@ -172,6 +184,7 @@ export const DnsDriftTable = memo(function DnsDriftTable({ projectId }: Props) {
                 ) : <span className={rowStyles.nullCell}>0</span>}
               </td>
               <td><NumCell value={r.danglingSubCount} /></td>
+              <td><UpdatedAtCell value={r.updatedAt} /></td>
             </tr>
           ))}
         </tbody>

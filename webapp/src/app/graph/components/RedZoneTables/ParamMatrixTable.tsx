@@ -5,6 +5,12 @@ import { RedZoneTableShell } from './RedZoneTableShell'
 import { useRedZoneTable } from './useRedZoneTable'
 import type { RedZoneExportConfig } from './exportCsv'
 import { useRedZoneFilters, type RedZoneFilterColumn } from './useRedZoneFilters'
+import {
+  UPDATED_AT_COLUMN,
+  UpdatedAtCell,
+  UpdatedAtTh,
+  useUpdatedAtSort,
+} from './updatedAt'
 import { ExternalLink } from '@/components/ui'
 import {
   SeverityBadge,
@@ -44,6 +50,8 @@ interface ParamRow {
   fuzzingPosition: string | null
   matchedAt: string | null
   cvssScore: number | null
+  /** Graph `updated_at` of the node this row is built from. */
+  updatedAt: unknown
 }
 
 const PAGE_SIZE = 100
@@ -87,6 +95,7 @@ const COLUMNS: RedZoneFilterColumn[] = [
   { key: 'fuzzingPosition', header: 'Fuzz Position' },
   { key: 'matchedAt', header: 'Matched At' },
   { key: 'cvssScore', header: 'CVSS' },
+  UPDATED_AT_COLUMN,
 ]
 
 interface Props { projectId: string | null }
@@ -101,18 +110,19 @@ export const ParamMatrixTable = memo(function ParamMatrixTable({ projectId }: Pr
   const { filteredRows: filtered, filterUi } = useRedZoneFilters({
     rows: searched, columns: COLUMNS, projectId, slug: 'paramMatrix',
   })
-  const sliced = useMemo(() => filtered.slice(0, limit), [filtered, limit])
+  const { sortedRows, sortDir, toggleSort } = useUpdatedAtSort(filtered)
+  const sliced = useMemo(() => sortedRows.slice(0, limit), [sortedRows, limit])
 
   const exportConfig = useMemo<RedZoneExportConfig | undefined>(() =>
     rows.length > 0
       ? {
-          rows: filtered,
+          rows: sortedRows,
           sheetName: 'Param-Matrix',
           fileSlug: 'redzone-param-matrix',
           columns: COLUMNS,
         }
       : undefined,
-    [filtered, rows.length],
+    [sortedRows, rows.length],
   )
 
   const injectableCount = (data?.meta?.injectableCount as number | undefined) ?? 0
@@ -148,6 +158,7 @@ export const ParamMatrixTable = memo(function ParamMatrixTable({ projectId }: Pr
             <th>CVSS</th>
             <th>Matched At</th>
             <th>Subdomain</th>
+            <UpdatedAtTh dir={sortDir} onToggle={toggleSort} />
           </tr>
         </thead>
         <tbody>
@@ -171,6 +182,7 @@ export const ParamMatrixTable = memo(function ParamMatrixTable({ projectId }: Pr
               <td><CvssCell score={r.cvssScore} /></td>
               <td><UrlCell url={r.matchedAt} max={240} /></td>
               <td>{r.subdomain ? <HostCell host={r.subdomain} /> : <Truncated text={r.subdomain} max={160} />}</td>
+              <td><UpdatedAtCell value={r.updatedAt} /></td>
             </tr>
           ))}
         </tbody>

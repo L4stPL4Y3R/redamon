@@ -6,6 +6,12 @@ import { useRedZoneTable } from './useRedZoneTable'
 import type { RedZoneExportConfig } from './exportCsv'
 import { useRedZoneFilters, type RedZoneFilterColumn } from './useRedZoneFilters'
 import {
+  UPDATED_AT_COLUMN,
+  UpdatedAtCell,
+  UpdatedAtTh,
+  useUpdatedAtSort,
+} from './updatedAt'
+import {
   Mono,
   Truncated,
   NumCell,
@@ -25,6 +31,8 @@ interface BlastRadiusRow {
   ipCount: number
   severities: string[]
   topCveIds: string[]
+  /** Graph `updated_at` of the node this row is built from. */
+  updatedAt: unknown
 }
 
 const PAGE_SIZE = 100
@@ -41,6 +49,7 @@ const COLUMNS: RedZoneFilterColumn[] = [
   { key: 'ipCount', header: 'IPs' },
   { key: 'severities', header: 'Severities' },
   { key: 'topCveIds', header: 'Top CVE IDs' },
+  UPDATED_AT_COLUMN,
 ]
 
 interface Props { projectId: string | null }
@@ -55,18 +64,19 @@ export const BlastRadiusTable = memo(function BlastRadiusTable({ projectId }: Pr
   const { filteredRows: filtered, filterUi } = useRedZoneFilters({
     rows: searched, columns: COLUMNS, projectId, slug: 'blastRadius',
   })
-  const sliced = useMemo(() => filtered.slice(0, limit), [filtered, limit])
+  const { sortedRows, sortDir, toggleSort } = useUpdatedAtSort(filtered)
+  const sliced = useMemo(() => sortedRows.slice(0, limit), [sortedRows, limit])
 
   const exportConfig = useMemo<RedZoneExportConfig | undefined>(() =>
     rows.length > 0
       ? {
-          rows: filtered,
+          rows: sortedRows,
           sheetName: 'Blast-Radius',
           fileSlug: 'redzone-blast-radius',
           columns: COLUMNS,
         }
       : undefined,
-    [filtered, rows.length],
+    [sortedRows, rows.length],
   )
 
   return (
@@ -96,6 +106,7 @@ export const BlastRadiusTable = memo(function BlastRadiusTable({ projectId }: Pr
             <th>BaseURLs</th>
             <th>IPs</th>
             <th>Top CVEs</th>
+            <UpdatedAtTh dir={sortDir} onToggle={toggleSort} />
           </tr>
         </thead>
         <tbody>
@@ -115,6 +126,7 @@ export const BlastRadiusTable = memo(function BlastRadiusTable({ projectId }: Pr
               <td><NumCell value={r.baseUrlCount} /></td>
               <td><NumCell value={r.ipCount} /></td>
               <td><ListCell items={r.topCveIds} max={3} /></td>
+              <td><UpdatedAtCell value={r.updatedAt} /></td>
             </tr>
           ))}
         </tbody>

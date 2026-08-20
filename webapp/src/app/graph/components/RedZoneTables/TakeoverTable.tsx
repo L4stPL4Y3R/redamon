@@ -6,6 +6,12 @@ import { useRedZoneTable } from './useRedZoneTable'
 import type { RedZoneExportConfig } from './exportCsv'
 import { useRedZoneFilters, type RedZoneFilterColumn } from './useRedZoneFilters'
 import {
+  UPDATED_AT_COLUMN,
+  UpdatedAtCell,
+  UpdatedAtTh,
+  useUpdatedAtSort,
+} from './updatedAt'
+import {
   SeverityBadge,
   Mono,
   Truncated,
@@ -33,6 +39,8 @@ interface TakeoverRow {
   firstSeen: string | null
   lastSeen: string | null
   detectedAt: string | null
+  /** Graph `updated_at` of the node this row is built from. */
+  updatedAt: unknown
 }
 
 const PAGE_SIZE = 100
@@ -51,6 +59,7 @@ const COLUMNS: RedZoneFilterColumn[] = [
   { key: 'evidence', header: 'Evidence' },
   { key: 'firstSeen', header: 'First Seen' },
   { key: 'lastSeen', header: 'Last Seen' },
+  UPDATED_AT_COLUMN,
 ]
 
 const VERDICT_CLASS: Record<string, string> = {
@@ -76,18 +85,19 @@ export const TakeoverTable = memo(function TakeoverTable({ projectId }: Props) {
   const { filteredRows: filtered, filterUi } = useRedZoneFilters({
     rows: searched, columns: COLUMNS, projectId, slug: 'takeover',
   })
-  const sliced = useMemo(() => filtered.slice(0, limit), [filtered, limit])
+  const { sortedRows, sortDir, toggleSort } = useUpdatedAtSort(filtered)
+  const sliced = useMemo(() => sortedRows.slice(0, limit), [sortedRows, limit])
 
   const exportConfig = useMemo<RedZoneExportConfig | undefined>(() =>
     rows.length > 0
       ? {
-          rows: filtered,
+          rows: sortedRows,
           sheetName: 'Takeover',
           fileSlug: 'redzone-takeover',
           columns: COLUMNS,
         }
       : undefined,
-    [filtered, rows.length],
+    [sortedRows, rows.length],
   )
 
   const meta =
@@ -124,6 +134,7 @@ export const TakeoverTable = memo(function TakeoverTable({ projectId }: Props) {
             <th>Sources</th>
             <th>#</th>
             <th>Evidence</th>
+            <UpdatedAtTh dir={sortDir} onToggle={toggleSort} />
           </tr>
         </thead>
         <tbody>
@@ -139,6 +150,7 @@ export const TakeoverTable = memo(function TakeoverTable({ projectId }: Props) {
               <td><ListCell items={r.sources} max={3} /></td>
               <td><NumCell value={r.confirmationCount} /></td>
               <td><Truncated text={r.evidence} max={260} /></td>
+              <td><UpdatedAtCell value={r.updatedAt} /></td>
             </tr>
           ))}
         </tbody>

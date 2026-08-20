@@ -21,6 +21,11 @@ export interface AiAttackFindingRecord {
   transcriptRefs: string[]    // distinct native-report paths (drill-down, §9c)
   probePackVersions: string[] // tool+version envelope, e.g. ['promptfoo/0.121.17']
   evidence: string            // representative evidence (worst-ASR finding)
+  // `updated_at` of the representative row, NOT the newest across the group:
+  // this module stays free of the Neo4j temporal decoding needed to compare
+  // two of them, and the representative is the row whose evidence and ASR the
+  // record already shows - so the timestamp matches the data on screen.
+  updatedAt?: unknown
 }
 
 // Raw per-tool row straight off the graph, before cross-tool corroboration.
@@ -37,6 +42,8 @@ export interface RawAttackRow {
   probePackVersion: string | null
   target: string | null
   endpointPath: string | null
+  /** Optional: a caller with no timestamp to hand still builds a valid row. */
+  updatedAt?: unknown
 }
 
 export const ATTACK_SEV_RANK: Record<string, number> = {
@@ -76,6 +83,7 @@ export function corroborateAttackFindings(rows: RawAttackRow[]): AiAttackFinding
       transcriptRefs: uniq(group.map(r => r.transcriptRef)),
       probePackVersions: uniq(group.map(r => r.probePackVersion)),
       evidence: rep.evidence || '',
+      updatedAt: rep.updatedAt ?? null,
     })
   }
   out.sort((a, b) =>

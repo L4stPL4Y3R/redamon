@@ -6,6 +6,12 @@ import { useRedZoneTable } from './useRedZoneTable'
 import type { RedZoneExportConfig } from './exportCsv'
 import { useRedZoneFilters, type RedZoneFilterColumn } from './useRedZoneFilters'
 import {
+  UPDATED_AT_COLUMN,
+  UpdatedAtCell,
+  UpdatedAtTh,
+  useUpdatedAtSort,
+} from './updatedAt'
+import {
   Mono,
   Truncated,
   UrlCell,
@@ -37,6 +43,8 @@ interface GraphqlRow {
   sensitiveFieldsSample: string | null
   vulnTypes: string[]
   vulnSeverities: string[]
+  /** Graph `updated_at` of the node this row is built from. */
+  updatedAt: unknown
 }
 
 const PAGE_SIZE = 100
@@ -60,6 +68,7 @@ const COLUMNS: RedZoneFilterColumn[] = [
   { key: 'sensitiveFieldsSample', header: 'Sensitive Fields' },
   { key: 'schemaHash', header: 'Schema Hash' },
   { key: 'copScannedAt', header: 'Last graphql-cop scan' },
+  UPDATED_AT_COLUMN,
 ]
 
 interface Props { projectId: string | null }
@@ -74,18 +83,19 @@ export const GraphqlLedgerTable = memo(function GraphqlLedgerTable({ projectId }
   const { filteredRows: filtered, filterUi } = useRedZoneFilters({
     rows: searched, columns: COLUMNS, projectId, slug: 'graphql',
   })
-  const sliced = useMemo(() => filtered.slice(0, limit), [filtered, limit])
+  const { sortedRows, sortDir, toggleSort } = useUpdatedAtSort(filtered)
+  const sliced = useMemo(() => sortedRows.slice(0, limit), [sortedRows, limit])
 
   const exportConfig = useMemo<RedZoneExportConfig | undefined>(() =>
     rows.length > 0
       ? {
-          rows: filtered,
+          rows: sortedRows,
           sheetName: 'GraphQL',
           fileSlug: 'redzone-graphql',
           columns: COLUMNS,
         }
       : undefined,
-    [filtered, rows.length],
+    [sortedRows, rows.length],
   )
 
   const introCount = rows.filter(r => r.introspection).length
@@ -122,6 +132,7 @@ export const GraphqlLedgerTable = memo(function GraphqlLedgerTable({ projectId }
             <th>S</th>
             <th>Vulns</th>
             <th>Sensitive fields</th>
+            <UpdatedAtTh dir={sortDir} onToggle={toggleSort} />
           </tr>
         </thead>
         <tbody>
@@ -139,6 +150,7 @@ export const GraphqlLedgerTable = memo(function GraphqlLedgerTable({ projectId }
               <td><NumCell value={r.subscriptionsCount} /></td>
               <td><ListCell items={r.vulnTypes} max={3} /></td>
               <td><Truncated text={r.sensitiveFieldsSample} max={260} /></td>
+              <td><UpdatedAtCell value={r.updatedAt} /></td>
             </tr>
           ))}
         </tbody>

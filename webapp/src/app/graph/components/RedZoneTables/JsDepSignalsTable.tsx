@@ -5,6 +5,12 @@ import { RedZoneTableShell } from './RedZoneTableShell'
 import { useRedZoneTable } from './useRedZoneTable'
 import type { RedZoneExportConfig } from './exportCsv'
 import { useRedZoneFilters, type RedZoneFilterColumn } from './useRedZoneFilters'
+import {
+  UPDATED_AT_COLUMN,
+  UpdatedAtCell,
+  UpdatedAtTh,
+  useUpdatedAtSort,
+} from './updatedAt'
 import { ExternalLink } from '@/components/ui'
 import { githubSlugToUrl, isGithubSlug } from '@/lib/url-utils'
 import {
@@ -49,6 +55,8 @@ interface JsDepSignalsRow {
   baseUrl: string | null
   subdomain: string | null
   parentJsUrl: string | null
+  /** Graph `updated_at` of the node this row is built from. */
+  updatedAt: unknown
 }
 
 const PAGE_SIZE = 100
@@ -84,6 +92,7 @@ const COLUMNS: RedZoneFilterColumn[] = [
   { key: 'baseUrl', header: 'BaseURL' },
   { key: 'subdomain', header: 'Subdomain' },
   { key: 'discoveredAt', header: 'Discovered At' },
+  UPDATED_AT_COLUMN,
 ]
 
 interface Props { projectId: string | null }
@@ -98,18 +107,19 @@ export const JsDepSignalsTable = memo(function JsDepSignalsTable({ projectId }: 
   const { filteredRows: filtered, filterUi } = useRedZoneFilters({
     rows: searched, columns: COLUMNS, projectId, slug: 'supplyChain',
   })
-  const sliced = useMemo(() => filtered.slice(0, limit), [filtered, limit])
+  const { sortedRows, sortDir, toggleSort } = useUpdatedAtSort(filtered)
+  const sliced = useMemo(() => sortedRows.slice(0, limit), [sortedRows, limit])
 
   const exportConfig = useMemo<RedZoneExportConfig | undefined>(() =>
     rows.length > 0
       ? {
-          rows: filtered,
+          rows: sortedRows,
           sheetName: 'JS-Dep-Signals',
           fileSlug: 'redzone-js-dep-signals',
           columns: COLUMNS,
         }
       : undefined,
-    [filtered, rows.length],
+    [sortedRows, rows.length],
   )
 
   const m = data?.meta as any
@@ -144,6 +154,7 @@ export const JsDepSignalsTable = memo(function JsDepSignalsTable({ projectId }: 
             <th>Source URL</th>
             <th>Subdomain</th>
             <th>Evidence</th>
+            <UpdatedAtTh dir={sortDir} onToggle={toggleSort} />
           </tr>
         </thead>
         <tbody>
@@ -166,6 +177,7 @@ export const JsDepSignalsTable = memo(function JsDepSignalsTable({ projectId }: 
               <td><UrlCell url={r.sourceUrl} max={260} /></td>
               <td>{r.subdomain ? <HostCell host={r.subdomain} /> : <Truncated text={r.subdomain} max={160} />}</td>
               <td><Truncated text={r.evidence || r.detail} max={260} /></td>
+              <td><UpdatedAtCell value={r.updatedAt} /></td>
             </tr>
           ))}
         </tbody>

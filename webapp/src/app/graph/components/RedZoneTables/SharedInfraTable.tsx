@@ -5,6 +5,12 @@ import { RedZoneTableShell } from './RedZoneTableShell'
 import { useRedZoneTable } from './useRedZoneTable'
 import type { RedZoneExportConfig } from './exportCsv'
 import { useRedZoneFilters, type RedZoneFilterColumn } from './useRedZoneFilters'
+import {
+  UPDATED_AT_COLUMN,
+  UpdatedAtCell,
+  UpdatedAtTh,
+  useUpdatedAtSort,
+} from './updatedAt'
 import { ExternalLink } from '@/components/ui'
 import { resolveLinkable } from '@/lib/url-utils'
 import {
@@ -30,6 +36,8 @@ interface SharedInfraRow {
   asn: string | null
   country: string | null
   ipAddress: string | null
+  /** Graph `updated_at` of the node this row is built from. */
+  updatedAt: unknown
 }
 
 const PAGE_SIZE = 50
@@ -69,6 +77,7 @@ const COLUMNS: RedZoneFilterColumn[] = [
   { key: 'asn', header: 'ASN' },
   { key: 'country', header: 'Country' },
   { key: 'ipAddress', header: 'IP' },
+  UPDATED_AT_COLUMN,
 ]
 
 interface Props { projectId: string | null }
@@ -83,11 +92,12 @@ export const SharedInfraTable = memo(function SharedInfraTable({ projectId }: Pr
   const { filteredRows: filtered, filterUi } = useRedZoneFilters({
     rows: searched, columns: COLUMNS, projectId, slug: 'sharedInfra',
   })
-  const sliced = useMemo(() => filtered.slice(0, limit), [filtered, limit])
+  const { sortedRows, sortDir, toggleSort } = useUpdatedAtSort(filtered)
+  const sliced = useMemo(() => sortedRows.slice(0, limit), [sortedRows, limit])
 
   const exportConfig = useMemo<RedZoneExportConfig | undefined>(() => {
     if (rows.length === 0) return undefined
-    const flat = filtered.map(r => ({
+    const flat = sortedRows.map(r => ({
       ...r,
       daysToExpiry: daysToExpiry(r.certNotAfter),
     }))
@@ -97,7 +107,7 @@ export const SharedInfraTable = memo(function SharedInfraTable({ projectId }: Pr
       fileSlug: 'redzone-shared-infra',
       columns: COLUMNS,
     }
-  }, [filtered, rows.length])
+  }, [sortedRows, rows.length])
 
   const m = data?.meta as any
   const meta =
@@ -132,6 +142,7 @@ export const SharedInfraTable = memo(function SharedInfraTable({ projectId }: Pr
             <th>TLS / Cipher</th>
             <th>Days to expiry</th>
             <th>ASN / Country</th>
+            <UpdatedAtTh dir={sortDir} onToggle={toggleSort} />
           </tr>
         </thead>
         <tbody>
@@ -172,6 +183,7 @@ export const SharedInfraTable = memo(function SharedInfraTable({ projectId }: Pr
                 <td>
                   <Truncated text={[r.asn, r.country].filter(Boolean).join(' · ')} max={140} />
                 </td>
+                <td><UpdatedAtCell value={r.updatedAt} /></td>
               </tr>
             )
           })}

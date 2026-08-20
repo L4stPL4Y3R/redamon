@@ -6,6 +6,12 @@ import { useRedZoneTable } from './useRedZoneTable'
 import type { RedZoneExportConfig } from './exportCsv'
 import { useRedZoneFilters, type RedZoneFilterColumn } from './useRedZoneFilters'
 import {
+  UPDATED_AT_COLUMN,
+  UpdatedAtCell,
+  UpdatedAtTh,
+  useUpdatedAtSort,
+} from './updatedAt'
+import {
   Truncated,
   ListCell,
   BoolChip,
@@ -44,6 +50,8 @@ interface DnsEmailRow {
   spfMissing: boolean
   dmarcMissing: boolean
   dnssecMissing: boolean
+  /** Graph `updated_at` of the node this row is built from. */
+  updatedAt: unknown
 }
 
 const PAGE_SIZE = 50
@@ -85,6 +93,7 @@ const COLUMNS: RedZoneFilterColumn[] = [
   { key: 'vtReputation', header: 'VT Reputation' },
   { key: 'otxPulseCount', header: 'OTX Pulses' },
   { key: 'vulnTags', header: 'Vuln Tags' },
+  UPDATED_AT_COLUMN,
 ]
 
 interface Props { projectId: string | null }
@@ -99,18 +108,19 @@ export const DnsEmailTable = memo(function DnsEmailTable({ projectId }: Props) {
   const { filteredRows: filtered, filterUi } = useRedZoneFilters({
     rows: searched, columns: COLUMNS, projectId, slug: 'dnsEmail',
   })
-  const sliced = useMemo(() => filtered.slice(0, limit), [filtered, limit])
+  const { sortedRows, sortDir, toggleSort } = useUpdatedAtSort(filtered)
+  const sliced = useMemo(() => sortedRows.slice(0, limit), [sortedRows, limit])
 
   const exportConfig = useMemo<RedZoneExportConfig | undefined>(() =>
     rows.length > 0
       ? {
-          rows: filtered,
+          rows: sortedRows,
           sheetName: 'DNS-Email',
           fileSlug: 'redzone-dns-email',
           columns: COLUMNS,
         }
       : undefined,
-    [filtered, rows.length],
+    [sortedRows, rows.length],
   )
 
   return (
@@ -145,6 +155,7 @@ export const DnsEmailTable = memo(function DnsEmailTable({ projectId }: Props) {
             <th>VT mal.</th>
             <th>OTX</th>
             <th>Registrar</th>
+            <UpdatedAtTh dir={sortDir} onToggle={toggleSort} />
           </tr>
         </thead>
         <tbody>
@@ -171,6 +182,7 @@ export const DnsEmailTable = memo(function DnsEmailTable({ projectId }: Props) {
               <td><NumCell value={r.vtMaliciousCount} /></td>
               <td><NumCell value={r.otxPulseCount} /></td>
               <td><Truncated text={r.registrar} max={160} /></td>
+              <td><UpdatedAtCell value={r.updatedAt} /></td>
             </tr>
           ))}
         </tbody>
