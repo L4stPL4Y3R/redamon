@@ -41,11 +41,15 @@ fi
 PREP='python -c "import pytest" 2>/dev/null || pip install -q -r /repo/requirements-test.txt >/dev/null 2>&1;
       git config --global --add safe.directory "*" 2>/dev/null || true;'
 
+# PYTHONPATH must match the `agent` section spec in redamon.sh, /repo/services
+# included. Without it `knowledge_base` resolves as an empty namespace package
+# and test_kb_isolation.py dies at collection, so this runner reported a failure
+# the real gate never saw, on a test that is not broken.
 run_in_image() {
     docker run --rm \
         -v "$REPO_ROOT:/repo" \
         -w /repo/agentic \
-        -e PYTHONPATH=/repo/agentic:/repo:/repo/mcp/servers:/repo/recon_orchestrator \
+        -e PYTHONPATH=/repo/agentic:/repo:/repo/mcp/servers:/repo/recon_orchestrator:/repo/services \
         -e COVERAGE_FILE=/tmp/redamon.coverage \
         -e HOME=/tmp \
         -e REDAMON_TEST_PARALLEL="$PARALLEL" \
