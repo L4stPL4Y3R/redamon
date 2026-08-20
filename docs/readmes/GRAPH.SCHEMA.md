@@ -15,7 +15,55 @@ services, technologies, and vulnerabilities in a navigable graph structure.
 3. **Technology-Vulnerability Linkage**: Technologies connect to known CVEs for risk assessment
 4. **No Redundancy**: Information stored once, relationships handle connections
 5. **Query Efficiency**: Optimized for path traversal (attack chains)
-6. **Multi-Tenant Isolation**: Every node has `user_id` + `project_id` for tenant filtering
+6. **Multi-Tenant Isolation**: Every ENTITY node has `user_id` + `project_id` for
+   tenant filtering. The three GLOBAL REFERENCE labels are the deliberate
+   exception - see below.
+
+---
+
+## 🌍 Global Reference Nodes (CVE, MitreData, Capec)
+
+`CVE`, `MitreData` and `Capec` are the public NVD/MITRE catalogue, not findings.
+They are UNIQUE on their natural id (`c.id`, `m.id`, `cap.capec_id`), so there is
+exactly ONE node per CVE for the whole database, shared by every project that
+finds it. They carry **no** `user_id` / `project_id`.
+
+```cypher
+// entity node - tenant-scoped
+MERGE (v:Vulnerability {id: $id, user_id: $uid, project_id: $pid})
+
+// reference node - natural id ONLY, never a tenant key
+MERGE (c:CVE {id: $cve_id})
+  ON CREATE SET c.source = 'nuclei'        // provenance: first writer wins
+```
+
+Three rules follow from that, each of which was a real defect:
+
+1. **Never stamp a tenant on one.** `SET c += props` with `user_id`/`project_id`
+   in the dict made the last project to touch a CVE its owner, and every
+   project-scoped delete then removed the shared node along with every other
+   project's links to it.
+2. **Never key a MERGE on the tenant triple.** `MERGE (c:CVE {id, user_id,
+   project_id})` collides with the uniqueness constraint on `id` and raises
+   `ConstraintValidationFailed` whenever the CVE already exists.
+3. **Never delete one by project.** Project wipes exclude these labels and then
+   sweep the nodes no project can REACH any more. Reachability, not degree: the
+   catalogue is internally linked as `CVE -> MitreData -> Capec`, so an
+   unreferenced CVE still holds its CWE.
+
+Reading them is by traversal, not by tenant filter. `graph_db/tenant_filter.py`
+exempts these labels from injection - a filter on an unstamped node matches
+nothing - but only for a pattern that names reference labels ONLY, and only in a
+query that carries a tenant-scoped pattern of its own:
+
+```cypher
+MATCH (t:Technology)-[:HAS_KNOWN_CVE]->(c:CVE) RETURN c.id, c.cvss   // ✅
+MATCH (c:CVE) RETURN c.id                                            // ❌ refused
+```
+
+The `idx_cve_tenant` / `idx_mitredata_tenant` / `idx_capec_tenant` indexes are
+vestigial: they remain in existing databases but index a property these nodes no
+longer carry.
 
 ---
 
