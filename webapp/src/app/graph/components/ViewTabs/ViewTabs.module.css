@@ -489,3 +489,17 @@
   color: var(--text-primary);
   background: var(--bg-hover, rgba(255,255,255,0.06));
 }
+
+/* -- Unseen-rows badge (table tab + its dropdown items) -- */
+
+.unseenBadge {
+  composes: badge;
+  /* `.badge` paints its text in --bg-primary, which is near-white in the dark
+     theme and near-black in the light one - so the count flipped to dark text
+     on crimson whenever the user switched themes. This token is white in both. */
+  color: var(--text-on-accent);
+  /* Pushed to the trailing edge so twenty badges line up in one column down the
+     dropdown instead of jittering with each label's width. */
+  margin-left: auto;
+  flex-shrink: 0;
+}

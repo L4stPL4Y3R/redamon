@@ -42,6 +42,7 @@ import { GraphViews } from './components/GraphViews'
 import { GitHubStarBanner } from './components/GitHubStarBanner'
 import { useGraphData, useDimensions, useNodeSelection, useTableData, useGraphViews } from './hooks'
 import { useScanVersions } from './hooks/useScanVersions'
+import { useUnseenCounts } from './hooks/useUnseenCounts'
 import { ActiveVersionOnlyNotice } from './components/VersionSwitch'
 import { VersionManager } from './components/VersionManager'
 import { ReconDeltaTable } from './components/ReconDelta'
@@ -537,10 +538,26 @@ export default function GraphPage() {
   // Sheet to pre-select inside a multi-sheet table when deep-linked (?sheet=...).
   // Cleared on any manual table switch so it never overrides a later manual open.
   const [deepLinkSheet, setDeepLinkSheet] = useState<string | null>(null)
+  // Unseen-row badges. The active tab is whichever table is on screen, so a tab
+  // the user is reading stops counting as unseen while they read it.
+  const {
+    counts: unseenCounts,
+    total: unseenTotal,
+    markSeen: markTabSeen,
+  } = useUnseenCounts(projectId, activeView === 'table' ? tableViewMode : null)
+
   const [jsReconSearch, setJsReconSearch] = useState('')
   const [jsReconData, setJsReconData] = useState<JsReconData | null>(null)
   const [activeNodeTypes, setActiveNodeTypes] = useState<Set<string>>(new Set())
   const [tableInitialized, setTableInitialized] = useState(false)
+
+  // Clear a tab's badge the moment it is opened, rather than on the next poll:
+  // a number that lingers for up to a poll interval after the user has looked
+  // at the rows reads as "this is stuck", not "this is fresh".
+  useEffect(() => {
+    if (activeView !== 'table') return
+    markTabSeen(tableViewMode)
+  }, [activeView, tableViewMode, markTabSeen])
 
   // Persistent per-project filter for which node types are hidden in the graph
   // bottom-bar chips. Survives reloads and project switches.
@@ -1516,6 +1533,8 @@ export default function GraphPage() {
         onDeleteFilter={handleDeleteFilter}
         tableViewMode={tableViewMode}
         onTableViewModeChange={(m) => { setDeepLinkSheet(null); setTableViewMode(m) }}
+        unseenCounts={unseenCounts}
+        unseenTotal={unseenTotal}
         jsReconSearch={jsReconSearch}
         onJsReconSearchChange={setJsReconSearch}
         onJsReconExportCsv={jsReconData ? async () => {

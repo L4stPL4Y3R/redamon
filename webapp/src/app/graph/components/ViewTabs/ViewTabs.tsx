@@ -85,6 +85,23 @@ export function parseTableViewMode(raw: string | null | undefined): TableViewMod
   return LEGACY_TABLE_MODES.get(raw) ?? null
 }
 
+/**
+ * The unseen-rows count on a tab, or nothing at all when there is none.
+ *
+ * Rendering `0` would put a permanent grey dot on twenty tabs, which is the
+ * opposite of what a badge is for - it only earns its place when it is telling
+ * the user something changed. Capped at 999+ so a post-scan four-digit count
+ * cannot push the dropdown wider than the menu.
+ */
+function UnseenBadge({ count }: { count?: number }) {
+  if (!count || count < 1) return null
+  return (
+    <span className={styles.unseenBadge} title={`${count.toLocaleString()} new or updated since you last looked`}>
+      {count > 999 ? '999+' : count}
+    </span>
+  )
+}
+
 export interface TunnelInfo {
   active: boolean
   host?: string
@@ -128,6 +145,10 @@ interface ViewTabsProps {
   // Table view mode (All Nodes vs specialized views vs red-zone analytics)
   tableViewMode?: TableViewMode
   onTableViewModeChange?: (mode: TableViewMode) => void
+  /** Rows written since this user last opened each table tab. See `useUnseenCounts`. */
+  unseenCounts?: Partial<Record<TableViewMode, number>>
+  /** Sum of the above, badged on the table tab itself. */
+  unseenTotal?: number
   // JS Recon table controls
   jsReconSearch?: string
   onJsReconSearchChange?: (value: string) => void
@@ -164,6 +185,8 @@ export const ViewTabs = memo(function ViewTabs({
   onDeleteFilter,
   tableViewMode = 'all',
   onTableViewModeChange,
+  unseenCounts,
+  unseenTotal,
   jsReconSearch,
   onJsReconSearchChange,
   onJsReconExportCsv,
@@ -367,6 +390,7 @@ export const ViewTabs = memo(function ViewTabs({
               return <Icon size={14} />
             })()}
             <span>{TABLE_MODE_LABELS[(tableViewMode === 'reconDelta' || tableViewMode === 'scanSchedule') ? 'all' : (tableViewMode ?? 'all')]}</span>
+            <UnseenBadge count={unseenTotal} />
             <ChevronDown
               size={18}
               strokeWidth={3}
@@ -381,120 +405,140 @@ export const ViewTabs = memo(function ViewTabs({
                 onClick={() => { onTableViewModeChange?.('nodeDetails'); setTableMenuOpen(false); onViewChange('table') }}
               >
                 <Layers size={12} /> Node Inspector
+                <UnseenBadge count={unseenCounts?.nodeDetails} />
               </button>
               <button
                 className={`${styles.tableDropdownItem} ${tableViewMode === 'all' ? styles.tableDropdownItemActive : ''}`}
                 onClick={() => { onTableViewModeChange?.('all'); setTableMenuOpen(false); onViewChange('table') }}
               >
                 <Table2 size={12} /> All Nodes
+                <UnseenBadge count={unseenCounts?.all} />
               </button>
               <button
                 className={`${styles.tableDropdownItem} ${tableViewMode === 'jsRecon' ? styles.tableDropdownItemActive : ''}`}
                 onClick={() => { onTableViewModeChange?.('jsRecon'); setTableMenuOpen(false); onViewChange('table') }}
               >
                 <Code size={12} /> JS Recon
+                <UnseenBadge count={unseenCounts?.jsRecon} />
               </button>
               <button
                 className={`${styles.tableDropdownItem} ${tableViewMode === 'aiSurface' ? styles.tableDropdownItemActive : ''}`}
                 onClick={() => { onTableViewModeChange?.('aiSurface'); setTableMenuOpen(false); onViewChange('table') }}
               >
                 <Bot size={12} /> AI Surface
+                <UnseenBadge count={unseenCounts?.aiSurface} />
               </button>
               <button
                 className={`${styles.tableDropdownItem} ${tableViewMode === 'aiRisk' ? styles.tableDropdownItemActive : ''}`}
                 onClick={() => { onTableViewModeChange?.('aiRisk'); setTableMenuOpen(false); onViewChange('table') }}
               >
                 <Radiation size={12} /> AI Risk (LLM)
+                <UnseenBadge count={unseenCounts?.aiRisk} />
               </button>
               <button
                 className={`${styles.tableDropdownItem} ${tableViewMode === 'killChain' ? styles.tableDropdownItemActive : ''}`}
                 onClick={() => { onTableViewModeChange?.('killChain'); setTableMenuOpen(false); onViewChange('table') }}
               >
                 <Target size={12} /> Kill-Chain Explorer
+                <UnseenBadge count={unseenCounts?.killChain} />
               </button>
               <button
                 className={`${styles.tableDropdownItem} ${tableViewMode === 'blastRadius' ? styles.tableDropdownItemActive : ''}`}
                 onClick={() => { onTableViewModeChange?.('blastRadius'); setTableMenuOpen(false); onViewChange('table') }}
               >
                 <Zap size={12} /> Technology Blast Radius
+                <UnseenBadge count={unseenCounts?.blastRadius} />
               </button>
               <button
                 className={`${styles.tableDropdownItem} ${tableViewMode === 'takeover' ? styles.tableDropdownItemActive : ''}`}
                 onClick={() => { onTableViewModeChange?.('takeover'); setTableMenuOpen(false); onViewChange('table') }}
               >
                 <Flag size={12} /> Subdomain Takeover
+                <UnseenBadge count={unseenCounts?.takeover} />
               </button>
               <button
                 className={`${styles.tableDropdownItem} ${tableViewMode === 'secrets' ? styles.tableDropdownItemActive : ''}`}
                 onClick={() => { onTableViewModeChange?.('secrets'); setTableMenuOpen(false); onViewChange('table') }}
               >
                 <Key size={12} /> Secrets & Credentials
+                <UnseenBadge count={unseenCounts?.secrets} />
               </button>
               <button
                 className={`${styles.tableDropdownItem} ${tableViewMode === 'netInitAccess' ? styles.tableDropdownItemActive : ''}`}
                 onClick={() => { onTableViewModeChange?.('netInitAccess'); setTableMenuOpen(false); onViewChange('table') }}
               >
                 <Server size={12} /> Net Initial-Access
+                <UnseenBadge count={unseenCounts?.netInitAccess} />
               </button>
               <button
                 className={`${styles.tableDropdownItem} ${tableViewMode === 'graphql' ? styles.tableDropdownItemActive : ''}`}
                 onClick={() => { onTableViewModeChange?.('graphql'); setTableMenuOpen(false); onViewChange('table') }}
               >
                 <Boxes size={12} /> GraphQL Risk Ledger
+                <UnseenBadge count={unseenCounts?.graphql} />
               </button>
               <button
                 className={`${styles.tableDropdownItem} ${tableViewMode === 'webInitAccess' ? styles.tableDropdownItemActive : ''}`}
                 onClick={() => { onTableViewModeChange?.('webInitAccess'); setTableMenuOpen(false); onViewChange('table') }}
               >
                 <LockKeyhole size={12} /> Web Initial-Access
+                <UnseenBadge count={unseenCounts?.webInitAccess} />
               </button>
               <button
                 className={`${styles.tableDropdownItem} ${tableViewMode === 'paramMatrix' ? styles.tableDropdownItemActive : ''}`}
                 onClick={() => { onTableViewModeChange?.('paramMatrix'); setTableMenuOpen(false); onViewChange('table') }}
               >
                 <Bug size={12} /> Parameter Matrix
+                <UnseenBadge count={unseenCounts?.paramMatrix} />
               </button>
               <button
                 className={`${styles.tableDropdownItem} ${tableViewMode === 'sharedInfra' ? styles.tableDropdownItemActive : ''}`}
                 onClick={() => { onTableViewModeChange?.('sharedInfra'); setTableMenuOpen(false); onViewChange('table') }}
               >
                 <Network size={12} /> Shared Infrastructure
+                <UnseenBadge count={unseenCounts?.sharedInfra} />
               </button>
               <button
                 className={`${styles.tableDropdownItem} ${tableViewMode === 'dnsEmail' ? styles.tableDropdownItemActive : ''}`}
                 onClick={() => { onTableViewModeChange?.('dnsEmail'); setTableMenuOpen(false); onViewChange('table') }}
               >
                 <Mail size={12} /> DNS & Email Posture
+                <UnseenBadge count={unseenCounts?.dnsEmail} />
               </button>
               <button
                 className={`${styles.tableDropdownItem} ${tableViewMode === 'threatIntel' ? styles.tableDropdownItemActive : ''}`}
                 onClick={() => { onTableViewModeChange?.('threatIntel'); setTableMenuOpen(false); onViewChange('table') }}
               >
                 <ShieldAlert size={12} /> Threat Intel Overlay
+                <UnseenBadge count={unseenCounts?.threatIntel} />
               </button>
               <button
                 className={`${styles.tableDropdownItem} ${tableViewMode === 'jsDepSignals' ? styles.tableDropdownItemActive : ''}`}
                 onClick={() => { onTableViewModeChange?.('jsDepSignals'); setTableMenuOpen(false); onViewChange('table') }}
               >
                 <Package size={12} /> JS Dep Signals
+                <UnseenBadge count={unseenCounts?.jsDepSignals} />
               </button>
               <button
                 className={`${styles.tableDropdownItem} ${tableViewMode === 'supplyChainSca' ? styles.tableDropdownItemActive : ''}`}
                 onClick={() => { onTableViewModeChange?.('supplyChainSca'); setTableMenuOpen(false); onViewChange('table') }}
               >
                 <PackageSearch size={12} /> Supply-Chain SCA
+                <UnseenBadge count={unseenCounts?.supplyChainSca} />
               </button>
               <button
                 className={`${styles.tableDropdownItem} ${tableViewMode === 'dnsDrift' ? styles.tableDropdownItemActive : ''}`}
                 onClick={() => { onTableViewModeChange?.('dnsDrift'); setTableMenuOpen(false); onViewChange('table') }}
               >
                 <History size={12} /> Historic DNS Drift
+                <UnseenBadge count={unseenCounts?.dnsDrift} />
               </button>
               <button
                 className={`${styles.tableDropdownItem} ${tableViewMode === 'webCachePoison' ? styles.tableDropdownItemActive : ''}`}
                 onClick={() => { onTableViewModeChange?.('webCachePoison'); setTableMenuOpen(false); onViewChange('table') }}
               >
                 <Droplets size={12} /> Web Cache Poisoning
+                <UnseenBadge count={unseenCounts?.webCachePoison} />
               </button>
             </div>
           )}
