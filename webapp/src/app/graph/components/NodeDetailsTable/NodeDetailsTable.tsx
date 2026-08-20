@@ -60,13 +60,16 @@ import {
   profileColumn,
   propColumnId,
   regexFor,
+  toDateMs,
   valueText,
   IN_COLUMN_ID,
   NAME_COLUMN_ID,
   OUT_COLUMN_ID,
+  UPDATED_AT_COLUMN_ID,
   type ColumnFilter,
   type ColumnKind,
 } from './nodeFilterHelpers'
+import { UPDATED_AT_PROP, UpdatedAtCell, nodeUpdatedAt } from '../RedZoneTables/updatedAt'
 import styles from './NodeDetailsTable.module.css'
 
 interface NodeDetailsTableProps {
@@ -126,7 +129,16 @@ export function NodeDetailsTable({ data, isLoading, error, projectId = null }: N
     [rowsByType, selectedNodeType]
   )
 
-  const dynamicColumnKeys = useMemo(() => deriveDynamicColumnKeys(rows), [rows])
+  const UPDATED_AT_COL_ID = UPDATED_AT_COLUMN_ID
+
+  // `updated_at` is lifted out of the alphabetical property columns and pinned
+  // rightmost, so it sits in the same place whichever node type is selected -
+  // and it is appended unconditionally, so a type whose nodes predate the
+  // timestamp still shows the column (empty) rather than losing it.
+  const dynamicColumnKeys = useMemo(
+    () => deriveDynamicColumnKeys(rows).filter(k => k !== UPDATED_AT_PROP),
+    [rows]
+  )
 
   // -- Hideable column registry --------------------------------------------
   // Storage keys MUST be stable across data shapes since they're persisted
@@ -136,8 +148,9 @@ export function NodeDetailsTable({ data, isLoading, error, projectId = null }: N
     () => [
       { storageKey: 'connectionsIn', columnId: 'connectionsIn', label: 'In' },
       { storageKey: 'connectionsOut', columnId: 'connectionsOut', label: 'Out' },
+      { storageKey: UPDATED_AT_PROP, columnId: UPDATED_AT_COL_ID, label: 'Updated' },
     ],
-    []
+    [UPDATED_AT_COL_ID]
   )
   const hideableColumns = useMemo(
     () => [
@@ -245,14 +258,30 @@ export function NodeDetailsTable({ data, isLoading, error, projectId = null }: N
           )
         },
       }),
+      columnHelper.accessor(
+        row => nodeUpdatedAt(row.node.properties),
+        {
+          id: UPDATED_AT_COL_ID,
+          header: 'Updated',
+          size: 150,
+          filterFn: advancedFilterFn,
+          // Direction-independent: an undated node is unknown, not oldest.
+          sortUndefined: 'last',
+          sortingFn: (a, b) =>
+            (toDateMs(nodeUpdatedAt(a.original.node.properties)) ?? 0) -
+            (toDateMs(nodeUpdatedAt(b.original.node.properties)) ?? 0),
+          cell: info => <UpdatedAtCell value={info.getValue()} />,
+        },
+      ),
     ]
 
     return [...leading, ...dynamic, ...trailing]
-  }, [dynamicColumnKeys])
+  }, [dynamicColumnKeys, UPDATED_AT_COL_ID])
 
   // -- Search + sorting + expansion ---------------------------------------
   const [globalFilter, setGlobalFilter] = useState('')
-  const [sorting, setSorting] = useState<SortingState>([])
+  // Newest first on load.
+  const [sorting, setSorting] = useState<SortingState>([{ id: UPDATED_AT_COL_ID, desc: true }])
   const [expanded, setExpanded] = useState<ExpandedState>({})
 
   // -- Per-column filters ---------------------------------------------------

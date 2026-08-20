@@ -1,5 +1,6 @@
 import type { TableRow } from '../../hooks/useTableData'
 import type { CellAccessor } from '../../utils/columnFilters'
+import { UPDATED_AT_PROP, nodeUpdatedAt } from '../RedZoneTables/updatedAt'
 
 /**
  * The Node Inspector's binding to the shared column-filter engine.
@@ -18,6 +19,7 @@ export * from '../../utils/columnFilters'
 export const NAME_COLUMN_ID = 'name'
 export const IN_COLUMN_ID = 'connectionsIn'
 export const OUT_COLUMN_ID = 'connectionsOut'
+export const UPDATED_AT_COLUMN_ID = `prop:${UPDATED_AT_PROP}`
 
 export function propColumnId(key: string): string {
   return `prop:${key}`
@@ -32,6 +34,9 @@ export const getCellValue: CellAccessor<TableRow> = (row, columnId) => {
   if (columnId === NAME_COLUMN_ID) return row.node.name
   if (columnId === IN_COLUMN_ID) return row.connectionsIn.length
   if (columnId === OUT_COLUMN_ID) return row.connectionsOut.length
+  // The pinned `Updated` column falls back through several property names, so
+  // the filter has to resolve it the same way the cell does.
+  if (columnId === UPDATED_AT_COLUMN_ID) return nodeUpdatedAt(row.node.properties)
   if (columnId.startsWith('prop:')) return row.node.properties[columnId.slice(5)]
   return undefined
 }

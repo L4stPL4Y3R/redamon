@@ -41,10 +41,12 @@ import {
   matchesFilter,
   profileColumn,
   regexFor,
+  toDateMs,
   type CellAccessor,
   type ColumnFilter,
   type ColumnKind,
 } from '../../utils/columnFilters'
+import { UPDATED_AT_KEY, UpdatedAtCell, nodeUpdatedAt } from '../RedZoneTables/updatedAt'
 import styles from './DataTable.module.css'
 
 /**
@@ -64,6 +66,7 @@ const cellValue: CellAccessor<TableRow> = (row, columnId) => {
     case 'connectionsIn': return row.connectionsIn.length
     case 'connectionsOut': return row.connectionsOut.length
     case 'totalConns': return row.connectionsIn.length + row.connectionsOut.length
+    case UPDATED_AT_KEY: return nodeUpdatedAt(row.node.properties)
     default: return undefined
   }
 }
@@ -75,6 +78,7 @@ const FILTERABLE_COLUMNS = [
   { columnId: 'connectionsIn', label: 'In' },
   { columnId: 'connectionsOut', label: 'Out' },
   { columnId: 'totalConns', label: 'Conns' },
+  { columnId: UPDATED_AT_KEY, label: 'Updated' },
 ]
 
 interface AdvancedFilterValue {
@@ -112,7 +116,9 @@ export const DataTable = memo(function DataTable({
   onGlobalFilterChange,
   projectId = null,
 }: DataTableProps) {
-  const [sorting, setSorting] = useState<SortingState>([])
+  // Newest first on load, so a table opened after a scan leads with what that
+  // scan just touched.
+  const [sorting, setSorting] = useState<SortingState>([{ id: UPDATED_AT_KEY, desc: true }])
   const [expanded, setExpanded] = useState<ExpandedState>({})
 
   const [panelOpened, setPanelOpened] = useState(false)
@@ -282,6 +288,27 @@ export const DataTable = memo(function DataTable({
         )
       },
     }),
+    columnHelper.accessor(
+      // `nodeUpdatedAt` yields `undefined` for a node with no readable write
+      // time, so `sortUndefined` below governs ALL unknowns uniformly.
+      row => nodeUpdatedAt(row.node.properties),
+      {
+        id: UPDATED_AT_KEY,
+        filterFn: advancedFilterFn,
+        header: 'Updated',
+        size: 150,
+        // 'last' is direction-INDEPENDENT: a node with no timestamp is unknown,
+        // not oldest, so reversing the sort must not float it to the top over
+        // the recent rows the user just asked to see.
+        sortUndefined: 'last',
+        // Compared as epoch millis: a Cypher temporal is an object, and the
+        // default comparator would sort every row as "[object Object]".
+        sortingFn: (a, b) =>
+          (toDateMs(nodeUpdatedAt(a.original.node.properties)) ?? 0) -
+          (toDateMs(nodeUpdatedAt(b.original.node.properties)) ?? 0),
+        cell: info => <UpdatedAtCell value={info.getValue()} />,
+      },
+    ),
   ], [])
 
   const table = useReactTable({

@@ -210,7 +210,7 @@ describe('NodeDetailsTable', () => {
     })
   })
 
-  test('Columns menu reflects ALL hideable columns (dynamic props + In + Out)', async () => {
+  test('Columns menu reflects ALL hideable columns (dynamic props + In + Out + Updated)', async () => {
     const { container } = render(
       <NodeDetailsTable data={makeData()} isLoading={false} error={null} />,
       { wrapper: makeWrapper() }
@@ -219,12 +219,13 @@ describe('NodeDetailsTable', () => {
       expect(container.querySelector('thead tr')?.textContent).toContain('registrar')
     })
 
-    // For Domain: 3 dynamic (registrar/country/city) + 2 fixed-hideable (In/Out) = 5
+    // For Domain: 3 dynamic (registrar/country/city)
+    //   + 3 fixed-hideable (In / Out / Updated) = 6
     const colBtn = Array.from(container.querySelectorAll('button')).find(b =>
       b.textContent?.includes('Columns')
     )
     expect(colBtn).toBeDefined()
-    expect(colBtn!.textContent).toMatch(/5\/5/)
+    expect(colBtn!.textContent).toMatch(/6\/6/)
   })
 
   test('"Hide all" button hides every dynamic column; "Show all" restores them', async () => {
@@ -285,7 +286,7 @@ describe('NodeDetailsTable', () => {
     })
   })
 
-  test('In and Out columns appear at the rightmost positions', async () => {
+  test('In, Out and Updated occupy the rightmost positions, in that order', async () => {
     const { container } = render(
       <NodeDetailsTable data={makeData()} isLoading={false} error={null} />,
       { wrapper: makeWrapper() }
@@ -297,13 +298,17 @@ describe('NodeDetailsTable', () => {
     const headers = Array.from(container.querySelectorAll('thead tr th')).map(
       th => th.textContent?.trim() ?? ''
     )
-    // Last two columns must be In, then Out
-    expect(headers[headers.length - 2]).toBe('In')
-    expect(headers[headers.length - 1]).toBe('Out')
-    // Dynamic columns must come before In/Out
+    // `Updated` is pinned last so it sits in the same place on every node
+    // type, with In/Out immediately before it.
+    expect(headers[headers.length - 3]).toBe('In')
+    expect(headers[headers.length - 2]).toBe('Out')
+    expect(headers[headers.length - 1]).toBe('Updated')
+    // Dynamic property columns must come before all three
     const inIdx = headers.indexOf('In')
     expect(headers.indexOf('registrar')).toBeLessThan(inIdx)
     expect(headers.indexOf('country')).toBeLessThan(inIdx)
+    // ...and `updated_at` must NOT also appear as a dynamic property column
+    expect(headers.filter(h => h === 'updated_at')).toHaveLength(0)
   })
 
   test('In and Out are listed as toggleable items in the Columns menu', async () => {
