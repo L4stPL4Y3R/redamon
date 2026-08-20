@@ -1,8 +1,9 @@
 /**
- * The registry is the badge feature's coverage contract: every table tab either
- * carries a badge or is listed as deliberately unbadged. Nothing else enforces
- * that, and the failure is silent - a tab added next month renders fine, filters
- * fine, and just never tells anyone it has new rows.
+ * The badge feature's coverage contract: every table tab either carries a badge
+ * backed by a real source, or is listed as deliberately unbadged. Nothing else
+ * enforces that, and both failures are silent - a tab added next month renders
+ * fine and simply never says it has new rows, or worse, gets a badge with no
+ * source behind it and reads a permanent zero.
  *
  * Reads the SOURCE of ViewTabs rather than importing it: that module is a client
  * component pulling in lucide-react and CSS modules, and this needs nothing from
@@ -14,8 +15,9 @@
 import { describe, test, expect } from 'vitest'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { ALL_GRAPH_LABELS, BADGED_TABS, UNBADGED_TABS, UNSEEN_TAB_LABELS, labelsInUse } from './registry'
+import { ALL_GRAPH_LABELS, BADGED_TABS, UNBADGED_TABS } from './registry'
 import { isSafeLabel } from './counts'
+import { LABEL_TABS, ROUTE_TABS, labelsForTab } from '@/app/api/analytics/unseen/sources'
 
 const VIEW_TABS = join(__dirname, '../components/ViewTabs/ViewTabs.tsx')
 const SCHEMA_PY = join(__dirname, '../../../../../graph_db/schema.py')
@@ -42,25 +44,52 @@ describe('every table tab is accounted for', () => {
     expect(badged || unbadged).toBe(true)
   })
 
-  test('no registry entry names a tab that no longer exists', () => {
+  test('no entry names a tab that no longer exists', () => {
     const modes = new Set(tableViewModes())
     for (const tab of [...BADGED_TABS, ...UNBADGED_TABS]) expect(modes.has(tab)).toBe(true)
   })
 })
 
-describe('every badged tab can actually be counted', () => {
-  test.each(BADGED_TABS)('%s lists at least one label', tab => {
-    expect(UNSEEN_TAB_LABELS[tab].length).toBeGreaterThan(0)
+describe('every badged tab has something to count', () => {
+  const sourced = new Set([...LABEL_TABS, ...ROUTE_TABS])
+
+  test.each(BADGED_TABS)('%s has a source', tab => {
+    // A badged tab with no source is not a crash, it is a badge that is always
+    // zero - indistinguishable from a quiet tab, and never noticed.
+    expect(sourced.has(tab)).toBe(true)
   })
 
-  test('every label is a bare identifier', () => {
-    // Labels are interpolated into Cypher, so anything else is an injection.
-    for (const label of labelsInUse()) expect(isSafeLabel(label)).toBe(true)
+  test('no source names a tab that is not badged', () => {
+    const badged = new Set<string>(BADGED_TABS)
+    for (const tab of sourced) expect(badged.has(tab)).toBe(true)
   })
 
-  test('every label is one the graph actually writes', () => {
+  test('a tab is counted one way or the other, never both', () => {
+    for (const tab of LABEL_TABS) expect(ROUTE_TABS).not.toContain(tab)
+  })
+
+  test('only whole-graph tabs are counted by label', () => {
+    // The bug this file exists to stop coming back: counting a FILTERED sheet by
+    // label badges it for nodes it would never show. Web Cache Poisoning lists
+    // only cache-poisoning vulns, so four ordinary Vulnerability nodes must not
+    // put a 4 over it.
+    expect([...LABEL_TABS].sort()).toEqual(['all', 'jsRecon', 'nodeDetails'])
+  })
+})
+
+describe('the labels used for the whole-graph tabs', () => {
+  test('are bare identifiers', () => {
+    // They are interpolated into Cypher, so anything else is an injection.
+    for (const tab of LABEL_TABS) {
+      for (const label of labelsForTab(tab)) expect(isSafeLabel(label)).toBe(true)
+    }
+  })
+
+  test('are labels the graph actually writes', () => {
     const known = new Set<string>(ALL_GRAPH_LABELS)
-    for (const label of labelsInUse()) expect(known.has(label)).toBe(true)
+    for (const tab of LABEL_TABS) {
+      for (const label of labelsForTab(tab)) expect(known.has(label)).toBe(true)
+    }
   })
 })
 

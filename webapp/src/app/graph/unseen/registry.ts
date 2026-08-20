@@ -50,44 +50,23 @@ export const ALL_GRAPH_LABELS = [
 export const UNBADGED_TABS: readonly TableViewMode[] = ['reconDelta', 'scanSchedule']
 
 /**
- * Tab -> the labels whose write time drives its badge.
+ * The tabs that carry a badge.
  *
- * These are the labels a row is BUILT FROM, not every label its Cypher
- * traverses. A tab that joins several labels (Kill-Chain, Net Initial-Access)
- * lists all of them, because a change to any one of them changes the row.
+ * How each one is COUNTED lives next to the counting, in
+ * `api/analytics/unseen/sources.ts`: two whole-graph tabs count nodes by label,
+ * the rest invoke their own route and count the rows it returns. That split
+ * matters and it is not cosmetic - counting the filtered sheets by label is
+ * exactly the bug this list used to encode, where four new Vulnerability nodes
+ * badged four unrelated tabs that all opened empty.
  */
-export const UNSEEN_TAB_LABELS: Record<Exclude<TableViewMode, 'reconDelta' | 'scanSchedule'>, readonly string[]> = {
-  nodeDetails: ALL_GRAPH_LABELS,
-  all: ALL_GRAPH_LABELS,
-  jsRecon: ['JsReconFinding'],
-  aiSurface: ['Endpoint', 'Technology'],
-  aiRisk: ['Vulnerability', 'Parameter', 'Endpoint', 'Technology'],
-  killChain: ['Technology', 'Port', 'IP', 'Subdomain', 'ExploitGvm'],
-  blastRadius: ['Technology'],
-  takeover: ['Vulnerability'],
-  secrets: ['Secret', 'GithubSecret', 'GithubSensitiveFile', 'MultiscannerFinding', 'ChainFinding'],
-  netInitAccess: ['Port', 'Vulnerability', 'IP'],
-  graphql: ['Endpoint'],
-  webInitAccess: ['BaseURL'],
-  paramMatrix: ['Parameter', 'Vulnerability'],
-  sharedInfra: ['Certificate', 'IP'],
-  dnsEmail: ['Domain'],
-  threatIntel: ['Domain', 'IP', 'ThreatPulse'],
-  jsDepSignals: ['JsReconFinding'],
-  supplyChainSca: ['Package', 'MalPackageFinding', 'Vulnerability'],
-  dnsDrift: ['Domain'],
-  webCachePoison: ['BaseURL', 'Endpoint', 'Vulnerability'],
-}
+export const BADGED_TABS = [
+  'nodeDetails', 'all', 'jsRecon', 'aiSurface', 'aiRisk', 'killChain', 'blastRadius',
+  'takeover', 'secrets', 'netInitAccess', 'graphql', 'webInitAccess', 'paramMatrix',
+  'sharedInfra', 'dnsEmail', 'threatIntel', 'jsDepSignals', 'supplyChainSca',
+  'dnsDrift', 'webCachePoison',
+] as const satisfies readonly Exclude<TableViewMode, 'reconDelta' | 'scanSchedule'>[]
 
-/** Tab ids that carry a badge, in no particular order. */
-export const BADGED_TABS = Object.keys(UNSEEN_TAB_LABELS) as (keyof typeof UNSEEN_TAB_LABELS)[]
-
-/** The distinct labels the count query has to scan, across all tabs. */
-export function labelsInUse(): string[] {
-  const seen = new Set<string>()
-  for (const labels of Object.values(UNSEEN_TAB_LABELS)) labels.forEach(l => seen.add(l))
-  return [...seen].sort()
-}
+export type BadgedTab = (typeof BADGED_TABS)[number]
 
 /** A user's per-tab watermarks: the instant they last saw each tab. */
 export type UnseenMarks = Partial<Record<string, string>>
@@ -97,6 +76,6 @@ export interface UnseenResponse {
   /** Server time, the only clock a watermark may ever be stamped from. */
   now: string
   counts: Partial<Record<string, number>>
-  /** Nodes unseen by SOME tab - not the sum of `counts`. See `distinctUnseenTotal`. */
+  /** The one number for the tab bar. Never a plain sum of `counts` - see `barTotal`. */
   total: number
 }

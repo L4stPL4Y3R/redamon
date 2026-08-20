@@ -8,11 +8,14 @@ import { BADGED_TABS, type UnseenResponse } from '../unseen/registry'
 const SEEN_AT_KEY = 'unseenSeenAt'
 
 /**
- * How often the badges refresh. A scan writes for minutes at a time, so a
- * sub-minute cadence buys nothing a user would notice while multiplying a
- * whole-project label scan by every open browser tab.
+ * How often the badges refresh.
+ *
+ * A poll fans out to every tab's own query server-side, which is what makes the
+ * numbers match the tables - and what makes it worth doing rarely. A scan writes
+ * for minutes at a time, so a faster cadence buys nothing a user would notice
+ * while multiplying that fan-out by every open browser tab.
  */
-const POLL_MS = 45_000
+const POLL_MS = 60_000
 
 type ProjectMarks = Record<string, string>
 type SeenAtPrefs = Record<string, ProjectMarks>
@@ -26,8 +29,9 @@ function sameCounts(a: Record<string, number>, b: Record<string, number>): boole
 /**
  * Unseen-row badges for the graph table tabs.
  *
- * A tab's badge counts the graph nodes behind it stamped after the instant that
- * user last had the tab open. Three rules make the number behave:
+ * A tab's badge counts the ROWS THAT TAB WOULD SHOW which were written after
+ * the instant that user last had it open - the route works that out per tab, so
+ * a badge and an empty table can never disagree. Three rules make it behave:
  *
  *  1. **Seeding.** A tab with no stored watermark is not "everything is new" -
  *     it is a user who has never had badges before. The first response seeds
@@ -43,9 +47,9 @@ function sameCounts(a: Record<string, number>, b: Record<string, number>): boole
 export function useUnseenCounts(projectId: string | null, activeTab: string | null) {
   const { prefs, isLoading, updatePref } = useUserPreferences()
   const [counts, setCounts] = useState<Record<string, number>>({})
-  // Not derived from `counts`: the tab bar shows nodes unseen by SOME tab,
-  // which is smaller than the sum of the badges because Node Inspector and All
-  // Nodes both cover the whole graph. Only the route can work that out.
+  // Not derived from `counts`: Node Inspector and All Nodes each cover the whole
+  // graph, so adding the badges up reports every new node two or three times.
+  // The route sends the reconciled figure - see `barTotal`.
   const [total, setTotal] = useState(0)
 
   const marks = useMemo<ProjectMarks>(() => {
@@ -158,7 +162,7 @@ export function useUnseenCounts(projectId: string | null, activeTab: string | nu
         if (active) next[active] = 0
         // Bail on an unchanged poll. Without this every tick hands the graph
         // page a fresh object and re-renders the canvas, which on a large graph
-        // is a visible hitch every 45 seconds to say "nothing changed".
+        // is a visible hitch on every tick to say "nothing changed".
         setCounts(prev => (sameCounts(prev, next) ? prev : next))
         // The bar keeps the route's figure even when the open tab was just
         // zeroed: those nodes are genuinely still unseen by the other tabs.
