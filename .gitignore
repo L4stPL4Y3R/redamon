@@ -227,6 +227,7 @@ docs/readmes/agent_prompts/
 # e.g. webapp/src/app/api/internal/
 /_local/
 /internal/
+/validation-benchmarks/
 
 # DevergoLabs (separate local project kept at repo root, untracked)
 /DevergoLabs/
