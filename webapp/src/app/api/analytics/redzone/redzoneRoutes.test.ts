@@ -349,8 +349,8 @@ describe('/api/analytics/redzone/secrets', () => {
     expect(body.rows.map((r: { id: string }) => r.id)).toEqual(['errored', 'dead', 'never'])
   })
 
-  test('N+1 guard: exactly two queries regardless of how many rows come back', async () => {
-    // Both traversals are set-based. A per-row lookup creeping in (to resolve an
+  test('N+1 guard: one query per source regardless of how many rows come back', async () => {
+    // Every traversal is set-based. A per-row lookup creeping in (to resolve an
     // asset name, say) would show up here as query count scaling with rows.
     runReturnFor = [
       { match: /MATCH \(s:Secret/, rows: Array.from({ length: 50 }, (_, i) => ({
@@ -362,7 +362,146 @@ describe('/api/analytics/redzone/secrets', () => {
     ]
     const body = await (await secretsRoute.GET(makeRequest('p1'))).json()
     expect(body.rows).toHaveLength(100)
-    expect(runCalls).toHaveLength(2)
+    // :Secret, MultiscannerFinding, GithubSecret, GithubSensitiveFile, ChainFinding
+    expect(runCalls).toHaveLength(5)
+  })
+
+  // -- the three sources this table used to omit ----------------------------
+  // Every one of them was graph-only: the operator had to open /graph to see a
+  // credential RedAmon had already found.
+
+  test('GitHub Secret Hunt findings are queried', async () => {
+    await secretsRoute.GET(makeRequest('p1'))
+    const c = runCalls.find(call => /MATCH \(gs:GithubSecret/.test(call.cypher))
+    expect(c).toBeDefined()
+    expect(c!.cypher).toMatch(/\(gp:GithubPath\)-\[:CONTAINS_SECRET\]->\(gs\)/)
+    expect(c!.params.pid).toBe('p1')
+  })
+
+  test('GitHub sensitive FILES are queried too, and carry no value', async () => {
+    runReturnFor = [
+      { match: /GithubSensitiveFile/, rows: [
+        { id: 'gf1', asset: 'acme/app', location: '.env', updatedAt: null },
+      ] },
+    ]
+    const body = await (await secretsRoute.GET(makeRequest('p1'))).json()
+    expect(body.rows).toHaveLength(1)
+    expect(body.rows[0].origin).toBe('GithubSensitiveFile')
+    // The scanner never opened the file, so claiming a sample would be a lie.
+    expect(body.rows[0].valueSample).toBeNull()
+    expect(body.rows[0].location).toBe('.env')
+    expect(body.rows[0].severity).toBe('low')
+  })
+
+  test('a GitHub secret is never marked as checked', async () => {
+    // Pure regex, no verification step. `unvalidated` would read as
+    // checked-and-dead, which nobody established.
+    runReturnFor = [
+      { match: /MATCH \(gs:GithubSecret/, rows: [
+        { id: 'g1', secretType: 'AWS Access Key ID', valueSample: 'AKIA', matches: 3,
+          asset: 'acme/app', location: 'src/config.py', updatedAt: null },
+      ] },
+    ]
+    const body = await (await secretsRoute.GET(makeRequest('p1'))).json()
+    expect(body.rows[0].validationStatus).toBe('unverified')
+    expect(body.rows[0].sourceModule).toBe('github_hunt')
+    expect(body.rows[0].asset).toBe('acme/app')
+    expect(body.rows[0].confidence).toBe(3)
+  })
+
+  test('GitHub severity separates a key from a private IP address', async () => {
+    // A full-org scan is mostly low-value families; flattening them all to one
+    // severity buries the findings that matter.
+    runReturnFor = [
+      { match: /MATCH \(gs:GithubSecret/, rows: [
+        { id: 'ip', secretType: 'IP Address (Private)', asset: 'a', location: 'b' },
+        { id: 'pg', secretType: 'PostgreSQL Connection String', asset: 'a', location: 'b' },
+        { id: 'pw', secretType: 'Hardcoded Password', asset: 'a', location: 'b' },
+      ] },
+    ]
+    const body = await (await secretsRoute.GET(makeRequest('p1'))).json()
+    const bySev = Object.fromEntries(body.rows.map((r: { id: string, severity: string }) => [r.id, r.severity]))
+    expect(bySev).toEqual({ ip: 'low', pg: 'high', pw: 'medium' })
+  })
+
+  test('a credential hidden in a URL is not filed as low', async () => {
+    // `redis://user:pass@`, `cloudinary://key:secret@` and
+    // `https://user:token@github.com` carry inline auth that no keyword in the
+    // pattern NAME gives away, so they need naming explicitly.
+    runReturnFor = [
+      { match: /MATCH \(gs:GithubSecret/, rows: [
+        { id: 'ghcred', secretType: 'GitHub Credentials URL', asset: 'a', location: 'b' },
+        { id: 'redis', secretType: 'Redis URL', asset: 'a', location: 'b' },
+        { id: 'cloudinary', secretType: 'Cloudinary URL', asset: 'a', location: 'b' },
+        { id: 'p12', secretType: 'PKCS12 File', asset: 'a', location: 'b' },
+        // Publishable by design — this one must STAY low, or the tier means
+        // nothing.
+        { id: 'recaptcha', secretType: 'Google reCAPTCHA Key', asset: 'a', location: 'b' },
+        { id: 'bucket', secretType: 'S3 Bucket (virtual-hosted)', asset: 'a', location: 'b' },
+      ] },
+    ]
+    const body = await (await secretsRoute.GET(makeRequest('p1'))).json()
+    const bySev = Object.fromEntries(body.rows.map((r: { id: string, severity: string }) => [r.id, r.severity]))
+    expect(bySev).toEqual({
+      ghcred: 'high', redis: 'high', cloudinary: 'high', p12: 'high',
+      recaptcha: 'low', bucket: 'low',
+    })
+  })
+
+  test('a credential the agent USED outranks every scanner finding', async () => {
+    // An exploit_success carrying a password is a credential someone logged in
+    // with — the strongest row this table can hold.
+    runReturnFor = [
+      { match: /MultiscannerFinding/, rows: [
+        { id: 'tf1', secretType: 'AWS', validationStatus: 'validated' },
+      ] },
+      { match: /MATCH \(f:ChainFinding/, rows: [
+        { id: 'c1', findingType: 'exploit_success', username: 'admin', password: 'hunter2',
+          attackType: 'sql_injection', severity: 'critical', targetIp: '10.0.0.5',
+          targetPort: 8080, title: 'Exploit success', updatedAt: null },
+      ] },
+    ]
+    const body = await (await secretsRoute.GET(makeRequest('p1'))).json()
+    expect(body.rows[0].id).toBe('c1')
+    expect(body.rows[0].origin).toBe('ChainFinding')
+    expect(body.rows[0].validationStatus).toBe('validated')
+    expect(body.rows[0].secretType).toBe('Credential Pair')
+    expect(body.rows[0].asset).toBe('10.0.0.5:8080')
+    expect(body.rows[0].location).toBe('user: admin')
+    expect(body.rows[0].keyType).toBe('sql_injection')
+  })
+
+  test('a merely OBSERVED credential is not claimed as proven', async () => {
+    runReturnFor = [
+      { match: /MATCH \(f:ChainFinding/, rows: [
+        { id: 'c1', findingType: 'credential_found', username: 'svc', password: 'p',
+          severity: 'high' },
+      ] },
+    ]
+    const body = await (await secretsRoute.GET(makeRequest('p1'))).json()
+    expect(body.rows[0].validationStatus).toBe('unvalidated')
+  })
+
+  test('the chain query matches on the property, not only on finding_type', async () => {
+    // The writer attaches username/password to exploit_success as well as
+    // credential_found; keying off the type alone misses the ones that worked.
+    await secretsRoute.GET(makeRequest('p1'))
+    const c = runCalls.find(call => /MATCH \(f:ChainFinding/.test(call.cypher))!.cypher
+    expect(c).toMatch(/f\.username IS NOT NULL OR f\.password IS NOT NULL/)
+    expect(c).toMatch(/f\.finding_type = 'credential_found'/)
+  })
+
+  test('a Secret Multiscanner file finding is pinned to its line and commit', async () => {
+    // Both were stored on the node and never surfaced, leaving the reader to
+    // search the file by hand.
+    runReturnFor = [
+      { match: /MultiscannerFinding/, rows: [
+        { id: 'tf1', secretType: 'AWS', location: 'src/app.py', line: 42,
+          commit: 'abcdef1234567890', findingKind: 'secret' },
+      ] },
+    ]
+    const body = await (await secretsRoute.GET(makeRequest('p1'))).json()
+    expect(body.rows[0].location).toBe('src/app.py:42 @abcdef1')
   })
 
   test('every query is scoped to the requested project', async () => {
