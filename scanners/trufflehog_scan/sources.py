@@ -491,6 +491,27 @@ def validate_config(source_id: str, config: dict) -> list[str]:
                 errors.append(
                     f"GitLab: '{repo}' must be a full URL, e.g. "
                     f"https://gitlab.com/{repo.strip('/')}.git")
+        # `includeRepos` is a CONJUNCTION of two globs, which is visible nowhere.
+        # TruffleHog applies the pattern TWICE per project: once to the path
+        # (`group/project`) while enumerating the group, and once to the clone
+        # URL (`https://host/group/project.git`) before scanning, keeping the
+        # project only if BOTH match. A pattern therefore has to survive a string
+        # with no scheme and no `.git` AND one carrying both, which is only
+        # possible when it starts and ends with `*`. Verified against the pinned
+        # binary: `acme/api*`, the shape that works on github, matches the path,
+        # fails the URL, and silently selects NOTHING, while `*acme/api*` works.
+        #
+        # `excludeRepos` is deliberately NOT checked: exclusion drops a project
+        # when EITHER string matches, so a full-path pattern is fine there. The
+        # asymmetry is the whole reason include needs its own rule.
+        for pattern in _as_list(cfg.get("includeRepos")):
+            if not (pattern.startswith("*") and pattern.endswith("*")):
+                errors.append(
+                    f"GitLab: include-repos pattern '{pattern}' would match "
+                    f"nothing. TruffleHog tests it against both "
+                    f"'group/project' and 'https://host/group/project.git' and "
+                    f"scans a project only if BOTH match, so the pattern must "
+                    f"start and end with '*'. Try '*{pattern.strip('*')}*'")
 
 
     if src.id == "docker":

@@ -546,6 +546,52 @@ class TestBinaryVerifiedConstraints(unittest.TestCase):
         # Empty scans every project the token can reach; that is a real mode.
         self.assertEqual(reg.validate_config("gitlab", {}), [])
 
+    # --- gitlab include-repos is a CONJUNCTION of two globs -----------------
+    # Measured against the pinned binary at --log-level=3, scanning a real group
+    # of three projects. TruffleHog applies the pattern TWICE per project: once
+    # to `group/project` while enumerating ("skipping project ... reason:
+    # ignored in config"), and once to `https://host/group/project.git` before
+    # scanning. A project is kept only when BOTH match, so a pattern has to
+    # survive a string with no scheme and no `.git` AND one carrying both.
+    #
+    # Observed against a fixture group holding alpha/beta/gamma (<group> is the
+    # group path; the real one lives only in the gitignored manifest):
+    #     '*a*'          -> alpha, beta, gamma      (both stages match)
+    #     '*/a*'         -> alpha                   (both stages match)
+    #     '*alpha*'      -> alpha                   (both stages match)
+    #     '*alpha'       -> enumerated, 0 findings  (path matched, URL did not)
+    #     '<group>/a*'   -> NOTHING                 (path matched, URL did not)
+    #     '*.git'        -> NOTHING                 (URL matched, path did not)
+    #     'alpha'        -> NOTHING                 (neither matched)
+
+    def test_gitlab_include_repos_needs_leading_and_trailing_star(self):
+        # The shape that works on github. It matches the project path, fails the
+        # clone URL, and selects NOTHING with no error anywhere.
+        errors = reg.validate_config("gitlab", {"includeRepos": ["acme/api*"]})
+        self.assertTrue(any("would match nothing" in e for e in errors), errors)
+        self.assertTrue(any("*acme/api*" in e for e in errors), errors)
+
+    def test_gitlab_include_repos_wrapped_in_stars_is_accepted(self):
+        for pattern in ("*acme/api*", "*/a*", "*a*", "*"):
+            self.assertEqual(
+                reg.validate_config("gitlab", {"includeRepos": [pattern]}), [],
+                f"{pattern!r} matches both strings and must be accepted")
+
+    def test_gitlab_include_repos_half_anchored_is_refused(self):
+        # Each of these matched exactly one of the two strings, so each selected
+        # nothing while looking perfectly reasonable.
+        for pattern in ("*alpha", "alpha*", "*.git", "alpha"):
+            self.assertTrue(
+                reg.validate_config("gitlab", {"includeRepos": [pattern]}),
+                f"{pattern!r} matches only one of the two strings and must be refused")
+
+    def test_gitlab_exclude_repos_is_deliberately_unrestricted(self):
+        # Exclusion drops a project when EITHER string matches, so a full-path
+        # pattern works there. Proven: --exclude-repos='<group>/b*' dropped beta.
+        # Applying the include rule here would refuse a config that works.
+        self.assertEqual(
+            reg.validate_config("gitlab", {"excludeRepos": ["acme/api*"]}), [])
+
     def test_github_shorthand_stays_allowed(self):
         # GitHub resolves org/repo through its API; only GitLab is strict.
         self.assertEqual(reg.validate_config("github", {"repos": ["acme/api"]}), [])

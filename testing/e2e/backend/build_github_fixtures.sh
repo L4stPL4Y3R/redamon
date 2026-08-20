@@ -185,7 +185,14 @@ if ensure_repo "$BETA" true; then
   D="$WORK/$BETA"
   git_init "$D"
   printf '# redamon-th-beta\n\nA finding here proves the GitHub token was injected.\n' > "$D/README.md"
-  printf 'dd_api_key=a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6\n' > "$D/monitoring.env"
+  # `datadog_api_key=`, NOT `dd_api_key=`: TruffleHog prefilters candidate
+  # chunks by detector KEYWORD before the pattern runs, and the Datadog
+  # detector's keyword is "datadog". The abbreviated spelling this used to carry
+  # is never considered, so beta yielded NO findings at all and every case
+  # asserting that beta contributed one was measuring something else. Only
+  # affects freshly built fixtures: an existing beta is left untouched, so
+  # rewrite monitoring.env by hand to repair one that was already created.
+  printf 'datadog_api_key=a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6\n' > "$D/monitoring.env"
   commit "$D" "add synthetic monitoring credential"
   push_repo "$BETA"
   echo "  + pushed"

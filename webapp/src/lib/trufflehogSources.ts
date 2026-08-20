@@ -156,8 +156,8 @@ export const TRUFFLEHOG_SOURCES: Record<string, TrufflehogSource> = {
       { key: 'endpoint', type: 'text', label: 'Endpoint', hint: 'Default https://gitlab.com; set for self-hosted' },
       { key: 'repos', type: 'multi', label: 'Repositories', hint: 'Empty scans every project the token can reach' },
       { key: 'groupIds', type: 'multi', label: 'Group IDs', hint: 'Includes subgroups' },
-      { key: 'includeRepos', type: 'multi', label: 'Include repos', hint: 'Glob' },
-      { key: 'excludeRepos', type: 'multi', label: 'Exclude repos', hint: 'Glob' },
+      { key: 'includeRepos', type: 'multi', label: 'Include repos', hint: 'Glob, and it must start AND end with * (e.g. *acme/api*): TruffleHog matches it against the project path and the clone URL, and needs both' },
+      { key: 'excludeRepos', type: 'multi', label: 'Exclude repos', hint: 'Glob; drops a project when it matches the project path OR the clone URL' },
       { key: 'includePaths', type: 'pathfile', label: 'Include paths' },
       { key: 'excludePaths', type: 'pathfile', label: 'Exclude paths' },
     ],
@@ -377,6 +377,21 @@ export function validateTrufflehogConfig(sourceId: string, config: Record<string
       for (const repo of asList(cfg.repos)) {
         if (!/^https?:\/\//.test(repo)) {
           errors.push(`GitLab: '${repo}' must be a full URL, e.g. https://gitlab.com/${repo.replace(/^\/+|\/+$/g, '')}.git`)
+        }
+      }
+      // `includeRepos` is a CONJUNCTION of two globs. TruffleHog applies the
+      // pattern twice per project, once to the path (`group/project`) while
+      // enumerating and once to the clone URL
+      // (`https://host/group/project.git`) before scanning, and keeps the
+      // project only if BOTH match. So it has to survive a string with no scheme
+      // and no `.git` AND one carrying both, which needs a leading and trailing
+      // `*`. `acme/api*`, the shape that works on github, matches the path,
+      // fails the URL, and silently selects NOTHING.
+      // `excludeRepos` is deliberately not checked: exclusion drops a project
+      // when EITHER string matches, so a full-path pattern works there.
+      for (const pattern of asList(cfg.includeRepos)) {
+        if (!(pattern.startsWith('*') && pattern.endsWith('*'))) {
+          errors.push(`GitLab: include-repos pattern '${pattern}' would match nothing. TruffleHog tests it against both 'group/project' and 'https://host/group/project.git' and scans a project only if BOTH match, so the pattern must start and end with '*'. Try '*${pattern.replace(/^\*+|\*+$/g, '')}*'`)
         }
       }
       break

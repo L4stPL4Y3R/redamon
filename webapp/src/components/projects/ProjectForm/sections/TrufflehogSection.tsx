@@ -527,7 +527,20 @@ function ProfileEditor({
   const src = TRUFFLEHOG_SOURCES[profile.source]
   const [config, setConfig] = useState<Record<string, unknown>>(profile.config ?? {})
 
-  useEffect(() => { setConfig(profile.config ?? {}) }, [profile.config])
+  // Keyed on the profile IDENTITY, not on `profile.config`.
+  //
+  // The card owns the operator's in-progress edits, and the parent already
+  // mirrors every save back into its own list, so there is nothing to pull in
+  // while the same profile stays open. Reacting to `profile.config` instead
+  // meant a `loadProfiles()` response that had been issued BEFORE an edit could
+  // land after it, carrying the config as the server knew it a moment earlier,
+  // and silently revert the field just typed. The next edit then merged onto
+  // that reverted object and the earlier field never reached the PATCH at all.
+  // Confirmed from a network trace: two edits produced
+  // `{"groupIds":[...]}` then `{"excludeRepos":[...]}`, losing the target.
+  // On gitlab that is invisible, because a profile with no target is still
+  // valid and means "scan every project this token can reach".
+  useEffect(() => { setConfig(profile.config ?? {}) }, [profile.id])
 
   if (!src) return null
 
@@ -555,7 +568,11 @@ function ProfileEditor({
   }
 
   return (
-    <div style={{
+    // The id is the only stable handle on one source's card. Several sources
+    // share a field label ('Endpoint', 'Include paths', ...), so a selector
+    // scoped to the whole section resolves to two inputs the moment a project
+    // holds more than one profile, which is the normal state, not an edge case.
+    <div id={`trufflehog-source-${src.id}`} style={{
       border: '1px solid var(--border-primary)', borderRadius: '8px',
       padding: '10px 14px', marginBottom: '8px',
     }}>
