@@ -12,6 +12,7 @@ import {
 } from '@/lib/aiAttackSurface'
 import { WikiInfoButton } from '@/components/ui'
 import styles from './page.module.css'
+import { UpdatedAtCell, UpdatedAtTh, sortByUpdatedAt, useUpdatedAtSortDir } from '@/app/graph/components/RedZoneTables/updatedAt'
 
 const CHIP_BLUE = '#3b82f6'
 
@@ -32,6 +33,7 @@ function sevColor(sev: string): string {
 export default function AiAttackSurfacePage() {
   const { projectId } = useProject()
   const s = useAiAttackSurface(projectId)
+  const { sortDir, toggleSort } = useUpdatedAtSortDir()
   // Scan Queue (Phase 3): a temporary launch refusal offers Cancel / Add to queue.
   const { handleStartFailure } = useScanStartFailure(projectId)
   const [filters, setFilters] = useState<Set<ChipKey>>(new Set())
@@ -553,10 +555,11 @@ export default function AiAttackSurfacePage() {
               <tr>
                 <th>Tool</th><th>OWASP</th><th>Attack</th><th>Target</th>
                 <th>ASR</th><th>Trials</th><th>Severity</th><th>Evidence</th><th>Report</th>
+                <UpdatedAtTh dir={sortDir} onToggle={toggleSort} />
               </tr>
             </thead>
             <tbody>
-              {s.findings.map((f) => (
+              {sortByUpdatedAt(s.findings, sortDir).map((f) => (
                 <tr key={f.id}>
                   <td>{f.source}</td>
                   <td>{f.owaspLlmId}</td>
@@ -570,6 +573,7 @@ export default function AiAttackSurfacePage() {
                     ? <a href={`/api/ai-attack-surface/${projectId}/transcript?ref=${encodeURIComponent(f.transcriptRef)}`}
                          target="_blank" rel="noopener noreferrer">view</a>
                     : '-'}</td>
+                  <td><UpdatedAtCell value={(f as { updatedAt?: unknown }).updatedAt} /></td>
                 </tr>
               ))}
             </tbody>

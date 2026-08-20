@@ -47,7 +47,8 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
               // Prefer the linked node; fall back to the URL stored on the
               // finding so custom (off-graph) targets still show a target.
               coalesce(parent.baseurl, parent.url, parent.name, v.ai_target_url) AS target,
-              parent.path AS endpointPath
+              parent.path AS endpointPath,
+              v.updated_at AS updatedAt
        LIMIT 2000`,
       { pid: projectId, sources: AI_ATTACK_SOURCES },
     )
@@ -70,6 +71,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       targetType: r.get('targetType'),
       target: r.get('target'),
       endpointPath: r.get('endpointPath'),
+      updatedAt: r.get('updatedAt') ?? null,
     }))
     return NextResponse.json({ findings, count: findings.length })
   } catch (error) {

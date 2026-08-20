@@ -15,6 +15,7 @@ import type {
 } from '@/lib/cypherfix-types'
 import { SEVERITY_ORDER } from '@/lib/cypherfix-types'
 import styles from './RemediationDashboard.module.css'
+import { UpdatedAtCell, UpdatedAtTh, sortByUpdatedAt, useUpdatedAtSortDir } from '@/app/graph/components/RedZoneTables/updatedAt'
 
 interface RemediationDashboardProps {
   remediations: Remediation[]
@@ -61,12 +62,16 @@ export function RemediationDashboard({
   }, [remediations])
 
   // Sort: by priority (ascending), then severity
+  const { sortDir, toggleSort } = useUpdatedAtSortDir()
   const sorted = useMemo(() => {
-    return [...remediations].sort((a, b) => {
+    // Priority/severity stays the tie-break: `sortByUpdatedAt` is stable, so
+    // two items written in the same second keep the triage ranking below.
+    const byPriority = [...remediations].sort((a, b) => {
       if (a.priority !== b.priority) return a.priority - b.priority
       return (SEVERITY_ORDER[a.severity] || 4) - (SEVERITY_ORDER[b.severity] || 4)
     })
-  }, [remediations])
+    return sortByUpdatedAt(byPriority, sortDir)
+  }, [remediations, sortDir])
 
   if (error) {
     return (
@@ -125,6 +130,7 @@ export function RemediationDashboard({
                 <th className={styles.thType}>Type</th>
                 <th className={styles.thStatus}>Status</th>
                 <th className={styles.thCve}>CVEs</th>
+                <UpdatedAtTh dir={sortDir} onToggle={toggleSort} />
                 <th className={styles.thActions}></th>
               </tr>
             </thead>
@@ -169,6 +175,7 @@ export function RemediationDashboard({
                       <span className={styles.noCve}>-</span>
                     )}
                   </td>
+                  <td><UpdatedAtCell value={rem.updatedAt} /></td>
                   <td className={styles.tdActions}>
                     <div className={styles.actions} onClick={e => e.stopPropagation()}>
                       {rem.status === 'pending' && (

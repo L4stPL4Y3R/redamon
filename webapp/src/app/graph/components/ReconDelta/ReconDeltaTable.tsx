@@ -8,6 +8,14 @@ import { WikiInfoButton } from '@/components/ui'
 import { GraphCanvas } from '../GraphCanvas'
 import { useDimensions } from '../../hooks'
 import styles from './ReconDeltaTable.module.css'
+import {
+  UpdatedAtCell,
+  UpdatedAtTh,
+  nodeUpdatedAt,
+  sortByUpdatedAt,
+  useUpdatedAtSortDir,
+  type SortDir,
+} from '../RedZoneTables/updatedAt'
 
 interface FieldChange { field: string; from: unknown; to: unknown }
 interface DeltaNode { key: string; type: string; name: string; properties: Record<string, unknown> }
@@ -89,6 +97,7 @@ export function ReconDeltaTable({ projectId, versions, isDark = true }: ReconDel
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [section, setSection] = useState<Section>('added')
+  const { sortDir, toggleSort } = useUpdatedAtSortDir()
   // Overlay (Section 6.3) is fetched separately and only when opened - it returns
   // the union of both versions, which is up to twice the render set.
   const [overlay, setOverlay] = useState<OverlayPayload | null>(null)
@@ -285,9 +294,9 @@ export function ReconDeltaTable({ projectId, versions, isDark = true }: ReconDel
           </div>
 
           <div className={styles.tableWrap}>
-            {section === 'added' && <NodeList nodes={data.addedNodes} kind="added" />}
-            {section === 'removed' && <NodeList nodes={data.removedNodes} kind="removed" />}
-            {section === 'changed' && <ChangedList nodes={data.changedNodes} />}
+            {section === 'added' && <NodeList nodes={data.addedNodes} kind="added" sortDir={sortDir} onToggleSort={toggleSort} />}
+            {section === 'removed' && <NodeList nodes={data.removedNodes} kind="removed" sortDir={sortDir} onToggleSort={toggleSort} />}
+            {section === 'changed' && <ChangedList nodes={data.changedNodes} sortDir={sortDir} onToggleSort={toggleSort} />}
             {section === 'links' && (
               <table className={styles.table}>
                 <thead>
@@ -357,15 +366,19 @@ export function ReconDeltaTable({ projectId, versions, isDark = true }: ReconDel
   )
 }
 
-function NodeList({ nodes, kind }: { nodes: DeltaNode[]; kind: 'added' | 'removed' }) {
+function NodeList({ nodes, kind, sortDir, onToggleSort }: {
+  nodes: DeltaNode[]; kind: 'added' | 'removed'; sortDir: SortDir; onToggleSort: () => void
+}) {
   if (nodes.length === 0) {
     return <p className={styles.emptyRow}>Nothing {kind}.</p>
   }
   return (
     <table className={styles.table}>
-      <thead><tr><th></th><th>Type</th><th>Asset</th><th>Details</th></tr></thead>
+      <thead><tr><th></th><th>Type</th><th>Asset</th><th>Details</th>
+        <UpdatedAtTh dir={sortDir} onToggle={onToggleSort} />
+      </tr></thead>
       <tbody>
-        {nodes.map(n => (
+        {sortByUpdatedAt(nodes, sortDir, n => nodeUpdatedAt(n.properties)).map(n => (
           <tr key={n.key}>
             <td className={kind === 'added' ? styles.added : styles.removed}>
               {kind === 'added' ? '+' : '−'}
@@ -379,6 +392,7 @@ function NodeList({ nodes, kind }: { nodes: DeltaNode[]; kind: 'added' | 'remove
                 .map(([k, v]) => `${k}=${renderValue(v)}`)
                 .join('  ')}
             </td>
+            <td><UpdatedAtCell value={nodeUpdatedAt(n.properties)} /></td>
           </tr>
         ))}
       </tbody>
@@ -386,13 +400,17 @@ function NodeList({ nodes, kind }: { nodes: DeltaNode[]; kind: 'added' | 'remove
   )
 }
 
-function ChangedList({ nodes }: { nodes: ChangedNode[] }) {
+function ChangedList({ nodes, sortDir, onToggleSort }: {
+  nodes: ChangedNode[]; sortDir: SortDir; onToggleSort: () => void
+}) {
   if (nodes.length === 0) return <p className={styles.emptyRow}>Nothing changed.</p>
   return (
     <table className={styles.table}>
-      <thead><tr><th>Type</th><th>Asset</th><th>Field</th><th>Before</th><th>After</th></tr></thead>
+      <thead><tr><th>Type</th><th>Asset</th><th>Field</th><th>Before</th><th>After</th>
+        <UpdatedAtTh dir={sortDir} onToggle={onToggleSort} />
+      </tr></thead>
       <tbody>
-        {nodes.flatMap(n =>
+        {sortByUpdatedAt(nodes, sortDir, n => nodeUpdatedAt(n.properties)).flatMap(n =>
           n.changes.map((c, i) => (
             <tr key={`${n.key}:${c.field}`}>
               <td>{i === 0 ? n.type : ''}</td>
@@ -400,6 +418,8 @@ function ChangedList({ nodes }: { nodes: ChangedNode[] }) {
               <td className={styles.field}>{c.field}</td>
               <td className={styles.removed}>{renderValue(c.from)}</td>
               <td className={styles.added}>{renderValue(c.to)}</td>
+              {/* One node spans several change rows; stamp only its first. */}
+              <td>{i === 0 ? <UpdatedAtCell value={nodeUpdatedAt(n.properties)} /> : null}</td>
             </tr>
           ))
         )}

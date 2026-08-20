@@ -6,6 +6,7 @@ import { Modal, useAlertModal, useToast, WikiInfoButton } from '@/components/ui'
 import type { ReconStatus } from '@/lib/recon-types'
 import type { ScanVersionSummary } from '../../hooks/useScanVersions'
 import styles from './VersionManager.module.css'
+import { UpdatedAtCell } from '../RedZoneTables/updatedAt'
 
 interface VersionManagerProps {
   isOpen: boolean
@@ -229,6 +230,7 @@ export function VersionManager({
                 <th>Label</th>
                 <th className={styles.num}>Nodes</th>
                 <th className={styles.num}>Snapshot</th>
+                <th>Created</th>
                 <th>State</th>
                 <th className={styles.actionsCol}>Actions</th>
               </tr>
@@ -272,6 +274,7 @@ export function VersionManager({
                     <td className={`${styles.num} ${styles.muted}`}>
                       {v.isCurrent ? 'live' : formatBytes(v.snapshotBytes)}
                     </td>
+                    <td><UpdatedAtCell value={v.createdAt} /></td>
                     <td>
                       {v.isCurrent && liveBadge && (
                         <span

@@ -135,7 +135,10 @@ export async function GET(request: NextRequest) {
        WITH f, COALESCE(target.address, target.name) AS targetHost
        RETURN f.title AS title, f.severity AS severity, f.finding_type AS findingType,
               f.evidence AS evidence, f.confidence AS confidence, f.phase AS phase,
-              targetHost
+              targetHost,
+              // ChainFinding gained updated_at with the universal-stamp
+              // sweep; created_at covers rows written before that.
+              coalesce(f.updated_at, f.created_at) AS updatedAt
        ORDER BY CASE f.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END
        LIMIT 20`,
       { pid: projectId }
@@ -148,6 +151,7 @@ export async function GET(request: NextRequest) {
       confidence: toNum(r.get('confidence')) || null,
       phase: r.get('phase') as string | null,
       targetHost: r.get('targetHost') as string | null,
+      updatedAt: r.get('updatedAt') ?? null,
     }))
 
     // Q9: Failures by type
