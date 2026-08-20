@@ -60,6 +60,7 @@ import { WORKFLOW_TOOLS } from '@/components/projects/ProjectForm/WorkflowView/w
 import type { ReconStatus } from '@/lib/recon-types'
 import type { ScanMode } from '@/hooks/useReconStatus'
 import { OtherScansModal } from './components/OtherScansModal/OtherScansModal'
+import { parseScanModal } from '@/lib/scanModalLink'
 import { useAlertModal, useToast } from '@/components/ui'
 import styles from './page.module.css'
 
@@ -503,6 +504,9 @@ export default function GraphPage() {
       clearSupplyChainLogs()
       const result = await startSupplyChain()
       if (result) {
+        // The logs drawer opens BEHIND Other Scans, so the modal has to get out
+        // of the way or the scan looks like it did nothing.
+        setIsOtherScansModalOpen(false)
         setActiveLogsDrawer('supplyChain')
         toast.info('Supply-Chain scan started')
       }
@@ -1094,6 +1098,14 @@ export default function GraphPage() {
 
   // Auto-open recon modal when navigating from project settings with autostart param
   useEffect(() => {
+    // A deep link that names a project must not be applied against whichever
+    // project the provider still holds: it resolves ?project= with an async
+    // fetch, so the first commit here can be the PREVIOUS one. Acting then also
+    // rewrites the URL to that other project - a scan modal on the wrong target.
+    // Wait for the provider to catch up; this effect re-runs when it does.
+    const urlProjectId = searchParams.get('project')
+    if (urlProjectId && urlProjectId !== projectId) return
+
     if (searchParams.get('autostart') === 'true' && projectId) {
       setIsReconModalOpen(true)
       router.replace(`/graph?project=${projectId}`)
@@ -1112,6 +1124,14 @@ export default function GraphPage() {
       setActiveView('table')
       setTableViewMode(tableParam)
       setDeepLinkSheet(searchParams.get('sheet'))   // optional sub-sheet to open
+      router.replace(`/graph?project=${projectId}`)
+    }
+    // "Start to Scan" in a project-settings section header: the settings page
+    // saved and sent the operator here with the scan's own modal to open.
+    const scanParam = parseScanModal(searchParams.get('scan'))
+    if (scanParam && projectId) {
+      if (scanParam === 'gvm') setIsGvmModalOpen(true)
+      else setIsOtherScansModalOpen(true)
       router.replace(`/graph?project=${projectId}`)
     }
   }, [searchParams, projectId, router])
@@ -1218,6 +1238,7 @@ export default function GraphPage() {
       clearGithubHuntLogs()
       const result = await startGithubHunt()
       if (result) {
+        setIsOtherScansModalOpen(false)
         setActiveLogsDrawer('githubHunt')
         toast.info('GitHub Hunt started')
       }
@@ -1242,6 +1263,7 @@ export default function GraphPage() {
       clearTrufflehogLogs()
       const result = await startTrufflehog(source)
       if (result) {
+        setIsOtherScansModalOpen(false)
         setActiveLogsDrawer(`trufflehog:${source}`)
         toast.info(`Secret Multiscanner ${source} scan started`)
       } else {

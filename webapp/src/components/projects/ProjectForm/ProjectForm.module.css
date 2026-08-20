@@ -380,6 +380,52 @@
   transition: transform var(--transition-default);
 }
 
+/* Update Settings / Start to Scan on a scan section's own header. Pushed right
+   so they sit next to the collapse chevron rather than centred by the header's
+   space-between. */
+.sectionHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+  margin-right: var(--space-3);
+}
+
+.sectionHeaderButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 4px;
+  border: 1px solid var(--border-primary, rgba(255, 255, 255, 0.12));
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sectionHeaderButton:hover:not(:disabled) {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.06));
+  color: var(--text-primary);
+}
+
+.sectionHeaderButton:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.sectionHeaderButtonPrimary {
+  color: var(--status-success, #16a34a);
+  border-color: color-mix(in srgb, var(--status-success, #16a34a) 40%, transparent);
+}
+
+.sectionHeaderButtonPrimary:hover:not(:disabled) {
+  color: var(--status-success, #16a34a);
+  background: color-mix(in srgb, var(--status-success, #16a34a) 12%, transparent);
+}
+
 .sectionIconOpen {
   transform: rotate(180deg);
 }

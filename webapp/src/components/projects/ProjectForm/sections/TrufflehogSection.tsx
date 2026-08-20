@@ -41,6 +41,8 @@ interface TrufflehogSectionProps {
    *  exists. In create mode the section shows the shared options only. */
   projectId?: string | null
   mode?: 'create' | 'edit'
+  /** Update Settings / Start to Scan for this scan, rendered in the header. */
+  actions?: React.ReactNode
 }
 
 const RESULT_TYPES = [
@@ -64,7 +66,7 @@ const setField = (
   value: unknown,
 ) => updateField(key as keyof FormData, value as FormData[keyof FormData])
 
-export function TrufflehogSection({ data, updateField, projectId, mode = 'edit' }: TrufflehogSectionProps) {
+export function TrufflehogSection({ data, updateField, projectId, mode = 'edit', actions }: TrufflehogSectionProps) {
   const [isOpen, setIsOpen] = useState(true)
   const [profiles, setProfiles] = useState<TrufflehogProfile[]>([])
   const [addingSource, setAddingSource] = useState('')
@@ -179,6 +181,7 @@ export function TrufflehogSection({ data, updateField, projectId, mode = 'edit' 
             {verifies ? 'Active' : 'Passive'}
           </span>
         </h2>
+        {actions}
         <ChevronDown
           size={16}
           className={`${styles.sectionIcon} ${isOpen ? styles.sectionIconOpen : ''}`}

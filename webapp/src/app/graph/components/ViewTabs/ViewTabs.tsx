@@ -311,7 +311,7 @@ export const ViewTabs = memo(function ViewTabs({
         </button>
 
         {/* Scan Timeline: Recon Delta + Scans are their own top-level tabs
-            (not buried in the table dropdown), each flagged NEW. */}
+            (not buried in the table dropdown). */}
         <button
           role="tab"
           aria-selected={activeView === 'table' && tableViewMode === 'reconDelta'}
@@ -320,7 +320,6 @@ export const ViewTabs = memo(function ViewTabs({
         >
           <GitCompare size={14} />
           <span>Recon Delta</span>
-          <span className={styles.newBadge}>NEW</span>
         </button>
         <button
           role="tab"
@@ -330,7 +329,6 @@ export const ViewTabs = memo(function ViewTabs({
         >
           <CalendarClock size={14} />
           <span>Scans</span>
-          <span className={styles.newBadge}>NEW</span>
         </button>
 
         <div ref={tableMenuRef} className={styles.tableMenuContainer}>
@@ -485,7 +483,6 @@ export const ViewTabs = memo(function ViewTabs({
                 onClick={() => { onTableViewModeChange?.('supplyChainSca'); setTableMenuOpen(false); onViewChange('table') }}
               >
                 <PackageSearch size={12} /> Supply-Chain SCA
-                <span className={styles.newBadge}>NEW</span>
               </button>
               <button
                 className={`${styles.tableDropdownItem} ${tableViewMode === 'dnsDrift' ? styles.tableDropdownItemActive : ''}`}

@@ -7,7 +7,7 @@ import { CredentialShortcut } from '@/components/settings/CredentialShortcut'
 import { useCredentialKeys } from '@/hooks/useCredentialKeys'
 import { TRUFFLEHOG_SOURCES } from '@/lib/trufflehogSources'
 import type { TrufflehogProfileSummary } from '@/hooks/useTrufflehogRuns'
-import { projectSettingsHref } from '@/lib/projectSettingsLinks'
+import { projectSettingsHref, type ProjectSectionAnchor } from '@/lib/projectSettingsLinks'
 import { Modal, WikiInfoButton } from '@/components/ui'
 import type { GithubHuntStatus, TrufflehogStatus, SupplyChainStatus } from '@/lib/recon-types'
 import { useSupplyChainConfig } from './useSupplyChainConfig'
@@ -62,6 +62,10 @@ interface OtherScansModalProps {
   /** Needed to read the configured scan input and to link into project settings.
    *  Without it every card renders read-only. */
   projectId?: string
+  /** Set by a host that IS the project settings page: an href to that same page
+   *  only swaps the hash, which fires no navigation, so the modal would stay
+   *  open on top of a form that never moved. The host opens the section itself. */
+  onOpenProjectSettings?: (anchor: ProjectSectionAnchor) => void
 }
 
 function StatusBadge({ status }: { status: string }) {
@@ -126,6 +130,7 @@ export function OtherScansModal({
   hasSupplyChainData = false,
   isSupplyChainLogsOpen = false,
   projectId,
+  onOpenProjectSettings,
 }: OtherScansModalProps) {
   // GitHub Hunt derived state
   const isGHBusy = githubHuntStatus === 'running' || githubHuntStatus === 'starting' || githubHuntStatus === 'pausing'
@@ -172,9 +177,23 @@ export function OtherScansModal({
     ? 'Viewing a saved version - switch back to the active version to run scans'
     : 'A version activation is in progress'
 
+  // A settings href that points at the page ALREADY under the modal only swaps
+  // the hash: no navigation, no unmount, so the click would look dead. The host
+  // opens the section (and closes the modal) itself in that case.
+  const settingsLinkProps = (section: ProjectSectionAnchor) =>
+    onOpenProjectSettings
+      ? {
+          onClick: (e: React.MouseEvent) => {
+            e.preventDefault()
+            onOpenProjectSettings(section)
+          },
+        }
+      : {}
+
   const supplyChainSettingsLink = projectId && (
     <Link
       href={projectSettingsHref(projectId, 'supply-chain-scanner')}
+      {...settingsLinkProps('supply-chain-scanner')}
       style={{ color: 'var(--accent-primary)', fontWeight: 500 }}
     >
       Set it in project settings
@@ -282,6 +301,7 @@ export function OtherScansModal({
             {projectId && (
               <Link
                 href={projectSettingsHref(projectId, 'github-secret-hunting')}
+                {...settingsLinkProps('github-secret-hunting')}
                 className={styles.settingsButton}
                 title="Configure the target org, repos and scan options in project settings"
                 aria-label="Configure GitHub Secret Hunt in project settings"
@@ -298,6 +318,7 @@ export function OtherScansModal({
             <Search size={18} className={styles.cardIcon} />
             <h3 className={styles.cardTitle}>Secret Multiscanner</h3>
             <WikiInfoButton target="Trufflehog" title="Secret Multiscanner wiki" />
+            <span className={styles.newBadge}>NEW</span>
             <StatusBadge status={trufflehogCardStatus} />
           </div>
           <p className={styles.cardDescription}>
@@ -314,6 +335,7 @@ export function OtherScansModal({
               {projectId && (
                 <Link
                   href={projectSettingsHref(projectId, 'trufflehog-scanner')}
+                  {...settingsLinkProps('trufflehog-scanner')}
                   style={{ color: 'var(--accent-primary)', fontWeight: 500 }}
                 >
                   Add one in project settings
@@ -429,6 +451,7 @@ export function OtherScansModal({
             {projectId && (
               <Link
                 href={projectSettingsHref(projectId, 'trufflehog-scanner')}
+                {...settingsLinkProps('trufflehog-scanner')}
                 className={styles.settingsButton}
                 title="Configure which sources to scan and their options in project settings"
                 aria-label="Configure Secret Multiscanner in project settings"
@@ -514,6 +537,7 @@ export function OtherScansModal({
             {projectId && (
               <Link
                 href={projectSettingsHref(projectId, 'supply-chain-scanner')}
+                {...settingsLinkProps('supply-chain-scanner')}
                 className={styles.settingsButton}
                 title="Configure the SBOM / lockfile, repository or organization to scan in project settings"
                 aria-label="Configure Supply Chain Scanner in project settings"

@@ -18,9 +18,11 @@ interface GithubSectionProps {
   data: FormData
   updateField: <K extends keyof FormData>(field: K, value: FormData[K]) => void
   hasGithubToken?: boolean
+  /** Update Settings / Start to Scan for this scan, rendered in the header. */
+  actions?: React.ReactNode
 }
 
-export function GithubSection({ data, updateField, hasGithubToken = false }: GithubSectionProps) {
+export function GithubSection({ data, updateField, hasGithubToken = false, actions }: GithubSectionProps) {
   const [isOpen, setIsOpen] = useState(true)
   const keys = useCredentialKeys()
 
@@ -41,6 +43,7 @@ export function GithubSection({ data, updateField, hasGithubToken = false }: Git
           <WikiInfoButton target="Github" />
           <span className={styles.badgePassive}>Passive</span>
         </h2>
+        {actions}
         <ChevronDown
           size={16}
           className={`${styles.sectionIcon} ${isOpen ? styles.sectionIconOpen : ''}`}

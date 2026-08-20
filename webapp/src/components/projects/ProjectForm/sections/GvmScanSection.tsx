@@ -13,9 +13,11 @@ type FormData = Omit<Project, 'id' | 'userId' | 'createdAt' | 'updatedAt' | 'use
 interface GvmScanSectionProps {
   data: FormData
   updateField: <K extends keyof FormData>(field: K, value: FormData[K]) => void
+  /** Update Settings / Start to Scan for this scan, rendered in the header. */
+  actions?: React.ReactNode
 }
 
-export function GvmScanSection({ data, updateField }: GvmScanSectionProps) {
+export function GvmScanSection({ data, updateField, actions }: GvmScanSectionProps) {
   const [isOpen, setIsOpen] = useState(true)
 
   return (
@@ -28,6 +30,7 @@ export function GvmScanSection({ data, updateField }: GvmScanSectionProps) {
           <WikiInfoButton target="GvmScan" />
           <span className={styles.badgeActive}>Active</span>
         </h2>
+        {actions}
         <ChevronDown
           size={16}
           className={`${styles.sectionIcon} ${isOpen ? styles.sectionIconOpen : ''}`}

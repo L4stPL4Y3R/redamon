@@ -23,6 +23,8 @@ interface SupplyChainScanSectionProps {
    *  In create mode the section explains that instead of offering a dead button. */
   projectId?: string | null
   mode?: 'create' | 'edit'
+  /** Update Settings / Start to Scan for this scan, rendered in the header. */
+  actions?: React.ReactNode
 }
 
 interface UploadedFile {
@@ -77,7 +79,7 @@ function formatSize(bytes: number): string {
  * enabled is the failure this replaced.
  */
 export function SupplyChainScanSection({
-  data, updateField, projectId, mode = 'edit',
+  data, updateField, projectId, mode = 'edit', actions,
 }: SupplyChainScanSectionProps) {
   const [isOpen, setIsOpen] = useState(true)
   const [file, setFile] = useState<UploadedFile | null>(null)
@@ -179,6 +181,7 @@ export function SupplyChainScanSection({
             {source === 'upload' ? 'Passive' : 'Active'}
           </span>
         </h2>
+        {actions}
         <ChevronDown size={16} className={`${styles.sectionIcon} ${isOpen ? styles.sectionIconOpen : ''}`} />
       </div>
 

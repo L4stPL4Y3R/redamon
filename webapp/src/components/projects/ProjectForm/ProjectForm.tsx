@@ -8,6 +8,7 @@ import type { Project } from '@prisma/client'
 import { validateProjectForm } from '@/lib/validation'
 import { isHardBlockedDomain } from '@/lib/hard-guardrail'
 import { tabForAnchor } from '@/lib/projectSettingsLinks'
+import { graphScanHref, type ScanModal } from '@/lib/scanModalLink'
 import { useProject } from '@/providers/ProjectProvider'
 import useReconStatus from '@/hooks/useReconStatus'
 import { useScanControls } from '@/hooks/useScanControls'
@@ -60,6 +61,7 @@ import { UrlscanSection } from './sections/UrlscanSection'
 import { SubdomainDiscoverySection } from './sections/SubdomainDiscoverySection'
 import { ToolMatrixSection } from './sections/ToolMatrixSection'
 import { GvmScanSection } from './sections/GvmScanSection'
+import { SectionScanActions } from './sections/SectionScanActions'
 import { CypherFixSettingsSection } from './sections/CypherFixSettingsSection'
 import { RoeSection } from './sections/RoeSection'
 import { OsintEnrichmentSection } from './sections/OsintEnrichmentSection'
@@ -268,14 +270,17 @@ export function ProjectForm({
   // Deep link into one section: /projects/<id>/settings#github-secret-hunting.
   // The tab has to be selected first - the section is not in the DOM until then -
   // so the scroll is deferred to the effect below rather than done here.
-  useEffect(() => {
-    const anchor = window.location.hash.slice(1)
-    if (!anchor) return
+  const openSection = useCallback((anchor: string) => {
     const tab = tabForAnchor(anchor)
     if (!tab) return
     setActiveTab(tab as TabId)
     setPendingAnchor(anchor)
   }, [])
+
+  useEffect(() => {
+    const anchor = window.location.hash.slice(1)
+    if (anchor) openSection(anchor)
+  }, [openSection])
 
   // Both setters above batch into one render, so by the time this runs the
   // section has been committed and can be scrolled to. Cleared either way: a
@@ -609,7 +614,9 @@ export function ProjectForm({
     }
   }
 
-  const handleSaveAndStay = async () => {
+  /** `after` runs only once the save actually succeeded - it is how the section
+   *  headers hand off to the graph page without navigating past a failed save. */
+  const handleSaveAndStay = async (after?: () => void) => {
     if (!onSaveAndStay) return
 
     if (!formData.name.trim()) {
@@ -651,6 +658,7 @@ export function ProjectForm({
       await onSaveAndStay(submitData)
       setBaseline(formData)
       toast.success('Project saved')
+      after?.()
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to save project'
       if (message.toLowerCase().includes('guardrail') || message.toLowerCase().includes('permanently blocked')) {
@@ -663,6 +671,34 @@ export function ProjectForm({
       }
     }
   }
+
+  // Update Settings / Start to Scan on a scan section's own header. The first is
+  // the top bar's submit; the second saves in place (nothing to save = go now)
+  // and then opens that scan's modal on the graph page.
+  const updateSettingsFromSection = () => {
+    void handleSubmit({ preventDefault: () => {} } as React.FormEvent)
+  }
+
+  const startScanFromSection = (scan: ScanModal) => {
+    if (!projectId) return
+    const openScan = () => router.push(graphScanHref(projectId, scan))
+    if (!isDirty) {
+      openScan()
+      return
+    }
+    void handleSaveAndStay(openScan)
+  }
+
+  const sectionScanActions = (scan: ScanModal, scanLabel: string) =>
+    mode === 'edit' && projectId ? (
+      <SectionScanActions
+        onUpdateSettings={updateSettingsFromSection}
+        onStartScan={() => startScanFromSection(scan)}
+        scanLabel={scanLabel}
+        isDirty={isDirty}
+        isSubmitting={isSubmitting}
+      />
+    ) : undefined
 
   // Partial recon confirm handler
   const handlePartialReconConfirm = useCallback(async (params: PartialReconParams) => {
@@ -1021,16 +1057,20 @@ export function ProjectForm({
 
         {activeTab === 'integrations' && (
           <>
-            <GvmScanSection data={formData} updateField={updateField} />
-            <GithubSection data={formData} updateField={updateField} hasGithubToken={hasGithubToken} />
+            <GvmScanSection data={formData} updateField={updateField}
+              actions={sectionScanActions('gvm', 'the GVM scan')} />
+            <GithubSection data={formData} updateField={updateField} hasGithubToken={hasGithubToken}
+              actions={sectionScanActions('other', 'Other Scans')} />
             <TrufflehogSection data={formData} updateField={updateField}
-              projectId={projectId ?? null} mode={mode} />
+              projectId={projectId ?? null} mode={mode}
+              actions={sectionScanActions('other', 'Other Scans')} />
             {/* Supply-Chain (L1): its input (uploaded SBOM / lockfile, GitHub
                 repository, or an org to batch) is configured here, next to the
                 other Other-Scans tools. The card in Other Scans owns only the
                 run controls and stays disabled until this is set. */}
             <SupplyChainScanSection data={formData} updateField={updateField}
-              projectId={projectId ?? null} mode={mode} />
+              projectId={projectId ?? null} mode={mode}
+              actions={sectionScanActions('other', 'Other Scans')} />
           </>
         )}
 
@@ -1176,6 +1216,13 @@ export function ProjectForm({
         isOpen={scans.otherScansOpen}
         onClose={scans.closeOtherScans}
         projectId={projectId ?? undefined}
+        onOpenProjectSettings={(anchor) => {
+          // The link's href is this very page, so the hash is updated here to
+          // keep a refresh landing on the section the operator asked for.
+          scans.closeOtherScans()
+          window.history.replaceState(null, '', `#${anchor}`)
+          openSection(anchor)
+        }}
         hasReconData={scans.hasReconData}
         hasGithubToken={hasGithubToken}
         githubHuntStatus={scans.githubHunt.state?.status}
