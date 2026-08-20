@@ -5,6 +5,7 @@ import { unlink } from 'fs/promises'
 import { existsSync } from 'fs'
 import path from 'path'
 import { getGraphSession } from '@/app/api/graph/neo4j'
+import { clearProjectGraph } from '@/lib/graphRestore'
 import { orchestratorFetch } from '@/lib/orchestrator'
 import { isInternalRequest, isScannerRequest } from '@/lib/session'
 import { requireEffectiveUser, requireProjectAccess } from '@/lib/access'
@@ -356,11 +357,10 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     try {
       const session = getGraphSession()
       try {
-        // Delete all nodes that belong to this project (DETACH DELETE removes relationships too)
-        await session.run(
-          `MATCH (n {project_id: $projectId}) DETACH DELETE n`,
-          { projectId: id }
-        )
+        // Via the shared helper: a raw `MATCH (n {project_id})` here also swept
+        // the global CVE/CWE/CAPEC nodes, which are shared with every other
+        // project that found them, taking those projects' links down too.
+        await clearProjectGraph(session, id)
         console.log(`Deleted Neo4j nodes for project: ${id}`)
       } finally {
         await session.close()

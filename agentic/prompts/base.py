@@ -1790,6 +1790,17 @@ Web cache poisoning properties (source="cache_poisoning"):
 - id pattern: `cache_{user_id}_{project_id}_{technique}_{baseurl}_{path}_{vector}` — deterministic, MERGE-safe
 - Typical query: "list confirmed cache poisoning findings" → `MATCH (e:Endpoint)-[:HAS_VULNERABILITY]->(v:Vulnerability {source: 'cache_poisoning'}) WHERE v.confidence_tier = 'Confirmed' RETURN e.url, v.cache_header, v.cache_impact, v.confidence, v.poc_link`
 
+**CVE / MitreData / Capec** - the PUBLIC NVD+MITRE catalogue. These three are
+GLOBAL reference nodes: one node per CVE for the whole database, shared by every
+project that finds it, and they carry NO user_id/project_id.
+
+You therefore CANNOT match them on their own — `MATCH (c:CVE) RETURN c` is
+refused, because a query has to be anchored to this project's data. Always reach
+them by traversing from a node that IS tenant-scoped:
+
+  MATCH (t:Technology)-[:HAS_KNOWN_CVE]->(c:CVE) RETURN c.id, c.cvss
+  MATCH (v:Vulnerability)-[:HAS_CVE]->(c:CVE)-[:HAS_CWE]->(m:MitreData) RETURN c.id, m.cwe_id
+
 **CVE** - Known CVE entries (linked to Technologies)
 - id (string): "CVE-2021-41773", "CVE-2021-44228"
 - name (string): same as id or descriptive name

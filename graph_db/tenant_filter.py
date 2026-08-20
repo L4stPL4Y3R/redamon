@@ -42,6 +42,29 @@ _WRITE_PROCEDURE_RE = re.compile(
 TENANT_PARAMS = {"tenant_user_id", "tenant_project_id"}
 TENANT_PROPS = "user_id: $tenant_user_id, project_id: $tenant_project_id"
 
+#: Labels holding GLOBAL reference data - the public NVD/MITRE catalogue. Each
+#: is UNIQUE on its natural id, so there is exactly one node per CVE for the
+#: whole database and it carries no tenant property at all. Injecting a tenant
+#: filter on one matches nothing, which made the agent blind to every CVE, CWE
+#: and CAPEC in the graph.
+#:
+#: Exempt because they hold no per-tenant data, not because scoping is
+#: inconvenient. Two guards keep the exemption from becoming a hole:
+#:   - a pattern qualifies only when EVERY label it names is on this list, and
+#:     only for a plain `:A` / `:A:B` conjunction. A label EXPRESSION never
+#:     qualifies, because `(n:!CVE)` means every node that is NOT a CVE.
+#:   - the QUERY must still carry at least one tenant-scoped pattern
+#:     (`find_unscoped_node_pattern`), so reference nodes are reachable only by
+#:     traversing from the caller's own data. `MATCH (c:CVE) RETURN c` on its
+#:     own is still refused: which CVEs exist in the database is itself a weak
+#:     signal about what other tenants have scanned.
+GLOBAL_REFERENCE_LABELS = frozenset({"CVE", "MitreData", "Capec"})
+
+#: A plain label conjunction and nothing else. Backticks are refused rather than
+#: unquoted: a backticked label may contain ':' and would break the split below,
+#: and no reference label needs quoting.
+_SIMPLE_LABELS_RE = re.compile(r'^(?:\s*:\s*[A-Za-z_][A-Za-z0-9_]*)+$')
+
 # A Cypher identifier: bare, or backtick-quoted (which may contain spaces).
 _IDENT = r'(?:`[^`]*`|[A-Za-z_][A-Za-z0-9_]*)'
 
@@ -236,6 +259,23 @@ def _pattern_has_tenant_props(inner: str) -> bool:
     return "$tenant_user_id" in inner and "$tenant_project_id" in inner
 
 
+def _is_global_reference_pattern(inner: str) -> bool:
+    """True when the pattern names ONLY labels from GLOBAL_REFERENCE_LABELS.
+
+    Strict by design; see the note on GLOBAL_REFERENCE_LABELS. An unlabelled
+    pattern, a mixed one such as `(n:CVE:Domain)`, and any label expression
+    (`:A|B`, `:!A`, `:A&B`) all fail this and are scoped as normal.
+    """
+    match = _NODE_INNER_RE.match(inner)
+    if not match:
+        return False
+    raw = (match.group('labels') or '').strip()
+    if not raw or not _SIMPLE_LABELS_RE.match(raw):
+        return False
+    labels = [part.strip() for part in raw.split(':') if part.strip()]
+    return bool(labels) and all(label in GLOBAL_REFERENCE_LABELS for label in labels)
+
+
 def _with_tenant_props(inner: str) -> str:
     match = _NODE_INNER_RE.match(inner)
     var = (match.group('var') or '').strip()
@@ -278,7 +318,9 @@ def inject_tenant_filter(cypher: str, user_id: str, project_id: str) -> str:
     for start, end, inner, parseable in _iter_node_patterns(cypher):
         if not parseable or start < last_end:
             continue
-        if _pattern_has_tenant_props(inner):
+        # A global reference pattern is left alone: these nodes carry no tenant
+        # property, so a filter here matches nothing at all.
+        if _pattern_has_tenant_props(inner) or _is_global_reference_pattern(inner):
             last_end = end
             continue
         spans.append((start, end, inner))
@@ -303,9 +345,23 @@ def find_unscoped_node_pattern(cypher: str) -> Optional[str]:
     Run this on the query AFTER injection. A non-None result means the query
     would read across projects and must not be executed.
     """
-    for start, end, inner, parseable in _iter_node_patterns(cypher):
-        if not parseable or not _pattern_has_tenant_props(inner):
+    patterns = list(_iter_node_patterns(cypher))
+    # Reference nodes are readable only from a query that is ITSELF anchored to
+    # the caller's data. Without this, `MATCH (c:CVE) RETURN c.id` would hand
+    # back every CVE in the database - no asset, no project, but still the union
+    # of what every tenant has found.
+    has_tenant_anchor = any(
+        parseable and _pattern_has_tenant_props(inner)
+        for _, _, inner, parseable in patterns
+    )
+    for start, end, inner, parseable in patterns:
+        if not parseable:
             return cypher[start:end]
+        if _pattern_has_tenant_props(inner):
+            continue
+        if has_tenant_anchor and _is_global_reference_pattern(inner):
+            continue
+        return cypher[start:end]
     return None
 
 

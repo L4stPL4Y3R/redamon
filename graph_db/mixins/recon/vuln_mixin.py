@@ -55,10 +55,12 @@ class VulnMixin:
         mitre_id = f"{cve_id}-{cwe_id}"
 
         # Create MitreData node with CWE properties
+        # GLOBAL reference node: keyed on its natural id alone, one node per
+        # CWE for the whole database. It carries NO tenant property - a stamp
+        # made the last project to touch it the owner, and every project-scoped
+        # delete then took the shared node down with it.
         mitre_props = {
             "id": mitre_id,
-            "user_id": user_id,
-            "project_id": project_id,
             "cve_id": cve_id,
             "cwe_id": cwe_id,
             "cwe_name": cwe_node.get("name"),
@@ -122,10 +124,9 @@ class VulnMixin:
                 numeric_id = capec_id_raw if isinstance(capec_id_raw, int) else None
 
             # Create Capec node with all properties
+            # Global reference node — see the MitreData note above.
             capec_props = {
                 "capec_id": capec_node_id,
-                "user_id": user_id,
-                "project_id": project_id,
                 "numeric_id": numeric_id,
                 "name": capec.get("name"),
                 "description": capec.get("description"),
@@ -578,12 +579,11 @@ class VulnMixin:
                             continue
 
                         # Create CVE node with all properties
+                        # Global reference node — see the MitreData note above.
                         cve_props = {
                             "id": cve_id,
                             "cve_id": cve_id,
                             "name": cve_id,
-                            "user_id": user_id,
-                            "project_id": project_id,
                             "cvss": cve.get("cvss"),
                             "severity": cve.get("severity"),
                             "description": cve.get("description"),

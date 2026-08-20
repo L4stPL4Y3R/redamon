@@ -1681,8 +1681,8 @@ def main():
                 from graph_db import Neo4jClient
                 with Neo4jClient() as graph_client:
                     if graph_client.verify_connection():
-                        clear_stats = graph_client.clear_project_data(USER_ID, PROJECT_ID)
-                        print(f"[+][graph-db] Previous data cleared: {clear_stats['nodes_deleted']} nodes removed\n")
+                        clear_stats = graph_client.clear_recon_data(USER_ID, PROJECT_ID)
+                        print(f"[+][graph-db] Previous recon data cleared: {clear_stats['nodes_deleted']} nodes removed\n")
                     else:
                         print("[!][graph-db] Could not connect to Neo4j - skipping clear\n")
             except Exception as e:
@@ -1769,8 +1769,8 @@ def main():
             from graph_db import Neo4jClient
             with Neo4jClient() as graph_client:
                 if graph_client.verify_connection():
-                    clear_stats = graph_client.clear_project_data(USER_ID, PROJECT_ID)
-                    print(f"[+][graph-db] Previous data cleared: {clear_stats['nodes_deleted']} nodes removed\n")
+                    clear_stats = graph_client.clear_recon_data(USER_ID, PROJECT_ID)
+                    print(f"[+][graph-db] Previous recon data cleared: {clear_stats['nodes_deleted']} nodes removed\n")
                 else:
                     print("[!][graph-db] Could not connect to Neo4j - skipping clear\n")
         except Exception as e:

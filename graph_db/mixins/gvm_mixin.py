@@ -505,16 +505,19 @@ class GvmMixin:
                                     """
                                     MATCH (e:ExploitGvm {id: $exploit_id})
                                     MERGE (c:CVE {id: $cve_id})
+                                    // GLOBAL reference node (UNIQUE on id, one per
+                                    // CVE for the whole database). A tenant stamp made
+                                    // the last writer its owner, and every
+                                    // project-scoped delete then took the node down for
+                                    // every other project linking to it.
                                     ON CREATE SET c.severity = $severity,
                                                   c.cvss = $cvss,
-                                                  c.source = 'gvm',
-                                                  c.user_id = $uid,
-                                                  c.project_id = $pid
+                                                  c.source = 'gvm'
+                                    SET c.updated_at = datetime()
                                     MERGE (e)-[:EXPLOITED_CVE]->(c)
                                     """,
                                     exploit_id=exploit_id, cve_id=cve_id_link,
-                                    severity=severity_label, cvss=cvss_score,
-                                    uid=user_id, pid=project_id
+                                    severity=severity_label, cvss=cvss_score
                                 )
                                 stats["cves_linked"] += 1
 

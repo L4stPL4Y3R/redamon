@@ -374,6 +374,134 @@ def migrate_legacy_labels(session):
               "next connection (no marker written)")
 
 
+
+# Every node write now stamps `updated_at`, but nodes written before that do not
+# carry it, and several labels never did: Package and MalPackageFinding stamp
+# first_seen/last_seen, the attack-chain labels stamp created_at. Those are the
+# rows the graph tables render as blank, and on a real graph Package alone is
+# the single largest label.
+#
+# Seeded from whichever write time the node DOES hold, newest-meaning first. A
+# node with none of them is left null rather than stamped "now": an invented
+# timestamp is worse than an honest blank, because it would claim the node was
+# touched by a scan that never saw it.
+UPDATED_AT_BACKFILL_MARKER = "backfill-updated-at-v1"
+UPDATED_AT_SOURCES = ("last_seen", "created_at", "first_seen")
+
+
+def backfill_updated_at(session):
+    """Give pre-existing nodes an `updated_at` from their other write time."""
+    if _migration_applied(session, UPDATED_AT_BACKFILL_MARKER):
+        return
+
+    ok = True
+    total = 0
+    for prop in UPDATED_AT_SOURCES:
+        try:
+            moved = _run_batched(
+                session,
+                f"MATCH (n) WHERE n.updated_at IS NULL AND n.`{prop}` IS NOT NULL "
+                f"WITH n LIMIT {MIGRATION_BATCH} "
+                f"SET n.updated_at = n.`{prop}` RETURN count(n) AS c")
+            total += moved
+            if moved:
+                print(f"[graph-db] backfilled updated_at on {moved} node(s) from {prop}")
+        except Exception as e:
+            print(f"[!][graph-db] updated_at backfill from {prop} failed: {e}")
+            ok = False
+
+    if ok:
+        _mark_migration_applied(session, UPDATED_AT_BACKFILL_MARKER)
+        if total:
+            print(f"[graph-db] updated_at backfill complete: {total} node(s)")
+    else:
+        print("[!][graph-db] updated_at backfill incomplete; retried on the "
+              "next connection (no marker written)")
+
+
+# CVE, MitreData and Capec are GLOBAL reference nodes: UNIQUE on their natural
+# id, one node per CVE for the whole database, shared by every project that
+# finds it. Several writers nevertheless stamped user_id/project_id on them via
+# `SET +=`, so the LAST project to touch a CVE became its owner — and every
+# project-scoped delete (a recon re-run, a project deletion, a scan-version
+# restore) then removed the shared node and every OTHER project's links to it.
+#
+# Observed live before the fix: 4 CVE nodes stamped with one project were linked
+# by INCLUDES_CVE from a second one.
+#
+# The writers no longer stamp. This strips the stamps already on disk, so the
+# project-scoped deletes stop matching them.
+# Labels owned by a scanner OTHER than the recon pipeline. A recon re-run wipes
+# and rebuilds recon's own view of the target; it must not take these with it.
+# Each of these subsystems already has its own scoped clear, run at the head of
+# its own ingest — recon was the last one still deleting everything.
+#
+# ADDING A SCANNER: put its labels here, or the first recon run after it lands
+# will delete its findings with no error anywhere.
+NON_RECON_LABELS = (
+    # GitHub Secret Hunt
+    "GithubHunt", "GithubRepository", "GithubPath", "GithubSecret",
+    "GithubSensitiveFile",
+    # Secret Multiscanner (TruffleHog)
+    "MultiscannerScan", "MultiscannerFinding", "MultiscannerRepository",
+    "MultiscannerImage", "MultiscannerModel", "MultiscannerBucket",
+    "MultiscannerEndpoint",
+    # Supply chain
+    "Package", "MalPackageFinding", "SbomDocument",
+    # Agent attack chains (session state, not recon output)
+    "AttackChain", "ChainStep", "ChainFinding", "ChainDecision", "ChainFailure",
+    # GVM
+    "ExploitGvm", "Traceroute",
+    # Knowledge base
+    "KBChunk",
+)
+
+# `source` values on the labels recon SHARES with another scanner — chiefly
+# Vulnerability, which GVM, the supply-chain scanner and the AI attack-surface
+# scanner all write into. Nodes carrying one of these belong to that scanner.
+# The mirror image of clear_gvm_data, which deletes only `source = 'gvm'`.
+NON_RECON_SOURCES = (
+    "gvm",                      # GVM
+    "osv",                      # supply chain
+    "garak", "promptfoo",       # AI attack surface findings
+    "ai_attack_target",         # ...and the synthetic target nodes they hang off
+)
+
+REFERENCE_TENANT_STRIP_MARKER = "strip-reference-node-tenant-v1"
+GLOBAL_REFERENCE_LABELS = ("CVE", "MitreData", "Capec")
+
+
+def strip_reference_node_tenant(session):
+    """Remove user_id/project_id from the global reference labels."""
+    if _migration_applied(session, REFERENCE_TENANT_STRIP_MARKER):
+        return
+
+    ok = True
+    total = 0
+    for label in GLOBAL_REFERENCE_LABELS:
+        try:
+            stripped = _run_batched(
+                session,
+                f"MATCH (n:`{label}`) "
+                f"WHERE n.user_id IS NOT NULL OR n.project_id IS NOT NULL "
+                f"WITH n LIMIT {MIGRATION_BATCH} "
+                f"REMOVE n.user_id, n.project_id RETURN count(n) AS c")
+            total += stripped
+            if stripped:
+                print(f"[graph-db] unstamped {stripped} {label} node(s)")
+        except Exception as e:
+            print(f"[!][graph-db] {label} tenant strip failed: {e}")
+            ok = False
+
+    if ok:
+        _mark_migration_applied(session, REFERENCE_TENANT_STRIP_MARKER)
+        if total:
+            print(f"[graph-db] reference-node tenant strip complete: {total} node(s)")
+    else:
+        print("[!][graph-db] reference-node tenant strip incomplete; retried on "
+              "the next connection (no marker written)")
+
+
 def init_schema(session):
     """
     Initialize constraints and indexes for the graph schema.
@@ -383,6 +511,8 @@ def init_schema(session):
     # Before the DDL: the new constraints cannot be created while data still
     # carries the old labels.
     migrate_legacy_labels(session)
+    backfill_updated_at(session)
+    strip_reference_node_tenant(session)
 
     for stmt in DROP_LEGACY_CONSTRAINTS:
         try:

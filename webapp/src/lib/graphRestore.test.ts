@@ -39,27 +39,58 @@ const node = (label: string, properties: Record<string, unknown>, id: string) =>
 beforeEach(() => vi.clearAllMocks())
 
 describe('clearProjectGraph', () => {
-  test('without exclusions it deletes the whole project subgraph', async () => {
+  // The wipe used to be a bare `MATCH (n {project_id}) DETACH DELETE n`. That
+  // also took the CVE/MitreData/Capec catalogue, which is ONE node per CVE for
+  // the whole database, shared by every project that found it — so deleting a
+  // project removed other projects' links to it. Observed live: 4 CVEs stamped
+  // with one project, linked from a second.
+  test('the global reference catalogue is always excluded', async () => {
     const { session, calls } = fakeSession()
     await clearProjectGraph(session, 'p1')
-    expect(calls).toHaveLength(1)
-    expect(calls[0].cypher).toContain('MATCH (n {project_id: $pid}) DETACH DELETE n')
-    expect(calls[0].cypher).not.toContain('NONE(')
-    expect(calls[0].params).toEqual({ pid: 'p1' })
+    expect(calls[0].cypher).toContain('NONE(l IN labels(n) WHERE l IN $excluded)')
+    expect(calls[0].params.excluded).toEqual(
+      expect.arrayContaining(['CVE', 'MitreData', 'Capec']))
   })
 
-  test('with exclusions it preserves those labels (F1: agent chains survive)', async () => {
+  test('with exclusions it preserves those labels TOO (F1: agent chains survive)', async () => {
     const { session, calls } = fakeSession()
     await clearProjectGraph(session, 'p1', ['AttackChain', 'ChainStep'])
     expect(calls[0].cypher).toContain('NONE(l IN labels(n) WHERE l IN $excluded)')
-    expect(calls[0].params).toEqual({ pid: 'p1', excluded: ['AttackChain', 'ChainStep'] })
+    expect(calls[0].params.excluded).toEqual(
+      expect.arrayContaining(['AttackChain', 'ChainStep', 'CVE', 'MitreData', 'Capec']))
   })
 
-  test('is scoped by project_id, never a bare MATCH (n)', async () => {
+  test('the caller cannot accidentally drop the reference exclusion', async () => {
+    const { session, calls } = fakeSession()
+    await clearProjectGraph(session, 'p1', [])
+    expect(calls[0].params.excluded).toEqual(
+      expect.arrayContaining(['CVE', 'MitreData', 'Capec']))
+  })
+
+  test('the project wipe itself is scoped by project_id, never a bare MATCH (n)', async () => {
     const { session, calls } = fakeSession()
     await clearProjectGraph(session, 'p1')
     await clearProjectGraph(session, 'p1', ['AttackChain'])
-    for (const c of calls) expect(c.cypher).toContain('project_id: $pid')
+    const wipes = calls.filter(c => c.cypher.includes('DETACH DELETE n')
+                                 && c.cypher.includes('NONE('))
+    expect(wipes.length).toBeGreaterThan(0)
+    for (const c of wipes) expect(c.cypher).toContain('project_id: $pid')
+  })
+
+  test('the orphan sweep is global on purpose, and touches ONLY reference labels', async () => {
+    // Reference nodes carry no project_id, so this one query cannot be
+    // project-scoped. Its safety comes from the label predicate instead: a bare
+    // `MATCH (n)` here without it would delete the database.
+    const { session, calls } = fakeSession()
+    await clearProjectGraph(session, 'p1')
+    const sweep = calls.find(c => c.cypher.includes('NOT EXISTS'))
+    expect(sweep).toBeDefined()
+    expect(sweep!.cypher).toContain('n:`CVE`')
+    expect(sweep!.cypher).toContain('n:`MitreData`')
+    expect(sweep!.cypher).toContain('n:`Capec`')
+    // Reachability, not degree: the catalogue is internally linked
+    // (CVE -> MitreData -> Capec), so a degree-zero test never fires.
+    expect(sweep!.cypher).toContain('-[*1..3]-')
   })
 })
 

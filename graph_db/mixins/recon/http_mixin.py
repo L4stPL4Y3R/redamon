@@ -22,6 +22,22 @@ from urllib.parse import urlparse, parse_qs
 from graph_db.cpe_resolver import _is_ip_address
 
 
+#: Every relationship type a Technology node can carry, and which way it points
+#: relative to the Technology. Used when a versioned detection absorbs a
+#: versionless twin: each is re-parented before the twin is removed.
+#:
+#: USES_TECHNOLOGY    (Endpoint|Service|Port|IP) -> Technology
+#: HAS_TECHNOLOGY     (Port|IP|Parameter)        -> Technology
+#: HAS_KNOWN_CVE      Technology -> CVE
+#: HAS_VULNERABILITY  Technology -> Vulnerability   (GVM)
+_TECH_TWIN_RELATIONSHIPS = (
+    ("USES_TECHNOLOGY", "in"),
+    ("HAS_TECHNOLOGY", "in"),
+    ("HAS_KNOWN_CVE", "out"),
+    ("HAS_VULNERABILITY", "out"),
+)
+
+
 def resolve_tech_version(session, name: str, version: str,
                          user_id: str, project_id: str) -> str:
     """Return the version to MERGE a Technology node on, collapsing duplicates.
@@ -45,20 +61,69 @@ def resolve_tech_version(session, name: str, version: str,
     """
     if version:
         # Absorb an existing versionless twin into this versioned node.
+        #
+        # Every relationship moves, not just USES_TECHNOLOGY. The original
+        # re-parented that one type and then DETACH DELETEd, so a twin that had
+        # already collected `(Port|IP)-[:HAS_TECHNOLOGY]->`, `-[:HAS_KNOWN_CVE]->`
+        # or GVM's `-[:HAS_VULNERABILITY]->` lost them silently - and the port
+        # scan, which reports versionless services, usually runs BEFORE the HTTP
+        # probe that supplies a version, so the twin normally HAS those edges.
         session.run(
             """
-            MATCH (old:Technology {name: $name, version: '',
-                                   user_id: $uid, project_id: $pid})
             MERGE (new:Technology {name: $name, version: $version,
                                    user_id: $uid, project_id: $pid})
-            WITH old, new
-            OPTIONAL MATCH (e)-[r:USES_TECHNOLOGY]->(old)
-            WITH old, new, collect(e) AS endpoints
-            FOREACH (e IN endpoints | MERGE (e)-[:USES_TECHNOLOGY]->(new))
-            DETACH DELETE old
+            SET new.updated_at = datetime()
             """,
             name=name, version=version, uid=user_id, pid=project_id,
         )
+        for rel, direction in _TECH_TWIN_RELATIONSHIPS:
+            if direction == "in":
+                existing, moved = f"(other)-[r:`{rel}`]->(old)", f"(other)-[:`{rel}`]->(new)"
+            else:
+                existing, moved = f"(old)-[r:`{rel}`]->(other)", f"(new)-[:`{rel}`]->(other)"
+            # DELETE r is not optional: re-creating the edge on `new` without
+            # dropping it from `old` leaves the twin holding a relationship, and
+            # the zero-degree guard below then refuses to remove it forever.
+            session.run(
+                f"""
+                MATCH (old:Technology {{name: $name, version: '',
+                                       user_id: $uid, project_id: $pid}})
+                MATCH (new:Technology {{name: $name, version: $version,
+                                       user_id: $uid, project_id: $pid}})
+                WITH old, new
+                MATCH {existing}
+                MERGE {moved}
+                DELETE r
+                """,
+                name=name, version=version, uid=user_id, pid=project_id,
+            )
+
+        # Delete the twin only once it holds nothing. A relationship type this
+        # list does not know about would otherwise be destroyed with no trace;
+        # leaving a duplicate node behind is the far cheaper failure.
+        record = session.run(
+            """
+            MATCH (old:Technology {name: $name, version: '',
+                                   user_id: $uid, project_id: $pid})
+            WHERE NOT (old)--()
+            DELETE old
+            RETURN count(old) AS absorbed
+            """,
+            name=name, uid=user_id, pid=project_id,
+        ).single()
+        if record is not None and not record["absorbed"]:
+            leftover = session.run(
+                """
+                MATCH (old:Technology {name: $name, version: '',
+                                       user_id: $uid, project_id: $pid})-[r]-()
+                RETURN collect(DISTINCT type(r)) AS types
+                """,
+                name=name, uid=user_id, pid=project_id,
+            ).single()
+            if leftover and leftover["types"]:
+                print(f"[!][graph-db] versionless {name} twin kept: unmoved "
+                      f"relationship type(s) {leftover['types']} - add them to "
+                      f"_TECH_TWIN_RELATIONSHIPS")
         return version
 
     # Versionless detection: prefer an existing versioned node for this name.

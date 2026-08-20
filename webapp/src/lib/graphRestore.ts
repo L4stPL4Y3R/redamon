@@ -49,25 +49,58 @@ const DEFAULT_NODE_BATCH = 500
 const DEFAULT_REL_BATCH = 500
 
 /**
+ * Global reference labels: the public NVD/MITRE catalogue. One node per CVE for
+ * the WHOLE database, shared by every project that finds it, so it must never
+ * be removed along with a project — doing so deleted other projects' links to
+ * it. Kept in step with GLOBAL_REFERENCE_LABELS in graph_db/schema.py.
+ */
+export const GLOBAL_REFERENCE_LABELS = ['CVE', 'MitreData', 'Capec'] as const
+
+/**
+ * Drop reference nodes no project can reach any more.
+ *
+ * The other half of excluding them from the wipe above, and it must test
+ * REACHABILITY rather than degree. The catalogue is internally linked as
+ * `CVE -[:HAS_CWE]-> MitreData -[:HAS_CAPEC]-> Capec`, so an unreferenced CVE
+ * still holds its CWE and a degree-zero test never fires — the nodes would
+ * accumulate forever. Nor is "no non-reference neighbour" enough: that would
+ * delete a MitreData whose CVE is still live. Mirrors
+ * `_sweep_orphan_reference_nodes` in graph_db/mixins/base_mixin.py.
+ */
+const REFERENCE_CHAIN_DEPTH = 3
+
+export async function sweepOrphanReferenceNodes(session: Session): Promise<void> {
+  const isRef = (v: string) =>
+    GLOBAL_REFERENCE_LABELS.map(l => `${v}:\`${l}\``).join(' OR ')
+  await session.run(
+    `MATCH (n) WHERE (${isRef('n')})
+       AND NOT EXISTS {
+         MATCH (n)-[*1..${REFERENCE_CHAIN_DEPTH}]-(x) WHERE NOT (${isRef('x')})
+       }
+     DETACH DELETE n`
+  )
+}
+
+/**
  * Delete a project's graph. `excludeLabels` keeps nodes that are NOT part of the
  * recon version - notably the AttackChain family, which is agent-session state
  * and must survive a version swap (F1).
+ *
+ * Global reference nodes are always excluded, then swept if orphaned.
  */
 export async function clearProjectGraph(
   session: Session,
   projectId: string,
   excludeLabels: readonly string[] = []
 ): Promise<void> {
-  if (excludeLabels.length === 0) {
-    await session.run('MATCH (n {project_id: $pid}) DETACH DELETE n', { pid: projectId })
-    return
-  }
+  const excluded = [...new Set([...excludeLabels, ...GLOBAL_REFERENCE_LABELS])]
   await session.run(
     `MATCH (n {project_id: $pid})
      WHERE NONE(l IN labels(n) WHERE l IN $excluded)
      DETACH DELETE n`,
-    { pid: projectId, excluded: [...excludeLabels] }
+    { pid: projectId, excluded }
   )
+  await sweepOrphanReferenceNodes(session)
 }
 
 /** Uniqueness-constraint keys per label, used to choose MERGE vs CREATE. */

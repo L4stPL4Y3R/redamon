@@ -14,6 +14,18 @@ from typing import Optional
 
 
 class SecretMixin:
+    @staticmethod
+    def _github_digest(*parts: str) -> str:
+        """Stable 12-hex identity digest for GitHub hunt node ids.
+
+        Replaces the builtin hash(), which is randomised per process via
+        PYTHONHASHSEED and so gave the same file a different node id on every
+        scan — and was truncated to 32 bits on top of that. The blanket
+        pre-clear hid it; anything that stops wiping first would surface it as
+        duplicated nodes.
+        """
+        return hashlib.sha1("\x1f".join(str(p) for p in parts).encode()).hexdigest()[:12]
+
     def clear_github_hunt_data(self, user_id: str, project_id: str) -> dict:
         """
         Delete only GitHub Secret Hunt nodes and relationships for a project.
@@ -21,9 +33,17 @@ class SecretMixin:
         Preserves all recon and GVM data. Only removes:
         - GithubSecret / GithubSensitiveFile nodes (leaf findings)
         - GithubPath nodes
-        - GithubRepository nodes
         - GithubHunt nodes
+        - GithubRepository nodes THIS scanner owns alone
         - All relationships between them and to Domain
+
+        GithubRepository is a SHARED node: `ensure_github_repository` in
+        supply_chain_mixin deliberately MERGEs the same id so a repo scanned
+        both ways is one node. A blanket `DETACH DELETE` here therefore wiped
+        the supply-chain scan's `GithubRepository -[:DEPENDS_ON]-> Package`
+        edges and left its packages floating. The repo sweep runs last and only
+        takes nodes with no relationship left once the hunt's own subtree is
+        gone, so a supply-chain anchor survives.
 
         Args:
             user_id: User identifier
@@ -37,6 +57,7 @@ class SecretMixin:
             "sensitive_files_deleted": 0,
             "paths_deleted": 0,
             "repositories_deleted": 0,
+            "repositories_kept": 0,
             "hunts_deleted": 0,
         }
 
@@ -86,20 +107,8 @@ class SecretMixin:
             if record:
                 stats["paths_deleted"] = record["deleted"]
 
-            # 5. Delete GithubRepository nodes
-            result = session.run(
-                """
-                MATCH (gr:GithubRepository {user_id: $uid, project_id: $pid})
-                DETACH DELETE gr
-                RETURN count(gr) as deleted
-                """,
-                uid=user_id, pid=project_id
-            )
-            record = result.single()
-            if record:
-                stats["repositories_deleted"] = record["deleted"]
-
-            # 6. Delete GithubHunt nodes
+            # 5. Delete GithubHunt nodes — before the repo sweep, so the hunt's
+            #    own HAS_REPOSITORY edges no longer count as "still referenced".
             result = session.run(
                 """
                 MATCH (gh:GithubHunt {user_id: $uid, project_id: $pid})
@@ -112,7 +121,32 @@ class SecretMixin:
             if record:
                 stats["hunts_deleted"] = record["deleted"]
 
-            total = sum(stats.values())
+            # 6. Delete only the GithubRepository nodes nothing else holds.
+            result = session.run(
+                """
+                MATCH (gr:GithubRepository {user_id: $uid, project_id: $pid})
+                WHERE NOT (gr)--()
+                DELETE gr
+                RETURN count(gr) as deleted
+                """,
+                uid=user_id, pid=project_id
+            )
+            record = result.single()
+            if record:
+                stats["repositories_deleted"] = record["deleted"]
+
+            result = session.run(
+                """
+                MATCH (gr:GithubRepository {user_id: $uid, project_id: $pid})
+                RETURN count(gr) as kept
+                """,
+                uid=user_id, pid=project_id
+            )
+            record = result.single()
+            if record:
+                stats["repositories_kept"] = record["kept"]
+
+            total = sum(v for k, v in stats.items() if k != "repositories_kept")
             print(f"[*][graph-db] Cleared GitHub Hunt data: {total} items removed")
 
         return stats
@@ -259,7 +293,7 @@ class SecretMixin:
                 seen_findings.add(dedup_key)
 
                 repo_id = f"github-repo-{user_id}-{project_id}-{repository}"
-                path_id = f"github-path-{user_id}-{project_id}-{hash(f'{repository}:{clean_path}') & 0xFFFFFFFF:08x}"
+                path_id = f"github-path-{user_id}-{project_id}-{self._github_digest(repository, clean_path)}"
 
                 # 3a. Create/merge GithubRepository node
                 if repository not in created_repos:
@@ -324,7 +358,7 @@ class SecretMixin:
                         continue
 
                 # 3c. Create leaf finding node (GithubSecret or GithubSensitiveFile)
-                finding_hash = f"{hash(dedup_key) & 0xFFFFFFFF:08x}"
+                finding_hash = self._github_digest(dedup_key)
                 details = finding.get("details", {})
 
                 if finding_type == "SECRET":

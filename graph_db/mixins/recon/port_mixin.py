@@ -484,13 +484,20 @@ class PortMixin:
                     if cve_id:
                         session.run(
                             """
-                            MERGE (c:CVE {id: $cve_id, user_id: $user_id, project_id: $project_id})
-                            SET c.cve_id = $cve_id,
-                                c.name = $cve_id,
-                                c.source = 'nmap_nse',
-                                c.updated_at = datetime()
+                            // CVE is a GLOBAL reference node: `cve_unique`
+                            // requires id to be unique across the database, so
+                            // keying the MERGE on the tenant triple collided
+                            // with any CVE another scan had already created and
+                            // threw ConstraintValidationFailed. The exception
+                            // landed in stats["errors"], so the CVE and both of
+                            // its links were dropped with nothing on screen.
+                            MERGE (c:CVE {id: $cve_id})
+                            ON CREATE SET c.cve_id = $cve_id,
+                                          c.name = $cve_id,
+                                          c.source = 'nmap_nse'
+                            SET c.updated_at = datetime()
                             """,
-                            cve_id=cve_id, user_id=user_id, project_id=project_id
+                            cve_id=cve_id
                         )
                         stats["cves_created"] += 1
 
@@ -498,7 +505,7 @@ class PortMixin:
                         session.run(
                             """
                             MATCH (v:Vulnerability {name: $name, ip_address: $ip_addr, port_number: $port_number, user_id: $user_id, project_id: $project_id})
-                            MATCH (c:CVE {id: $cve_id, user_id: $user_id, project_id: $project_id})
+                            MATCH (c:CVE {id: $cve_id})
                             MERGE (v)-[:HAS_CVE]->(c)
                             """,
                             name=script_id, ip_addr=ip_addr, port_number=port_number,
@@ -516,7 +523,7 @@ class PortMixin:
                                     session.run(
                                         """
                                         MATCH (t:Technology {name: $tech_name, user_id: $user_id, project_id: $project_id})
-                                        MATCH (c:CVE {id: $cve_id, user_id: $user_id, project_id: $project_id})
+                                        MATCH (c:CVE {id: $cve_id})
                                         MERGE (t)-[:HAS_KNOWN_CVE]->(c)
                                         """,
                                         tech_name=svc_tech_name, cve_id=cve_id,

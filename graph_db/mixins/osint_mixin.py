@@ -96,6 +96,7 @@ class OsintMixin:
                             ON CREATE SET p.state = 'open', p.source = 'shodan', p.updated_at = datetime()
                             ON MATCH SET p.updated_at = datetime()
                             MERGE (i:IP {address: $ip, user_id: $user_id, project_id: $project_id})
+                            SET i.updated_at = datetime()
                             MERGE (i)-[:HAS_PORT]->(p)
                             """,
                             port=port_num, protocol=protocol, ip=ip,
@@ -145,6 +146,7 @@ class OsintMixin:
                                 ON CREATE SET p.state = 'open', p.source = 'shodan', p.updated_at = datetime()
                                 ON MATCH SET p.updated_at = datetime()
                                 MERGE (i:IP {address: $ip, user_id: $user_id, project_id: $project_id})
+                                SET i.updated_at = datetime()
                                 MERGE (i)-[:HAS_PORT]->(p)
                                 """,
                                 port=port_num, protocol="tcp", ip=ip,
@@ -174,6 +176,7 @@ class OsintMixin:
                                 ON CREATE SET s.source = 'shodan_rdns', s.status = 'resolved',
                                               s.discovered_at = datetime(), s.updated_at = datetime()
                                 MERGE (i:IP {address: $ip, user_id: $user_id, project_id: $project_id})
+                                SET i.updated_at = datetime()
                                 MERGE (s)-[:RESOLVES_TO {record_type: 'A', timestamp: datetime()}]->(i)
                                 """,
                                 name=hostname, ip=ip, user_id=user_id, project_id=project_id
@@ -293,6 +296,7 @@ class OsintMixin:
                             """
                             MATCH (s:Subdomain {name: $subdomain, user_id: $user_id, project_id: $project_id})
                             MERGE (i:IP {address: $ip, user_id: $user_id, project_id: $project_id})
+                            SET i.updated_at = datetime()
                             MERGE (s)-[:RESOLVES_TO {record_type: $type, timestamp: datetime()}]->(i)
                             """,
                             subdomain=fqdn, ip=rec_value, type=rec_type,
@@ -326,12 +330,13 @@ class OsintMixin:
 
                     session.run(
                         """
+                        // Global reference node: no tenant stamp, or a project
+                        // wipe deletes it for every other project too.
                         MERGE (c:CVE {id: $cve_id})
-                        ON CREATE SET c.source = $source, c.user_id = $user_id,
-                                      c.project_id = $project_id, c.updated_at = datetime()
+                        ON CREATE SET c.source = $source
+                        SET c.updated_at = datetime()
                         """,
-                        cve_id=cve_id, source=cve_source,
-                        user_id=user_id, project_id=project_id
+                        cve_id=cve_id, source=cve_source
                     )
                     stats["cves_created"] += 1
 
@@ -421,6 +426,7 @@ class OsintMixin:
                             session.run(
                                 """
                                 MERGE (d:Domain {name: $domain, user_id: $uid, project_id: $pid})
+                                SET d.updated_at = datetime()
                                 MERGE (s:Subdomain {name: $subdomain, user_id: $uid, project_id: $pid})
                                 ON CREATE SET s.discovered_by = 'urlscan', s.status = 'resolved',
                                               s.updated_at = datetime()
@@ -480,6 +486,7 @@ class OsintMixin:
                                 """
                                 MATCH (s:Subdomain {name: $subdomain, user_id: $uid, project_id: $pid})
                                 MERGE (i:IP {address: $ip, user_id: $uid, project_id: $pid})
+                                SET i.updated_at = datetime()
                                 MERGE (s)-[:RESOLVES_TO]->(i)
                                 """,
                                 subdomain=subdomain, ip=ip,
@@ -808,6 +815,7 @@ class OsintMixin:
                                     ON CREATE SET p.state = 'open', p.updated_at = datetime()
                                     SET p.source = 'censys', p.updated_at = datetime()
                                     MERGE (i:IP {address: $ip, user_id: $user_id, project_id: $project_id})
+                                    SET i.updated_at = datetime()
                                     MERGE (i)-[:HAS_PORT]->(p)
                                     """,
                                     port=int(port_num), protocol=protocol, ip=ip,
@@ -907,6 +915,7 @@ class OsintMixin:
                                         SET s.source = 'censys_rdns', s.status = 'unverified',
                                             s.updated_at = datetime()
                                         MERGE (i:IP {address: $ip, user_id: $user_id, project_id: $project_id})
+                                        SET i.updated_at = datetime()
                                         MERGE (s)-[:RESOLVES_TO {record_type: 'A', timestamp: datetime()}]->(i)
                                         """,
                                         name=hostname, ip=ip, user_id=user_id, project_id=project_id,
@@ -998,6 +1007,7 @@ class OsintMixin:
                                 ON CREATE SET p.state = 'open', p.updated_at = datetime()
                                 SET p.source = 'fofa', p.updated_at = datetime()
                                 MERGE (i:IP {address: $ip, user_id: $user_id, project_id: $project_id})
+                                SET i.updated_at = datetime()
                                 MERGE (i)-[:HAS_PORT]->(p)
                                 """,
                                 port=pnum, ip=ip, user_id=user_id, project_id=project_id,
@@ -1053,6 +1063,7 @@ class OsintMixin:
                                         c.is_valid     = CASE WHEN $cert_valid <> '' THEN ($cert_valid = 'true') ELSE c.is_valid END,
                                         c.updated_at   = datetime()
                                     MERGE (i:IP {address: $ip, user_id: $user_id, project_id: $project_id})
+                                    SET i.updated_at = datetime()
                                     MERGE (i)-[:HAS_CERTIFICATE]->(c)
                                     """,
                                     cn=cert_cn,
@@ -1078,6 +1089,7 @@ class OsintMixin:
                                     ON CREATE SET s.status = 'unverified', s.discovered_at = datetime(), s.updated_at = datetime()
                                     SET s.source = 'fofa', s.updated_at = datetime()
                                     MERGE (i:IP {address: $ip, user_id: $user_id, project_id: $project_id})
+                                    SET i.updated_at = datetime()
                                     MERGE (s)-[:RESOLVES_TO {record_type: 'A', timestamp: datetime()}]->(i)
                                     """,
                                     name=host, ip=ip, user_id=user_id, project_id=project_id,
@@ -1192,6 +1204,7 @@ class OsintMixin:
                                         SET s.source = 'otx_passive_dns', s.status = 'unverified', s.updated_at = datetime()
                                         WITH s
                                         MERGE (i:IP {address: $ip, user_id: $user_id, project_id: $project_id})
+                                        SET i.updated_at = datetime()
                                         MERGE (s)-[r:RESOLVES_TO {record_type: $record_type}]->(i)
                                         ON CREATE SET r.first_seen = $first_seen, r.last_seen = $last_seen, r.timestamp = datetime()
                                         SET r.last_seen = CASE WHEN $last_seen <> '' THEN $last_seen ELSE r.last_seen END
@@ -1255,6 +1268,7 @@ class OsintMixin:
                                         m.updated_at = datetime()
                                     WITH m
                                     MERGE (i:IP {address: $ip, user_id: $user_id, project_id: $project_id})
+                                    SET i.updated_at = datetime()
                                     MERGE (i)-[:ASSOCIATED_WITH_MALWARE]->(m)
                                     """,
                                     hash=h, user_id=user_id, project_id=project_id,
@@ -1292,6 +1306,7 @@ class OsintMixin:
                                         tp.updated_at = datetime()
                                     WITH tp
                                     MERGE (i:IP {address: $ip, user_id: $user_id, project_id: $project_id})
+                                    SET i.updated_at = datetime()
                                     MERGE (i)-[:APPEARS_IN_PULSE]->(tp)
                                     """,
                                     pulse_id=pulse_id, user_id=user_id, project_id=project_id,
@@ -1528,6 +1543,7 @@ class OsintMixin:
                                 ON CREATE SET p.state = 'open', p.updated_at = datetime()
                                 SET p.source = 'netlas', p.updated_at = datetime()
                                 MERGE (i:IP {address: $ip, user_id: $user_id, project_id: $project_id})
+                                SET i.updated_at = datetime()
                                 MERGE (i)-[:HAS_PORT]->(p)
                                 """,
                                 port=pnum, protocol=protocol, ip=ip, user_id=user_id, project_id=project_id,
@@ -1795,6 +1811,7 @@ class OsintMixin:
                                     ON CREATE SET p.state = 'open', p.updated_at = datetime()
                                     SET p.source = 'zoomeye', p.updated_at = datetime()
                                     MERGE (i:IP {address: $ip, user_id: $user_id, project_id: $project_id})
+                                    SET i.updated_at = datetime()
                                     MERGE (i)-[:HAS_PORT]->(p)
                                     """,
                                     port=pnum, protocol=protocol, ip=ip,
@@ -1860,6 +1877,7 @@ class OsintMixin:
                                                       s.updated_at = datetime()
                                         MERGE (i:IP {address: $ip, user_id: $user_id,
                                                      project_id: $project_id})
+                                        SET i.updated_at = datetime()
                                         MERGE (s)-[:RESOLVES_TO {record_type: 'A',
                                                                   timestamp: datetime()}]->(i)
                                         """,
@@ -2011,6 +2029,7 @@ class OsintMixin:
                                     ON CREATE SET p.state = 'open', p.updated_at = datetime()
                                     SET p.source = 'criminalip', p.updated_at = datetime()
                                     MERGE (i:IP {address: $ip, user_id: $user_id, project_id: $project_id})
+                                    SET i.updated_at = datetime()
                                     MERGE (i)-[:HAS_PORT]->(p)
                                     """,
                                     port=pnum, protocol=proto, ip=ip,
@@ -2069,15 +2088,14 @@ class OsintMixin:
 
                                     session.run(
                                         """
+                                        // Global reference node: no tenant stamp.
                                         MERGE (c:CVE {id: $cve_id})
-                                        ON CREATE SET c.source = 'criminalip',
-                                                      c.user_id = $user_id, c.project_id = $project_id,
-                                                      c.updated_at = datetime()
-                                        SET c.cvss = $cvss, c.description = $description
+                                        ON CREATE SET c.source = 'criminalip'
+                                        SET c.cvss = $cvss, c.description = $description,
+                                            c.updated_at = datetime()
                                         """,
                                         cve_id=cve_id, cvss=cvss,
                                         description=vuln.get("description"),
-                                        user_id=user_id, project_id=project_id,
                                     )
                                     stats["cves_created"] += 1
 
@@ -2213,6 +2231,7 @@ class OsintMixin:
                                 ON CREATE SET p.state = 'open', p.source = 'uncover',
                                               p.updated_at = datetime()
                                 MERGE (i:IP {address: $ip, user_id: $user_id, project_id: $project_id})
+                                SET i.updated_at = datetime()
                                 MERGE (i)-[:HAS_PORT]->(p)
                                 """,
                                 port=int(port_num), ip=ip,
