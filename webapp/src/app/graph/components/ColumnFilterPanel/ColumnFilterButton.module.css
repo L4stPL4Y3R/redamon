@@ -58,17 +58,16 @@
   font-weight: var(--font-semibold);
 }
 
+/*
+ * A positioning wrapper only. The panel owns the width, chrome and scrolling:
+ * when both sized themselves the wrapper was the narrower of the two and its
+ * `overflow: hidden` sheared the right-hand controls (the "not" checkbox) off
+ * every card.
+ */
 .dropdown {
   position: absolute;
   top: calc(100% + 4px);
   z-index: 60;
-  width: 320px;
-  max-height: 60vh;
-  overflow: hidden;
-  background: var(--bg-primary);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
 }
 
 /* The control sits at the right edge of its toolbar, so the panel hangs from
