@@ -179,6 +179,11 @@ class GithubHuntState(BaseModel):
     completed_at: Optional[datetime] = None
     error: Optional[str] = None
     container_id: Optional[str] = None
+    #: Needed by the orchestrator-side ingest backstop, which writes the graph
+    #: when the container died before it could (SIGKILL, OOM, crash).
+    user_id: Optional[str] = None
+    ingested: bool = False
+    ingest_attempts: int = 0
 
 
 class GithubHuntLogEvent(BaseModel):

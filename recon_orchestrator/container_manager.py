@@ -190,6 +190,7 @@ TRUFFLEHOG_CONTAINER_USER = "trufflehog"
 TRUFFLEHOG_CONTAINER_UID = 10001
 
 MAX_TRUFFLEHOG_INGEST_ATTEMPTS = int(os.environ.get("TRUFFLEHOG_INGEST_ATTEMPTS", "5"))
+MAX_GITHUB_HUNT_INGEST_ATTEMPTS = int(os.environ.get("GITHUB_HUNT_INGEST_ATTEMPTS", "5"))
 
 # How long a finished run stays in the state dict before it is pruned. Must stay
 # comfortably above the webapp's 90 s reconcile grace: prune sooner and a run
@@ -3118,6 +3119,11 @@ class ContainerManager:
                             state.error = f"Container exited with code {exit_code}"
                             state.completed_at = datetime.now(timezone.utc)
 
+                        # Both branches: a non-zero exit still leaves whatever the
+                        # scan had already saved, and a SIGKILLed container exits
+                        # non-zero having written nothing to the graph itself.
+                        self._ingest_github_hunt(state)
+
                         try:
                             container.remove()
                             logger.info(f"Auto-removed finished GitHub hunt container for project {project_id}")
@@ -3184,6 +3190,7 @@ class ContainerManager:
             project_id=project_id,
             status=GithubHuntStatus.STARTING,
             started_at=datetime.now(timezone.utc),
+            user_id=user_id,
         )
         self.github_hunt_states[project_id] = state
 
@@ -3308,6 +3315,10 @@ class ContainerManager:
                 if container.status == "paused":
                     container.unpause()
                 container.stop(timeout=timeout)
+                # BEFORE removing it: the container had `timeout` seconds to save
+                # and write the graph itself. If SIGKILL came first, this is the
+                # last chance to keep the run's findings.
+                self._ingest_github_hunt(state)
                 container.remove()
                 state.status = GithubHuntStatus.IDLE
                 state.completed_at = datetime.now(timezone.utc)
@@ -4924,6 +4935,101 @@ exit $RC
         # the difference between a scan reading a fixture and a compromised scan
         # rewriting the fixture every later run will read.
         return {host_path: {"bind": th_sources.SCAN_TARGETS_MOUNT, "mode": "ro"}}
+
+    GITHUB_HUNT_OUTPUT_DIR = Path("/app/github_secret_hunt/output")
+
+    def _ingest_github_hunt(self, state: GithubHuntState) -> None:
+        """Write a finished hunt's findings to the graph if the container did not.
+
+        A BACKSTOP, not the primary path. The hunt writes its own graph update
+        at the end of main.py, which covers a clean finish and (since the SIGTERM
+        handler) a graceful stop. What it cannot cover is the container dying
+        without running its exit path at all — SIGKILL after the stop grace
+        period, an OOM kill, a hard crash. That happened for real: a stack
+        restart killed a 58-minute scan and 799 findings produced zero nodes,
+        because the only writer was inside the process being killed.
+
+        TruffleHog already works this way round (`_ingest_trufflehog`); this puts
+        the hunt behind the same safety net without taking away its own write.
+
+        Skipped when the graph already holds THIS run, compared on the artifact's
+        `scan_end_time`. Re-ingesting would be correct but not free: the write
+        begins by clearing the previous subtree, so a needless repeat is a window
+        where the data is briefly gone.
+
+        Never raises: a failed ingest must not flip a finished scan into an error.
+        """
+        if state.ingested:
+            return
+        if state.ingest_attempts >= MAX_GITHUB_HUNT_INGEST_ATTEMPTS:
+            return
+        state.ingest_attempts += 1
+        if not state.user_id:
+            # An empty tenant key writes nodes no scoped read can see and no
+            # scoped clear can remove. Refuse before doing any work.
+            logger.error(
+                f"[github-hunt] refusing to ingest {state.project_id}: "
+                "the run carries no user_id")
+            return
+
+        out_path = self.GITHUB_HUNT_OUTPUT_DIR / f"github_hunt_{state.project_id}.json"
+        if not out_path.exists():
+            return
+        try:
+            data = json.loads(out_path.read_text())
+        except (OSError, ValueError) as e:
+            logger.warning(f"[github-hunt] unreadable findings for {state.project_id}: {e}")
+            return
+        if not data.get("findings"):
+            state.ingested = True
+            return
+
+        try:
+            from graph_db import Neo4jClient
+        except ImportError:
+            logger.warning("[github-hunt] graph_db unavailable; skipping ingest")
+            return
+        # Same caveat as the TruffleHog ingest: NEO4J_URI in this service's
+        # environment is the value forwarded to HOST-network scan containers, so
+        # it says localhost and reaches nothing from here.
+        neo4j_uri = (os.environ.get("ORCHESTRATOR_NEO4J_URI", "").strip()
+                     or "bolt://neo4j:7687")
+        try:
+            with Neo4jClient(uri=neo4j_uri) as client:
+                if not client.verify_connection():
+                    logger.warning("[github-hunt] Neo4j unreachable; skipping ingest")
+                    return
+                with client.driver.session() as session:
+                    row = session.run(
+                        """
+                        MATCH (gh:GithubHunt {user_id: $uid, project_id: $pid})
+                        RETURN gh.scan_end_time AS ended
+                        """,
+                        uid=state.user_id, pid=state.project_id).single()
+                if row and row["ended"] and row["ended"] == data.get("scan_end_time"):
+                    state.ingested = True
+                    logger.info(
+                        f"[github-hunt] {state.project_id} already in the graph "
+                        f"(the container wrote it); nothing to do")
+                    return
+
+                stats = client.update_graph_from_github_hunt(
+                    data, state.user_id, state.project_id,
+                )
+            state.ingested = True
+            logger.info(
+                f"[github-hunt] backstop ingest for {state.project_id} "
+                f"({len(data.get('findings') or [])} findings): {stats}")
+        except Exception as e:
+            if state.ingest_attempts >= MAX_GITHUB_HUNT_INGEST_ATTEMPTS:
+                logger.error(
+                    f"[github-hunt] ingest failed for {state.project_id} after "
+                    f"{state.ingest_attempts} attempts, giving up: {e}. "
+                    f"Findings remain at {out_path}; re-run the hunt to retry.")
+            else:
+                logger.warning(
+                    f"[github-hunt] ingest attempt {state.ingest_attempts} failed "
+                    f"for {state.project_id}: {e}")
 
     def _ingest_trufflehog(self, state: TrufflehogState) -> None:
         """Read a finished run's findings JSON and write it to the graph.

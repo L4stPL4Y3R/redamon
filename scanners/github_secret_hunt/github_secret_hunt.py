@@ -20,7 +20,7 @@ import os
 import json
 import math
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, List, Set
 from pathlib import Path
 
@@ -579,7 +579,12 @@ class GitHubSecretHunter:
 
         rate_limit = self.github.get_rate_limit()
         reset_time = rate_limit.core.reset
-        wait_seconds = (reset_time - datetime.utcnow()).total_seconds() + 10
+        # PyGithub >= 2.0 returns an AWARE datetime; subtracting a naive
+        # utcnow() raises TypeError from inside the rate-limit handler and
+        # aborts the whole scan, skipping the graph write. Match the tzinfo of
+        # whatever this PyGithub hands back.
+        now = datetime.now(timezone.utc) if reset_time.tzinfo else datetime.utcnow()
+        wait_seconds = (reset_time - now).total_seconds() + 10
 
         if wait_seconds > 0:
             print(f"\n[!] Rate limit hit! Waiting {int(wait_seconds)} seconds...")

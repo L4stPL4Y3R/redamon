@@ -16,6 +16,7 @@ Usage:
 """
 
 import os
+import signal
 import sys
 import json
 from pathlib import Path
@@ -140,12 +141,37 @@ def run_github_secret_hunt(project_id: str) -> dict:
     }
 
 
+def _install_sigterm_handler():
+    """Turn SIGTERM into the KeyboardInterrupt the scan loop already handles.
+
+    Every stop reaches this container as SIGTERM: the orchestrator's stop
+    endpoint, and its shutdown cleanup when the stack is restarted. Python's
+    default SIGTERM handler exits on the spot, so neither the final save nor the
+    graph write ran and an hour of scanning was discarded (observed 2026-08-20:
+    14 repos, 799 findings, zero nodes). SIGINT was already handled, which hid
+    it — Ctrl-C saved, a restart did not.
+
+    KeyboardInterrupt rather than a custom exception on purpose: it is a
+    BaseException, so it passes through the `except Exception: continue` guards
+    in the per-file and per-commit loops instead of being swallowed.
+    """
+    def _raise(signum, frame):
+        raise KeyboardInterrupt()
+
+    try:
+        signal.signal(signal.SIGTERM, _raise)
+    except ValueError:
+        pass  # not the main thread; the scan is single-threaded, so this is moot
+
+
 def main():
     """Main entry point."""
 
     if not PROJECT_ID:
         print("[!] ERROR: PROJECT_ID environment variable not set")
         return 1
+
+    _install_sigterm_handler()
 
     # Load per-project settings from webapp API (or use defaults)
     load_project_settings(PROJECT_ID)
