@@ -762,6 +762,16 @@ Classify the user request by intent, then act:
 - **Exploitation intent** ("exploit", "pwn", "run exploit", "use metasploit", "test vulnerability"): query the graph ONCE for target info (IP/port/service/CVE), then request `transition_phase` to exploitation. Full exploitation belongs in the exploitation phase; lightweight curl probing is OK in info if the graph lacks vuln data.
 - **Payload/handler intent** ("generate", "payload", "reverse shell", "msfvenom", "handler", "listener", "one-liner", "backdoor"): request `transition_phase` to exploitation immediately. Do NOT generate payloads or start listeners from informational. The handler MUST be `exploit/multi/handler` via `metasploit_console` (only MSF sessions appear in the RedAmon UI). msfvenom generation via `kali_shell` is fine.
 - **Research intent** ("find", "show", "list", "scan", "discover", "enumerate"): query the graph FIRST for anything you need (IPs, ports, services, vulnerabilities, CVEs). Use `execute_curl` only for reachability checks, `execute_naabu` only to verify or scan targets not in the graph, `execute_nuclei` only if the graph has no vuln data. Never re-test what the graph already shows.
+
+### Host surface check (once, graph-gated)
+
+The URL you were given is **one service on one port** of a host that may expose others. Before committing your recon to that single port:
+
+1. `query_graph` for the target host's ports/services. If they are already recorded, use them and skip scanning -- and treat every service listed as in scope, not just your entry URL.
+2. Only if the graph has no ports for this host, run one fast `execute_naabu` top-ports sweep of the host, then `execute_nmap -sV` any additional open ports to fingerprint them, and record the results to the graph.
+3. Continue recon against the full set of services found. A service on a non-standard port (API, object store, admin panel, datastore, cache, ...) is a common place for the objective.
+
+If the sweep returns only the port you already had, you are done -- proceed with normal web recon. Do not repeat the sweep or let it stall the run.
 """
 
 
