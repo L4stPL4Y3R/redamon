@@ -340,6 +340,6 @@ On-prem connection (Cloud VPN)      -> network pivot to internal targets
 - Domain-wide delegation is silent: there is no UI alert when an SA impersonates a user. Audit logs do record it, but real-time detection is rare.
 - `iam.serviceAccounts.actAs` is the master privesc primitive on GCP. Combined with any `*.create` permission on a service that supports SA attachment, it gives token minting for the target SA.
 - Cloud Functions HTTPS triggers with `ingressSettings: ALLOW_ALL` and `--allow-unauthenticated` are publicly invokable; many teams forget to lock these down.
-- Service-account JSON keys leak in source code, public buckets, container images, and CI artifacts. `gitleaks` patterns include the `private_key` field; always scan recovered repos.
+- Service-account JSON keys leak in source code, public buckets, container images, and CI artifacts. `betterleaks` patterns include the `private_key` field; always scan recovered repos.
 - `gcloud auth print-access-token` (when run from a compromised workstation) leaks the user's OAuth token; same effect as a service-account JSON.
 - The `metadata.google.internal` hostname requires the `Metadata-Flavor: Google` header on most paths. The `v1beta1` endpoint sometimes relaxes this -- a known SSRF-friendly fallback.

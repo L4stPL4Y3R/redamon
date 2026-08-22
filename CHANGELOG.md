@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.11.3] - 2026-08-21
+
+### Changed
+
+- **The agent's secret scanner is now betterleaks, the gitleaks successor from the same author (Zach Rice).** It is a drop-in replacement baked into kali-sandbox: it reads the same `.gitleaks.toml`, emits gitleaks-compatible JSON, and adds a `confidence` attribute plus a `--git-workers` flag that parallelises the git-log walk. On an 800-commit history it roughly halves scan time (about 460ms single-process down to about 230ms with `--git-workers 4`) at identical detections. The agent now runs `betterleaks git <repo>` (modern gitleaks dropped the `detect` subcommand); `betterleaks dir <path>` scans a working tree without history.
+
+### Fixed
+
+- **GVM no longer fails to start with `exit 137` on ordinary hosts** ([#176](https://github.com/samugit83/redamon/issues/176)). The memory governor divides `GVM_DATA`'s group share across the eight one-shot feed loaders, but it did so *after* applying the floor, so the declared 192 MB minimum became 24 MB per container. Those images `cp -r` a multi-GB Greenbone feed (the VT tree alone is ~2 GB / ~180k files) and are SIGKILLed below ~128 MB, so every host from 12 GB to 32 GB was handed a cap that could not work: `gvm-vt` and `gvm-scap-data` were OOM-killed on repeat, and `gvmd` / `gvm-ospd`, gated on them completing, never started. The exported per-container slice is now floored at 512 MB. The loaders also moved to a new **transient** tier, excluded from the over-commit invariant, because their ceiling covers reclaimable page cache on containers that exit before the stack is in use, and counting it as a concurrent claim on RAM is what squeezed the group in the first place.
+- **`update` now converges the GVM stack on every GVM-enabled run**, not only when `docker-compose.yml` changed. The per-service caps live in `.env`, which the governor rewrites on every run, so a release that only touched `redamon.sh` would otherwise leave the old cap baked into the running containers. The convergence now enumerates every `gvm-*` service (plus `gvmd`) from the compose file rather than naming the four long-running ones, so the feed loaders are recreated with the new cap — including `gvm-notus-data`, which has no `depends_on` edge and the previous four-service recreate skipped entirely.
+- **A GVM loader killed by its memory cap now says so.** `install` and `up` inspect the loaders when compose fails and report which ones were OOM-killed, the current `GVM_DATA_MEM`, and where to pin a larger value, instead of leaving compose's opaque "didn't complete successfully" after minutes of silent `restart: on-failure` retries.
+
 ## [6.11.2] - 2026-08-20
 
 ### Added

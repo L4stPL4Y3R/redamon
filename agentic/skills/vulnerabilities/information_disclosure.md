@@ -17,7 +17,7 @@ Reference for hunting and triaging information leaks. Pull this in when you need
 | Mass artifact fuzz | `execute_ffuf` | Path / extension wordlists. |
 | URL discovery from archives | `execute_gau` | Wayback + AlienVault + Common Crawl URLs. |
 | Site crawl + JS extraction | `execute_katana` `-jc -jsl` | Then `kali_shell jsluice` per JS file. |
-| Secrets scan on a cloned repo | `kali_shell gitleaks` / `semgrep p/secrets` | After `git clone`. |
+| Secrets scan on a cloned repo | `kali_shell betterleaks` / `semgrep p/secrets` | After `git clone`. |
 | Diff harness across principals | `execute_curl` x N + `kali_shell diff/jq` | Same path, different tokens. |
 
 ### Captured-traffic workflow (proxy_* tools)
@@ -51,7 +51,7 @@ kali_shell: git clone http://target.tld/.git /tmp/loot/repo || \
              curl -s "http://target.tld/.git/HEAD" -o .git/HEAD && \
              # then walk pack files via git-dumper or similar
              true)
-kali_shell: gitleaks detect -s /tmp/loot/repo --report-path /tmp/loot/leaks.json
+kali_shell: betterleaks git /tmp/loot/repo --git-workers 4 --exit-code 0 --report-path /tmp/loot/leaks.json --report-format json
 ```
 
 ### Config and secrets
@@ -205,7 +205,7 @@ execute_curl url: "https://target.tld/api/me"
 ## Triage rubric
 
 - **Critical**: credentials, signed-URL signatures, `service_role` / admin tokens, full config dumps, JVM/Go heap dumps, AD machine-account hashes, signing-key material.
-- **High**: precise component versions with reachable CVEs, cross-tenant data via cache, source maps revealing hidden admin endpoints, `.git/` reachable, gitleaks-positive `.env`.
+- **High**: precise component versions with reachable CVEs, cross-tenant data via cache, source maps revealing hidden admin endpoints, `.git/` reachable, betterleaks-positive `.env`.
 - **Medium**: internal hostnames / IP ranges enabling LFI / SSRF pivots, debug pages on staging surfaces, OpenAPI exposing privileged operations.
 - **Low**: generic banners, marketing version strings, intentional public docs, owner-only metadata that doesn't cross identity / tenant boundaries.
 
@@ -264,7 +264,7 @@ A clean info-disclosure finding includes:
 ## Hand-off
 
 ```
-.git / repo dump          -> kali_shell gitleaks (then /skill semgrep on the cloned tree)
+.git / repo dump          -> kali_shell betterleaks (then /skill semgrep on the cloned tree)
 source maps recovered     -> probe each new endpoint with the standard auth matrix
 debug / actuator dumps    -> immediately notify operator if heap / env exposure
 cache leaks               -> file as Cross-User Cache Poisoning

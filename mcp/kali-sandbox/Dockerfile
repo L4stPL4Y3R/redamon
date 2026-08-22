@@ -168,10 +168,11 @@ RUN retry go install -v github.com/ffuf/ffuf/v2@latest \
 # Requires CGO for tree-sitter bindings; gcc already installed above
 RUN CGO_ENABLED=1 retry go install -v github.com/BishopFox/jsluice/cmd/jsluice@latest
 
-# Install gitleaks -- git repository secret scanner (API keys, passwords, tokens)
-# Source: https://github.com/gitleaks/gitleaks (MIT)
-# Note: Go module path uses old org (zricethezav), not new org (gitleaks) -- known issue #1839
-RUN retry go install -v github.com/zricethezav/gitleaks/v8@latest
+# Install betterleaks -- git repository secret scanner (API keys, passwords, tokens).
+# Gitleaks successor from the same author (Zach Rice); drop-in CLI, reads .gitleaks.toml,
+# gitleaks-compatible JSON, and parallelises the git-log walk via --git-workers.
+# Source: https://github.com/betterleaks/betterleaks (MIT)
+RUN retry go install -v github.com/betterleaks/betterleaks@latest
 
 # Install OWASP Amass (subdomain enumeration & network mapping)
 # Source: https://github.com/owasp-amass/amass (Apache-2.0)
