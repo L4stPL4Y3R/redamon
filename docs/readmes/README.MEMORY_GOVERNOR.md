@@ -518,17 +518,35 @@ everyone else shrinks proportionally instead of over-committing the host.
 | `GVM_OSPD` (gvm profile) | 110 | 512 MB | burst |
 | `GVM_REDIS` (gvm profile) | 90 | 256 MB | burst |
 | `GVM_POSTGRES` (gvm profile) | 50 | 256 MB | burst |
-| `GVM_DATA` (gvm profile) | 40 | 192 MB | burst |
+| `GVM_DATA` (gvm profile) | 40 | 192 MB (512 MB per container) | transient |
 | `KB_REFRESH` (kb profile) | 150 | 512 MB | burst |
 
 **GVM is a stack, not a service.** Sizing only `gvmd` left ospd-openvas (the
 actual scanner), redis (which holds the whole VT feed and is routinely
 multi-GB) and GVM's own postgres with *no* `mem_limit` at all, so on a `--gvm`
 host they ran uncapped beside a fully budgeted everything-else and could consume
-the scan pool and the OS reserve. `GVM_DATA` is one share divided across the nine
-one-shot feed loaders -- six of them have no `depends_on`, so they start
+the scan pool and the OS reserve. `GVM_DATA` is one share divided across the
+eight one-shot feed loaders -- six of them have no `depends_on`, so they start
 concurrently and their memory stacks during setup; `GVM_DATA_MEM` is therefore
 the *per-container* slice, not the group total.
+
+That divide is applied **after** the floor, which made `GVM_DATA` the one entry
+whose declared floor was not a floor on the exported value: 192 MB across eight
+containers is 24 MB each. The loader images run `cp -r` over a multi-GB feed (the
+VT tree alone is ~2 GB / ~180k files) and are SIGKILLed below ~128 MB, so every
+host from 12 GB to 32 GB received a cap that could not work and the whole GVM
+stack failed to start ([#176](https://github.com/samugit83/redamon/issues/176)).
+The exported slice is now floored at `_GVM_DATA_MIN_MB` (**512 MB**), which is
+the only floor in the table that binds at realistic host sizes -- because this
+requirement is set by the size of the Greenbone feed, not by the host.
+
+**Transient tier.** Those loaders are also the reason for a third tier. They are
+one-shot containers that exit before the stack is in use, and their ceiling
+covers *reclaimable page cache* from the copy rather than an anonymous
+allocation. Counting that as a concurrent claim on RAM is precisely what
+squeezed the group down to 24 MB, so transient entries are excluded from both
+sides of the over-commit equation below and are never multiplied by
+`BURST_FACTOR`.
 
 **Reserved vs burst.** A `mem_limit` is a ceiling, not a reservation, so unused
 headroom costs nothing and may be over-committed. Neo4j pre-allocates its page
@@ -556,8 +574,9 @@ constant happened to fit. In practice the base profile keeps its full 250% while
 
 **Floors** are the only absolute numbers in the system, and they describe the
 *software* (a JVM cannot boot in 128 MB), not the host. They never bind at
->= 8 GB. Below that, `allocate_memory` returns non-zero and `preflight_ram_gate`
-refuses the host rather than handing out limits that cannot work -- which is why
+>= 8 GB, `GVM_DATA` excepted (see above). Below that, `allocate_memory` returns
+non-zero and `preflight_ram_gate` refuses the host rather than handing out
+limits that cannot work -- which is why
 8 GB **with GVM + KB enabled** is now correctly rejected up front instead of
 over-committing and OOM-ing later.
 

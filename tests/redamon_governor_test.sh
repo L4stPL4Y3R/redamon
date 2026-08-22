@@ -330,12 +330,13 @@ inv_check() {   # inv_check <hostMB> <swapMB> <gvm> <kb> <label>
     STUB_MEM="$t"; allocate_memory
     local s=0 i
     for i in "${!_ALLOC_NAMES[@]}"; do
-        if [[ "${_ALLOC_NAMES[$i]}" == "GVM_DATA" ]]; then
-            # ONE compose var caps N containers, so the group costs N x the slice.
-            s=$(( s + (_ALLOC_MB[i] / _GVM_DATA_CONTAINERS) * _GVM_DATA_CONTAINERS ))
-        else
-            s=$(( s + _ALLOC_MB[i] ))
-        fi
+        # Transient-tier entries are outside the invariant by design: they are
+        # one-shot containers that exit before the stack is in use, and their
+        # ceiling covers reclaimable page cache, not an anonymous allocation.
+        # Counting the GVM loader group as a concurrent claim on RAM is exactly
+        # what squeezed it to 24 MB and OOM-killed the feed copy (#176).
+        [[ "${_ALLOC_TIERS[$i]}" == "t" ]] && continue
+        s=$(( s + _ALLOC_MB[i] ))
     done
     local worst=$(( s + _ALLOC_OS_MB )) avail=$(( t + sw ))
     if [[ "$worst" -le "$avail" ]]; then
@@ -402,6 +403,30 @@ for i in "${!_ALLOC_NAMES[@]}"; do
            "$(mb "$GVM_DATA_MEM")" "$(( _ALLOC_MB[i] / _GVM_DATA_CONTAINERS ))"
     fi
 done
+# REGRESSION (#176): the divide-by-N is applied AFTER the floor, so GVM_DATA was
+# the one spec whose declared floor was not a floor on the exported value -- it
+# handed out 24m..121m per loader, and the feed images `cp -r` a multi-GB tree
+# that is SIGKILLed below ~128m. Every host from 12GB to 32GB got a cap that
+# could not work, which is every real user. Assert the per-container FLOOR at
+# every size, not just proportionality: 24m was perfectly proportional.
+for host in 12288 16384 24576 32768 65536 131072; do
+    fresh_process; WANT_GVM=1; STUB_MEM="$host"; allocate_memory
+    if [[ "$(mb "${GVM_DATA_MEM:-0m}")" -ge "$_GVM_DATA_MIN_MB" ]]; then
+        ok "GVM_DATA_MEM >= ${_GVM_DATA_MIN_MB}m at ${host}MB"
+    else
+        bad "GVM_DATA_MEM >= ${_GVM_DATA_MIN_MB}m at ${host}MB" "$GVM_DATA_MEM" ">= ${_GVM_DATA_MIN_MB}m"
+    fi
+done
+
+# The floor must be enough for the real workload, not merely non-zero. 128m is
+# where the measured VT-feed copy starts surviving; the floor carries margin over
+# it for a slower disk and a bigger feed.
+if [[ "$_GVM_DATA_MIN_MB" -ge 256 ]]; then
+    ok "the loader floor carries margin over the measured ~128m OOM boundary"
+else
+    bad "the loader floor carries margin" "$_GVM_DATA_MIN_MB" ">= 256"
+fi
+
 WANT_GVM=0; fresh_process; STUB_MEM=31736; allocate_memory
 eq "GVM vars are absent when the profile is off" "${GVM_OSPD_MEM:-<unset>}" "<unset>"
 

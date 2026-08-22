@@ -105,7 +105,7 @@ services:
   gvm-vt:
     image: registry.community.greenbone.net/community/vulnerability-tests
     container_name: redamon-gvm-vt
-    mem_limit: ${GVM_DATA_MEM:-1g}    # shared cap for the one-shot feed loaders (they start concurrently)
+    mem_limit: ${GVM_DATA_MEM:-1g}    # per-loader cap; redamon.sh floors it at 512m (the feed copy OOMs below ~128m)
     restart: on-failure:5
     environment:
       FEED_RELEASE: "24.10"
@@ -115,7 +115,7 @@ services:
   gvm-notus-data:
     image: registry.community.greenbone.net/community/notus-data
     container_name: redamon-gvm-notus-data
-    mem_limit: ${GVM_DATA_MEM:-1g}    # shared cap for the one-shot feed loaders (they start concurrently)
+    mem_limit: ${GVM_DATA_MEM:-1g}    # per-loader cap; redamon.sh floors it at 512m (the feed copy OOMs below ~128m)
     restart: on-failure:5
     volumes:
       - notus_data:/mnt
@@ -123,7 +123,7 @@ services:
   gvm-scap-data:
     image: registry.community.greenbone.net/community/scap-data
     container_name: redamon-gvm-scap-data
-    mem_limit: ${GVM_DATA_MEM:-1g}    # shared cap for the one-shot feed loaders (they start concurrently)
+    mem_limit: ${GVM_DATA_MEM:-1g}    # per-loader cap; redamon.sh floors it at 512m (the feed copy OOMs below ~128m)
     restart: on-failure:5
     volumes:
       - scap_data:/mnt
@@ -131,7 +131,7 @@ services:
   gvm-cert-bund-data:
     image: registry.community.greenbone.net/community/cert-bund-data
     container_name: redamon-gvm-cert-data
-    mem_limit: ${GVM_DATA_MEM:-1g}    # shared cap for the one-shot feed loaders (they start concurrently)
+    mem_limit: ${GVM_DATA_MEM:-1g}    # per-loader cap; redamon.sh floors it at 512m (the feed copy OOMs below ~128m)
     restart: on-failure:5
     volumes:
       - cert_data:/mnt
@@ -139,7 +139,7 @@ services:
   gvm-dfn-cert-data:
     image: registry.community.greenbone.net/community/dfn-cert-data
     container_name: redamon-gvm-dfn-cert
-    mem_limit: ${GVM_DATA_MEM:-1g}    # shared cap for the one-shot feed loaders (they start concurrently)
+    mem_limit: ${GVM_DATA_MEM:-1g}    # per-loader cap; redamon.sh floors it at 512m (the feed copy OOMs below ~128m)
     restart: on-failure:5
     volumes:
       - cert_data:/mnt
@@ -149,7 +149,7 @@ services:
   gvm-data-objects:
     image: registry.community.greenbone.net/community/data-objects
     container_name: redamon-gvm-data-objects
-    mem_limit: ${GVM_DATA_MEM:-1g}    # shared cap for the one-shot feed loaders (they start concurrently)
+    mem_limit: ${GVM_DATA_MEM:-1g}    # per-loader cap; redamon.sh floors it at 512m (the feed copy OOMs below ~128m)
     restart: on-failure:5
     environment:
       FEED_RELEASE: "24.10"
@@ -159,7 +159,7 @@ services:
   gvm-report-formats:
     image: registry.community.greenbone.net/community/report-formats
     container_name: redamon-gvm-report-formats
-    mem_limit: ${GVM_DATA_MEM:-1g}    # shared cap for the one-shot feed loaders (they start concurrently)
+    mem_limit: ${GVM_DATA_MEM:-1g}    # per-loader cap; redamon.sh floors it at 512m (the feed copy OOMs below ~128m)
     restart: on-failure:5
     environment:
       FEED_RELEASE: "24.10"
@@ -171,7 +171,7 @@ services:
   gvm-gpg-data:
     image: registry.community.greenbone.net/community/gpg-data
     container_name: redamon-gvm-gpg-data
-    mem_limit: ${GVM_DATA_MEM:-1g}    # shared cap for the one-shot feed loaders (they start concurrently)
+    mem_limit: ${GVM_DATA_MEM:-1g}    # per-loader cap; redamon.sh floors it at 512m (the feed copy OOMs below ~128m)
     restart: on-failure:5
     volumes:
       - gpg_data:/mnt

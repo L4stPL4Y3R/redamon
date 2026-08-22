@@ -466,18 +466,23 @@ preflight_disk_gate() {
 # its share up front. Neo4j pre-allocates the page cache and Postgres its
 # shared_buffers, so those are `r` (reserved) and are never multiplied. Every
 # other service is `b` (burst) and gets BURST_FACTOR x its fair share, so one
-# busy service can use the headroom the others are not touching.
+# busy service can use the headroom the others are not touching. A third tier
+# `t` (transient) is for one-shot containers that exit before the stack is in
+# use and whose ceiling covers reclaimable page cache rather than an anonymous
+# allocation: those sit outside the over-commit accounting entirely.
 #
 # FLOORS are the only absolute numbers, and they are a property of the SOFTWARE
 # (a JVM cannot boot in 128 MB), not of the host. They never bind at >= 8 GB; on
 # a smaller host the allocator reports infeasible rather than handing out limits
-# that cannot work.
+# that cannot work. The one exception is GVM_DATA, whose requirement is set by
+# the size of the Greenbone feed rather than by the host, so its per-container
+# floor binds at every realistic host size -- see _GVM_DATA_MIN_MB.
 #
 # Every knob is a percentage and env-overridable. Keep the weights in sync with
 # docs/readmes/README.MEMORY_GOVERNOR.md.
 # =============================================================================
 
-# name:weight(per-mille of the services pool):floor(MB):tier(r=reserved,b=burst)
+# name:weight(per-mille of the services pool):floor(MB):tier(r=reserved,b=burst,t=transient)
 _MEM_SPECS_BASE="NEO4J:320:1024:r POSTGRES:80:256:r AGENT:180:768:b WEBAPP:180:512:b KALI:100:512:b RECON_ORCHESTRATOR:60:256:b CAPTURE_PROXY:40:128:b DOCKER_BROKER:20:96:b TRAFFIC_INGEST:20:96:b"
 # Optional profiles ADD weight; the sum is renormalised, so enabling one shrinks
 # everybody else proportionally instead of over-committing the host.
@@ -487,9 +492,9 @@ _MEM_SPECS_BASE="NEO4J:320:1024:r POSTGRES:80:256:r AGENT:180:768:b WEBAPP:180:5
 # whole VT feed, routinely multi-GB) and its own postgres -- with no mem_limit at
 # all, so on a --gvm host they sat uncapped next to a carefully budgeted
 # everything-else and could eat the scan pool and the OS reserve. GVM_DATA is one
-# shared cap for the nine one-shot feed loaders: six of them have no depends_on,
+# shared cap for the eight one-shot feed loaders: six of them have no depends_on,
 # so they start concurrently and their memory stacks during setup.
-_MEM_SPEC_GVM="GVMD:120:768:b GVM_OSPD:110:512:b GVM_REDIS:90:256:b GVM_POSTGRES:50:256:b GVM_DATA:40:192:b"
+_MEM_SPEC_GVM="GVMD:120:768:b GVM_OSPD:110:512:b GVM_REDIS:90:256:b GVM_POSTGRES:50:256:b GVM_DATA:40:192:t"
 # GVM_DATA's share is the TOTAL for the loader group; the exported
 # GVM_DATA_MEM is that divided by the container count, because ONE compose
 # var caps all of them and six start concurrently. Counting the group once
@@ -498,6 +503,16 @@ _MEM_SPEC_GVM="GVMD:120:768:b GVM_OSPD:110:512:b GVM_REDIS:90:256:b GVM_POSTGRES
 # in docker-compose.yml (the stale-lock cleanup moved into gvm-postgres itself,
 # so the count went 9 -> 8).
 _GVM_DATA_CONTAINERS=8
+# ...but the divide must not take the slice below what the loader actually needs.
+# Every other spec exports its allocated MB, so its floor is a real floor; this
+# one divides first, which turned the declared 192 MB into 24 MB per container
+# and SIGKILLed the feed copy on every host from 12 GB to ~32 GB (issue #176).
+# The images run `cp -r` over a multi-GB tree (the VT feed is ~2 GB / ~180k
+# files) and the page cache that generates is charged to the cgroup, so the copy
+# dies below ~128 MB. 512 leaves margin for a slower disk and a growing feed.
+# Over-committing here is safe in a way it would not be for a service: these are
+# one-shot containers that exit before any scan is admitted.
+_GVM_DATA_MIN_MB=512
 _MEM_SPEC_KB="KB_REFRESH:150:512:b"
 
 # Results, published as parallel indexed arrays (NOT associative: redamon.sh
@@ -745,11 +760,17 @@ allocate_memory() {
     # construction at every host size and every profile combination.
     local reserved_total=0 burst_fair=0
     for (( i = 0; i < n; i++ )); do
-        if [[ "${_ALLOC_TIERS[$i]}" == "b" ]]; then
-            burst_fair=$(( burst_fair + _ALLOC_MB[i] ))
-        else
-            reserved_total=$(( reserved_total + _ALLOC_MB[i] ))
-        fi
+        case "${_ALLOC_TIERS[$i]}" in
+            # TRANSIENT: one-shot containers that exit before the stack is in
+            # use, and whose ceiling is headroom for RECLAIMABLE page cache (a
+            # `cp` of a big tree), not an anonymous allocation. Counting that as
+            # a concurrent claim on RAM is what drove the GVM loaders down to
+            # 24 MB and OOM-killed the feed copy (#176). Excluded from both sides
+            # of the cushion equation.
+            t) ;;
+            b) burst_fair=$(( burst_fair + _ALLOC_MB[i] )) ;;
+            *) reserved_total=$(( reserved_total + _ALLOC_MB[i] )) ;;
+        esac
     done
     local cushion max_burst
     local swap_mb; swap_mb="$(_swap_total_mb)"
@@ -807,8 +828,12 @@ _mem_export_all() {
             continue
         fi
         if [[ "$name" == "GVM_DATA" ]]; then
-            # One var caps N containers: export the PER-CONTAINER slice.
-            _mem_own GVM_DATA_MEM "$(( mb / _GVM_DATA_CONTAINERS ))m"
+            # One var caps N containers: export the PER-CONTAINER slice, never
+            # below the floor the copy needs (see _GVM_DATA_MIN_MB).
+            local per=$(( mb / _GVM_DATA_CONTAINERS ))
+            [[ "$per" -lt "$_GVM_DATA_MIN_MB" ]] && per="$_GVM_DATA_MIN_MB"
+            _mem_own GVM_DATA_MEM "${per}m"
+            _ALLOC_MB[$i]=$(( per * _GVM_DATA_CONTAINERS ))
             continue
         fi
         _mem_own "${name}_MEM" "${mb}m"
@@ -2217,6 +2242,40 @@ pull_gvm_images() {
     success "All GVM images pulled successfully."
 }
 
+# Run `docker compose up -d` and, when it fails, say WHY if the cause is a feed
+# loader that was OOM-killed.
+#
+# A loader dies with a bare `Killed` and exit 137, compose reports only "didn't
+# complete successfully", and `restart: on-failure:5` turns that into minutes of
+# silent retries before the same opaque message (issue #176). gvmd and gvm-ospd
+# are gated on these completing, so the whole GVM stack then never starts and
+# nothing in the output points at the memory cap that caused it.
+gvm_up_or_diagnose() {
+    docker compose up -d "$@" && return 0
+    local rc=$? svc cid killed exitcode oom=()
+    for svc in $(docker compose config --services 2>/dev/null | grep '^gvm-'); do
+        cid="$(docker compose ps -aq "$svc" 2>/dev/null | head -1)"
+        [[ -n "$cid" ]] || continue
+        read -r killed exitcode <<< "$(docker inspect \
+            -f '{{.State.OOMKilled}} {{.State.ExitCode}}' "$cid" 2>/dev/null)"
+        # A zero exit is a success whatever the OOMKilled flag says about an
+        # earlier restart. OOMKilled is otherwise authoritative, but some daemon
+        # versions clear it, so a bare 137 on a one-shot `cp` counts too.
+        [[ "${exitcode:-0}" != "0" ]] || continue
+        [[ "$killed" == "true" || "$exitcode" == "137" ]] && oom+=("$svc")
+    done
+    [[ ${#oom[@]} -eq 0 ]] && return "$rc"
+
+    error "GVM feed loader(s) out of memory: ${oom[*]}"
+    error "  These copy a multi-GB Greenbone feed and were killed by their memory cap."
+    error "  Current cap: GVM_DATA_MEM=${GVM_DATA_MEM:-<unset>} (needs >= 512m)."
+    error "  Raise it by adding this to .env ABOVE the '${_MEM_BLOCK_BEGIN}' line,"
+    error "  which pins it so the governor stops recomputing it:"
+    error "      GVM_DATA_MEM=1g"
+    error "  Then re-run: ./redamon.sh up"
+    return "$rc"
+}
+
 # ---------------------------------------------------------------------------
 # Knowledge Base helpers
 # ---------------------------------------------------------------------------
@@ -2578,7 +2637,7 @@ cmd_install() {
     # Start services (force-recreate ensures compose changes like command: are applied)
     info "Starting services..."
     if [[ "$gvm_mode" == "true" ]]; then
-        docker compose up -d --force-recreate
+        gvm_up_or_diagnose --force-recreate
     else
         # shellcheck disable=SC2086
         docker compose up -d --force-recreate $CORE_SERVICES
@@ -2946,11 +3005,47 @@ cmd_update() {
         done
     fi
 
-    # Recreate GVM containers when docker-compose.yml changed (picks up command/image/volume changes)
-    if [[ "$rebuild_all" == "true" ]] && is_gvm_enabled; then
-        info "Recreating GVM containers to apply compose changes..."
-        pull_gvm_images true
-        docker compose up -d --force-recreate gvm-redis gvm-postgres gvmd gvm-ospd
+    # Converge the GVM stack onto the current compose config + .env.
+    #
+    # This runs on EVERY GVM-enabled update, not only when docker-compose.yml
+    # changed. The per-service memory caps live in .env, which the governor
+    # rewrites on every run, so a release that only touches redamon.sh (e.g. the
+    # GVM_DATA_MEM floor that fixes #176) would otherwise leave the old cap baked
+    # into the running containers until some unrelated later `up`. A plain
+    # `up -d` recreates exactly the containers whose config drifted and leaves
+    # the rest alone, so the nothing-changed case costs nothing.
+    #
+    # Enumerate EVERY gvm-* service from the compose file, not just the four
+    # long-running ones. Naming only those relies on depends_on to pull in the
+    # feed loaders, and gvm-notus-data has no depends_on edge, so it alone would
+    # be skipped and keep its stale (too-small) GVM_DATA_MEM cap. Deriving the
+    # list from `docker compose config` (as pull_gvm_images does) means it cannot
+    # drift from the file. compose recreates exactly the containers whose config
+    # changed -- so a loader whose only change is the new cap is re-run, while an
+    # unchanged one is left alone.
+    if is_gvm_enabled; then
+        # `gvmd` has no `gvm-` prefix, so the grep misses it; append it the same
+        # way pull_gvm_images does. Without it the runtime scanner daemon would
+        # keep its stale config on a rebuild_all update.
+        local gvm_svcs
+        gvm_svcs="$(docker compose config --services 2>/dev/null | grep '^gvm-' | tr '\n' ' ')"
+        [[ -n "$gvm_svcs" ]] && gvm_svcs="$gvm_svcs gvmd"
+        if [[ -z "$gvm_svcs" ]]; then
+            warn "No gvm-* services in the compose config; skipping GVM convergence."
+        else
+            local gvm_flags=()
+            if [[ "$rebuild_all" == "true" ]]; then
+                info "Recreating GVM containers to apply compose changes..."
+                pull_gvm_images true
+                gvm_flags=(--force-recreate)
+            else
+                info "Converging GVM containers onto the current resource caps..."
+            fi
+            # Non-fatal: an update must still finish, bump the version and run its
+            # own stack verification even if GVM itself will not come up.
+            # shellcheck disable=SC2086
+            gvm_up_or_diagnose "${gvm_flags[@]}" $gvm_svcs || warn "GVM stack did not converge -- see above; core services are unaffected."
+        fi
     fi
 
     # Converge the gvmd 'admin' password onto GVM_PASSWORD from .env. Runs on every
@@ -3345,7 +3440,7 @@ cmd_up() {
     fi
 
     if [[ "$gvm_mode" == "true" ]]; then
-        docker compose up -d
+        gvm_up_or_diagnose
     else
         # shellcheck disable=SC2086
         docker compose up -d $CORE_SERVICES
