@@ -101,10 +101,25 @@ RUN pip install --no-cache-dir uv
 # Declared AFTER core pip install so changing SKIP_KB doesn't bust that cache layer.
 ARG SKIP_KB=false
 
+# PyTorch wheel source. Defaults to the CPU-only index (~200 MB). `pip install
+# torch` on linux/amd64 otherwise pulls the CUDA wheel, which vendors ~2.5 GB of
+# nvidia-* runtime libs this workload never uses (embeddings run on CPU via
+# faiss-cpu). A GPU host builds with
+#   --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cu124
+# which redamon.sh sets from the frozen build decision (`.gpu-enabled` marker).
+# Pre-installing torch here means sentence-transformers below finds it already
+# satisfied and never reaches for the default CUDA wheel.
+ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
+
 # KB heavy dependencies: torch, sentence-transformers, faiss-cpu
 # Skipped when SKIP_KB=true (--skipkbase flag)
 RUN if [ "$SKIP_KB" != "true" ]; then \
-        pip install --no-cache-dir -r requirements-kb.txt; \
+        pip install --no-cache-dir torch --index-url "$TORCH_INDEX_URL" \
+        && pip install --no-cache-dir -r requirements-kb.txt \
+        && TORCH_INDEX_URL="$TORCH_INDEX_URL" python -c "import torch,os,sys; \
+want_cpu='/cpu' in os.environ.get('TORCH_INDEX_URL',''); \
+got_cpu=torch.__version__.endswith('+cpu'); \
+sys.exit(0) if want_cpu==got_cpu else (print(f'FATAL: TORCH_INDEX_URL asked for {\"cpu\" if want_cpu else \"cuda\"} but torch is {torch.__version__}'), sys.exit(1))"; \
     fi
 
 # Pre-download the embedding model (~1.3 GB) unless KB is skipped.

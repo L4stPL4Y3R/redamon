@@ -237,6 +237,9 @@ docs/readmes/agent_prompts/
 .kbase-enabled
 .kbase-disabled
 .skipkbase
+.gpu-enabled
+.gpu-disabled
+.torch-variant
 
 # Claude Code config
 .claude/

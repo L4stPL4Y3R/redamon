@@ -7,6 +7,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VERSION_FILE="$SCRIPT_DIR/VERSION"
 GVM_FLAG_FILE="$SCRIPT_DIR/.gvm-enabled"
+GPU_ENABLED_FLAG_FILE="$SCRIPT_DIR/.gpu-enabled"
+GPU_DISABLED_FLAG_FILE="$SCRIPT_DIR/.gpu-disabled"
+TORCH_VARIANT_MARKER="$SCRIPT_DIR/.torch-variant"
 KBASE_FLAG_FILE="$SCRIPT_DIR/.kbase-enabled"
 KBASE_DISABLED_FLAG_FILE="$SCRIPT_DIR/.kbase-disabled"
 LEGACY_SKIPKBASE_FLAG_FILE="$SCRIPT_DIR/.skipkbase"
@@ -2313,6 +2316,105 @@ is_kb_enabled() {
     is_kbase_enabled
 }
 
+# --- GPU / PyTorch build variant --------------------------------------------
+# The CPU-vs-CUDA PyTorch decision is made ONCE at build time and frozen. A GPU
+# is "usable" only if the NVIDIA *container runtime* is present -- a bare card
+# with no nvidia-container-toolkit cannot be handed to a container, so a CUDA
+# image there would be pure bloat. We therefore key off the runtime, not the card.
+gpu_runtime_available() {
+    # Authoritative signal: an "nvidia" entry among the docker RUNTIME KEYS
+    # (registered by nvidia-container-toolkit). Match keys only -- NOT docker
+    # info's giant features blob, which mentions unrelated tokens.
+    if docker info --format '{{range $k, $v := .Runtimes}}{{$k}} {{end}}' 2>/dev/null \
+        | grep -qiw nvidia; then
+        return 0
+    fi
+    # Fallback: a WORKING driver. The nvidia-smi *binary* can exist on a host
+    # with no functional driver (it then errors), so require it to actually run.
+    command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1
+}
+
+is_gpu_enabled() {
+    # Explicit flag wins; otherwise auto-detect once (unless disabled explicitly).
+    if [[ -f "$GPU_ENABLED_FLAG_FILE" ]]; then
+        return 0
+    elif [[ -f "$GPU_DISABLED_FLAG_FILE" ]]; then
+        return 1
+    else
+        gpu_runtime_available
+    fi
+}
+
+# Export TORCH_INDEX_URL for `docker compose build` and freeze the decision into
+# the `.torch-variant` marker. The runtime GPU device grant (docker-compose.gpu.yml)
+# is overlaid via COMPOSE_FILE ONLY when the build produced a CUDA image, so a
+# CPU host never requests a device it cannot provide.
+#   cu124 is a safe default CUDA series; override with TORCH_CUDA_INDEX_URL if a
+#   host's driver needs a different one.
+_gpu_export_env() {
+    local cuda_index="${TORCH_CUDA_INDEX_URL:-https://download.pytorch.org/whl/cu124}"
+    local variant="cpu"
+    if is_gpu_enabled; then
+        export TORCH_INDEX_URL="$cuda_index"
+        variant="gpu"
+    else
+        export TORCH_INDEX_URL="https://download.pytorch.org/whl/cpu"
+    fi
+    # The marker is what every later command obeys, so a failed write is NOT
+    # cosmetic: a GPU build whose marker never landed would start with no device
+    # grant and silently run its CUDA image on the CPU. Say so loudly.
+    if ! printf '%s' "$variant" > "$TORCH_VARIANT_MARKER" 2>/dev/null; then
+        warn "Could not write $TORCH_VARIANT_MARKER (read-only checkout?)."
+        warn "  Built variant '$variant' will not be remembered; GPU device access may not be applied."
+    fi
+}
+
+# Compose-file args for the GPU device grant. Empty on CPU builds.
+# Call sites that pass their OWN -f flags (e.g. $DEV_COMPOSE) MUST append this,
+# because explicit -f overrides $COMPOSE_FILE entirely.
+GPU_COMPOSE_ARGS=""
+
+# Apply the GPU runtime device grant, but ONLY when the frozen build marker says
+# a CUDA image was built. Two mechanisms, deliberately:
+#   * COMPOSE_FILE  -> every plain `docker compose ...` call site, no edits.
+#   * GPU_COMPOSE_ARGS -> the call sites that pass explicit -f (dev overlay),
+#     where COMPOSE_FILE is ignored by compose.
+# Inert on CPU builds -> zero risk on GPU-less hosts.
+_gpu_compose_overlay() {
+    local variant
+    variant="$(cat "$TORCH_VARIANT_MARKER" 2>/dev/null)" || variant=""
+
+    # Re-export the FROZEN build arg (read from the marker, never re-detected).
+    # `up` does not build today, but any build reached from a runtime command must
+    # reproduce the variant this install was built with rather than silently
+    # falling back to the compose default (CPU).
+    case "$variant" in
+        gpu) export TORCH_INDEX_URL="${TORCH_CUDA_INDEX_URL:-https://download.pytorch.org/whl/cu124}" ;;
+        cpu) export TORCH_INDEX_URL="https://download.pytorch.org/whl/cpu" ;;
+    esac
+
+    [[ "$variant" == "gpu" ]] || return 0
+
+    # The build decision is frozen, but the HARDWARE can disappear underneath it
+    # (driver upgrade, toolkit removed, image rsynced to another host). Requesting
+    # an nvidia device the daemon cannot provide makes `up` fail hard and the whole
+    # stack unstartable. Degrade to CPU with a loud warning instead: a CUDA image
+    # runs fine on CPU, just slower.
+    if ! gpu_runtime_available; then
+        warn "Built for GPU (.torch-variant=gpu) but no NVIDIA container runtime is available now."
+        warn "  Starting WITHOUT GPU access (the CUDA image falls back to CPU)."
+        warn "  Restore nvidia-container-toolkit, or rebuild for CPU: ./redamon.sh install --cpu"
+        return 0
+    fi
+
+    # Idempotent: install -> _kb_bootstrap both call this in one process.
+    if [[ "${COMPOSE_FILE:-}" != *"docker-compose.gpu.yml"* ]]; then
+        # Absolute paths: some call sites run from a different cwd.
+        export COMPOSE_FILE="${COMPOSE_FILE:-$SCRIPT_DIR/docker-compose.yml}:$SCRIPT_DIR/docker-compose.gpu.yml"
+    fi
+    GPU_COMPOSE_ARGS="-f $SCRIPT_DIR/docker-compose.gpu.yml"
+}
+
 # Export KB-related env vars so downstream processes (docker compose, make)
 # see a value that matches the flag file. Called from every cmd_* that
 # shells out to docker compose. Always exports — the flag is authoritative,
@@ -2473,6 +2575,7 @@ _kb_choose_profile() {
 _kb_bootstrap() {
     local profile="${1:-lite}"
     _kb_export_env
+    _gpu_compose_overlay # honor the frozen GPU decision at runtime (inert on CPU)
     _kb_wait_neo4j || return 1
     info "Bootstrapping Knowledge Base (profile=${profile})..."
     _kb_make "kb-build-${profile}" MODE=docker
@@ -2538,11 +2641,14 @@ _kb_get_neo4j_count() {
 cmd_install() {
     local gvm_mode="false"
     local kbase_mode="false"
+    local gpu_mode=""   # "on" | "off" | "" (auto-detect); set by --gpu / --cpu
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --gvm)   gvm_mode="true" ;;
             --kbase) kbase_mode="true" ;;
+            --gpu)   gpu_mode="on" ;;
+            --cpu)   gpu_mode="off" ;;
             *) error "Unknown flag: $1"; exit 1 ;;
         esac
         shift
@@ -2583,7 +2689,25 @@ cmd_install() {
         rm -f "$KBASE_FLAG_FILE"
         touch "$KBASE_DISABLED_FLAG_FILE"
     fi
+    # GPU is opt-in like KB. --gpu / --cpu are sticky (mirrors the KB markers);
+    # with neither, auto-detect the NVIDIA container runtime at build time.
+    if [[ "$gpu_mode" == "on" ]]; then
+        info "Mode: GPU PyTorch build (--gpu, CUDA wheel for the agent KB)"
+        touch "$GPU_ENABLED_FLAG_FILE"; rm -f "$GPU_DISABLED_FLAG_FILE"
+    elif [[ "$gpu_mode" == "off" ]]; then
+        info "Mode: CPU-only PyTorch build (--cpu)"
+        touch "$GPU_DISABLED_FLAG_FILE"; rm -f "$GPU_ENABLED_FLAG_FILE"
+    else
+        rm -f "$GPU_ENABLED_FLAG_FILE" "$GPU_DISABLED_FLAG_FILE"
+        if gpu_runtime_available; then
+            info "Mode: GPU PyTorch build (auto-detected NVIDIA container runtime)"
+        else
+            info "Mode: CPU-only PyTorch build (no NVIDIA container runtime detected)"
+        fi
+    fi
     _kb_export_env
+    _gpu_export_env      # freeze CPU/CUDA torch decision into .torch-variant
+    _gpu_compose_overlay # honor the frozen GPU decision at runtime (inert on CPU)
     echo ""
 
     # Export version for docker build arg
@@ -2704,9 +2828,32 @@ cmd_install() {
 }
 
 cmd_update() {
+    # --gpu / --cpu are accepted here too, so switching the PyTorch variant does
+    # not require a full `install`. Unlike install, omitting them PRESERVES the
+    # existing sticky choice (same contract as the GVM/KB flags: an update must
+    # never silently flip a decision the user made at install time).
+    local gpu_mode="" update_args=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --gpu) gpu_mode="on";  update_args+=("$1") ;;
+            --cpu) gpu_mode="off"; update_args+=("$1") ;;
+            *) error "Unknown flag: $1"; exit 1 ;;
+        esac
+        shift
+    done
+    if [[ "$gpu_mode" == "on" ]]; then
+        info "Switching to a GPU PyTorch build (--gpu)"
+        touch "$GPU_ENABLED_FLAG_FILE"; rm -f "$GPU_DISABLED_FLAG_FILE"
+    elif [[ "$gpu_mode" == "off" ]]; then
+        info "Switching to a CPU-only PyTorch build (--cpu)"
+        touch "$GPU_DISABLED_FLAG_FILE"; rm -f "$GPU_ENABLED_FLAG_FILE"
+    fi
+
     _migrate_reorg_layout
     _migrate_legacy_kbase_flag
     _kb_export_env
+    _gpu_export_env      # freeze CPU/CUDA torch decision into .torch-variant
+    _gpu_compose_overlay # honor the frozen GPU decision at runtime (inert on CPU)
 
     print_banner
     check_prerequisites
@@ -2768,7 +2915,7 @@ cmd_update() {
         # added in the target release). Guarded by REDAMON_UPDATE_FROM so we do
         # not pull or loop again.
         export REDAMON_UPDATE_FROM="$old_head"
-        exec bash "$SCRIPT_DIR/redamon.sh" update
+        exec bash "$SCRIPT_DIR/redamon.sh" update ${update_args[@]+"${update_args[@]}"}
     fi
 
     local new_version
@@ -3314,6 +3461,7 @@ cmd_up_dev() {
     _migrate_reorg_layout
     _migrate_legacy_kbase_flag
     _kb_export_env
+    _gpu_compose_overlay # honor the frozen GPU decision at runtime (inert on CPU)
 
     local gvm_flag="false"
     if is_gvm_enabled; then
@@ -3321,7 +3469,7 @@ cmd_up_dev() {
     fi
 
     # shellcheck disable=SC2086
-    if ! ensure_core_images $DEV_COMPOSE; then
+    if ! ensure_core_images $DEV_COMPOSE $GPU_COMPOSE_ARGS; then
         exit 1
     fi
 
@@ -3337,10 +3485,10 @@ cmd_up_dev() {
     if [[ "$gvm_flag" == "true" ]]; then
         pull_gvm_images
         # shellcheck disable=SC2086
-        docker compose $DEV_COMPOSE up -d
+        docker compose $DEV_COMPOSE $GPU_COMPOSE_ARGS up -d
     else
         # shellcheck disable=SC2086
-        docker compose $DEV_COMPOSE up -d $CORE_SERVICES
+        docker compose $DEV_COMPOSE $GPU_COMPOSE_ARGS up -d $CORE_SERVICES
     fi
 
     # Verify BEFORE announcing. See verify_core_running().
@@ -3385,6 +3533,7 @@ cmd_up() {
     _migrate_reorg_layout
     _migrate_legacy_kbase_flag
     _kb_export_env
+    _gpu_compose_overlay # honor the frozen GPU decision at runtime (inert on CPU)
 
     local gvm_mode="false"
     if is_gvm_enabled; then
@@ -3623,6 +3772,7 @@ cmd_purge() {
     rm -f "$KBASE_FLAG_FILE"
     rm -f "$KBASE_DISABLED_FLAG_FILE"
     rm -f "$LEGACY_SKIPKBASE_FLAG_FILE"
+    rm -f "$GPU_ENABLED_FLAG_FILE" "$GPU_DISABLED_FLAG_FILE" "$TORCH_VARIANT_MARKER"
     success "Full cleanup complete. All RedAmon data and images have been removed."
     echo ""
     info "To reinstall: ./redamon.sh install"
@@ -3719,6 +3869,17 @@ cmd_status() {
         echo -e "  ${CYAN}GVM_ENABLED:${NC}   false"
     fi
 
+    # PyTorch build variant, read from the FROZEN marker (not re-detected): this
+    # is what the installed images actually contain. "not built yet" on a clone
+    # that has never run install/update.
+    local _tv
+    _tv="$(cat "$TORCH_VARIANT_MARKER" 2>/dev/null)" || _tv=""
+    case "$_tv" in
+        gpu) echo -e "  ${CYAN}TORCH_BUILD:${NC}   ${GREEN}gpu (CUDA)${NC}" ;;
+        cpu) echo -e "  ${CYAN}TORCH_BUILD:${NC}   cpu" ;;
+        *)   echo -e "  ${CYAN}TORCH_BUILD:${NC}   not built yet" ;;
+    esac
+
     # KB feature gate (from kb_config.yaml / env var)
     if is_kb_enabled; then
         echo -e "  ${CYAN}KB_ENABLED:${NC}    ${GREEN}true${NC}"
@@ -3786,6 +3947,7 @@ cmd_kb_build() {
     echo ""
 
     _kb_export_env
+    _gpu_compose_overlay # honor the frozen GPU decision at runtime (inert on CPU)
     _kb_wait_neo4j || exit 1
 
     info "Running ingestion pipeline..."
@@ -3804,6 +3966,7 @@ cmd_kb_update() {
 
     print_banner
     _kb_export_env
+    _gpu_compose_overlay # honor the frozen GPU decision at runtime (inert on CPU)
     _kb_wait_neo4j || exit 1
 
     if [[ -n "$source" ]]; then
@@ -3856,6 +4019,7 @@ cmd_kb_rebuild() {
     echo ""
 
     _kb_export_env
+    _gpu_compose_overlay # honor the frozen GPU decision at runtime (inert on CPU)
     _kb_wait_neo4j || exit 1
 
     info "Rebuilding Knowledge Base from scratch..."
@@ -3871,6 +4035,7 @@ cmd_kb_rebuild() {
 
 cmd_kb_stats() {
     _kb_export_env
+    _gpu_compose_overlay # honor the frozen GPU decision at runtime (inert on CPU)
     _kb_wait_neo4j || exit 1
     _kb_make kb-stats MODE=docker
 }
@@ -3910,6 +4075,8 @@ cmd_help() {
     echo -e "  ${GREEN}install${NC}              Build and start RedAmon (no GVM, no Knowledge Base)"
     echo -e "  ${GREEN}install --gvm${NC}        Build and start RedAmon (with GVM/OpenVAS)"
     echo -e "  ${GREEN}install --kbase${NC}      Build with Knowledge Base (~4.4 GB heavier, local KB enabled)"
+    echo -e "  ${GREEN}install --gpu${NC}        Build the KB on CUDA PyTorch (~2.5 GB heavier; needs nvidia-container-toolkit)"
+    echo -e "  ${GREEN}install --cpu${NC}        Force CPU-only PyTorch (default; auto-detected when neither flag is given)"
     echo -e "  ${GREEN}update${NC}           Pull latest version and smart-rebuild changed services"
     echo -e "  ${GREEN}up${NC}               Start services"
     echo -e "  ${GREEN}up dev${NC}           Start in dev mode (hot-reload, auto-detects GVM mode)"
@@ -3931,6 +4098,7 @@ cmd_help() {
     echo "  ./redamon.sh install --kbase       # First-time setup with local Knowledge Base"
     echo "  ./redamon.sh install --gvm         # First-time setup with GVM/OpenVAS"
     echo "  ./redamon.sh install --gvm --kbase # First-time setup with everything"
+    echo "  ./redamon.sh install --kbase --gpu  # Knowledge Base on the GPU (CUDA PyTorch)"
     echo "  ./redamon.sh update           # Update to latest version"
     echo "  ./redamon.sh up               # Start after reboot"
     echo "  ./redamon.sh up dev           # Dev mode with hot-reload (auto-detects GVM)"
@@ -4168,7 +4336,7 @@ esac
 
 case "${1:-help}" in
     install) shift; cmd_install "$@" ;;
-    update)  cmd_update ;;
+    update)  shift; cmd_update "$@" ;;
     up)
         if [[ "${2:-}" == "dev" ]]; then
             cmd_up_dev

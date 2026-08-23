@@ -807,6 +807,7 @@ services:
       dockerfile: agentic/Dockerfile
       args:
         SKIP_KB: "${SKIP_KB:-false}"
+        TORCH_INDEX_URL: "${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cpu}"
     container_name: redamon-agent
     mem_limit: ${AGENT_MEM:-3g}             # sized from host RAM by redamon.sh
     pids_limit: ${AGENT_PIDS:-1024}         # D1: fork-bomb ceiling (generous)
@@ -910,6 +911,8 @@ services:
     build:
       context: .
       dockerfile: agentic/Dockerfile
+      args:
+        TORCH_INDEX_URL: "${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cpu}"
     image: redamon-agent
     container_name: redamon-kb-refresh
     environment:

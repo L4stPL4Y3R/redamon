@@ -1,0 +1,19 @@
+# GPU runtime overlay for the agent (Knowledge Base on a CUDA build).
+#
+# This ONLY grants the already-GPU-built agent image access to the host GPU at
+# runtime. It does NOT change what was built: the CPU-vs-CUDA torch decision is
+# frozen at build time (redamon.sh --gpu -> TORCH_INDEX_URL -> .torch-variant
+# marker). redamon.sh overlays this file (via COMPOSE_FILE) only when the
+# `.gpu-enabled` marker is present, so it is inert on CPU-only hosts.
+#
+# Requires the NVIDIA driver + nvidia-container-toolkit on the host. Without a
+# CUDA-built image this overlay is pointless; without the toolkit `up` errors.
+services:
+  agent:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

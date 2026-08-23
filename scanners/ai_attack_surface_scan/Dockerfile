@@ -25,9 +25,17 @@ COPY scanners/ai_attack_surface_scan/requirements.txt /tmp/base-requirements.txt
 RUN pip install --no-cache-dir -r /tmp/base-requirements.txt
 
 # --- Per-tool venvs (isolated, conflicting deps) ---
+# All three tool venvs transitively pull PyTorch (garak & pyrit directly;
+# giskard via bert-score in the [llm] extra), and each independently resolves to
+# the CUDA wheel by default -> ~2.5 GB of unused nvidia-* runtime PER venv. They
+# are pinned to the CPU-only wheel: local torch does ~no heavy compute here
+# (garak's default probes use heuristic detectors; pyrit/giskard score via the
+# local Ollama judge over HTTP). This scanner is CPU-only by design and is NOT
+# parametrized for GPU (unlike the agent's KB).
 COPY scanners/ai_attack_surface_scan/adapters/garak/requirements.txt /tmp/garak-requirements.txt
 RUN python -m venv /opt/venv-garak \
     && /opt/venv-garak/bin/pip install --no-cache-dir -U pip \
+    && /opt/venv-garak/bin/pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
     && /opt/venv-garak/bin/pip install --no-cache-dir -r /tmp/garak-requirements.txt
 
 COPY scanners/ai_attack_surface_scan/adapters/pyrit/requirements.txt /tmp/pyrit-requirements.txt
@@ -37,6 +45,7 @@ COPY scanners/ai_attack_surface_scan/adapters/pyrit/requirements.txt /tmp/pyrit-
 # exists and the toolchain simply goes unused).
 RUN python -m venv /opt/venv-pyrit \
     && /opt/venv-pyrit/bin/pip install --no-cache-dir -U pip \
+    && /opt/venv-pyrit/bin/pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
     && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable \
     && . "$HOME/.cargo/env" \
     && /opt/venv-pyrit/bin/pip install --no-cache-dir -r /tmp/pyrit-requirements.txt \
@@ -45,7 +54,22 @@ RUN python -m venv /opt/venv-pyrit \
 COPY scanners/ai_attack_surface_scan/adapters/giskard/requirements.txt /tmp/giskard-requirements.txt
 RUN python -m venv /opt/venv-giskard \
     && /opt/venv-giskard/bin/pip install --no-cache-dir -U pip \
+    && /opt/venv-giskard/bin/pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
     && /opt/venv-giskard/bin/pip install --no-cache-dir -r /tmp/giskard-requirements.txt
+
+# Guard: fail the BUILD if any venv ended up with a CUDA torch. Pinning torch
+# first only holds while the tools' own pins stay compatible -- a future garak/
+# pyrit/giskard bump could make pip resolve a different torch from PyPI (the
+# default index = CUDA) and silently restore ~2.5 GB per venv. This assertion
+# turns that silent size regression into a loud failure. `+cpu` is the CPU
+# wheel's build tag; the CUDA wheels carry `+cuXXX` or no local tag.
+RUN for v in garak pyrit giskard; do \
+        /opt/venv-$v/bin/python -c "import torch,sys; \
+v=torch.__version__; \
+sys.exit(0) if v.endswith('+cpu') else (print(f'FATAL: venv-$v has non-CPU torch {v}'), sys.exit(1))" \
+        || exit 1; \
+    done \
+    && echo "torch CPU-variant guard: all venvs OK"
 
 # --- promptfoo (Node CLI; NOT a venv) ---
 # First non-Python tool. Install Node 22 + the pinned promptfoo. The dataset-based
