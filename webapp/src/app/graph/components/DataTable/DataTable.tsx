@@ -30,6 +30,7 @@ import {
 } from 'lucide-react'
 import type { GraphData } from '../../types'
 import { NODE_COLORS } from '../../config'
+import { badgeColors } from '../../utils'
 import type { TableRow } from '../../hooks/useTableData'
 import { ExpandedRowDetail } from './ExpandedRowDetail'
 import { ColumnFilterButton, ActiveFilterChips } from '../ColumnFilterPanel'
@@ -187,7 +188,7 @@ export const DataTable = memo(function DataTable({
         const type = info.getValue()
         const color = NODE_COLORS[type] || NODE_COLORS.Default
         return (
-          <span className={styles.typeBadge} style={{ background: color }}>
+          <span className={styles.typeBadge} style={badgeColors(color)}>
             {type}
           </span>
         )

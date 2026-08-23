@@ -5,7 +5,7 @@ import { AlertTriangle, ArrowLeft } from 'lucide-react'
 import { Drawer, ExternalLink } from '@/components/ui'
 import { trufflehogDisplayFields } from '@/lib/trufflehogDisplay'
 import { GraphNode } from '../../types'
-import { getNodeColor, getNodeUrl } from '../../utils'
+import { badgeColors, getNodeColor, getNodeUrl } from '../../utils'
 import { renderPropertyValue } from '../../utils/renderPropertyValue'
 import { ClusterNodeList } from './ClusterNodeList'
 import styles from './NodeDrawer.module.css'
@@ -147,7 +147,7 @@ export function NodeDrawer({
               <span className={styles.propertyKey}>Type</span>
               <span
                 className={styles.propertyBadge}
-                style={{ backgroundColor: getNodeColor(displayNode) }}
+                style={badgeColors(getNodeColor(displayNode))}
               >
                 {displayNode.type}
               </span>

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronRight, Search, Folder } from 'lucide-react'
 import { GraphNode } from '../../types'
-import { getNodeColor } from '../../utils'
+import { badgeColors, getNodeColor } from '../../utils'
 import styles from './ClusterNodeList.module.css'
 
 interface ClusterNodeListProps {
@@ -76,7 +76,7 @@ export function ClusterNodeList({ cluster, onSelectChild }: ClusterNodeListProps
       <div className={styles.header}>
         <span
           className={styles.typeBadge}
-          style={{ backgroundColor: color }}
+          style={badgeColors(color)}
         >
           {childType}
         </span>
