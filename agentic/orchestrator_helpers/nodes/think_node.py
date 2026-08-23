@@ -1,7 +1,9 @@
 """Think node — core ReAct reasoning with LLM decision, output analysis, and chain memory."""
 
 import asyncio
+import hashlib
 import logging
+import time
 from uuid import uuid4
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -840,20 +842,30 @@ async def think_node(state: AgentState, config, *, llm, guidance_queues, neo4j_c
         f"Switching is a first-class action and needs no phase change."
     )
 
-    # Log the full prompt for debugging
-    logger.info(f"\n{'#'*80}")
+    # Prompt logging. The system prompt is ~100 KB and largely static across
+    # iterations, so dumping it every turn is ~90% of the log's volume. Emit it
+    # in full only on the first iteration (or when LOG_LLM_VERBOSE is set); on
+    # later turns log a one-line fingerprint (length + hash) so a change is still
+    # visible. The small, dynamic context (chain / todo / target / Q&A) is always
+    # logged since it is what actually changes turn to turn.
+    _prompt_hash = hashlib.sha1(system_prompt.encode("utf-8", "replace")).hexdigest()[:12]
+    _verbose_prompt = bool(get_setting('LOG_LLM_VERBOSE', False))
     logger.info(f"# THINK NODE PROMPT - Iteration {iteration} - Phase: {phase}")
-    logger.info(f"{'#'*80}")
-    logger.info(f"\n--- CHAIN CONTEXT ---\n{chain_context_formatted}")
-    logger.info(f"\n--- TODO LIST ---\n{todo_list_formatted}")
-    logger.info(f"\n--- TARGET INFO ---\n{target_info_formatted}")
-    logger.info(f"\n--- Q&A HISTORY ---\n{qa_history_formatted}")
-    logger.info(f"\n--- FULL SYSTEM PROMPT ({len(system_prompt)} chars) ---")
-    chunk_size = 4000
-    for i in range(0, len(system_prompt), chunk_size):
-        chunk = system_prompt[i:i+chunk_size]
-        logger.info(f"PROMPT[{i}:{i+len(chunk)}]:\n{chunk}")
-    logger.info(f"{'#'*80}\n")
+    logger.info(f"--- CHAIN CONTEXT ---\n{chain_context_formatted}")
+    logger.info(f"--- TODO LIST ---\n{todo_list_formatted}")
+    logger.info(f"--- TARGET INFO ---\n{target_info_formatted}")
+    logger.info(f"--- Q&A HISTORY ---\n{qa_history_formatted}")
+    if _verbose_prompt or iteration <= 1:
+        logger.info(f"--- FULL SYSTEM PROMPT ({len(system_prompt)} chars, sha1={_prompt_hash}) ---")
+        chunk_size = 4000
+        for i in range(0, len(system_prompt), chunk_size):
+            chunk = system_prompt[i:i+chunk_size]
+            logger.info(f"PROMPT[{i}:{i+len(chunk)}]:\n{chunk}")
+    else:
+        logger.info(
+            f"--- SYSTEM PROMPT: {len(system_prompt)} chars, sha1={_prompt_hash} "
+            f"(full dump suppressed; set LOG_LLM_VERBOSE=true to emit) ---"
+        )
 
     # Anthropic prompt caching: when the LLM is ChatAnthropic, split the
     # assembled system prompt at CACHE_PREFIX_END_MARKER and emit two content
@@ -892,6 +904,7 @@ async def think_node(state: AgentState, config, *, llm, guidance_queues, neo4j_c
     response_text = ""
     input_tokens_this_turn = _dt_in
     output_tokens_this_turn = _dt_out
+    _think_t0 = time.monotonic()
 
     for attempt in range(max_retries):
         if attempt > 0:
@@ -941,11 +954,11 @@ async def think_node(state: AgentState, config, *, llm, guidance_queues, neo4j_c
             f"provider={type(llm).__name__} (iter {iteration})"
         )
 
-        logger.info(f"\n{'='*60}")
-        logger.info(f"LLM RAW RESPONSE - Iteration {iteration} (attempt {attempt+1}/{max_retries})")
-        logger.info(f"{'='*60}")
-        logger.info(f"{response_text}")
-        logger.info(f"{'='*60}\n")
+        # Raw response is redundant with the structured THOUGHT/REASONING/ACTION
+        # block below; emit it only under LOG_LLM_VERBOSE.
+        if _verbose_prompt:
+            logger.info(f"LLM RAW RESPONSE - Iteration {iteration} (attempt {attempt+1}/{max_retries})")
+            logger.info(f"{response_text}")
 
         decision, last_error = try_parse_llm_decision(response_text)
         if decision:
@@ -962,7 +975,25 @@ async def think_node(state: AgentState, config, *, llm, guidance_queues, neo4j_c
             updated_todo_list=[],
         )
 
-    logger.info(f"[{user_id}/{project_id}/{session_id}] Decision: action={decision.action}, tool={decision.tool_name}")
+    _think_ms = int((time.monotonic() - _think_t0) * 1000)
+    logger.info(
+        f"[{user_id}/{project_id}/{session_id}] Decision: action={decision.action}, "
+        f"tool={decision.tool_name} think_ms={_think_ms} provider={type(llm).__name__} "
+        f"tokens_turn(in={input_tokens_this_turn},out={output_tokens_this_turn})"
+    )
+    # Structured decision event for the machine-readable stream.
+    try:
+        from session_log import log_event
+        log_event(
+            "decision",
+            session=session_id, iteration=iteration, phase=phase,
+            action=str(decision.action), tool=decision.tool_name,
+            think_ms=_think_ms, provider=type(llm).__name__,
+            tokens_in=input_tokens_this_turn, tokens_out=output_tokens_this_turn,
+            prompt_sha1=_prompt_hash,
+        )
+    except Exception:
+        pass
 
     # Detailed logging for debugging
     logger.info(f"\n{'='*60}")

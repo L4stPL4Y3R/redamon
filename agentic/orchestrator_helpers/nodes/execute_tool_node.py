@@ -285,21 +285,39 @@ async def execute_tool_node(
     tool_output = step_data.get("tool_output", "")
     success = step_data.get("success", False)
     error_msg = step_data.get("error_message")
+    duration_ms = step_data.get("duration_ms")
 
-    logger.info(f"SUCCESS: {success}")
+    logger.info(f"SUCCESS: {success} duration_ms={duration_ms}")
     if error_msg:
         logger.info(f"ERROR: {error_msg}")
 
+    # Only a bounded head goes to the prose log; the full body is already on the
+    # offload file + DB, so line-by-line dumping the whole thing was pure bloat.
+    _cap = int(get_setting('LOG_TOOL_OUTPUT_MAX_CHARS', 4000))
     logger.info(f"TOOL_OUTPUT ({len(tool_output)} chars):")
     if tool_output:
-        output_preview = tool_output[:100000]
-        for line in output_preview.split('\n'):
+        for line in tool_output[:_cap].split('\n'):
             logger.info(f"  | {line}")
-        if len(tool_output) > 100000:
-            logger.info(f"  | ... ({len(tool_output) - 100000} more chars)")
+        if len(tool_output) > _cap:
+            logger.info(f"  | ... ({len(tool_output) - _cap} more chars; full body offloaded/DB)")
     else:
         logger.info("  (empty output)")
-    logger.info(f"{'='*60}\n")
+
+    # Flag capture: the north-star event for a CTF harness. Detect the moment a
+    # flag appears in tool output instead of leaving it buried in the dump.
+    try:
+        from session_log import detect_flags, log_event
+        _flags = detect_flags(tool_output)
+        if _flags:
+            logger.info(f"[{user_id}/{project_id}/{session_id}] FLAG_CAPTURED via {tool_name}: {_flags}")
+            for _flag in _flags:
+                log_event("flag_captured", session=session_id, iteration=iteration,
+                          phase=phase, tool=tool_name, flag=_flag)
+        log_event("tool_result", session=session_id, iteration=iteration, phase=phase,
+                  tool=tool_name, success=success, duration_ms=duration_ms,
+                  output_chars=len(tool_output), error=error_msg)
+    except Exception:
+        pass
 
     # Detect new Metasploit sessions and register chat mapping
     if tool_name == "metasploit_console" and tool_output:

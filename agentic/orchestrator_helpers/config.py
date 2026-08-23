@@ -12,6 +12,23 @@ if TYPE_CHECKING:
 _checkpointer: "MemorySaver | None" = None
 
 
+def _bind_log_session(session_id: str) -> None:
+    """Bind session_id for per-session log routing (best-effort, never raises).
+
+    Called from get_config_values so each node re-asserts the routing key in its
+    own execution context, covering any node LangGraph runs outside the task that
+    ran create_config.
+    """
+    if not session_id or session_id == "unknown":
+        return
+    try:
+        from agent_context import current_log_session_id
+        if current_log_session_id.get() != session_id:
+            current_log_session_id.set(session_id)
+    except Exception:
+        pass
+
+
 def set_checkpointer(cp: "MemorySaver") -> None:
     """Set the checkpointer reference (called by orchestrator)."""
     global _checkpointer
@@ -59,6 +76,16 @@ def create_config(
         Config dict for graph.invoke()
     """
     thread_id = get_thread_id(user_id, project_id, session_id)
+
+    # Bind this turn's session id for per-session log routing. Set here (not in
+    # set_tenant_context, which nodes call with session_id="") so it survives the
+    # whole graph run; asyncio child tasks snapshot it at creation, so every node
+    # spawned by the astream below inherits it.
+    try:
+        from agent_context import current_log_session_id
+        current_log_session_id.set(session_id or "")
+    except Exception:
+        pass
 
     return {
         # LangGraph recursion limit - must be higher than MAX_ITERATIONS
@@ -108,22 +135,28 @@ def get_config_values(config) -> Tuple[str, str, str]:
 
     # Extract values from configurable
     if isinstance(configurable, dict):
+        sid = configurable.get("session_id", "unknown")
+        _bind_log_session(sid)
         return (
             configurable.get("user_id", "unknown"),
             configurable.get("project_id", "unknown"),
-            configurable.get("session_id", "unknown")
+            sid
         )
     elif hasattr(configurable, 'get'):
+        sid = configurable.get("session_id", "unknown")
+        _bind_log_session(sid)
         return (
             configurable.get("user_id", "unknown"),
             configurable.get("project_id", "unknown"),
-            configurable.get("session_id", "unknown")
+            sid
         )
     else:
+        sid = getattr(configurable, "session_id", "unknown")
+        _bind_log_session(sid)
         return (
             getattr(configurable, "user_id", "unknown"),
             getattr(configurable, "project_id", "unknown"),
-            getattr(configurable, "session_id", "unknown")
+            sid
         )
 
 

@@ -248,10 +248,27 @@ async def _execute_single_step(
         except Exception as e:
             logger.warning(f"Error emitting tool output chunk: {e}")
 
-    logger.info(f"  SUCCESS: {step['success']}")
+    logger.info(f"  SUCCESS: {step['success']} duration_ms={step.get('duration_ms')}")
     if step.get("error_message"):
         logger.info(f"  ERROR: {step['error_message']}")
     logger.info(f"  OUTPUT ({len(tool_output)} chars)")
+
+    # Flag capture + structured tool_result for the machine-readable stream.
+    try:
+        from session_log import detect_flags, log_event
+        _flags = detect_flags(tool_output)
+        if _flags:
+            logger.info(f"[{user_id}/{project_id}/{session_id}] FLAG_CAPTURED via {tool_name} "
+                        f"(wave {wave_id}): {_flags}")
+            for _flag in _flags:
+                log_event("flag_captured", session=session_id, phase=phase, tool=tool_name,
+                          wave_id=wave_id, step_index=step_index, flag=_flag)
+        log_event("tool_result", session=session_id, phase=phase, tool=tool_name,
+                  wave_id=wave_id, step_index=step_index, success=step["success"],
+                  duration_ms=step.get("duration_ms"), output_chars=len(tool_output),
+                  error=step.get("error_message"))
+    except Exception:
+        pass
 
     # Emit tool_complete (no output_summary — raw output already sent as chunk)
     if streaming_cb:

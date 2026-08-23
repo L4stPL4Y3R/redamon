@@ -16,6 +16,12 @@ from typing import Optional
 current_user_id: ContextVar[str] = ContextVar("current_user_id", default="")
 current_project_id: ContextVar[str] = ContextVar("current_project_id", default="")
 current_session_id: ContextVar[str] = ContextVar("current_session_id", default="")
+# Session id used ONLY to route log records to per-session files. Kept separate
+# from current_session_id because node-level set_tenant_context(user, project)
+# calls reset current_session_id to "" mid-run; this one is set once per turn at
+# the graph entrypoint (create_config) and must survive the whole execution so
+# every node's records land in the same agent.<session_id>.log.
+current_log_session_id: ContextVar[str] = ContextVar("current_log_session_id", default="")
 current_phase: ContextVar[str] = ContextVar("current_phase", default="informational")
 current_graph_view_cypher: ContextVar[Optional[str]] = ContextVar(
     "current_graph_view_cypher", default=None,

@@ -5,6 +5,8 @@ Configures logging with file rotation, console output, and proper formatting.
 """
 import logging
 import re
+import threading
+from collections import OrderedDict
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -35,6 +37,13 @@ def _redact_text(text: str) -> str:
     return text
 
 
+def redact_text(text: str) -> str:
+    """Public secret-scrubber. Used by session_log to redact event field values
+    BEFORE json.dumps, so the JSONL stream stays valid JSON (the line-level
+    RedactingFilter can eat a trailing quote/brace when a token shape abuts it)."""
+    return _redact_text(text)
+
+
 class RedactingFilter(logging.Filter):
     """Rewrite token-shaped substrings in the formatted message + args to
     ``[REDACTED]``. Attached to every handler this module creates."""
@@ -57,6 +66,99 @@ class RedactingFilter(logging.Filter):
 
 
 _REDACTING_FILTER = RedactingFilter()
+
+
+# =============================================================================
+# Per-session file routing
+# =============================================================================
+# Routes each record to logs/agent.<session_id>.log based on the
+# current_log_session_id ContextVar (set per turn at the graph entrypoint).
+# Records with no bound session (startup, websocket housekeeping, background
+# threads that didn't inherit the context) fall back to the shared agent.log.
+class PerSessionRoutingHandler(logging.Handler):
+    """A handler that fans records out to one RotatingFileHandler per session id.
+
+    Per-session handlers are created lazily and cached with LRU eviction so the
+    number of open file descriptors stays bounded on a long-lived server that
+    has served many sessions.
+    """
+
+    # Drop "." too: the only dots in the filename are the ones we add around the
+    # session id (agent.<id>.log), so a ".." in a session id can never survive.
+    _SAFE = re.compile(r"[^A-Za-z0-9_-]")
+
+    def __init__(self, log_dir: Path, fallback_name: str, formatter,
+                 max_bytes: int, backup_count: int, max_open: int = 64,
+                 name_template: str = "agent.{session}.log"):
+        super().__init__(level=FILE_LOG_LEVEL)
+        self._log_dir = log_dir
+        self._fallback_name = fallback_name
+        self._formatter = formatter
+        self._max_bytes = max_bytes
+        self._backup_count = backup_count
+        self._max_open = max(2, max_open)
+        self._name_template = name_template
+        self._handlers: "OrderedDict[str, RotatingFileHandler]" = OrderedDict()
+        self._lock = threading.Lock()
+
+    def _target_name(self, session_id: str) -> str:
+        if not session_id:
+            return self._fallback_name
+        safe = self._SAFE.sub("_", session_id)[:120]
+        return self._name_template.format(session=safe)
+
+    def _get_handler(self, name: str) -> RotatingFileHandler:
+        with self._lock:
+            handler = self._handlers.get(name)
+            if handler is not None:
+                self._handlers.move_to_end(name)
+                return handler
+            handler = RotatingFileHandler(
+                filename=str(self._log_dir / name),
+                maxBytes=self._max_bytes,
+                backupCount=self._backup_count,
+                encoding="utf-8",
+                delay=True,  # don't open the file until something is written
+            )
+            handler.setLevel(FILE_LOG_LEVEL)
+            handler.setFormatter(self._formatter)
+            handler.addFilter(_REDACTING_FILTER)  # I5 — redact per-session files too
+            self._handlers[name] = handler
+            self._handlers.move_to_end(name)
+            # Evict least-recently-used handlers beyond the cap; never the fallback.
+            while len(self._handlers) > self._max_open:
+                old_name = next(iter(self._handlers))
+                if old_name == self._fallback_name:
+                    self._handlers.move_to_end(old_name)
+                    continue
+                old_handler = self._handlers.pop(old_name)
+                try:
+                    old_handler.close()
+                except Exception:
+                    pass
+            return handler
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            from agent_context import current_log_session_id
+            session_id = current_log_session_id.get()
+        except Exception:
+            session_id = ""
+        try:
+            self._get_handler(self._target_name(session_id)).handle(record)
+        except Exception:
+            self.handleError(record)
+
+    def close(self) -> None:
+        with self._lock:
+            for handler in self._handlers.values():
+                try:
+                    handler.close()
+                except Exception:
+                    pass
+            self._handlers.clear()
+        super().close()
+
 
 # =============================================================================
 # LOGGING SETTINGS
@@ -111,7 +213,13 @@ def setup_logging(
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.DEBUG)  # Capture all levels, handlers will filter
 
-    # Clear existing handlers to avoid duplicates
+    # Clear existing handlers to avoid duplicates. Close first so a re-init does
+    # not leak the per-session routing handler's cached file descriptors.
+    for _old in list(root_logger.handlers):
+        try:
+            _old.close()
+        except Exception:
+            pass
     root_logger.handlers.clear()
 
     # Console handler
@@ -123,20 +231,33 @@ def setup_logging(
         console_handler.addFilter(_REDACTING_FILTER)  # I5
         root_logger.addHandler(console_handler)
 
-    # File handler with rotation
+    # File handler with rotation. When per-session routing is on, each turn's
+    # records go to agent.<session_id>.log and anything with no bound session
+    # falls back to agent.log; when off, everything shares a single agent.log.
     if log_to_file:
-        log_file_path = LOG_DIR / LOG_FILE_NAME
-        file_handler = RotatingFileHandler(
-            filename=str(log_file_path),
-            maxBytes=LOG_MAX_BYTES,
-            backupCount=get_setting('LOG_BACKUP_COUNT', 5),
-            encoding="utf-8",
-        )
-        file_handler.setLevel(FILE_LOG_LEVEL)
         file_formatter = logging.Formatter(FILE_LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
-        file_handler.setFormatter(file_formatter)
-        file_handler.addFilter(_REDACTING_FILTER)  # I5
-        root_logger.addHandler(file_handler)
+        backup_count = get_setting('LOG_BACKUP_COUNT', 5)
+        if get_setting('LOG_PER_SESSION', True):
+            file_handler = PerSessionRoutingHandler(
+                log_dir=LOG_DIR,
+                fallback_name=LOG_FILE_NAME,
+                formatter=file_formatter,
+                max_bytes=LOG_MAX_BYTES,
+                backup_count=backup_count,
+            )
+            # The routed inner handlers each redact; the router itself just fans out.
+            root_logger.addHandler(file_handler)
+        else:
+            file_handler = RotatingFileHandler(
+                filename=str(LOG_DIR / LOG_FILE_NAME),
+                maxBytes=LOG_MAX_BYTES,
+                backupCount=backup_count,
+                encoding="utf-8",
+            )
+            file_handler.setLevel(FILE_LOG_LEVEL)
+            file_handler.setFormatter(file_formatter)
+            file_handler.addFilter(_REDACTING_FILTER)  # I5
+            root_logger.addHandler(file_handler)
 
     # Module-specific file handlers (separate log files for CypherFix agents)
     if log_to_file:
@@ -170,6 +291,36 @@ def setup_logging(
     logging.getLogger("mcp").setLevel(logging.WARNING)
     logging.getLogger("mcp.client").setLevel(logging.WARNING)
     logging.getLogger("mcp.client.sse").setLevel(logging.WARNING)
+    # websocket_api emits one DEBUG line per message sent + per ping/pong; at
+    # DEBUG that floods the per-session file with thousands of housekeeping lines.
+    logging.getLogger("websocket_api").setLevel(logging.INFO)
+
+    # Structured per-session event stream (agent.<session_id>.events.jsonl). The
+    # 'session_events' logger is ALWAYS isolated from root (propagate=False) so
+    # that log_event() — which callers invoke unconditionally — can never leak
+    # JSON into the prose log or console, even when the stream is disabled. When
+    # enabled it routes to per-session .jsonl files; when disabled it gets a
+    # NullHandler so records are silently dropped (no lastResort to stderr).
+    events_logger = logging.getLogger("session_events")
+    events_logger.setLevel(logging.INFO)
+    events_logger.propagate = False
+    for _old in list(events_logger.handlers):  # close before clear: no FD leak on re-init
+        try:
+            _old.close()
+        except Exception:
+            pass
+    events_logger.handlers.clear()
+    if log_to_file and get_setting('LOG_EVENT_STREAM', True):
+        events_logger.addHandler(PerSessionRoutingHandler(
+            log_dir=LOG_DIR,
+            fallback_name="agent.events.jsonl",
+            formatter=logging.Formatter("%(message)s"),  # message is already JSON
+            max_bytes=LOG_MAX_BYTES,
+            backup_count=get_setting('LOG_BACKUP_COUNT', 5),
+            name_template="agent.{session}.events.jsonl",
+        ))
+    else:
+        events_logger.addHandler(logging.NullHandler())
 
     # Log startup message
     logger = logging.getLogger(__name__)

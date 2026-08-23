@@ -104,7 +104,7 @@ DEFAULT_AGENT_SETTINGS: dict[str, Any] = {
     'LATS_PROBE_LEDGER_MAX': 400,                 # max executed probe keys retained in the cross-tree dedup ledger (§3): a later tree HARD-drops a byte-identical re-run of any probe a prior tree already ran
     'LATS_RESET_DEBOUNCE': 2,                      # a live tree is torn down only after a reset condition (phase/skill/target/objective change) holds this many CONSECUTIVE turns; a one-turn jitter blip (transient blank, oscillation) is ignored. task_complete is exempt (immediate).
     'LATS_STOP_ON_FOOTHOLD': False,               # when True, a mid-chain foothold finding (exploit_success/access_gained/rce/...) stops LATS — both BLOCKS activation and RESETS a live tree ("exploit path found, hand back"). OFF for flag-hunts, where a foothold is a MEANS, not the objective, so stopping early loses the tree before it reaches the flag.
-    'LATS_LOG_EXPAND_PROMPT': True,               # [TEMP DIAGNOSTIC] dump the real expand prompt to agent.log for the grounding audit; revert to False after
+    'LATS_LOG_EXPAND_PROMPT': False,              # diagnostic: dump the real LATS expand prompt to the log; on-demand only
     # GROUNDING (full-context parity): when on, LATS's expand receives EVERYTHING the
     # normal think node receives — the rendered attack-chain context (execution trace →
     # real discovered endpoints/params/observations), full target_info, RoE/scope, the
@@ -244,6 +244,19 @@ DEFAULT_AGENT_SETTINGS: dict[str, Any] = {
     # Logging
     'LOG_MAX_MB': 10,
     'LOG_BACKUP_COUNT': 5,
+    # Process-global, read once at startup by logging_config.setup_logging: when
+    # True, each session's records go to logs/agent.<session_id>.log (with
+    # agent.log kept as the fallback for unscoped records).
+    'LOG_PER_SESSION': True,
+    # Emit the machine-readable per-session event stream (agent.<sid>.events.jsonl).
+    'LOG_EVENT_STREAM': True,
+    # When True, dump the full system prompt EVERY iteration and the raw LLM
+    # response. Off by default: the full prompt is logged once (iteration 1) and
+    # the structured THOUGHT/REASONING/ACTION block already carries the response.
+    'LOG_LLM_VERBOSE': False,
+    # Max chars of a tool's output written to the prose log; the full body still
+    # goes to the offload file + DB. Prose log keeps a bounded head for context.
+    'LOG_TOOL_OUTPUT_MAX_CHARS': 4000,
 
     # Tool Phase Restrictions
     'TOOL_PHASE_MAP': {

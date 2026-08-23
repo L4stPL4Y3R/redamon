@@ -385,11 +385,13 @@ def _query_ngrok_tunnel() -> dict | None:
                     "hostname": hostname,
                 }
 
-        logger.warning("ngrok API returned no TCP tunnels")
+        logger.debug("ngrok API returned no TCP tunnels")
         return None
 
     except Exception as e:
-        logger.warning(f"Failed to query ngrok tunnel API: {e}")
+        # Not an error: a missing/unreachable tunnel is the normal state when
+        # ngrok is not configured. At WARNING this floods the log on every poll.
+        logger.debug(f"ngrok tunnel API unreachable: {e}")
         return None
 
 
