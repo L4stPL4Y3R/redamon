@@ -61,12 +61,16 @@ export const NODE_COLORS: Record<string, string> = {
   // EXTERNAL / OUT-OF-SCOPE (informational, not a target)
   ExternalDomain: '#8b8178',       // Warm stone gray
 
-  // ATTACK CHAIN (Amber family) - Agent execution history
-  AttackChain: '#f59e0b',     // Amber - Chain root
-  ChainStep: '#f59e0b',       // Amber - Execution steps
-  ChainFinding: '#f59e0b',    // Amber - Findings
-  ChainDecision: '#f59e0b',   // Amber - Decision points
-  ChainFailure: '#f59e0b',    // Amber - Failed attempts
+  // ATTACK CHAIN - Agent execution history. Colour ranks the nodes: the finding
+  // is what the operator came for, the root anchors the chain, and the steps are
+  // neutral scaffolding that must not compete with either.
+  AttackChain: '#f59e0b',     // Amber-500 - chain root, the family anchor
+  ChainStep: '#a1a1aa',       // Gray-400 - execution scaffolding, deliberately neutral;
+                              // lighter than CHAIN_SESSION_COLORS.inactive so steps of
+                              // the selected chain still separate from the rest
+  ChainDecision: '#78350f',   // Amber-900 - quieter still; decisions are bookkeeping
+  ChainFinding: '#ff7a00',    // Vivid orange - outshines the whole warm band
+  ChainFailure: '#8c5a5a',    // Grey-red - a dead end must never read as a success
 
   Default: '#6b7280',        // Gray - Fallback
 }
@@ -109,7 +113,7 @@ export const SELECTION_COLORS = {
 export const CHAIN_SESSION_COLORS = {
   inactive: '#6b7280',          // Grey-500 - chains not in active session
   inactiveSelected: '#f59e0b',  // Amber - inactive chain node when clicked/selected
-  inactiveFinding: '#3d3107',   // Dark yellow - inactive non-goal ChainFinding diamonds
+  inactiveFinding: '#5a2b00',   // Dark orange - inactive non-goal ChainFinding diamonds
   activeRing: '#facc15',        // Yellow-400 - pulsing ring on active AttackChain node
 } as const
 

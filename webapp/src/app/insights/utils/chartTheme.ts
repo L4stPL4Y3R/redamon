@@ -33,9 +33,11 @@ export function getNodeTypePalette() {
     Header: getCssVar('--node-header') || '#71717a',
     DNSRecord: getCssVar('--color-cyan-600') || '#0891b2',
     GithubSecret: getCssVar('--color-amber-500') || '#f59e0b',
-    AttackChain: getCssVar('--color-crimson-400') || '#ef5350',
-    ChainStep: getCssVar('--color-crimson-300') || '#ef9a9a',
-    ChainFinding: getCssVar('--color-orange-500') || '#f97316',
+    AttackChain: getCssVar('--node-chain-root') || '#f59e0b',
+    ChainStep: getCssVar('--node-chain-step') || '#a1a1aa',
+    ChainDecision: getCssVar('--node-chain-decision') || '#78350f',
+    ChainFinding: getCssVar('--node-chain-finding') || '#ff7a00',
+    ChainFailure: getCssVar('--node-chain-failure') || '#8c5a5a',
   }
 }
 

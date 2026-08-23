@@ -98,6 +98,13 @@
   --node-endpoint: var(--color-violet-500);
   --node-parameter: var(--color-purple-500);
 
+  /* Attack chain (warm family; brightness ranks finding > root > scaffolding) */
+  --node-chain-root: var(--color-amber-500);
+  --node-chain-step: var(--color-gray-400);
+  --node-chain-decision: var(--color-amber-900);
+  --node-chain-finding: #ff7a00;
+  --node-chain-failure: #8c5a5a;
+
   /* Context & Metadata */
   --node-technology: var(--color-green-500);
   --node-certificate: var(--color-amber-600);
