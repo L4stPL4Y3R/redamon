@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.11.5] - 2026-08-23
+
+### Added
+
+- **Per-session agent logs and a machine-readable event stream.** Each session writes its own `agent.<session_id>.log` instead of one shared file, alongside an `agent.<session_id>.events.jsonl` stream carrying `decision` / `tool_result` / `flag_captured` events with timings, provider and token counts. Toggles: `LOG_PER_SESSION`, `LOG_EVENT_STREAM`, `LOG_LLM_VERBOSE`, `LOG_TOOL_OUTPUT_MAX_CHARS` ([663424bf]).
+- **`install` / `update` accept `--gpu` / `--cpu`.** The PyTorch variant is decided once at build time and frozen in `.torch-variant`; every later command obeys that marker instead of re-probing the hardware. With neither flag the NVIDIA *container runtime* is auto-detected, since a card without nvidia-container-toolkit can never be handed to a container. `status` reports `TORCH_BUILD` ([7fda7514]).
+
+### Changed
+
+- **PyTorch is pinned to the CPU wheel, cutting ~11 GB of unused CUDA libraries.** `pip install torch` resolves to the CUDA build by default, vendoring ~2.5 GB of `nvidia-*` runtime per install site across four sites, none of which used a GPU: KB embeddings run on CPU and the AI-attack-surface tools route inference to the local Ollama. `redamon-ai-attack-surface` drops 16.29 GB to 9.17 GB (-43.7%) and the agent's KB torch layer 5.49 GB to 1.50 GB (-72.7%). All three scanner venvs are pinned (giskard pulled torch too, via `bert-score`); both Dockerfiles now fail the build if the resulting torch does not match the requested variant, so a future dependency bump cannot silently restore the bloat ([7fda7514]).
+- **Attack-chain node colours carry the ranking** instead of five types sharing one amber: vivid orange for `ChainFinding`, amber for the chain root, grey for steps, amber-900 for decisions and grey-red for failures, so a dead end cannot read as a success. Insights charts now read the same `--node-chain-*` tokens ([01062dbc]).
+- **Agent log noise is down roughly 90%:** the system prompt is dumped once per session rather than every turn, raw LLM responses are gated behind a toggle, and tool output in the prose log is capped (the full body still reaches the offload and the DB) ([663424bf]).
+
+### Fixed
+
+- **Badge text was unreadable on 18 of the 43 node colours** (Capec yellow at 1.9:1). Badges keep the palette colour, since it is the node's identity on the canvas, and pick whichever of white or near-black scores higher; only a mid-luminance colour no text can clear is nudged darker. A test loops the whole palette so a new colour that cannot reach WCAG AA fails there instead of shipping ([35a3de0f]).
+
 ## [6.11.4] - 2026-08-22
 
 ### Fixed
