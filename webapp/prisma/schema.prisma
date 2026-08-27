@@ -938,6 +938,7 @@ model Project {
   // ========== GVM VULNERABILITY SCAN ==========
   gvmScanConfig                     String  @default("Full and fast") @map("gvm_scan_config")
   gvmScanTargets                    String  @default("both") @map("gvm_scan_targets")
+  gvmPortList                       String  @default("All TCP and Nmap top 100 UDP") @map("gvm_port_list")
   gvmTaskTimeout                    Int     @default(14400) @map("gvm_task_timeout")
   gvmPollInterval                   Int     @default(30) @map("gvm_poll_interval")
   gvmCleanupAfterScan               Boolean @default(true) @map("gvm_cleanup_after_scan")

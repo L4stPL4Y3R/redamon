@@ -2807,6 +2807,8 @@ class ContainerManager:
                     # rather than as an explicit empty value (issue #174).
                     **({"GVM_NO_PROGRESS_TIMEOUT": os.environ["GVM_NO_PROGRESS_TIMEOUT"]}
                        if os.environ.get("GVM_NO_PROGRESS_TIMEOUT", "").strip() else {}),
+                    **({"GVM_LIVENESS_INTERVAL": os.environ["GVM_LIVENESS_INTERVAL"]}
+                       if os.environ.get("GVM_LIVENESS_INTERVAL", "").strip() else {}),
                     "GVM_SOCKET_PATH": os.environ.get("GVM_SOCKET_PATH", "/run/gvmd/gvmd.sock"),
                     "GVM_USERNAME": os.environ.get("GVM_USERNAME", "admin"),
                     "GVM_PASSWORD": os.environ.get("GVM_PASSWORD", "admin"),
