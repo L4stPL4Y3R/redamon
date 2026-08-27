@@ -40,9 +40,14 @@ class IndividualPromptBlockBudgets(unittest.TestCase):
         from prompts.base import build_informational_guidance
         info = build_informational_guidance("informational")
         # Was ~2k chars pre-Safe (Intent Detection + Graph-First split);
-        # compressed to single bulleted block ~1.2k. Budget at 1400.
+        # compressed to single bulleted block ~1.2k. A later commit added the
+        # substantive "Host surface check" guidance block (~950 chars), which is
+        # intentional; the budget is raised to 2400 to match while still guarding
+        # against runaway multi-paragraph restores. (Budget bump is unrelated to
+        # the crypto_attack skill: build_informational_guidance is a fixed literal
+        # that renders no per-skill content.)
         self.assertLess(
-            len(info), 1400,
+            len(info), 2400,
             "build_informational_guidance regressed — check for restored "
             "multi-paragraph intent sections or duplicate Graph-First list.",
         )

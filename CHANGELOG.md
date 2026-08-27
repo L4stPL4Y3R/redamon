@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.11.6] - 2026-08-27
+
+### Added
+
+- **New built-in agent skill: Cryptographic Attacks (`crypto_attack`).** A first-class attack class for breaking a cryptographic construction the target trusts -- decrypting or forging a cookie / token / signature / MAC via CBC padding oracles and bit-flipping, ECB analysis, stream / nonce reuse (two-time pad), JWT signature attacks (`alg:none`, HS/RS confusion, weak-secret cracking, `kid` / `jwk` / `jku`), hash length extension, RSA weaknesses, and predictable-token / PRNG reconstruction. Classified by the Intent Router, injected into the exploitation-phase prompt, toggleable per project, and badged **CRYPT**. Attacks are scripted in `execute_code` (PyCryptodome / pwntools / PyJWT) backed by `openssl` / `jwt_tool` / `hashcat` in kali-sandbox. Content is fairness-clean (generic crypto tradecraft only) and covered by a 41-test suite.
+
 ## [6.11.5] - 2026-08-23
 
 ### Added

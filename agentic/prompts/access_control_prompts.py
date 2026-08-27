@@ -106,6 +106,13 @@ enumeration, header/verb sets). When capture is OFF, fall back to `execute_curl`
   that ignore the header.
 - **Do not rat-hole on external CVE/PoC hunts** before the local differential
   sweep is on the record.
+- **Commit to a logic/race vector; do not scatter into scanners.** Once evidence
+  points to a business-logic, mass-assignment, or TOCTOU/race authorization bug (a
+  concurrency/race theme, a check that sets state then re-reads it, a
+  client-controlled trust field), concentrate on THAT vector with `execute_curl` /
+  `execute_code`. Content-discovery fuzzers, credential brute-forcers, and
+  CVE/version scanners do not solve logic or race bugs - running them here burns the
+  budget the actual exploit needs.
 
 --------------------------------------------------------------------------------
 ## MANDATORY WORKFLOW
@@ -272,6 +279,16 @@ falsely read as "no bypass." Diff every response against the baseline:
   price) to an update/create body and check whether the server binds them.
 - Client-side-only enforcement: if `execute_playwright` shows the UI hides an
   action by JS but the underlying endpoint still exists, call the endpoint directly.
+- **A privilege tamper still needs a valid session.** If flipping the
+  role/entitlement field returns an AUTHENTICATION failure (a bad-login response)
+  rather than an authorization denial, the blocking gate is auth, not authz - the
+  tamper is likely correct but is firing without a logged-in principal. Do NOT
+  abandon it: obtain ANY valid low-privilege credential first (Step 2A), then replay
+  the exact tamper inside that authenticated request. To source a low-priv login
+  cheaply, derive candidate usernames from role names, on-page labels, and endpoint
+  paths (and their common short forms), and try trivial/derived passwords - vendor
+  defaults, the username itself, and a short weak-password list - before escalating
+  to heavier credential attacks.
 
 ### Step 7: Token / session authorization (JWT, cookies)
 - Decode any JWT / bearer / session token (`execute_code`). Inspect claims for
@@ -304,6 +321,25 @@ falsely read as "no bypass." Diff every response against the baseline:
   reordering, or replaying steps, and forcing state transitions out of order.
 - Diff the resulting state against the intended path; a reachable end-state without
   the gating step is the flaw.
+- **Step-up / second-factor is often not re-enforced at the resource.** When access
+  is multi-step (login -> OTP/2FA/email-verify/approval -> protected page), test
+  whether the protected page independently re-checks EACH step or only trusts
+  first-step state (e.g. a session role/flag set at login). Reach the protected
+  resource carrying ONLY the first-step state and see if it serves the goal - a
+  second factor gated on the login path alone is frequently never re-validated on the
+  target page. A guessable or static second-factor value is a secondary finding;
+  test the "not re-checked at all" case first.
+- **TOCTOU / race-condition authorization (check-then-use).** When a handler
+  VALIDATES state and then RE-READS or RE-USES that state later (same handler or a
+  sibling), or when server-side state is shared across concurrent requests by a
+  cookie/session id, there is a race window. Exploit it generically: (1) pin the
+  exact check-then-use gap; (2) drive it with high parallelism aimed at same-instant
+  arrival (a burst of simultaneous requests / an HTTP-pipelined batch), NOT
+  sequential retries; (3) interleave the two operations that must race - the request
+  that PASSES the check against the one that MUTATES the checked state - on the SAME
+  shared session/context; (4) use any state-echo/observability view the app exposes
+  (a debug/status/echo endpoint) to CONFIRM the intended change actually lands, and
+  keep raising concurrency until it does.
 
 --------------------------------------------------------------------------------
 ## CONFIDENCE SCORING + REPORTING

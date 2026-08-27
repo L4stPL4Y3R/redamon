@@ -216,6 +216,36 @@ the interactsh setup that doubles as an RFI oracle.
 You MUST reach Level 1 proof on ONE primitive before moving on. Do not chain
 primitives in parallel -- the WAF will fingerprint and block you.
 
+#### 4A-zero. MANDATORY when the payload sits in the URL PATH (not a query value): defeat YOUR OWN client's normalisation first
+
+Traversal payloads fall into two positions, and they fail for OPPOSITE reasons:
+- **Query / parameter position** (`?file=../../etc/hosts`, `?path=...`): the `../`
+  travels inside a parameter VALUE. Your HTTP client transmits it verbatim, so a
+  failure here means the SERVER filtered or bound it -- move to encodings / 4A-ter.
+- **URL-path position** (`/<prefix>/../etc/hosts`, `/<prefix>..%2f...`, a raw-path
+  or `..;` parser form): the `../`, `//` and `.` live in the request-line PATH.
+  Every ordinary HTTP client REWRITES this before it leaves your process -- `curl`
+  folds `../` and merges `//`, and `requests` / `httpx` / browsers re-encode and
+  resolve dot-segments -- so the server NEVER receives the sequence you typed. A
+  path-position payload that "does nothing" has almost always been eaten by YOUR
+  OWN tooling, not the target.
+
+So for ANY path-position payload you MUST send the request line byte-for-byte,
+un-normalised, before concluding it failed:
+- `curl --path-as-is 'http://HOST/<the exact raw path>'` (disables curl's
+  dot-segment folding), or
+- a raw socket that writes the literal request line verbatim
+  (`GET <raw path> HTTP/1.1` + `Host:` header via Python `socket`) -- the only
+  fully faithful channel for encoded dots, mixed separators, `..;`, and NUL /
+  overlong forms.
+
+Re-fire EVERY path-position form (from 4A and 4A-ter) through one of these raw
+channels against a known OUT-OF-BASE proof file before deciding the sink is not
+traversable. A payload that returns the normalised root/baseline through a normal
+client but was never re-sent raw is UNTESTED, not negative. Skipping this is the
+single most common reason a genuinely-vulnerable path-position sink is wrongly
+declared dead.
+
 #### 4A. Plain path traversal (most common, try first)
 
 Start with the simplest payload, escalate only if filtered. The agent's first
@@ -247,6 +277,31 @@ Server-mismatch variants (when nginx / a reverse proxy fronts the app):
 /static/..%252f..%252fetc%252fhosts                # double-encoded for double-decoders
 /static/.%252e/etc/hosts
 ```
+
+Web-server **alias off-by-slash** (a `location /<prefix>` whose `alias` / `Alias`
+maps the prefix to a filesystem directory, but the LOCATION is written WITHOUT a
+trailing slash): the prefix immediately followed by `../` with NO separating slash
+escapes into the PARENT of the mapped directory. `/<prefix>../<name>` reads one
+level above the served root, `/<prefix>../../<name>` two levels, and so on.
+Enumerate this against ANY path prefix that behaves like a mapped static root
+(serves raw files, exposes an autoindex, or returns file bodies), not only ones
+literally named for assets. This is a PATH-position payload, so it ONLY works when
+sent raw (see 4A-zero) -- a client that normalises `/<prefix>../` down to `/`
+before sending will silently hide a live off-by-slash escape.
+
+**MANDATORY off-by-slash gate.** Whenever a location prefix `/P` and `/P/` return
+DIFFERENT responses (status / length / body differ), OR any error, header, or
+autoindex discloses a filesystem or alias/docroot path bound to `/P`, that prefix
+is alias-mapped -- you MUST fire the RAW off-by-slash escape
+`GET /P../<known-out-of-base proof>` (NO slash between the prefix and `..`, sent
+un-normalised per 4A-zero) and, if it returns a body, `GET /P../` to autoindex the
+PARENT directory, BEFORE spending further budget fuzzing files *under* `/P`.
+Enumerating the children of an alias-mapped prefix while never escaping ABOVE it is
+a recurring run-loser: on this bug the sink is the directory boundary itself, not
+the files inside it. A prefix that reads like an application route (`app` / `panel` /
+`portal` / `console` / `dashboard`, or any authoritative-sounding word) is NOT
+exempt -- classify it by the `/P`-vs-`/P/` behaviour and any disclosed path, never
+by its name, and try the escape before declaring the prefix a dead app route.
 
 Capture the first oracle hit, record the exact payload form, and move on.
 

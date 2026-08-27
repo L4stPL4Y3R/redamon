@@ -530,6 +530,20 @@ def build_attack_path_behavior(attack_path_type):
             "exfiltration, and prefer in-band/error-based since OOB sends data off-target. Discover the "
             "endpoint, schema, and objective file from the live target; then action='complete' after proof."
         )
+    elif attack_path_type == "crypto_attack":
+        return (
+            "In informational phase: inventory every attacker-controllable value the server decrypts "
+            "or verifies (cookies, tokens, signatures, MACs, ciphertext params) with query_graph / "
+            "proxy_search, decode each, and fingerprint the construction (block size, ECB block "
+            "repeats, JWT alg, a MAC/hash trailer, an RSA n/e/c triple, or a predictable token), "
+            "then act.\n"
+            "In exploitation: follow the crypto workflow. Probe the decrypt/verify endpoint for an "
+            "ERROR DIFFERENTIAL (padding/format vs content vs success) and run the construction-specific "
+            "attack it implies (padding oracle, bit-flip/malleability, ECB cut-and-paste, keystream/nonce "
+            "reuse, JWT forge, hash length extension, RSA break, or token prediction) with execute_code. "
+            "Script byte-level attacks in Python, never hand-guess; then action='complete' after recovering "
+            "or forging the trusted value."
+        )
     elif attack_path_type.startswith("user_skill:"):
         return (
             "Follow the attack skill workflow guidance provided in the Available Tools section.\n"

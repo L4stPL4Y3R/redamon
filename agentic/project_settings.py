@@ -387,6 +387,7 @@ DEFAULT_AGENT_SETTINGS: dict[str, Any] = {
             'access_control': True,
             'http_request_smuggling': True,
             'xxe': True,
+            'crypto_attack': True,
         },
         'user': {},
     },
