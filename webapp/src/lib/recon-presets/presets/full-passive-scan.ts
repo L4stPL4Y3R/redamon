@@ -59,6 +59,8 @@ Red team operators in the pre-engagement phase, OSINT analysts building target p
 6. Arjun in passive mode discovers parameters without sending requests to the target
 7. All 10 OSINT providers enrich discovered IPs with geolocation, services, banners, threat intelligence, and passive CVEs
 8. CVE lookup and MITRE enrichment map found service versions to known vulnerabilities and attack patterns`,
+  targetProfile: 'both',
+  environment: 'external',
   parameters: {
     // Modules: domain_discovery + port_scan (passive) + resource_enum (GAU/ParamSpider only)
     //        + vuln_scan (needed for CVE lookup + MITRE enrichment -- Nuclei itself is

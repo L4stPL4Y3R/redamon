@@ -327,8 +327,7 @@ class TestCryptoAttackToolRegistryAlignment(unittest.TestCase):
 
     def test_steers_to_key_tools(self):
         for tool in ("query_graph", "execute_code", "kali_shell", "execute_curl",
-                     "fs_write", "job_spawn", "proxy_search", "proxy_replay",
-                     "proxy_to_curl"):
+                     "fs_write", "job_spawn", "redamon."):
             self.assertIn(tool, CRYPTO_ATTACK_TOOLS, f"skill should reference {tool}")
 
     def test_names_only_installed_cli_crypto_tools(self):

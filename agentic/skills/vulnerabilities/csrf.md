@@ -80,16 +80,16 @@ Content-Type: text/plain
 
 `text/plain` is the JSON-bypass classic: many JSON APIs accept the body if the parser is content-type-agnostic.
 
-### Captured-traffic workflow (proxy_* tools)
+### Captured-traffic workflow (proxy_brain tools)
 
-If HTTP Traffic Capture is enabled, source and drive this from the recorded history (proxy_* only see traffic that crossed the capture proxy).
+If HTTP Traffic Capture is enabled, source and drive this from the recorded history (proxy_brain only see traffic that crossed the capture proxy).
 
-- `proxy_get id part:"response"` / `proxy_query` reads the captured session model (each `Set-Cookie` with its `SameSite` / `Secure` / `HttpOnly`).
-- Token-strictness via `proxy_replay` on a captured state-change request: `dropHeaders:["X-CSRF-Token"]`, or a body edit emptying the `_csrf` field, checking the action still succeeds (200 / state changed).
+- `redamon.get id part:"response"` / `redamon.query` reads the captured session model (each `Set-Cookie` with its `SameSite` / `Secure` / `HttpOnly`).
+- Token-strictness via `redamon.replay` on a captured state-change request: `dropHeaders:["X-CSRF-Token"]`, or a body edit emptying the `_csrf` field, checking the action still succeeds (200 / state changed).
 - The same request with `headers:{"X-HTTP-Method-Override":"DELETE"}` or `headers:{"Content-Type":"text/plain"}` tests the method-override and JSON-as-form bypasses.
 - Auth-context swap (`dropHeaders` plus a different session `cookie`) proves cross-user / cross-session token reuse.
 
-Caveat: proxy_replay is host-pinned same-origin, so it cannot prove the cross-origin SameSite / Origin property. That still needs `execute_playwright`.
+Caveat: redamon.replay is host-pinned same-origin, so it cannot prove the cross-origin SameSite / Origin property. That still needs `execute_playwright`.
 
 ## Attack matrix
 

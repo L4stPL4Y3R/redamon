@@ -534,7 +534,7 @@ def build_attack_path_behavior(attack_path_type):
         return (
             "In informational phase: inventory every attacker-controllable value the server decrypts "
             "or verifies (cookies, tokens, signatures, MACs, ciphertext params) with query_graph / "
-            "proxy_search, decode each, and fingerprint the construction (block size, ECB block "
+            "redamon.search, decode each, and fingerprint the construction (block size, ECB block "
             "repeats, JWT alg, a MAC/hash trailer, an RSA n/e/c triple, or a predictable token), "
             "then act.\n"
             "In exploitation: follow the crypto workflow. Probe the decrypt/verify endpoint for an "
