@@ -18,7 +18,7 @@ READ (no traffic, tenant-scoped for you, returns text or objects):
   `search(host="x", has_auth=True)`. Filters: host, method, status,
   statusClass/status_class ("2xx".."5xx"), tool, source ("recon"/"agent"),
   session/sessionId, run/runId, hasAuth, reflected, only5xx, q (URL substring),
-  bodyq/body_q (response-body substring), limit. Each `Txn` has `.id` and `.raw`.
+  bodyq/body_q (response-body substring), limit. Each `Txn` has `.id` `.raw` `.method` `.status` `.url` `.host` `.path`.
 - `redamon.get(id, part="response") -> str` — full headers+body of ONE txn.
   part = "request" | "response" | "both".
 - `redamon.sitemap() -> str` — distinct host+path+method observed, with counts.
@@ -54,7 +54,7 @@ RESULT:
 - `redamon.emit(text)` / `print(...)` — what returns to you. Print DISTILLED lines only.
 
 `Response` fields: `.status` (int|None), `.headers` (lowercased dict), `.body` (str),
-`.length` (int), `.payload` (the fuzz payload, if any). `Txn` fields: `.id`, `.raw`.
+`.length` (int), `.payload` (the fuzz payload, if any). `Txn` fields: `.id` `.raw` `.method` `.status` `.url` `.host` `.path`.
 
 ### BURP → HOW YOU BUILD IT (the mental model)
 

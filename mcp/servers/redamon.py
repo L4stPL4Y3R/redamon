@@ -81,10 +81,23 @@ def _post(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
 # Lightweight result wrappers (keep the recipes ergonomic: .id / .status / .body)
 # --------------------------------------------------------------------------
 class Txn:
-    """A captured-transaction summary row (from search)."""
+    """A captured-transaction summary row (from search). Besides `.id`/`.raw`, the
+    summary line is parsed into `.method`, `.status`, `.url` (host+path+query),
+    `.host`, `.path` for convenience."""
     def __init__(self, id: str, raw: str):
         self.id = id
         self.raw = raw
+        self.method = self.status = self.url = self.host = self.path = None
+        p = (raw or "").split()
+        if len(p) > 1:
+            self.method = p[1]
+        if len(p) > 2 and p[2].isdigit():
+            self.status = int(p[2])
+        if len(p) > 3:
+            self.url = p[3]
+            s = self.url.find("/")
+            self.host = self.url[:s] if s > 0 else self.url
+            self.path = self.url[s:] if s >= 0 else ""
 
     def __repr__(self):
         return self.raw or f"<Txn {self.id}>"

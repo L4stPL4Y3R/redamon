@@ -723,7 +723,12 @@ def proxy_brain(code: str, _redamon_ctx: str = "") -> str:
     # so a fixed filename would let concurrent runs overwrite each other's code.
     filepath = f"/tmp/pb_{uuid.uuid4().hex}.py"
 
-    write_cmd = f"cat << 'REDAMON_PB_EOF' > {filepath}\n{code}\nREDAMON_PB_EOF"
+    # `redamon` is PRE-IMPORTED for the agent (the tool description promises this):
+    # prepend a one-line preamble that puts the SDK on the path and imports it, so
+    # the agent's code can use `redamon.*` directly. One physical line keeps the
+    # agent's traceback line numbers off by only 1.
+    preamble = "import sys as _s; _s.path.insert(0, '/opt/mcp_servers'); import redamon\n"
+    write_cmd = f"cat << 'REDAMON_PB_EOF' > {filepath}\n{preamble}{code}\nREDAMON_PB_EOF"
     try:
         w = subprocess.run(["bash", "-c", write_cmd], capture_output=True, text=True, timeout=10)
         if w.returncode != 0:
