@@ -74,3 +74,43 @@ def test_active_replay_phase_gate(phase, allowed):
     # exploitation phases (fail closed otherwise).
     gate = phase in ("exploitation", "post_exploitation")
     assert gate is allowed
+
+
+# --------------------------------------------------------------------------
+# F1: replay host-pin — mutate.path must never re-open the URL authority.
+# --------------------------------------------------------------------------
+def _txn(host="origin.example.com", scheme="http", port=80, path="/item", query="id=1"):
+    return {"host": host, "scheme": scheme, "port": port, "path": path,
+            "query": query, "method": "GET", "req_headers": {}, "req_body": None}
+
+
+def _replay_netloc(curl_args):
+    import shlex
+    from urllib.parse import urlsplit
+    # build_replay_curl appends the URL as the final positional arg.
+    return urlsplit(shlex.split(curl_args)[-1]).netloc
+
+
+def test_replay_pins_host_on_normal_path():
+    from traffic_tools import build_replay_curl
+    assert _replay_netloc(build_replay_curl(_txn(), {"path": "/other"})) == "origin.example.com"
+
+
+@pytest.mark.parametrize("evil_path", [
+    "@evil.com/steal",     # userinfo trick: http://origin@evil.com/
+    "@evil.com",
+    "evil.com/x",          # unrooted path becomes part of the authority
+    "@127.0.0.1/",         # would-be SSRF via userinfo
+])
+def test_replay_host_pin_blocks_authority_injection(evil_path):
+    # A hostile mutate.path must not move the target off the origin host.
+    from traffic_tools import build_replay_curl
+    netloc = _replay_netloc(build_replay_curl(_txn(), {"path": evil_path}))
+    assert netloc == "origin.example.com", f"host pin escaped to {netloc!r}"
+    assert "evil.com" not in netloc and "127.0.0.1" not in netloc
+
+
+def test_replay_preserves_nondefault_port_in_pin():
+    from traffic_tools import build_replay_curl
+    netloc = _replay_netloc(build_replay_curl(_txn(port=8080), {"path": "@evil.com/"}))
+    assert netloc == "origin.example.com:8080"

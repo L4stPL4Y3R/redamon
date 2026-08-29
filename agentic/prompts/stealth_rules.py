@@ -67,6 +67,12 @@ stop and inform the user honestly — do NOT proceed with noisy techniques.
 - A SINGLE targeted replay only (one request); no rapid-fire replays or manual fuzzing loops.
 - Read/analyze tools (proxy_search/get/sitemap/params/grep/diff/to_curl/query) are passive — use freely.
 
+### proxy_brain — RESTRICTED
+- The read/decode side of `redamon` (search/get/sitemap/params/grep/diff/query/decode/jwt) is passive — use freely.
+- FORBIDDEN in stealth: `redamon.fuzz(...)` and `redamon.batch(...)`, and any loop that calls `redamon.replay(...)` more than once — a payload sweep or rapid-fire replay is inherently noisy.
+- ALLOWED: a SINGLE targeted `redamon.replay(...)` (one request) to confirm one finding.
+- The per-session send budget still applies and the server will refuse once it is exhausted; stay far below it in stealth.
+
 ### execute_curl — RESTRICTED
 - Single targeted requests ONLY (one URL per invocation)
 - MUST include a realistic User-Agent header (`-H 'User-Agent: Mozilla/5.0 ...'`)

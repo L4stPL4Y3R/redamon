@@ -2904,6 +2904,21 @@ async def graph_exec(body: GraphExecRequest):
 # have minted (it holds INTERNAL_API_KEY; kali does not), so a foothold inside
 # the least-trusted worker cannot forge a cross-tenant read or send.
 
+# Per-session live-send budget for /traffic/replay. One proxy_brain confirmation
+# fans out to many sends (a loop / batch); without a cap a single confirmed run
+# could flood a target. Counted per session (from the verified tag) across the
+# agent process (single-worker; startup_guard enforces one worker, and async
+# increments here happen with no intervening await, so no lock is needed).
+_TRAFFIC_REPLAY_SENDS: dict[str, int] = {}
+
+
+def _replay_budget() -> int:
+    try:
+        return max(1, int(os.environ.get("TRAFFIC_REPLAY_BUDGET", "1000") or "1000"))
+    except (TypeError, ValueError):
+        return 1000
+
+
 class TrafficExecRequest(BaseModel):
     """kali redamon SDK -> agent, read-only corpus access. `ctx` is the signed
     agent tag; tenant is derived from it (never from the body). `op` selects a
@@ -3049,15 +3064,30 @@ async def traffic_replay(body: TrafficReplayRequest):
     try:
         if body.op == "fuzz":
             ip = str(body.insertion_point or "")
-            payloads = [str(x) for x in (body.payloads or [])]
+            # Bound the INPUT before materializing (build_fuzz_curls also caps the
+            # output, but a huge input list would still be stringified in full).
+            payloads = [str(x) for x in (body.payloads or [])[:200]]
             if not ip or not payloads:
                 return JSONResponse(status_code=400, content={"error": "fuzz requires insertion_point + payloads"})
             sends = [{"payload": pl, "curl_args": args} for pl, args in build_fuzz_curls(txn, ip, payloads)]
         else:
             mutate = body.mutate if isinstance(body.mutate, dict) else {}
             sends = [{"payload": None, "curl_args": build_replay_curl(txn, mutate)}]
+    except ValueError as e:
+        # Host-pin / scope violation (F1) or a malformed mutate — refuse, fail closed.
+        return JSONResponse(status_code=400, content={"error": f"replay refused: {str(e)[:200]}"})
     except Exception as e:  # noqa: BLE001
         return JSONResponse(status_code=400, content={"error": f"could not build replay: {str(e)[:200]}"})
+
+    # Per-session send budget (F2): one confirmed proxy_brain run must not emit
+    # unbounded live traffic. Count PREPARED sends per session; refuse over budget.
+    budget = _replay_budget()
+    bkey = claims.get("session_id") or f"{claims['user_id']}:{claims['project_id']}"
+    used = _TRAFFIC_REPLAY_SENDS.get(bkey, 0)
+    if used + len(sends) > budget:
+        return JSONResponse(status_code=429, content={
+            "error": f"replay send budget exhausted for this session ({used}/{budget}); refusing {len(sends)} more"})
+    _TRAFFIC_REPLAY_SENDS[bkey] = used + len(sends)
 
     return JSONResponse(content={"sends": sends, "ctx": replay_tag})
 
