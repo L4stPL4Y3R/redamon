@@ -77,6 +77,7 @@ import { seedInitialModels, needsModelGate, hasNoConfiguredProvider } from './pr
 import { SavePresetModal } from './SavePresetModal'
 import { UserPresetDrawer } from './UserPresetDrawer'
 import { getPresetById, type ReconPreset } from '@/lib/recon-presets'
+import { resolveIpModeForPreset } from '@/lib/recon-presets/targeting'
 import { PRESET_EXCLUDED_FIELDS } from '@/lib/project-preset-utils'
 
 const WorkflowView = dynamic(
@@ -504,12 +505,20 @@ export function ProjectForm({
       }
       next.agentOpenaiModel = p.agentOpenaiModel
       next.aiPipelineModel = p.aiPipelineModel
+      // Drive Start-from-IP from the preset's declared target type. ipMode is a
+      // user-owned identity field (PRESET_EXCLUDED_FIELDS restored it to p above),
+      // so this metadata-driven flip is the ONLY place a preset can set the mode.
+      // Non-destructive: the now-hidden side (targetDomain / targetIps) is left
+      // intact so switching back does not lose what the user typed. resolve()
+      // returns undefined (leave as-is) in edit mode and for 'both' presets.
+      const resolvedIpMode = resolveIpModeForPreset(preset.targetProfile, mode)
+      if (resolvedIpMode !== undefined) next.ipMode = resolvedIpMode
       return next as ProjectFormData
     })
     setAppliedPreset(preset)
     setIsPresetModalOpen(false)
     toast.success(`Recon preset "${preset.name}" applied`, 'Preset Applied')
-  }, [toast])
+  }, [toast, mode])
 
   const handleLoadUserPreset = useCallback((settings: Record<string, unknown>) => {
     // Only apply keys that already exist in the form: the merged settings can carry

@@ -1,11 +1,12 @@
 'use client'
 
 import { useState, useMemo, useEffect } from 'react'
-import { ChevronDown, Target, ShieldAlert, AlertTriangle } from 'lucide-react'
+import { ChevronDown, Target, ShieldAlert, AlertTriangle, Globe, Network, Check, Lock } from 'lucide-react'
 import { AiToggleLabel } from '../AiToggleLabel'
 import { Toggle, WikiInfoButton } from '@/components/ui'
 import type { Project } from '@prisma/client'
 import { isHardBlockedDomain } from '@/lib/hard-guardrail'
+import { classifyIpTargets } from '@/lib/ip-target-utils'
 import { FileImportButton } from '../FileImportButton'
 import { ModelPicker } from '@/components/shared/ModelPicker'
 import { useProject } from '@/providers/ProjectProvider'
@@ -65,6 +66,15 @@ export function TargetSection({ data, updateField, mode = 'create' }: TargetSect
 
   // Display value for IP textarea
   const displayIps = useMemo(() => (data.targetIps || []).join('\n'), [data.targetIps])
+
+  // Classify the entered IPs so the form can warn when targets are on a
+  // private/local network, where public OSINT + subdomain enumeration return
+  // nothing. Only meaningful in IP mode.
+  const ipTargetClass = useMemo(
+    () => (ipMode ? classifyIpTargets(data.targetIps) : 'empty'),
+    [ipMode, data.targetIps]
+  )
+  const hasLocalIps = ipTargetClass === 'private' || ipTargetClass === 'mixed'
 
   // Hard guardrail: deterministic check for government/public domains (non-disableable)
   const hardBlockResult = useMemo(
@@ -145,20 +155,103 @@ export function TargetSection({ data, updateField, mode = 'create' }: TargetSect
             or IP-based targeting mode.
           </p>
 
-          {/* IP Mode Toggle - locked in edit mode */}
-          <div className={styles.toggleRow}>
-            <div>
-              <span className={styles.toggleLabel}>Start from IP</span>
-              <p className={styles.toggleDescription}>
-                Target IP addresses or CIDR ranges instead of a domain. The pipeline will
-                attempt reverse DNS to discover hostnames.
-              </p>
+          {/* Targeting mode: a full-width, two-card segmented selector. This is
+              the first and most consequential decision on the form (it decides
+              which half of the pipeline runs), so it reads as a pair of distinct
+              coloured modes rather than a small on/off toggle. Blue = Domain,
+              purple = IP/Local, mirroring the recon-preset classification chips.
+              Locked after creation - ipMode cannot change on an existing project. */}
+          <div className={styles.fieldGroup}>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              {([
+                {
+                  isIp: false,
+                  accent: '#60a5fa',
+                  accentBg: 'rgba(96, 165, 250, 0.12)',
+                  icon: <Globe size={20} />,
+                  title: 'Domain / Hostname',
+                  subtitle: 'A domain or hostname — public or internal (incl. AD)',
+                },
+                {
+                  isIp: true,
+                  accent: '#a78bfa',
+                  accentBg: 'rgba(167, 139, 250, 0.12)',
+                  icon: <Network size={20} />,
+                  title: 'IP / CIDR',
+                  subtitle: 'IP addresses or ranges — public or internal',
+                },
+              ]).map((opt) => {
+                const active = opt.isIp === ipMode
+                return (
+                  <button
+                    key={opt.title}
+                    type="button"
+                    disabled={isLocked}
+                    aria-pressed={active}
+                    onClick={() => !isLocked && handleIpModeToggle(opt.isIp)}
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      textAlign: 'left',
+                      padding: '14px 16px',
+                      borderRadius: '10px',
+                      cursor: isLocked ? 'not-allowed' : 'pointer',
+                      opacity: isLocked && !active ? 0.45 : 1,
+                      border: `2px solid ${active ? opt.accent : 'var(--border-subtle, #333)'}`,
+                      background: active ? opt.accentBg : 'transparent',
+                      color: active ? opt.accent : 'var(--text-secondary, #9ca3af)',
+                      transition: 'border-color 0.15s ease, background 0.15s ease, color 0.15s ease',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                      {opt.icon}
+                      <span style={{ fontSize: '15px', fontWeight: 700 }}>{opt.title}</span>
+                      {active && !isLocked && <Check size={16} style={{ marginLeft: 'auto' }} />}
+                      {isLocked && active && <Lock size={14} style={{ marginLeft: 'auto', opacity: 0.7 }} />}
+                    </div>
+                    <span
+                      style={{
+                        display: 'block',
+                        fontSize: '12px',
+                        lineHeight: 1.4,
+                        color: active ? opt.accent : 'var(--text-tertiary, #6b7280)',
+                        opacity: active ? 0.9 : 1,
+                      }}
+                    >
+                      {opt.subtitle}
+                    </span>
+                  </button>
+                )
+              })}
             </div>
-            <Toggle
-              checked={ipMode}
-              onChange={handleIpModeToggle}
-              disabled={isLocked}
-            />
+
+            <p className={styles.toggleDescription} style={{ marginTop: 'var(--space-3)' }}>
+              {ipMode ? (
+                <>
+                  Targets are IP addresses or CIDR ranges, <strong>public or private</strong>.
+                  The pipeline runs reverse DNS to recover hostnames. For a private/internal
+                  range or Active Directory, pick the{' '}
+                  <strong>Internal Network &amp; Active Directory</strong> recon preset, which
+                  turns off the public-only tools (OSINT, subdomain enumeration, WHOIS) that
+                  cannot see a LAN.
+                </>
+              ) : (
+                <>
+                  Targets are a domain or hostname, <strong>public or internal</strong>. A
+                  public domain gets full OSINT and subdomain discovery; for an internal
+                  hostname (e.g. <code>myinternal.com</code>) turn Subdomain Discovery off and
+                  make sure this host can resolve the name. Choose <strong>IP / CIDR</strong>{' '}
+                  instead when you only have addresses.
+                </>
+              )}
+              {isLocked && (
+                <>
+                  {' '}
+                  <strong>The targeting mode is locked after project creation.</strong> Create
+                  a new project to change it.
+                </>
+              )}
+            </p>
           </div>
 
           <div className={styles.fieldRow}>
@@ -234,6 +327,63 @@ export function TargetSection({ data, updateField, mode = 'create' }: TargetSect
                   ? 'Target IPs are locked after project creation. Create a new project to change them.'
                   : 'Enter one IP or CIDR per line, or comma-separated. IPv4, IPv6, and CIDR ranges supported. Max /24 (256 hosts).'}
               </span>
+
+              {/* Private/local target detected: public OSINT + subdomain enumeration
+                  cannot see RFC1918 space, so warn and point at the internal preset. */}
+              {hasLocalIps && (
+                <div
+                  className={styles.shodanWarning}
+                  style={{
+                    marginTop: 'var(--space-2)',
+                    marginBottom: 0,
+                    padding: 'var(--space-3) var(--space-4)',
+                    fontSize: 'var(--text-sm)',
+                    borderWidth: '2px',
+                    borderColor: 'rgba(251, 146, 60, 0.5)',
+                    background: 'rgba(251, 146, 60, 0.12)',
+                    alignItems: 'center',
+                  }}
+                >
+                  <AlertTriangle size={22} style={{ color: '#fb923c' }} />
+                  <span>
+                    <strong>
+                      {ipTargetClass === 'mixed'
+                        ? 'Some targets are on a private / local network.'
+                        : 'These targets are on a private / local network.'}
+                    </strong>{' '}
+                    Public lookups (Shodan, Censys, crt.sh, WHOIS, subdomain enumeration)
+                    return nothing for private / RFC1918 addresses, so leaving them on just
+                    wastes time. For local network or Active Directory testing, select the
+                    {' '}<strong>Internal Network &amp; Active Directory</strong> recon preset,
+                    which turns those off and focuses the scan on internal services
+                    (SMB, LDAP, Kerberos, RDP, WinRM, databases).
+                  </span>
+                </div>
+              )}
+
+              {/* Always-on note for IP mode: the domain-only phases don't apply. */}
+              <div
+                className={styles.shodanWarning}
+                style={{
+                  marginTop: 'var(--space-2)',
+                  marginBottom: 0,
+                  padding: 'var(--space-3) var(--space-4)',
+                  fontSize: 'var(--text-sm)',
+                  borderWidth: '1px',
+                  borderColor: 'rgba(96, 165, 250, 0.4)',
+                  background: 'rgba(96, 165, 250, 0.10)',
+                  alignItems: 'center',
+                }}
+              >
+                <AlertTriangle size={20} style={{ color: '#60a5fa' }} />
+                <span>
+                  <strong>IP mode:</strong> domain-only steps are skipped. Subdomain
+                  discovery, WHOIS, DNS/email security and subdomain-takeover checks need a
+                  registered domain and do not run against bare IPs. Port scanning, service
+                  and version detection, HTTP probing, CVE lookup and the security checks
+                  work normally.
+                </span>
+              </div>
             </div>
           )}
 
