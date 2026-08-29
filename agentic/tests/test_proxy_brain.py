@@ -126,6 +126,12 @@ def test_proxy_brain_registered_across_layers():
     import tools
     assert "proxy_brain" in TOOL_REGISTRY, "not advertised to the LLM"
     pm = DEFAULT_AGENT_SETTINGS["TOOL_PHASE_MAP"]
-    assert pm.get("proxy_brain") == ["exploitation", "post_exploitation"], "phase map missing/wrong"
+    # All phases: read/decode is safe everywhere; active sends are gated at
+    # /traffic/replay, not by the phase map.
+    assert pm.get("proxy_brain") == ["informational", "exploitation", "post_exploitation"], "phase map missing/wrong"
+    # The retired proxy_* tools must be gone from every layer.
+    for dead in ("proxy_search", "proxy_get", "proxy_replay", "proxy_fuzz", "proxy_query"):
+        assert dead not in TOOL_REGISTRY, f"{dead} still registered"
+        assert dead not in pm, f"{dead} still in phase map"
     assert "proxy_brain" in tools.SYSTEM_MCP_TOOL_NAMES, "would be dropped by the manifest filter"
     assert "proxy_brain" in DANGEROUS_TOOLS, "active tool must require confirmation"

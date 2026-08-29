@@ -25,8 +25,6 @@ DANGEROUS_TOOLS = frozenset({
     'execute_code', 'execute_hydra', 'execute_playwright', 'execute_wpscan',
     'execute_arjun', 'execute_ffuf', 'execute_amass', 'execute_gau',
     'execute_katana',
-    # Active captured-traffic tools emit live target traffic (§10.4/§15.5).
-    'proxy_replay', 'proxy_fuzz',
     # proxy_brain runs agent-authored code that can emit live traffic (its
     # redamon.replay/fuzz path). One confirmation authorizes a bounded campaign;
     # the per-send budget + host-pin bound the blast radius (plan §10).
@@ -265,20 +263,11 @@ DEFAULT_AGENT_SETTINGS: dict[str, Any] = {
     # Tool Phase Restrictions
     'TOOL_PHASE_MAP': {
         'query_graph': ['informational', 'exploitation', 'post_exploitation'],
-        # Captured-traffic read/analyze tools (Phase 4 §10.4) — read-only over
-        # already-captured data, useful in every phase (like query_graph).
-        'proxy_search': ['informational', 'exploitation', 'post_exploitation'],
-        'proxy_get': ['informational', 'exploitation', 'post_exploitation'],
-        'proxy_sitemap': ['informational', 'exploitation', 'post_exploitation'],
-        'proxy_params': ['informational', 'exploitation', 'post_exploitation'],
-        'proxy_grep': ['informational', 'exploitation', 'post_exploitation'],
-        'proxy_diff': ['informational', 'exploitation', 'post_exploitation'],
-        'proxy_to_curl': ['informational', 'exploitation', 'post_exploitation'],
-        'proxy_query': ['informational', 'exploitation', 'post_exploitation'],
-        # Active traffic tools (dangerous — emit live traffic): exploitation+ only.
-        'proxy_replay': ['exploitation', 'post_exploitation'],
-        'proxy_fuzz': ['exploitation', 'post_exploitation'],
-        'proxy_brain': ['exploitation', 'post_exploitation'],
+        # proxy_brain is the single traffic tool (replaces proxy_search/get/
+        # sitemap/params/grep/diff/to_curl/query/replay/fuzz). Available in all
+        # phases so read/decode recon stays usable; active sends (redamon.replay/
+        # fuzz) are refused outside exploitation by /traffic/replay itself.
+        'proxy_brain': ['informational', 'exploitation', 'post_exploitation'],
         'execute_curl': ['informational', 'exploitation', 'post_exploitation'],
         'execute_naabu': ['informational', 'exploitation'],
         'execute_httpx': ['informational', 'exploitation'],
