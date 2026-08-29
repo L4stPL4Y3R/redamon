@@ -163,6 +163,9 @@ interface ViewTabsProps {
   showLabels?: boolean
   onToggle3D?: (value: boolean) => void
   onToggleLabels?: (value: boolean) => void
+  /** False when the graph map is deliberately not fetched or drawn. */
+  renderEnabled?: boolean
+  onToggleRender?: (value: boolean) => void
   nodeCount?: number
 }
 
@@ -198,6 +201,8 @@ export const ViewTabs = memo(function ViewTabs({
   showLabels,
   onToggle3D,
   onToggleLabels,
+  renderEnabled = true,
+  onToggleRender,
   nodeCount = 0,
 }: ViewTabsProps) {
   const [dropdownOpen, setDropdownOpen] = useState(false)
@@ -583,13 +588,25 @@ export const ViewTabs = memo(function ViewTabs({
       <div className={styles.rightSection}>
       {activeView === 'graph' && onToggle3D && onToggleLabels && (
         <div className={styles.viewToggles}>
-          <div title={nodeCount > AUTO_2D_THRESHOLD ? `3D disabled: graph has ${nodeCount.toLocaleString()} nodes (max ${AUTO_2D_THRESHOLD.toLocaleString()} for 3D)` : undefined}>
+          {onToggleRender && (
+            <div title={renderEnabled ? 'Stop fetching and drawing the graph (the tables keep working)' : 'Graph rendering is off - nothing is fetched or drawn'}>
+              <Toggle
+                checked={renderEnabled}
+                onChange={onToggleRender}
+                labelOn="Render"
+                aria-label="Toggle graph rendering"
+              />
+            </div>
+          )}
+          {/* With rendering off there is no layout to switch or label, so both
+              stay visible (no jumping toolbar) but inert. */}
+          <div title={!renderEnabled ? 'Graph rendering is off' : nodeCount > AUTO_2D_THRESHOLD ? `3D disabled: graph has ${nodeCount.toLocaleString()} nodes (max ${AUTO_2D_THRESHOLD.toLocaleString()} for 3D)` : undefined}>
             <Toggle
               checked={nodeCount > AUTO_2D_THRESHOLD ? false : (is3D ?? false)}
               onChange={onToggle3D}
               labelOff="2D"
               labelOn="3D"
-              disabled={nodeCount > AUTO_2D_THRESHOLD}
+              disabled={!renderEnabled || nodeCount > AUTO_2D_THRESHOLD}
               aria-label="Toggle 2D/3D view"
             />
           </div>
@@ -597,6 +614,7 @@ export const ViewTabs = memo(function ViewTabs({
             checked={showLabels ?? false}
             onChange={onToggleLabels}
             labelOn="Labels"
+            disabled={!renderEnabled}
             aria-label="Toggle labels"
           />
         </div>
