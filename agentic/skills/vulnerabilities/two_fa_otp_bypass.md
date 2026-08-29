@@ -61,9 +61,9 @@ Every 2FA gate has fallback paths. Find them all:
 
 The fallback flow is usually the bypass.
 
-## Captured-traffic workflow (redamon.* (proxy_brain) tools)
+## Captured-traffic workflow (proxy_brain tools)
 
-If HTTP Traffic Capture is enabled, source and drive the second-factor probes from the recorded login flow instead of rebuilding the validation request by hand. redamon.* (proxy_brain) tools only see traffic that went through the capture proxy, so drive the first factor + 2FA prompt through it first, then work from the captured `/auth/2fa/verify` transaction.
+If HTTP Traffic Capture is enabled, source and drive the second-factor probes from the recorded login flow instead of rebuilding the validation request by hand. proxy_brain tools only see traffic that went through the capture proxy, so drive the first factor + 2FA prompt through it first, then work from the captured `/auth/2fa/verify` transaction.
 
 - OTP brute force (attack 1) is redamon.fuzz when the code rides a query parameter: `redamon.fuzz(<verify_txn>, "code", ["000000","000001","000002"])` returns per-payload status+length, so a valid code stands out by a differing body length or a 200. redamon.fuzz caps at 50 payloads and only walks a query param, so for the full space or a JSON / form body position, iterate `redamon.replay(<verify_txn>, {"body":"{\"code\":\"NNNNNN\"}"})` in a loop.
 - Code reuse / replay (attack 3): `redamon.replay(<successful_verify_txn>, {})` re-submits the same code after logout to test single-use enforcement.

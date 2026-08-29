@@ -40,9 +40,9 @@ execute_curl url: "https://target.tld/.well-known/jwks.json"
 
 Inventory every consumer of the token. Many backends only verify the signature and skip `aud` / `typ` / `iss`; finding such a service is the cheapest win.
 
-## Captured-traffic workflow (redamon.* (proxy_brain) tools)
+## Captured-traffic workflow (proxy_brain tools)
 
-If HTTP Traffic Capture is enabled, source and drive token testing from the recorded history instead of rebuilding requests by hand. redamon.* (proxy_brain) tools only see traffic that went through the capture proxy.
+If HTTP Traffic Capture is enabled, source and drive token testing from the recorded history instead of rebuilding requests by hand. proxy_brain tools only see traffic that went through the capture proxy.
 
 - Harvest tokens: `redamon.search({"hasAuth":true})` lists every captured request carrying an Authorization header, and `redamon.grep("eyJ")` / `redamon.grep("Bearer ")` pull Bearer JWTs out of response bodies and JS bundles. This replaces the `query_graph` token pull.
 - `redamon.get(<txn_id>, "both")` gives the full request/response of a token-bearing transaction, so you can lift the exact header shape and the endpoint that consumes it.

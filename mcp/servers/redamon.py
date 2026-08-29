@@ -110,13 +110,20 @@ def _read(op: str, args: Optional[Dict[str, Any]] = None) -> str:
     return _post("/traffic/exec", {"op": op, "args": args or {}}).get("result", "")
 
 
-def search(**filters) -> List[Txn]:
-    """Burp-style history search. Filters: host, method, status, status_class,
-    tool, source, session (sessionId), run (runId), has_auth, reflected, only_5xx,
-    q, body_q, limit. Returns Txn rows (use .id with get/replay)."""
+def search(filters: Optional[Dict[str, Any]] = None, **kwargs) -> List[Txn]:
+    """Burp-style history search. Call EITHER with a dict of filters
+    (redamon.search({"host": "x", "hasAuth": True})) OR with keyword filters
+    (redamon.search(host="x", has_auth=True)) — both work. Filters: host, method,
+    status, status_class/statusClass, tool, source, session/sessionId, run/runId,
+    has_auth/hasAuth, reflected, only_5xx/only5xx, q, body_q/bodyq, limit. Returns
+    Txn rows (use .id with get/replay)."""
     alias = {"status_class": "statusClass", "has_auth": "hasAuth", "only_5xx": "only5xx",
              "session": "sessionId", "run": "runId", "body_q": "bodyq"}
-    f = {alias.get(k, k): v for k, v in filters.items() if v is not None}
+    merged: Dict[str, Any] = {}
+    if isinstance(filters, dict):
+        merged.update(filters)  # dict form is already endpoint-shaped; pass through
+    merged.update({alias.get(k, k): v for k, v in kwargs.items()})  # kwargs: snake_case -> camelCase
+    f = {k: v for k, v in merged.items() if v is not None}
     text = _read("search", f)
     out: List[Txn] = []
     for line in (text or "").splitlines():

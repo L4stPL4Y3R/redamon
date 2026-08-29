@@ -62,9 +62,9 @@ Inspect:
 | `Access-Control-Max-Age: 600` | Browser caches the pre-flight |
 | `Vary: Origin` | Server is origin-aware (good sign for security; or mis-cached for poisoning) |
 
-### Captured-traffic workflow (redamon.* (proxy_brain) tools)
+### Captured-traffic workflow (proxy_brain tools)
 
-If HTTP Traffic Capture is enabled, source and drive this from the recorded history (redamon.* (proxy_brain) only see traffic that crossed the capture proxy).
+If HTTP Traffic Capture is enabled, source and drive this from the recorded history (proxy_brain only see traffic that crossed the capture proxy).
 
 - `redamon.search {"hasAuth":true}` / `redamon.query` to find authenticated API responses already carrying `Access-Control-Allow-Credentials: true` or a reflected origin; `redamon.grep "Access-Control-Allow-Origin"` scans captured bodies for the header.
 - `redamon.replay id mutate:{headers:{"Origin":"https://attacker.tld"}}` resends a captured authenticated request with a mutated `Origin` and reads back ACAO / ACAC / Vary; add `method:"OPTIONS"` plus `Access-Control-Request-Method` / `-Headers` for the pre-flight differential.

@@ -46,7 +46,7 @@ This workflow uses only tools already present in the agent runtime. No new Kali 
 
 If the operator forbids OOB callbacks, drop the `interactsh-client` step and lean on reflective probes, error-message diffing, and timing oracles instead.
 
-### Captured-traffic workflow (redamon.* (proxy_brain) tools)
+### Captured-traffic workflow (proxy_brain tools)
 
 When HTTP Traffic Capture is enabled, redamon.replay re-sends a captured multipart upload with a mutated filename, Content-Type, or body (extension rotation, polyglot magic bytes, a config-file drop, a traversal filename), recorded as a new replay txn. redamon.get then fetches the served file back and redamon.grep inspects the response for execution or inline render plus the load-bearing headers (Content-Type, Content-Disposition, X-Content-Type-Options). Where the proxy stops: byte-level polyglot and toolchain payload crafting still needs execute_code, and stored-XSS or toolchain-RCE proof needs execute_playwright (real browser) or an OOB collector.
 

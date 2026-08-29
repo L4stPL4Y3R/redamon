@@ -70,9 +70,9 @@ absolute redirects
 Set-Cookie Domain= attribute
 ```
 
-### Captured-traffic workflow (redamon.* (proxy_brain) tools)
+### Captured-traffic workflow (proxy_brain tools)
 
-If HTTP Traffic Capture is enabled, source and drive this from the recorded history (redamon.* (proxy_brain) only see traffic that crossed the capture proxy).
+If HTTP Traffic Capture is enabled, source and drive this from the recorded history (proxy_brain only see traffic that crossed the capture proxy).
 
 - `redamon.replay id mutate:{headers:{"X-Forwarded-Host":"attacker.tld"}}` resends a captured request with a mutated `X-Forwarded-Host` / `X-Original-Host` / `Forwarded` and inspects the reflected host in the body, `Location`, and `Set-Cookie Domain=`. The raw `Host` is pinned to the origin, but `X-Forwarded-Host` (the more-trusted header) is fully mutable.
 - `redamon.diff id_canonical id_poisoned` pairs a clean replay against the poisoned one so the reflected host stands out.

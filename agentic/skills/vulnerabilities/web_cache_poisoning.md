@@ -96,9 +96,9 @@ for h in HEADERS_CANDIDATES:
         print(f"POISONED via {h}")
 ```
 
-### Captured-traffic workflow (redamon.* (proxy_brain) tools)
+### Captured-traffic workflow (proxy_brain tools)
 
-If HTTP Traffic Capture is enabled, source and drive this from the recorded history (redamon.* (proxy_brain) only see traffic that crossed the capture proxy).
+If HTTP Traffic Capture is enabled, source and drive this from the recorded history (proxy_brain only see traffic that crossed the capture proxy).
 
 - `redamon.query` / `redamon.search` to inventory cacheable or authenticated responses that lack `Vary`, and to pick a real captured path to poison.
 - Paired causality with `redamon.replay`: first `redamon.replay id mutate:{query:"cb=ABC", headers:{"X-Forwarded-Host":"attacker.tld"}}`, then `redamon.replay id mutate:{query:"cb=ABC"}` without the header, reading `X-Cache` / `Age` / `CF-Cache-Status` on the second response. If the header-free replay still serves the poison on the same `cb`, the header is unkeyed and poisoning is live.

@@ -49,9 +49,9 @@ Useful keys to record:
 
 Map every relying party (RP), every IdP, and every resource server. Mix-up and audience-confusion attacks live in those edges.
 
-## Captured-traffic workflow (redamon.* (proxy_brain) tools)
+## Captured-traffic workflow (proxy_brain tools)
 
-If HTTP Traffic Capture is enabled, source and drive the flow probes from the recorded redirect chain and token exchanges instead of rebuilding them by hand. redamon.* (proxy_brain) tools only see traffic that went through the capture proxy, so drive the login (`execute_playwright` or the browser) through it first.
+If HTTP Traffic Capture is enabled, source and drive the flow probes from the recorded redirect chain and token exchanges instead of rebuilding them by hand. proxy_brain tools only see traffic that went through the capture proxy, so drive the login (`execute_playwright` or the browser) through it first.
 
 - Pull flow secrets: `redamon.grep("access_token")`, `redamon.grep("code=")`, and `redamon.grep("state=")` extract the `code`, `state`, `nonce`, and issued tokens from captured responses / redirects; `redamon.search({"q":"token"})` locates the `/token` exchange transaction.
 - Code single-use test: `redamon.replay(<token_txn>, {})` re-sends the captured `/token` POST verbatim a second time. A second 200 with a fresh access token proves the authorization code is not single-use (mirrors the Validation script below, without rebuilding the body).

@@ -64,7 +64,7 @@ The strongest oracle is **two accounts** owning distinct objects (if credentials
 or self-registration exist): what User A may see vs what User A can reach of User
 B's is the ground truth for horizontal escalation.
 
-**Prefer the captured-traffic (`redamon.* (proxy_brain)`) tools as your native oracle when HTTP
+**Prefer the captured-traffic (`proxy_brain`) tools as your native oracle when HTTP
 capture is on** (they are the built-in Burp-equivalent and remove hand-rolled
 diffing): `redamon.search` / `redamon.sitemap` / `redamon.params` to mine what has
 already been observed; **`redamon.replay`** to resend a real captured request with

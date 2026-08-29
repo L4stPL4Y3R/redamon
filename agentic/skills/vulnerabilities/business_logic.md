@@ -60,9 +60,9 @@ Example: e-commerce checkout
 [paid|shipped] --refund(amount)--> [refunded] (full) or [partially_refunded]
 ```
 
-## Captured-traffic workflow (redamon.* (proxy_brain) tools)
+## Captured-traffic workflow (proxy_brain tools)
 
-If HTTP Traffic Capture is enabled, source and drive the state-machine probes from the recorded checkout / workflow sequence instead of rebuilding each request by hand. redamon.* (proxy_brain) tools only see requests that went through the capture proxy, so run the workflow (via `execute_playwright` or the UI) through it first, then work from the captured transactions.
+If HTTP Traffic Capture is enabled, source and drive the state-machine probes from the recorded checkout / workflow sequence instead of rebuilding each request by hand. proxy_brain tools only see requests that went through the capture proxy, so run the workflow (via `execute_playwright` or the UI) through it first, then work from the captured transactions.
 
 - `redamon.search({"host":"target.tld"})` and `redamon.sitemap()` recover the ordered transition set (add_item -> apply_coupon -> create_order -> auth -> capture) with methods and statuses, replacing manual re-capture for Step 2.
 - Step-3 state-machine abuse is redamon.replay:

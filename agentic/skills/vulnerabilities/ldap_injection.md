@@ -73,9 +73,9 @@ kali_shell: ldapsearch -x -H ldap://target.tld -b "" -s base "(objectClass=*)" n
 
 Returned `namingContexts` reveal the search base DNs.
 
-### Captured-traffic workflow (redamon.* (proxy_brain) tools)
+### Captured-traffic workflow (proxy_brain tools)
 
-If HTTP Traffic Capture is enabled, source and drive this from the recorded history (redamon.* (proxy_brain) only see traffic that crossed the capture proxy).
+If HTTP Traffic Capture is enabled, source and drive this from the recorded history (proxy_brain only see traffic that crossed the capture proxy).
 
 - `redamon.params` flags the field that flows into the filter (a `q` / `username` / `group` search param).
 - For a GET search param, `redamon.fuzz id "q" ["*", "*)(uid=*", "alice)(description=A*", "alice)(description=B*"]` drives the auth-bypass and boolean-blind char-by-char set over one captured QUERY param, comparing per-payload length to find the "found / not found" oracle.

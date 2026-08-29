@@ -105,9 +105,9 @@ Common IdPs and their footprints:
 | `accounts.google.com/o/saml2` | Google Workspace |
 | `onelogin.com/saml` | OneLogin |
 
-## Captured-traffic workflow (redamon.* (proxy_brain) tools)
+## Captured-traffic workflow (proxy_brain tools)
 
-If HTTP Traffic Capture is enabled, source and drive the SAML probes from the recorded ACS POST instead of rebuilding the flow by hand. redamon.* (proxy_brain) tools only see traffic that went through the capture proxy, so drive the SSO login (`execute_playwright`) through it first.
+If HTTP Traffic Capture is enabled, source and drive the SAML probes from the recorded ACS POST instead of rebuilding the flow by hand. proxy_brain tools only see traffic that went through the capture proxy, so drive the SSO login (`execute_playwright`) through it first.
 
 - `redamon.search({"bodyq":"SAMLResponse","method":"POST"})` locates the captured POST to the SP's ACS; `redamon.get(<acs_txn>, "both")` returns the full `SAMLResponse=` / `RelayState=` body to decode and the Set-Cookie session it produced.
 - Replay-twice freshness test (the cleanest first probe): `redamon.replay(<acs_txn>, {})` re-POSTs the identical captured response to the ACS. A second successful session proves replay-detection / `NotOnOrAfter` freshness is gone. This runs against the pinned SP ACS host, exactly where you want it.

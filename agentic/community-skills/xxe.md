@@ -35,7 +35,7 @@ This workflow uses only tools already present in the agent's runtime:
 
 No additional Kali packages are needed for this skill.
 
-### Captured-traffic workflow (redamon.* (proxy_brain) tools)
+### Captured-traffic workflow (proxy_brain tools)
 
 When HTTP Traffic Capture is enabled, redamon.sitemap and redamon.query surface XML-speaking endpoints already observed (Content-Type xml, `.asmx`/`.svc`, SOAP paths) without re-crawling. redamon.replay takes one captured XML or JSON transaction and swaps its body for a DOCTYPE/entity payload (set headers to switch Content-Type to application/xml), then redamon.grep reads a disclosed file (for example /etc/passwd) out of the response, or redamon.diff compares it against a benign baseline replay. Where the proxy stops: blind OOB exfiltration (external DTD plus interactsh) and XSLT-to-RCE stay in the execute_curl / kali_shell path; redamon.replay is pinned to the origin host.
 

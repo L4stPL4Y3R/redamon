@@ -80,9 +80,9 @@ Content-Type: text/plain
 
 `text/plain` is the JSON-bypass classic: many JSON APIs accept the body if the parser is content-type-agnostic.
 
-### Captured-traffic workflow (redamon.* (proxy_brain) tools)
+### Captured-traffic workflow (proxy_brain tools)
 
-If HTTP Traffic Capture is enabled, source and drive this from the recorded history (redamon.* (proxy_brain) only see traffic that crossed the capture proxy).
+If HTTP Traffic Capture is enabled, source and drive this from the recorded history (proxy_brain only see traffic that crossed the capture proxy).
 
 - `redamon.get id part:"response"` / `redamon.query` reads the captured session model (each `Set-Cookie` with its `SameSite` / `Secure` / `HttpOnly`).
 - Token-strictness via `redamon.replay` on a captured state-change request: `dropHeaders:["X-CSRF-Token"]`, or a body edit emptying the `_csrf` field, checking the action still succeeds (200 / state changed).

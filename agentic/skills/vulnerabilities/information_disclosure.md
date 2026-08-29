@@ -20,9 +20,9 @@ Reference for hunting and triaging information leaks. Pull this in when you need
 | Secrets scan on a cloned repo | `kali_shell betterleaks` / `semgrep p/secrets` | After `git clone`. |
 | Diff harness across principals | `execute_curl` x N + `kali_shell diff/jq` | Same path, different tokens. |
 
-### Captured-traffic workflow (redamon.* (proxy_brain) tools)
+### Captured-traffic workflow (proxy_brain tools)
 
-If HTTP Traffic Capture is enabled, source and drive this from the recorded history first (redamon.* (proxy_brain) only see traffic that crossed the capture proxy; blind artifact-path fuzzing for `/.git`, `/.env` and friends stays with `execute_ffuf`, since those were never requested).
+If HTTP Traffic Capture is enabled, source and drive this from the recorded history first (proxy_brain only see traffic that crossed the capture proxy; blind artifact-path fuzzing for `/.git`, `/.env` and friends stays with `execute_ffuf`, since those were never requested).
 
 - `redamon.grep` across all captured response bodies for secret patterns, tokens, API keys, and version strings (`AKIA`, `BEGIN PRIVATE KEY`, `password`, framework version markers).
 - `redamon.query` / `redamon.search` to inventory disclosure headers already observed (`Server`, `X-Powered-By`, `Server-Timing`, `Via`, `X-Cache`, and the other cache headers).

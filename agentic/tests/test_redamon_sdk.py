@@ -49,3 +49,22 @@ def test_parse_curl_carries_payload_label():
     assert r.status == 500
     assert "SQL syntax error" in r.body
     assert r.payload == "1001'"
+
+
+def test_search_accepts_dict_and_kwargs():
+    # The skills call redamon.search({...}) (dict); code may also use kwargs. Both
+    # must reach the endpoint as endpoint-shaped (camelCase) filters.
+    seen = {}
+    orig = redamon._read
+    redamon._read = lambda op, args=None: seen.update(args or {}) or ""
+    try:
+        redamon.search({"hasAuth": True, "method": "POST"})
+        assert seen == {"hasAuth": True, "method": "POST"}
+        seen.clear()
+        redamon.search(has_auth=True, host="x")           # snake_case kwargs -> aliased
+        assert seen == {"hasAuth": True, "host": "x"}
+        seen.clear()
+        redamon.search(**{"q": "admin"})
+        assert seen == {"q": "admin"}
+    finally:
+        redamon._read = orig

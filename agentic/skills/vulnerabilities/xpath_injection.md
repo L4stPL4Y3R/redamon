@@ -68,9 +68,9 @@ Metacharacters: `' " ( ) [ ]` plus the path separators `/ //`.
 
 XPath 2.0+ gives richer extraction (`doc()`, `unparsed-text()`, regex). XPath 1.0 is what most legacy apps still use.
 
-### Captured-traffic workflow (redamon.* (proxy_brain) tools)
+### Captured-traffic workflow (proxy_brain tools)
 
-If HTTP Traffic Capture is enabled, source and drive this from the recorded history (redamon.* (proxy_brain) only see traffic that crossed the capture proxy).
+If HTTP Traffic Capture is enabled, source and drive this from the recorded history (proxy_brain only see traffic that crossed the capture proxy).
 
 - `redamon.grep "Saxon"` (also `Xalan`, `lxml`, `DOMXPath`) reads verbatim XPath engine errors already sitting in captured response bodies, fingerprinting engine and version.
 - For a GET search param, `redamon.fuzz id "q" [...]` drives the boolean-blind `substring()` binary search over one captured QUERY param, iterating the character-position payload sets.

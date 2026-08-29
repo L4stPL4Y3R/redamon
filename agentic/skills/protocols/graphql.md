@@ -84,9 +84,9 @@ Inference signals to mine:
 
 `kali_shell graphql-cop` runs these inference probes for you.
 
-## Captured-traffic workflow (redamon.* (proxy_brain) tools)
+## Captured-traffic workflow (proxy_brain tools)
 
-If HTTP Traffic Capture is enabled, source and drive these probes from the recorded `/graphql` POSTs instead of rebuilding queries by hand. redamon.* (proxy_brain) tools only see traffic that went through the capture proxy, so run the app's GraphQL calls through it first.
+If HTTP Traffic Capture is enabled, source and drive these probes from the recorded `/graphql` POSTs instead of rebuilding queries by hand. proxy_brain tools only see traffic that went through the capture proxy, so run the app's GraphQL calls through it first.
 
 - `redamon.search({"q":"graphql","method":"POST"})` lists the captured operations; `redamon.get(id,"both")` shows the exact query body and auth context to mutate.
 - Aliased dual-fetch auth-swap: take a captured single-object query and replay it with both aliases plus a swapped identity: `redamon.replay(<query_txn>, {"body":"{\"query\":\"query { own: order(id:\\\"OWN\\\"){id owner{email}} foreign: order(id:\\\"FOREIGN\\\"){id owner{email}} }\"}","headers":{"Authorization":"Bearer <userB>"}})`, then `redamon.diff(<owner_txn>, <replay_txn>)` to prove missing per-edge authorization.

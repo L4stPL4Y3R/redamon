@@ -121,7 +121,7 @@ execute_katana args: "-u https://target.tld -hl -nos -noi -cdd /tmp/katana_profi
 
 Bootstrap the profile once via `execute_playwright` (login flow), then point Katana at the same data dir.
 
-### Captured traffic (redamon.* (proxy_brain) tools)
+### Captured traffic (proxy_brain tools)
 
 When HTTP Traffic Capture is enabled and Katana crawls through the capture proxy, the crawl folds into captured history and becomes queryable via redamon.search (host/method/status filters) and redamon.grep (substring over response bodies). The crawl output overlaps redamon.sitemap (distinct observed endpoints) and redamon.params (distinct params, POST bodies included), so redamon.sitemap can dedupe what is already seen and seed only the paths Katana still needs to reach, no re-crawl needed to inspect what was captured.
 

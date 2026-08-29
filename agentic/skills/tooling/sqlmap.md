@@ -132,7 +132,7 @@ kali_shell: sqlmap -u "https://target.tld/item?id=1" -p id --batch -D appdb -T u
 kali_shell: sqlmap -u "https://target.tld/item?id=1" -p id --batch --os-shell
 ```
 
-### Captured traffic (redamon.* (proxy_brain) tools)
+### Captured traffic (proxy_brain tools)
 
 When HTTP Traffic Capture is enabled, the `-r` request-file flow is captured-traffic-native: redamon.to_curl(id) and redamon.get(id) render a captured transaction back to a raw request or curl you can drop into `/tmp/req.txt` and feed via `-r`, no re-run of the original tool needed. Find candidate injection points with redamon.params (injectability heuristic) and redamon.search; redamon.replay reproduces an authenticated request (host pinned to origin) to reach injection points behind a session. redamon.diff(id_a, id_b) is the in-platform boolean-blind true/false comparison, and redamon.fuzz iterates payloads over one query param.
 
