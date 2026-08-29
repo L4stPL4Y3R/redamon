@@ -114,3 +114,18 @@ def test_replay_preserves_nondefault_port_in_pin():
     from traffic_tools import build_replay_curl
     netloc = _replay_netloc(build_replay_curl(_txn(port=8080), {"path": "@evil.com/"}))
     assert netloc == "origin.example.com:8080"
+
+
+# --------------------------------------------------------------------------
+# Row 12: proxy_brain must be registered in every layer or the agent sees a
+# tool it cannot dispatch (or an MCP tool the manifest filter drops silently).
+# --------------------------------------------------------------------------
+def test_proxy_brain_registered_across_layers():
+    from prompts.tool_registry import TOOL_REGISTRY
+    from project_settings import DEFAULT_AGENT_SETTINGS, DANGEROUS_TOOLS
+    import tools
+    assert "proxy_brain" in TOOL_REGISTRY, "not advertised to the LLM"
+    pm = DEFAULT_AGENT_SETTINGS["TOOL_PHASE_MAP"]
+    assert pm.get("proxy_brain") == ["exploitation", "post_exploitation"], "phase map missing/wrong"
+    assert "proxy_brain" in tools.SYSTEM_MCP_TOOL_NAMES, "would be dropped by the manifest filter"
+    assert "proxy_brain" in DANGEROUS_TOOLS, "active tool must require confirmation"
