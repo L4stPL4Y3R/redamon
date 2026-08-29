@@ -36,13 +36,25 @@ def test_manual_file_present_and_core_complete():
 
 
 def test_every_documented_function_exists():
-    core = redamon.manual()
-    documented = set(re.findall(r"redamon\.(\w+)\s*\(", core))
+    # Scan the WHOLE manual (every recipe in every section), not just the core, so
+    # a section that calls a renamed/removed function is caught.
+    with open(redamon._MANUAL_PATH, "r", encoding="utf-8") as fh:
+        full = fh.read()
+    documented = set(re.findall(r"redamon\.(\w+)\s*\(", full))
     # ignore private helpers a recipe might reference
     documented = {d for d in documented if not d.startswith("_")}
     missing = sorted(d for d in documented
                      if not callable(getattr(redamon, d, None)))
     assert not missing, f"manual documents non-existent redamon.* functions: {missing}"
+
+
+def test_manual_recipes_use_no_private_helpers():
+    # Recipes must use the PUBLIC API only — no redamon._b64u / _run / _post etc.,
+    # which are internal and may change without notice.
+    with open(redamon._MANUAL_PATH, "r", encoding="utf-8") as fh:
+        full = fh.read()
+    privates = sorted(set(re.findall(r"redamon\.(_\w+)", full)))
+    assert not privates, f"manual leaks private SDK helpers into recipes: {privates}"
 
 
 def test_every_public_function_is_documented():

