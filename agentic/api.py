@@ -2893,6 +2893,176 @@ async def graph_exec(body: GraphExecRequest):
 
 
 # =============================================================================
+# TRAFFIC — proxy_brain broker endpoints (kali `redamon` SDK -> agent)
+# =============================================================================
+#
+# The kali sandbox runs agent-authored code (`proxy_brain`) but holds NO
+# DATABASE_URL. Its `redamon` SDK reaches the captured-traffic corpus and the
+# active replay path ONLY through these two endpoints — the mirror of the
+# redagraph -> /graph/exec pattern. Tenant identity is NOT taken from the body:
+# it is derived from a signed `ctx` tag (source=agent) that only the agent could
+# have minted (it holds INTERNAL_API_KEY; kali does not), so a foothold inside
+# the least-trusted worker cannot forge a cross-tenant read or send.
+
+class TrafficExecRequest(BaseModel):
+    """kali redamon SDK -> agent, read-only corpus access. `ctx` is the signed
+    agent tag; tenant is derived from it (never from the body). `op` selects a
+    fixed read operation; `args` are the op's parameters."""
+    ctx: str
+    op: str  # search|get|sitemap|params|grep|diff|to_curl|query
+    args: dict = {}
+
+
+class TrafficReplayRequest(BaseModel):
+    """kali redamon SDK -> agent, ACTIVE replay PREPARE. The agent validates
+    tenant + phase, reads the origin (tenant-scoped), builds the HOST-PINNED curl
+    and signs the replay lineage tag, then returns them for the worker to send
+    through the capture proxy. The agent never reaches the target itself."""
+    ctx: str
+    op: str = "replay"  # replay | fuzz
+    id: str
+    mutate: dict = {}
+    insertion_point: Optional[str] = None  # fuzz only
+    payloads: Optional[list] = None        # fuzz only
+
+
+def _verify_traffic_ctx(ctx: str) -> Optional[dict]:
+    """Verify the signed agent tag and return its claims, or None (fail closed).
+
+    The tag is HMAC-signed with INTERNAL_API_KEY, which the kali worker does not
+    hold, so it can present the scoped SCANNER_API_KEY for transport auth yet
+    cannot mint a tag for a tenant it was not issued for."""
+    try:
+        from redamon_ctx import verify_tag
+    except Exception:  # noqa: BLE001
+        return None
+    key = os.environ.get("INTERNAL_API_KEY", "")
+    if not key or key == "changeme":
+        # Fail closed: without the signing key we cannot authenticate the tenant
+        # claim, and this path authorizes cross-tenant reads + live sends.
+        return None
+    payload = verify_tag(ctx, {"agent": key})
+    if not payload or not payload.get("user_id") or not payload.get("project_id"):
+        return None
+    return payload
+
+
+def _apply_traffic_tenant(claims: dict) -> None:
+    """Bind the verified tenant into request-local ContextVars so the reused
+    traffic_tools logic scopes to it. FastAPI runs each request in its own task
+    context, so these sets never leak across concurrent requests."""
+    from agent_context import (
+        current_user_id, current_project_id, current_session_id, current_phase,
+    )
+    current_user_id.set(claims["user_id"])
+    current_project_id.set(claims["project_id"])
+    if claims.get("session_id"):
+        current_session_id.set(claims["session_id"])
+    if claims.get("phase"):
+        current_phase.set(claims["phase"])
+
+
+@app.post("/traffic/exec", tags=["Traffic"], dependencies=[Depends(require_internal_auth_only)])
+async def traffic_exec(body: TrafficExecRequest):
+    """Read-only corpus access for the kali `redamon` SDK. Constrained ops only;
+    tenant from the verified tag; every underlying query hard-injects the tenant
+    filter (traffic_tools). Returns the tool's formatted text under `result`."""
+    claims = _verify_traffic_ctx(body.ctx)
+    if not claims:
+        return JSONResponse(status_code=401, content={"error": "invalid or missing traffic ctx"})
+    _apply_traffic_tenant(claims)
+
+    import json as _json
+    from traffic_tools import (
+        proxy_search, proxy_get, proxy_sitemap, proxy_params, proxy_grep,
+        proxy_diff, proxy_to_curl, proxy_query,
+    )
+    a = body.args or {}
+    op = body.op
+    try:
+        if op == "search":
+            filt = a if isinstance(a, dict) else {}
+            out = await proxy_search.ainvoke({"filters": _json.dumps(filt)})
+        elif op == "get":
+            out = await proxy_get.ainvoke({"id": str(a.get("id", "")), "part": a.get("part", "response")})
+        elif op == "sitemap":
+            out = await proxy_sitemap.ainvoke({})
+        elif op == "params":
+            out = await proxy_params.ainvoke({})
+        elif op == "grep":
+            out = await proxy_grep.ainvoke({"pattern": str(a.get("pattern", "")), "limit": int(a.get("limit", 50) or 50)})
+        elif op == "diff":
+            out = await proxy_diff.ainvoke({"id_a": str(a.get("id_a", "")), "id_b": str(a.get("id_b", ""))})
+        elif op == "to_curl":
+            out = await proxy_to_curl.ainvoke({"id": str(a.get("id", ""))})
+        elif op == "query":
+            out = await proxy_query.ainvoke({"spec": _json.dumps(a.get("spec", a))})
+        else:
+            return JSONResponse(status_code=400, content={"error": f"unknown op {op!r}"})
+    except Exception as e:  # noqa: BLE001 — surface to the SDK, never a trace
+        return JSONResponse(status_code=500, content={"error": str(e)[:300]})
+    return JSONResponse(content={"result": out})
+
+
+@app.post("/traffic/replay", tags=["Traffic"], dependencies=[Depends(require_internal_auth_only)])
+async def traffic_replay(body: TrafficReplayRequest):
+    """ACTIVE replay PREPARE. Validates tenant + phase, reads the origin
+    (tenant-scoped), builds the host-pinned curl and signs the replay lineage
+    tag. The worker performs the send through the capture proxy. Per-send gating
+    lives here because one proxy_brain run fans out to many sends."""
+    claims = _verify_traffic_ctx(body.ctx)
+    if not claims:
+        return JSONResponse(status_code=401, content={"error": "invalid or missing traffic ctx"})
+
+    # Per-send phase gate (the tag carries the session phase). Active sends are
+    # confined to the exploitation phases, mirroring TOOL_PHASE_MAP for the old
+    # proxy_replay/proxy_fuzz. Fail closed on anything else.
+    phase = claims.get("phase") or "informational"
+    if phase not in ("exploitation", "post_exploitation"):
+        return JSONResponse(status_code=403, content={"error": f"active replay not allowed in phase '{phase}'"})
+
+    _apply_traffic_tenant(claims)
+
+    import json as _json
+    from traffic_tools import fetch_transaction, build_replay_curl, build_fuzz_curls
+    txn = await fetch_transaction(str(body.id))
+    if not txn:
+        return JSONResponse(status_code=404, content={"error": "origin transaction not found (or not in your project)"})
+
+    # Sign the replay lineage tag (source=agent, is_replay, origin_id) so the
+    # ingest attributes the re-captured row from the VERIFIED tag, not the body.
+    try:
+        from redamon_ctx import sign_tag
+        replay_tag = sign_tag({
+            "source": "agent",
+            "project_id": claims["project_id"],
+            "user_id": claims["user_id"],
+            "session_id": claims.get("session_id") or None,
+            "tool": "proxy_brain",
+            "phase": phase,
+            "is_replay": True,
+            "origin_id": str(body.id),
+        }, os.environ.get("INTERNAL_API_KEY", ""))
+    except Exception:  # noqa: BLE001
+        replay_tag = ""
+
+    try:
+        if body.op == "fuzz":
+            ip = str(body.insertion_point or "")
+            payloads = [str(x) for x in (body.payloads or [])]
+            if not ip or not payloads:
+                return JSONResponse(status_code=400, content={"error": "fuzz requires insertion_point + payloads"})
+            sends = [{"payload": pl, "curl_args": args} for pl, args in build_fuzz_curls(txn, ip, payloads)]
+        else:
+            mutate = body.mutate if isinstance(body.mutate, dict) else {}
+            sends = [{"payload": None, "curl_args": build_replay_curl(txn, mutate)}]
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse(status_code=400, content={"error": f"could not build replay: {str(e)[:200]}"})
+
+    return JSONResponse(content={"sends": sends, "ctx": replay_tag})
+
+
+# =============================================================================
 # KALI TERMINAL — WebSocket PTY proxy to kali-sandbox terminal server
 # =============================================================================
 

@@ -187,6 +187,8 @@ class TestDangerousTools(unittest.TestCase):
             'execute_gau', 'execute_katana',
             # Active captured-traffic tools (emit live target traffic).
             'proxy_replay', 'proxy_fuzz',
+            # proxy_brain runs agent code that can emit live traffic.
+            'proxy_brain',
             # Supply-chain L3: downloads attacker-authored tarballs.
             'execute_guarddog',
         }

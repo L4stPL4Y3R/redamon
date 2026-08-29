@@ -1,0 +1,352 @@
+"""
+redamon — the `proxy_brain` SDK. Runs inside kali-sandbox; the agent's
+`proxy_brain` code does `import redamon` and drives the captured-traffic corpus
+and the active replay path through it.
+
+It holds NO database credential and opens NO socket to Postgres. Every capability
+is an authenticated HTTP call to the agent's `/traffic/exec` (read) and
+`/traffic/replay` (active PREPARE) endpoints — the mirror of the redagraph ->
+/graph/exec broker. Tenant identity is carried by the signed `REDAMON_CTX` tag
+(minted by the agent, which holds INTERNAL_API_KEY; this worker does not), so a
+foothold here cannot read or send for a tenant it was not issued for.
+
+Env (injected per-invocation by the proxy_brain MCP tool):
+  REDAMON_AGENT_URL  - the agent base URL (default http://agent:8080)
+  SCANNER_API_KEY    - scoped transport auth (X-Internal-Key)
+  REDAMON_CTX        - the signed agent tag (tenant/session/phase claims)
+"""
+from __future__ import annotations
+
+import base64
+import binascii
+import gzip
+import hashlib
+import hmac
+import json
+import os
+import shlex
+import subprocess
+import sys
+import urllib.parse
+from typing import Any, Dict, List, Optional
+
+import requests
+
+_TIMEOUT = 60
+_CURL_TIMEOUT = 45
+
+
+def _agent_url() -> str:
+    return os.environ.get("REDAMON_AGENT_URL", "http://agent:8080").rstrip("/")
+
+
+def _ctx() -> str:
+    tok = os.environ.get("REDAMON_CTX", "").strip()
+    if not tok:
+        _die("no REDAMON_CTX in the environment — proxy_brain must be launched by the agent "
+             "so the tenant/session context is set.")
+    return tok
+
+
+def _headers() -> Dict[str, str]:
+    h = {}
+    key = os.environ.get("SCANNER_API_KEY", "").strip()
+    if key:
+        h["X-Internal-Key"] = key
+    return h
+
+
+def _die(msg: str) -> None:
+    print(f"redamon: {msg}", file=sys.stderr)
+    raise SystemExit(2)
+
+
+def _post(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    body = {**payload, "ctx": _ctx()}
+    try:
+        r = requests.post(f"{_agent_url()}{path}", json=body, headers=_headers(), timeout=_TIMEOUT)
+    except requests.RequestException as e:
+        _die(f"cannot reach agent at {_agent_url()}{path}: {e}")
+    if r.status_code == 200:
+        return r.json()
+    try:
+        err = r.json().get("error", r.text)
+    except Exception:  # noqa: BLE001
+        err = r.text
+    _die(f"{path} -> {r.status_code}: {err}")
+    return {}  # unreachable
+
+
+# --------------------------------------------------------------------------
+# Lightweight result wrappers (keep the recipes ergonomic: .id / .status / .body)
+# --------------------------------------------------------------------------
+class Txn:
+    """A captured-transaction summary row (from search)."""
+    def __init__(self, id: str, raw: str):
+        self.id = id
+        self.raw = raw
+
+    def __repr__(self):
+        return self.raw or f"<Txn {self.id}>"
+
+
+class Response:
+    """A replayed request's response (parsed from curl -i)."""
+    def __init__(self, status: Optional[int], headers: Dict[str, str], body: str, payload: Optional[str] = None):
+        self.status = status
+        self.headers = headers
+        self.body = body
+        self.length = len(body or "")
+        self.payload = payload
+
+    def __repr__(self):
+        return f"<Response {self.status} {self.length}b" + (f" payload={self.payload!r}>" if self.payload is not None else ">")
+
+
+# --------------------------------------------------------------------------
+# READ — no traffic; every call is tenant-scoped server-side.
+# --------------------------------------------------------------------------
+def _read(op: str, args: Optional[Dict[str, Any]] = None) -> str:
+    return _post("/traffic/exec", {"op": op, "args": args or {}}).get("result", "")
+
+
+def search(**filters) -> List[Txn]:
+    """Burp-style history search. Filters: host, method, status, status_class,
+    tool, source, session (sessionId), run (runId), has_auth, reflected, only_5xx,
+    q, body_q, limit. Returns Txn rows (use .id with get/replay)."""
+    alias = {"status_class": "statusClass", "has_auth": "hasAuth", "only_5xx": "only5xx",
+             "session": "sessionId", "run": "runId", "body_q": "bodyq"}
+    f = {alias.get(k, k): v for k, v in filters.items() if v is not None}
+    text = _read("search", f)
+    out: List[Txn] = []
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line or line.endswith("transaction(s):") or line.startswith("No "):
+            continue
+        tok = line.split()
+        if tok:
+            out.append(Txn(tok[0], line))
+    return out
+
+
+def get(id: str, part: str = "response") -> str:
+    """Full request/response (headers + body) of one transaction. part =
+    request|response|both."""
+    return _read("get", {"id": id, "part": part})
+
+
+def sitemap() -> str:
+    """Distinct observed endpoints (host+path+method) with hit counts."""
+    return _read("sitemap")
+
+
+def params() -> str:
+    """Distinct request params with sample values + an injectability heuristic."""
+    return _read("params")
+
+
+def grep(pattern: str, limit: int = 50) -> str:
+    """Substring search across captured response bodies (+ a snippet)."""
+    return _read("grep", {"pattern": pattern, "limit": limit})
+
+
+def diff(id_a: str, id_b: str) -> str:
+    """Structural diff of two captured responses (status/length/headers/body)."""
+    return _read("diff", {"id_a": id_a, "id_b": id_b})
+
+
+def to_curl(id: str) -> str:
+    """Render a captured request as a reproducible curl (sends nothing)."""
+    return _read("to_curl", {"id": id})
+
+
+def query(spec: Dict[str, Any]) -> str:
+    """Constrained analytical query builder (allowlisted columns/aggs; no raw SQL)."""
+    return _read("query", {"spec": spec})
+
+
+# --------------------------------------------------------------------------
+# DECODE / CRYPTO — pure, no network.
+# --------------------------------------------------------------------------
+def decode(value: str, max_depth: int = 6) -> str:
+    """Best-effort peel of common encodings (url, base64, hex, gzip). Returns the
+    fully-decoded value, or the last readable layer."""
+    cur = str(value)
+    for _ in range(max_depth):
+        nxt = _decode_one(cur)
+        if nxt is None or nxt == cur:
+            break
+        cur = nxt
+    return cur
+
+
+def _decode_one(s: str) -> Optional[str]:
+    if "%" in s:
+        u = urllib.parse.unquote(s)
+        if u != s:
+            return u
+    st = s.strip()
+    if len(st) >= 8 and all(c in "0123456789abcdefABCDEF" for c in st) and len(st) % 2 == 0:
+        try:
+            b = bytes.fromhex(st)
+            if b[:2] == b"\x1f\x8b":
+                return gzip.decompress(b).decode("utf-8", "replace")
+            return b.decode("utf-8", "replace")
+        except (ValueError, OSError):
+            pass
+    if len(st) >= 8 and all(c in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=-_" for c in st):
+        try:
+            pad = st.replace("-", "+").replace("_", "/")
+            pad += "=" * (-len(pad) % 4)
+            b = base64.b64decode(pad, validate=False)
+            if b[:2] == b"\x1f\x8b":
+                return gzip.decompress(b).decode("utf-8", "replace")
+            txt = b.decode("utf-8")
+            if txt.isprintable() or "\n" in txt:
+                return txt
+        except (binascii.Error, ValueError, UnicodeDecodeError, OSError):
+            pass
+    return None
+
+
+class Jwt:
+    """A parsed JWT with forge helpers. Signing uses HS256 (alg:none / weak
+    secret). Resend the forged token with replay(mutate={'headers': ...})."""
+    def __init__(self, token: str):
+        self.token = token
+        parts = token.split(".")
+        self.header = _jwt_seg(parts[0]) if len(parts) > 0 else {}
+        self.payload = _jwt_seg(parts[1]) if len(parts) > 1 else {}
+
+    def forge(self, alg_none: bool = False, secret: Optional[str] = None,
+              claims: Optional[Dict[str, Any]] = None) -> str:
+        payload = {**self.payload, **(claims or {})}
+        if alg_none:
+            header = {**self.header, "alg": "none"}
+            return _b64u(json.dumps(header)) + "." + _b64u(json.dumps(payload)) + "."
+        header = {**self.header, "alg": "HS256"}
+        signing_input = (_b64u(json.dumps(header)) + "." + _b64u(json.dumps(payload))).encode()
+        sig = hmac.new((secret or "").encode(), signing_input, hashlib.sha256).digest()
+        return signing_input.decode() + "." + _b64u_bytes(sig)
+
+    def __repr__(self):
+        return f"<Jwt header={self.header} payload={self.payload}>"
+
+
+def jwt(token: str) -> Jwt:
+    return Jwt(token)
+
+
+def _jwt_seg(seg: str) -> Dict[str, Any]:
+    try:
+        seg += "=" * (-len(seg) % 4)
+        return json.loads(base64.urlsafe_b64decode(seg))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _b64u(s: str) -> str:
+    return base64.urlsafe_b64encode(s.encode()).decode().rstrip("=")
+
+
+def _b64u_bytes(b: bytes) -> str:
+    return base64.urlsafe_b64encode(b).decode().rstrip("=")
+
+
+# --------------------------------------------------------------------------
+# ACTIVE — host-pinned, egress-guarded, re-captured, per-send gated server-side.
+# --------------------------------------------------------------------------
+def replay(id: str, mutate: Optional[Dict[str, Any]] = None) -> Response:
+    """Resend a captured request with fields changed (method/path/query/param/
+    headers/dropHeaders/cookie/body). Host/scheme/port are PINNED to the origin
+    by the agent — they cannot be changed here. Returns the parsed Response."""
+    data = _post("/traffic/replay", {"op": "replay", "id": id, "mutate": mutate or {}})
+    sends = data.get("sends") or []
+    ctx = data.get("ctx", "")
+    if not sends:
+        _die("replay produced no request")
+    return _run(sends[0]["curl_args"], ctx)
+
+
+def batch(id: str, mutations: List[Dict[str, Any]], parallel: bool = False) -> List[Response]:
+    """Replay one origin request once per mutation. `parallel` fires them
+    concurrently (race-condition testing). Each is host-pinned + re-captured."""
+    out: List[Response] = []
+    for m in mutations:
+        out.append(replay(id, m))
+    return out
+
+
+def fuzz(id: str, insertion_point: str, payloads: List[str]) -> List[Response]:
+    """Iterate `payloads` over the query param `insertion_point` on one captured
+    request. Returns one Response per payload (server caps the count)."""
+    data = _post("/traffic/replay", {"op": "fuzz", "id": id,
+                                     "insertion_point": insertion_point,
+                                     "payloads": [str(p) for p in payloads]})
+    ctx = data.get("ctx", "")
+    out: List[Response] = []
+    for s in (data.get("sends") or []):
+        out.append(_run(s["curl_args"], ctx, payload=s.get("payload")))
+    return out
+
+
+def _run(curl_args: str, ctx: str, payload: Optional[str] = None) -> Response:
+    """Execute a prepared, host-pinned curl locally, routed through the capture
+    proxy (so it is egress-guarded + re-captured) exactly like execute_curl."""
+    args = shlex.split(curl_args)
+    if "-i" not in args and "--include" not in args:
+        args = ["-i"] + args
+    try:
+        from capture_routing import agent_capture_routing
+        cap_url, cap_tok = agent_capture_routing(ctx)
+    except Exception:  # noqa: BLE001
+        cap_url, cap_tok = (None, None)
+    if cap_url and cap_tok:
+        args = args + ["-x", cap_url, "-k", "-H", f"X-Redamon-Ctx: {cap_tok}"]
+    try:
+        proc = subprocess.run(["curl", *args], capture_output=True, text=True, timeout=_CURL_TIMEOUT)
+        raw = proc.stdout
+    except subprocess.TimeoutExpired:
+        return Response(None, {}, "[timeout]", payload)
+    except Exception as e:  # noqa: BLE001
+        return Response(None, {}, f"[curl error: {e}]", payload)
+    return _parse_curl(raw, payload)
+
+
+def _parse_curl(raw: str, payload: Optional[str]) -> Response:
+    status: Optional[int] = None
+    headers: Dict[str, str] = {}
+    body = raw
+    # Split the last header block from the body (handles proxy CONNECT + redirects).
+    blocks = raw.split("\r\n\r\n") if "\r\n\r\n" in raw else raw.split("\n\n")
+    if len(blocks) >= 2:
+        head, body = blocks[0], "\n\n".join(blocks[1:])
+        lines = head.splitlines()
+        if lines and lines[0].startswith("HTTP/"):
+            try:
+                status = int(lines[0].split()[1])
+            except (IndexError, ValueError):
+                status = None
+        for ln in lines[1:]:
+            if ":" in ln:
+                k, v = ln.split(":", 1)
+                headers[k.strip().lower()] = v.strip()
+    return Response(status, headers, body, payload)
+
+
+# --------------------------------------------------------------------------
+# RESULTS
+# --------------------------------------------------------------------------
+def finding(kind: str, txn_id: str, evidence: Any = None, severity: str = "medium") -> None:
+    """Record a finding. For now it is emitted into the run output (structured)
+    for the agent to lift into the report; wiring to the findings store/graph is
+    a tracked follow-on."""
+    ev = ""
+    if isinstance(evidence, Response):
+        ev = f" status={evidence.status} len={evidence.length}"
+    print(json.dumps({"finding": kind, "txn": txn_id, "severity": severity, "evidence": ev}))
+
+
+def emit(text: str) -> None:
+    """Print a line into the run output (what returns to the agent)."""
+    print(text)

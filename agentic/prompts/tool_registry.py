@@ -112,6 +112,22 @@ TOOL_REGISTRY = {
             '   - Payload count is capped; sent to the ORIGIN host only; FORBIDDEN in stealth mode'
         ),
     },
+    "proxy_brain": {
+        "purpose": "Write Python to hunt + exploit over the captured HTTP corpus (DANGEROUS)",
+        "when_to_use": "Compose real oracles over captured traffic: blind-SQLi bisection, IDOR/BOLA sweeps, JWT forging, races, multi-step chains — anything the shaped tools cannot express",
+        "args_format": '"code": "python that imports redamon and calls redamon.search/replay/fuzz/jwt/decode/... (see the tool docstring for the full SDK + recipes)"',
+        "description": (
+            '**proxy_brain** (DANGEROUS — can emit live traffic) — ONE tool that replaces the\n'
+            'proxy_* family: write Python; `redamon` is pre-imported.\n'
+            '   - READ (no traffic): redamon.search(**f) get(id) sitemap() params() grep(p) diff(a,b) query(spec) to_curl(id)\n'
+            '   - DECODE: redamon.decode(v) ; redamon.jwt(tok).forge(alg_none=True|secret=..|claims=..)\n'
+            '   - ACTIVE (live): redamon.replay(id, mutate={...}) ; redamon.batch(id, muts) ; redamon.fuzz(id, point, payloads)\n'
+            '   - RESULT: redamon.finding(kind, id, evidence, severity) ; print(...)\n'
+            '   - mutate keys: method,path,query,param,headers,dropHeaders,cookie,body (host is PINNED)\n'
+            '   - Tenant-scoped for you; active sends are host-pinned, re-captured, exploitation-phase only.\n'
+            '   - Print only distilled results, never raw bodies (output is truncated).'
+        ),
+    },
     "query_graph": {
         "purpose": "Neo4j database queries",
         "when_to_use": "PRIMARY - Check graph first for recon data",

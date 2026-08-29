@@ -234,7 +234,7 @@ SYSTEM_MCP_TOOL_NAMES = frozenset({
     "execute_jsluice", "execute_katana", "execute_wpscan",
     "execute_nmap", "execute_nuclei", "kali_shell", "execute_playwright",
     "execute_hydra", "metasploit_console", "msf_restart",
-    "execute_code", "cve_intel", "execute_masscan",
+    "execute_code", "cve_intel", "execute_masscan", "proxy_brain",
     # Supply-chain L3 PASSIVE verdict tool. It was missing here and got dropped
     # by the manifest filter ("Skipped registering ... not declared in any
     # manifest") while still advertised to the LLM, so every call returned "Tool
@@ -2282,6 +2282,20 @@ class PhaseAwareToolExecutor:
             _redamon_ctx = self._build_redamon_ctx(tool_name)
             if _redamon_ctx:
                 tool_args = {**tool_args, "_redamon_ctx": _redamon_ctx}
+
+        # proxy_brain: the signed tenant/session tag is how its kali `redamon` SDK
+        # reaches the corpus (/traffic/exec) and the replay path (/traffic/replay),
+        # so it is injected UNCONDITIONALLY — independent of the capture-proxy
+        # toggle — and the LLM never sees it. Fail closed if we can't mint it: a
+        # tag-less run would be a request the agent cannot tenant-scope.
+        if tool_name == "proxy_brain":
+            _pb_ctx = self._build_redamon_ctx("proxy_brain")
+            if not _pb_ctx:
+                return {
+                    "success": False, "output": None,
+                    "error": "proxy_brain: no tenant/session context — cannot mint the traffic tag.",
+                }
+            tool_args = {**tool_args, "_redamon_ctx": _pb_ctx}
 
         # Dispatch logic pulled into a closure so we can re-invoke with a
         # fresh tool reference after an MCP reconnect.
