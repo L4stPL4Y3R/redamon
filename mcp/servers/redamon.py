@@ -17,6 +17,7 @@ Env (injected per-invocation by the proxy_brain MCP tool):
 """
 from __future__ import annotations
 
+import atexit
 import base64
 import binascii
 import gzip
@@ -34,6 +35,7 @@ import requests
 
 _TIMEOUT = 60
 _CURL_TIMEOUT = 45
+_BROWSER_NAV_TIMEOUT = 30000  # ms
 
 
 def _agent_url() -> str:
@@ -368,6 +370,204 @@ def _parse_curl(raw: str, payload: Optional[str]) -> Response:
                 k, v = ln.split(":", 1)
                 headers[k.strip().lower()] = v.strip()
     return Response(status, headers, body, payload)
+
+
+# --------------------------------------------------------------------------
+# BROWSER — a real chromium as an oracle (DOM XSS, SPA, JS flows). Live traffic;
+# host-pinned to the seed transaction's host, exploitation-phase + action-budget
+# gated server-side at /traffic/browser, egress-guarded + re-captured.
+# --------------------------------------------------------------------------
+class Browser:
+    """A live chromium pinned to the host of a captured transaction. Drive it to
+    reach a signal that only exists AFTER JavaScript runs — the rendered DOM, a
+    console message, or a fired alert() — the oracle curl replay cannot read.
+
+    Budgeted actions (each is one server-checked step): goto, click, fill, submit,
+    press, eval. Free reads (no budget): dom, text, html, console, alerts, url.
+    Always close() when done. Do NOT drive it from batch(parallel=True) — sync
+    Playwright is not thread-safe."""
+
+    # Each live instance is a full chromium; too many at once OOMs the shared kali
+    # container (1 GB). Cap concurrent live browsers per proxy_brain run and steer
+    # the agent to close() first. (The server also budgets every open, so this is
+    # defence-in-depth for the honest in-process path.)
+    _live = 0
+    _MAX_LIVE = 3
+
+    def __init__(self, origin_id: str):
+        # _closed starts True so a mid-init failure (or an early atexit) never
+        # decrements _live for a browser that was never counted.
+        self._closed = True
+        if Browser._live >= Browser._MAX_LIVE:
+            _die(f"browser: {Browser._live} browsers already open in this run "
+                 f"(max {Browser._MAX_LIVE}); call .close() on one before opening another")
+        self._origin_id = str(origin_id)
+        data = _post("/traffic/browser", {"action": "open", "origin_id": self._origin_id})
+        self._host = data.get("origin_host")
+        self._scheme = data.get("scheme") or "http"
+        self._port = data.get("port")
+        cap_tag = data.get("ctx") or ""
+        if not self._host:
+            _die("browser: origin transaction has no host to pin to")
+        try:
+            from playwright.sync_api import sync_playwright
+        except Exception as e:  # noqa: BLE001
+            _die(f"browser: Playwright is unavailable in this sandbox: {e}")
+        from browser_launch import BROWSER_ARGS, CHROME_UA, capture_kwargs
+        proxy, headers = capture_kwargs(_ctx(), header_tag=cap_tag)
+        self._alerts: List[str] = []
+        self._console: List[str] = []
+        self._pw = sync_playwright().start()
+        try:
+            self._browser = self._pw.chromium.launch(
+                headless=True, args=BROWSER_ARGS, proxy=proxy,
+            )
+            self._context = self._browser.new_context(
+                user_agent=CHROME_UA,
+                ignore_https_errors=bool(proxy),  # trust the capture proxy MITM CA
+                extra_http_headers=headers or {},
+            )
+            self._page = self._context.new_page()
+        except Exception as e:  # noqa: BLE001
+            self._pw.stop()
+            _die(f"browser: chromium failed to launch: {e}")
+        # Launch succeeded: now it is a live browser to be reaped. Register an
+        # atexit fallback so a run that forgets close() still tears chromium down
+        # on normal interpreter exit (SIGKILL at the 180s cap is caught by the
+        # driver's parent-pipe EOF instead).
+        Browser._live += 1
+        self._closed = False
+        atexit.register(self.close)
+        # A fired dialog (alert/confirm/prompt) is the classic in-band XSS oracle;
+        # auto-dismiss so it never blocks, and record its message for alerts().
+        self._page.on("dialog", lambda d: (self._alerts.append(d.message), d.dismiss()))
+        self._page.on("console", lambda m: self._console.append(f"{m.type}: {m.text}"))
+
+    # -- pin + budget checkin (server is the authority) --------------------
+    def _checkin(self, action: str, url: Optional[str] = None) -> None:
+        payload: Dict[str, Any] = {"action": action, "origin_id": self._origin_id}
+        if url is not None:
+            payload["url"] = url
+        _post("/traffic/browser", payload)  # _die on 400/403/429 (pin/phase/budget)
+
+    def _abs(self, path_or_url: str) -> str:
+        s = str(path_or_url)
+        if "://" in s:
+            return s  # full URL — the server still host-checks it against the pin
+        hostport = self._host
+        if self._port not in (80, 443, None):
+            hostport = f"{self._host}:{self._port}"
+        p = s if s.startswith("/") else "/" + s
+        return f"{self._scheme}://{hostport}{p}"
+
+    def _assert_on_origin(self) -> None:
+        # A click / submit / redirect may cross off the pinned origin. Compare
+        # host AND port AND scheme (a redirect to :8443 or https is off-origin).
+        from urllib.parse import urlsplit
+        u = urlsplit(self._page.url)
+        _defport = {"http": 80, "https": 443}
+        cur_port = u.port if u.port is not None else _defport.get(u.scheme)
+        pin_port = self._port if self._port is not None else _defport.get(self._scheme)
+        if u.hostname and (u.hostname != self._host or u.scheme != self._scheme or cur_port != pin_port):
+            _die(f"browser: navigated off the pinned origin "
+                 f"({u.scheme}://{u.hostname}:{cur_port} != {self._scheme}://{self._host}:{pin_port})")
+
+    # -- budgeted actions --------------------------------------------------
+    def goto(self, path_or_url: str):
+        """Navigate (host-pinned). Returns the main response status (int|None)."""
+        url = self._abs(path_or_url)
+        self._checkin("navigate", url)
+        try:
+            # "load", not "networkidle": networkidle never settles on SPAs / long-
+            # poll / websocket pages (the feature's primary targets) and would time
+            # out on every one. JS run at parse/DOMContentLoaded/onload has fired by
+            # "load", so DOM-XSS dialogs are already captured.
+            resp = self._page.goto(url, wait_until="load", timeout=_BROWSER_NAV_TIMEOUT)
+        except Exception as e:  # noqa: BLE001
+            return f"[nav error: {e}]"
+        self._assert_on_origin()  # a 3xx may have redirected off the pinned origin
+        return resp.status if resp else None
+
+    def click(self, selector: str):
+        self._checkin("interact")
+        self._page.click(selector, timeout=_BROWSER_NAV_TIMEOUT)
+        self._assert_on_origin()
+
+    def fill(self, selector: str, value: str):
+        self._checkin("interact")
+        self._page.fill(selector, str(value), timeout=_BROWSER_NAV_TIMEOUT)
+
+    def submit(self, selector: str):
+        self._checkin("interact")
+        self._page.click(selector, timeout=_BROWSER_NAV_TIMEOUT)
+        try:
+            self._page.wait_for_load_state("load", timeout=_BROWSER_NAV_TIMEOUT)
+        except Exception:  # noqa: BLE001
+            pass
+        self._assert_on_origin()
+
+    def press(self, selector: str, key: str):
+        self._checkin("interact")
+        self._page.press(selector, str(key), timeout=_BROWSER_NAV_TIMEOUT)
+        self._assert_on_origin()  # Enter can submit a form and navigate off-host
+
+    def eval(self, js: str) -> Any:
+        """Run JS in the page context; returns the result. Costs one action."""
+        self._checkin("eval")
+        return self._page.evaluate(str(js))
+
+    # -- free reads (the oracle) ------------------------------------------
+    def dom(self) -> str:
+        return self._page.content()
+
+    def text(self, selector: Optional[str] = None) -> str:
+        if selector:
+            el = self._page.query_selector(selector)
+            return el.inner_text() if el else ""
+        return self._page.inner_text("body")
+
+    def html(self, selector: Optional[str] = None) -> str:
+        if selector:
+            el = self._page.query_selector(selector)
+            return el.inner_html() if el else ""
+        return self._page.content()
+
+    def console(self) -> List[str]:
+        return list(self._console)
+
+    def alerts(self) -> List[str]:
+        """Messages of any JS dialog (alert/confirm/prompt) fired so far — the
+        in-band DOM-XSS oracle."""
+        return list(self._alerts)
+
+    def url(self) -> str:
+        return self._page.url
+
+    def close(self) -> None:
+        # Idempotent: safe to call twice (explicitly + via atexit) and a no-op for
+        # a browser that never finished launching, so _live is decremented once.
+        if getattr(self, "_closed", True):
+            return
+        self._closed = True
+        Browser._live = max(0, Browser._live - 1)
+        for step in (lambda: self._context.close(),
+                     lambda: self._browser.close(),
+                     lambda: self._pw.stop()):
+            try:
+                step()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def __repr__(self):
+        return f"<Browser pinned={self._host} url={getattr(self._page, 'url', '?')}>"
+
+
+def browser(id: str) -> Browser:
+    """Open a live chromium PINNED to the host of captured transaction `id` (find
+    one with search()). Exploitation-phase only, per-session action-budgeted, and
+    re-captured. Use it to confirm bugs whose signal only appears after JS runs:
+    read redamon.manual("browser") first."""
+    return Browser(id)
 
 
 # --------------------------------------------------------------------------

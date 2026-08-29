@@ -23,6 +23,9 @@ proxy reach it at **`http://pbtarget:5000/`**. It is also on the host at
 | `GET /api/invoice/<id>` | IDOR/BOLA — any invoice, no owner check | `authz` |
 | `GET /api/product?id=1` | SQLi — sqlite string-concat (boolean/error/UNION); `secret_note` is the loot | `sqli`, `intruder` |
 | `GET /search?q=` | reflected XSS — `q` echoed unescaped | `injection` |
+| `GET /dom#name=` | DOM XSS — client JS writes `location.hash` into `innerHTML`; curl sees inert HTML, only a real browser fires it | `browser` |
+| `GET /portal` (+ `/api/portal-data`) | SPA — the secret (`internal-portal-key-7F3A9C`) is injected by client JS after a `fetch`; curl only sees the `Loading…` shell | `browser` |
+| `GET /account` (+ `POST /api/update-email`) | JS-minted anti-CSRF token computed in client JS, never in the raw HTML; read it in the browser (`eval`), then hand it to `replay` | `browser`, `flows` |
 | `POST /api/login` + `GET /api/admin` | JWT weak secret (`secret123`); `/api/admin` trusts `role` → forge `role:admin` for the **FLAG** | `jwt` |
 | `POST /redeem` `{"coupon":"FREESHIP"}` | race — single-use coupon, widened window; >1 grant = win | `race` |
 | `GET /go?next=` | open redirect | `injection` |

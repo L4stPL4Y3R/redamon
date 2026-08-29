@@ -32,22 +32,25 @@ _registry_lock = threading.RLock()
 
 
 TOOL_REGISTRY = {
-    # ===== Captured HTTP traffic — the "Burp history" (one code tool) =====
+    # ===== Captured HTTP traffic — the in-platform HTTP history (one code tool) =====
     "proxy_brain": {
-        "purpose": "Write Python to hunt + exploit over the captured HTTP corpus — your in-platform Burp Suite (DANGEROUS)",
-        "when_to_use": "Whenever HTTP traffic has been captured and you need to inspect, correlate, replay, fuzz, or confirm a web vuln. It is a code sandbox, not a fixed command: compose the `redamon` SDK into ANY capability Burp Suite has — blind-SQLi bisection, IDOR/BOLA sweeps, JWT forging, race conditions, request smuggling, cache poisoning, param mining, multi-step token flows — anything a shaped tool cannot express.",
+        "purpose": "Write Python to hunt + exploit over the captured HTTP corpus — your in-platform web-hacking toolkit (DANGEROUS)",
+        "when_to_use": "Whenever HTTP traffic has been captured and you need to inspect, correlate, replay, fuzz, or confirm a web vuln. It is a code sandbox, not a fixed command: compose the `redamon` SDK into ANY web-proxy capability — blind-SQLi bisection, IDOR/BOLA sweeps, JWT forging, race conditions, request smuggling, cache poisoning, param mining, multi-step token flows — anything a shaped tool cannot express.",
         "args_format": '"code": "Python. `redamon` is pre-imported. Read redamon.manual() FIRST for anything non-trivial, then write your attack."',
         "description": (
-            '**proxy_brain** (DANGEROUS — can emit live traffic) — your Burp Suite inside RedAmon.\n'
+            '**proxy_brain** (DANGEROUS — can emit live traffic) — your web-hacking toolkit inside RedAmon.\n'
             'You write Python; `redamon` is pre-imported and is your ONLY I/O to the captured\n'
             'traffic and the live replay path. There is no fixed menu — it is a language: if\n'
-            'Burp can do it, you code it here by composing these primitives.\n'
+            'a web proxy can do it, you code it here by composing these primitives.\n'
             '\n'
             '  READ (no traffic, any phase): redamon.search({..}|**f) · get(id, part) · sitemap() ·\n'
             '     params() · grep(pat) · diff(a,b) · query(spec) · to_curl(id)   (search rows have .id/.raw)\n'
             '  DECODE (no traffic): redamon.decode(v) · redamon.jwt(tok).forge(alg_none=True|secret=..|claims=..)\n'
             '  ACTIVE (LIVE, exploitation phase only): redamon.replay(id, mutate={..}) ·\n'
             '     redamon.batch(id, muts, parallel=True) · redamon.fuzz(id, param, payloads)\n'
+            '  BROWSER (LIVE, exploitation only — for signals only visible AFTER JS runs, e.g. DOM XSS):\n'
+            '     redamon.browser(id) → .goto/.click/.fill/.eval (host-pinned, action-budgeted) then read\n'
+            '     .dom()/.alerts()/.console() as the oracle. See manual("browser").\n'
             '  RESULT: redamon.finding(kind, txn_id, evidence, severity) · print(...)\n'
             '  mutate keys: method,path,query,param,headers,dropHeaders,cookie,body — HOST IS PINNED\n'
             '     (a replay can only ever hit the origin txn\'s host). Response: .status .headers .body .length\n'
@@ -56,10 +59,10 @@ TOOL_REGISTRY = {
             '     a regex over .body / timing), compare to a baseline — that fact confirms the bug.\n'
             '\n'
             '  >>> READ THE MANUAL FIRST for anything beyond a basic search/replay. From your code:\n'
-            '        print(redamon.manual())          # core: full SDK + the Burp-capability map + section index\n'
+            '        print(redamon.manual())          # core: full SDK + the capability map + section index\n'
             '        print(redamon.manual("jwt"))     # one deep technique section, with copy-paste recipes\n'
             '     Sections: recon, intruder, sqli, authz, jwt, race, smuggling, cache, injection,\n'
-            '     decode, sequencer, flows, report. Read the section RIGHT BEFORE the code that uses it.\n'
+            '     decode, sequencer, flows, browser, report. Read the section RIGHT BEFORE the code that uses it.\n'
             '\n'
             '  LIMITS (enforced): host-pinned · per-session send budget (~1000) · 180s/run · output\n'
             '     truncated (print DISTILLED lines, never raw bodies) · every send is re-captured.\n'

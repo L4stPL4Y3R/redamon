@@ -64,6 +64,7 @@ stop and inform the user honestly — do NOT proceed with noisy techniques.
 - The read/decode side of `redamon` (search/get/sitemap/params/grep/diff/query/decode/jwt) is passive — use freely.
 - FORBIDDEN in stealth: `redamon.fuzz(...)` and `redamon.batch(...)`, and any loop that calls `redamon.replay(...)` more than once — a payload sweep or rapid-fire replay is inherently noisy.
 - ALLOWED: a SINGLE targeted `redamon.replay(...)` (one request) to confirm one finding.
+- `redamon.browser(...)` renders a full page (many sub-requests): FORBIDDEN in stealth except a SINGLE `.goto` + read to confirm one client-side finding. No click/eval loops, no crawling multiple routes.
 - The per-session send budget still applies and the server will refuse once it is exhausted; stay far below it in stealth.
 
 ### execute_curl — RESTRICTED

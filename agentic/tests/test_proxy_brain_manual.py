@@ -22,7 +22,8 @@ import redamon  # noqa: E402
 # The public SDK the manual promises the agent. Keep in sync with redamon.py.
 PUBLIC_API = {
     "search", "get", "sitemap", "params", "grep", "diff", "to_curl", "query",
-    "decode", "jwt", "replay", "batch", "fuzz", "finding", "emit", "manual",
+    "decode", "jwt", "replay", "batch", "fuzz", "browser", "finding", "emit",
+    "manual",
 }
 
 
@@ -31,7 +32,7 @@ def test_manual_file_present_and_core_complete():
     assert "not found" not in core, "manual file missing next to the SDK"
     assert "THE SDK" in core
     assert "SECTION INDEX" in core
-    assert "BURP" in core          # the capability map
+    assert "HOW YOU BUILD" in core  # the capability map (web-proxy workflows)
     assert "OAST" in core          # the NOT-available caveat
 
 
@@ -77,7 +78,7 @@ def test_section_retrieval_and_index_consistency():
     for name in ("recon", "intruder", "sqli", "authz", "jwt", "race",
                  "smuggling", "cache", "injection", "decode", "sequencer",
                  "flows", "report", "nosql", "graphql", "lfi", "cmdi",
-                 "cors", "xxe", "auth"):
+                 "cors", "xxe", "auth", "browser"):
         assert name in secs, f"index lists '{name}' but no such section"
         body = redamon.manual(name)
         assert len(body) > 50 and "no section" not in body

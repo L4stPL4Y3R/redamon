@@ -6,6 +6,9 @@ Each route maps to a technique in mcp/servers/proxy_brain_manual.md:
   IDOR/BOLA        GET  /api/invoice/<id>       (no owner check)
   SQLi (bool/err)  GET  /api/product?id=1       (sqlite string-concat)
   reflected XSS    GET  /search?q=              (unescaped reflection)
+  DOM XSS          GET  /dom#name=              (JS sink; hash never hits server)
+  JS-rendered SPA  GET  /portal                 (secret injected by client JS only)
+  JS-minted token  GET  /account + POST /api/update-email  (csrf token computed in JS)
   JWT weak secret  POST /api/login  + GET /api/admin  (HS256, secret "secret123")
   race condition   POST /redeem                 (single-use coupon, widened window)
   open redirect    GET  /go?next=
@@ -64,8 +67,8 @@ def index():
     return jsonify({
         "app": "proxy_brain guinea pig",
         "endpoints": ["/api/invoice/<id>", "/api/product?id=1", "/search?q=",
-                      "/api/login (POST)", "/api/admin", "/redeem (POST)",
-                      "/go?next=", "/ping?host="],
+                      "/dom#name=", "/portal", "/account", "/api/login (POST)",
+                      "/api/admin", "/redeem (POST)", "/go?next=", "/ping?host="],
     })
 
 
@@ -96,6 +99,71 @@ def product():
 def search():
     q = request.args.get("q", "")
     return Response(f"<html><body>Results for: {q}</body></html>", mimetype="text/html")
+
+
+# --- DOM XSS: the sink is in client JS; the payload rides the URL fragment ----
+# curl only ever sees this inert HTML — the fragment (#...) is never sent to the
+# server, and the write to innerHTML happens only once a real browser runs the JS.
+@app.get("/dom")
+def dom():
+    page = (
+        "<html><body><h1>Welcome</h1><div id='out'></div>"
+        "<script>"
+        "var p=new URLSearchParams(location.hash.slice(1));"
+        "document.getElementById('out').innerHTML='Hi '+(p.get('name')||'guest');"
+        "</script></body></html>"
+    )
+    return Response(page, mimetype="text/html")
+
+
+# --- SPA / JS-rendered content: the secret is injected by client JS after a
+# fetch, so curl only ever sees the "Loading..." shell. A real browser runs the
+# JS and can read the rendered value out of the DOM. -------------------------
+@app.get("/portal")
+def portal():
+    page = (
+        "<html><body><h1>Portal</h1><div id='app'>Loading...</div>"
+        "<script>"
+        "fetch('/api/portal-data').then(function(r){return r.json();}).then(function(d){"
+        "document.getElementById('app').innerHTML='<h2>'+d.title+'</h2><p>'+d.note+'</p>';});"
+        "</script></body></html>"
+    )
+    return Response(page, mimetype="text/html")
+
+
+@app.get("/api/portal-data")
+def portal_data():
+    # The interesting value only reaches the page through JS; curl /portal never has it.
+    return jsonify({"title": "Internal Staff Portal", "note": "internal-portal-key-7F3A9C"})
+
+
+# --- JS-minted token: an anti-CSRF token is COMPUTED in client JS and never
+# appears in the raw HTML, so curl cannot post the form. A browser reads the
+# minted value (eval), then hands it to replay for the real request. ----------
+VALID_CSRF = "csrf-" + format(0x1F4 * 3, "x")   # must match the JS below ("csrf-5dc")
+
+
+@app.get("/account")
+def account():
+    page = (
+        "<html><body><h2>Account</h2>"
+        "<form id='f' method='POST' action='/api/update-email'>"
+        "<input type='hidden' id='csrf' name='csrf'>"
+        "<input name='email' id='email'></form>"
+        "<script>"
+        "document.getElementById('csrf').value='csrf-'+((0x1F4)*3).toString(16);"
+        "</script></body></html>"
+    )
+    return Response(page, mimetype="text/html")
+
+
+@app.post("/api/update-email")
+def update_email():
+    data = request.get_json(silent=True) or request.form
+    if data.get("csrf") != VALID_CSRF:            # BUG: guessable, JS-only token
+        return jsonify({"error": "bad or missing csrf token"}), 403
+    return jsonify({"ok": True, "email": data.get("email"),
+                    "note": "email changed using a token that only existed in client JS"})
 
 
 # --- JWT: weak HS256 secret; /api/admin trusts the role claim ----------------

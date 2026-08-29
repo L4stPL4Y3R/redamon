@@ -6,7 +6,7 @@ request/response of each HTTP transaction, tags it with *who* produced it
 (project / user / run / tool), stores it in Postgres, and exposes it to both the
 human (the `/traffic` UI) and the AI agent (read-only `proxy_*` tools).
 
-Think of it as Burp Suite's HTTP history, except it is automatic (no manual proxy
+Think of it as an always-on HTTP history, except it is automatic (no manual proxy
 config), attributed (every row knows which scan run and which agent session
 created it), and queryable by the LLM itself.
 
@@ -541,7 +541,7 @@ validated against `^[0-9a-f]{64}$` to block path traversal
 ### Human: the `/traffic` UI
 
 [`webapp/src/app/traffic/page.tsx`](../../webapp/src/app/traffic/page.tsx). A
-server-paginated, Burp-style table. Columns: Time, Source (recon/agent badge),
+server-paginated, proxy-style table. Columns: Time, Source (recon/agent badge),
 Tool, Method, Host, Path, Status (colored by class, "BLK" if blocked), Length,
 response Time, Flags (cookie / reflect / replay / out-of-scope / **ioc**, which
 links to the incident write-up when the catalog supplied a usable http(s) URL —
@@ -721,7 +721,7 @@ ones are pushed to the orchestrator on the settings save.
 `scaIntelIgnoreSuffixes` is per-USER, not per-project: an operator's OAST
 provider is a property of their tooling, not of a target. The incident catalog
 legitimately lists `oastify.com` and friends as indicators, so without this list
-a pentester running Burp Collaborator would flag their own callbacks on every
+a pentester running an OAST server would flag their own callbacks on every
 engagement. **Clearing the box restores the shipped list rather than disabling
 suppression** — to see OAST hits, replace it with a host you never use. It
 reaches the ingest worker as `CAPTURE_IOC_IGNORE_SUFFIXES` via the same
@@ -813,7 +813,7 @@ retention and scope are the database fields above.
 The agent works the capture corpus through a **single code-native tool,
 `proxy_brain`**. Instead of a fixed menu of narrow commands, `proxy_brain` runs a
 block of the agent's own Python inside the Kali sandbox, with a pre-imported SDK
-called `redamon` as its only door to the traffic. Anything Burp Suite does the
+called `redamon` as its only door to the traffic. Anything an interactive web proxy does, the
 agent scripts here: Repeater, Intruder, Comparer, Sequencer, Decoder, JWT Editor,
 Autorize, Turbo Intruder, all composed in a few lines over the captured history. A
 vulnerability is usually an *algorithm* (an oracle queried in a loop, a value
@@ -866,6 +866,14 @@ flowchart LR
   and returns `curl_args` + `ctx`. The SDK's `_run` then executes the curl **from
   inside kali, through the capture proxy** ([`redamon.py:329`](../../mcp/servers/redamon.py#L329)),
   so the send is egress-guarded and re-captured exactly like `execute_curl`.
+- **Browser ops** (`redamon.browser(id)` and its `.goto` / `.click` / `.eval` / … )
+  POST to `/traffic/browser` ([`api.py:3122`](../../agentic/api.py#L3122)), a **PREPARE**
+  that verifies the tag, gates the exploitation phase, re-reads the origin
+  (tenant-scoped) to pin the navigation host/port/scheme, and enforces a per-session
+  **action budget** (every action, including `open`, costs one unit). A real Chromium
+  then runs **inside kali, through the capture proxy** (routed by `browser_launch.py`),
+  so every request it makes is egress-guarded and re-captured as
+  `tool=proxy_brain_browser`. The SDK caps concurrent browsers at 3.
 
 ### Tenant isolation (the signed tag)
 
@@ -910,7 +918,7 @@ reaching another tenant's traffic:
 
 | Call | What it returns |
 |---|---|
-| `redamon.search(filters)` | Burp-style history rows (`.id`, `.method`, `.status`, `.url`, `.host`, `.path`); summaries only, never bodies. Filters: host, method, status, statusClass, tool, source, session, run, hasAuth, reflected, only5xx, `q`, `bodyq`, limit. |
+| `redamon.search(filters)` | HTTP history rows (`.id`, `.method`, `.status`, `.url`, `.host`, `.path`); summaries only, never bodies. Filters: host, method, status, statusClass, tool, source, session, run, hasAuth, reflected, only5xx, `q`, `bodyq`, limit. |
 | `redamon.get(id, part)` | Full request or response (headers + body) for one transaction (`request` / `response` / `both`); the way to pull a body into scope. |
 | `redamon.sitemap()` | Distinct endpoints observed, with hit counts and statuses. |
 | `redamon.params()` | Distinct request parameters + an injectability guess (seq-id / uuid / jwt / base64). |
@@ -929,11 +937,22 @@ base64 / url / hex / gzip layers; `redamon.jwt(tok)` parses a JWT and forges var
 |---|---|
 | `redamon.replay(id, mutate)` | Resend a captured request with fields changed (`method`, `path`, `query`, `param`, `headers`, `dropHeaders`, `cookie`, `body`). **Host / scheme / port pinned to the origin.** Returns a `Response` (`.status`, `.headers`, `.body`, `.length`). |
 | `redamon.batch(id, muts, parallel=True)` | One replay per mutation; `parallel=True` fires them **concurrently** (a real race-condition window: limit overrun, double-spend, coupon reuse). |
-| `redamon.fuzz(id, insertion_point, payloads)` | Burp-Intruder over one query parameter; one `Response` per payload. |
+| `redamon.fuzz(id, insertion_point, payloads)` | An automated payload sweep over one query parameter; one `Response` per payload. |
+
+**Browser ops** (live traffic, exploitation phases only — the rendered-DOM oracle
+for bugs that only surface after JavaScript runs, e.g. DOM-based XSS, SPA-only routes,
+JS-minted CSRF):
+
+| Call | What it does |
+|---|---|
+| `redamon.browser(id)` | Open a real Chromium **pinned to txn `id`'s host / port / scheme**; find the id with `search` first. Costs one action. |
+| `.goto(path)` `.click(sel)` `.fill(sel, v)` `.submit(sel)` `.press(sel, key)` `.eval(js)` | **Budgeted** actions; an off-origin navigation is refused and a redirect that crosses off the origin aborts the run. |
+| `.dom()` `.text(sel)` `.html(sel)` `.console()` `.alerts()` `.url()` | **Free** reads (no budget). `.alerts()` returns any fired `alert/confirm/prompt` — the in-band DOM-XSS oracle. |
+| `.close()` | Tear the browser down; at most 3 open at once. |
 
 **Result:** `redamon.finding(kind, txn_id, evidence, severity)` records a finding;
 `redamon.manual(section=None)` returns the on-demand cookbook (core map, or one of
-twenty technique sections) so the recipes never bloat the prompt.
+twenty-one technique sections — including `browser`) so the recipes never bloat the prompt.
 
 ### How an active send actually runs (host pin + budget)
 

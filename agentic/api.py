@@ -3092,6 +3092,121 @@ async def traffic_replay(body: TrafficReplayRequest):
     return JSONResponse(content={"sends": sends, "ctx": replay_tag})
 
 
+# Per-session browser-action budget for /traffic/browser. proxy_brain's
+# `redamon.browser` drives a real chromium in the kali sandbox; its page loads
+# fan out to sub-requests the /traffic/replay send-budget never sees (they go
+# kali -> capture proxy directly), so a separate counter caps browser ACTIONS
+# (goto/click/eval). Same in-process single-worker model as _TRAFFIC_REPLAY_SENDS.
+_TRAFFIC_BROWSER_ACTIONS: dict[str, int] = {}
+
+
+def _browser_budget() -> int:
+    try:
+        return max(1, int(os.environ.get("TRAFFIC_BROWSER_ACTION_BUDGET", "100") or "100"))
+    except (TypeError, ValueError):
+        return 100
+
+
+class TrafficBrowserRequest(BaseModel):
+    """kali `redamon.browser` -> agent, browser PREPARE. `open` mints one signed
+    capture tag pinned to the origin transaction's host; `navigate`/`interact`/
+    `eval` enforce the per-session action budget, and `navigate` additionally
+    refuses any URL whose host is not the pinned origin host. The kali worker
+    holds no signing key, so it can neither forge a tenant nor retarget the pin."""
+    ctx: str
+    action: str  # open | navigate | interact | eval
+    origin_id: str
+    url: Optional[str] = None  # navigate only (for the host-pin check)
+
+
+@app.post("/traffic/browser", tags=["Traffic"], dependencies=[Depends(require_internal_auth_only)])
+async def traffic_browser(body: TrafficBrowserRequest):
+    """Browser PREPARE for the kali `redamon.browser` SDK. Mirrors /traffic/replay:
+    validates tenant + phase, re-reads the origin transaction tenant-scoped to pin
+    the host, and (for `open`) signs the capture-lineage tag the browser stamps on
+    every request. Active navigation is exploitation-phase only and per-session
+    action-budgeted, because one proxy_brain run drives many browser actions."""
+    claims = _verify_traffic_ctx(body.ctx)
+    if not claims:
+        return JSONResponse(status_code=401, content={"error": "invalid or missing traffic ctx"})
+
+    # Browsing emits live traffic; confine it to the exploitation phases exactly
+    # like /traffic/replay. Fail closed on anything else.
+    phase = claims.get("phase") or "informational"
+    if phase not in ("exploitation", "post_exploitation"):
+        return JSONResponse(status_code=403, content={"error": f"browser not allowed in phase '{phase}'"})
+
+    _apply_traffic_tenant(claims)
+
+    from traffic_tools import fetch_transaction
+    txn = await fetch_transaction(str(body.origin_id))
+    if not txn:
+        return JSONResponse(status_code=404, content={"error": "origin transaction not found (or not in your project)"})
+    origin_host = txn.get("host")
+    origin_scheme = txn.get("scheme", "http")
+    origin_port = txn.get("port")
+    _DEFAULT_PORT = {"http": 80, "https": 443}
+
+    # Host-pin: a navigation may only ever land on the ORIGIN transaction's host
+    # AND port AND scheme. Hostname alone would let `:8443` or an http->https
+    # upgrade reach a DIFFERENT service on the same host, so pin all three exactly
+    # like the curl replay path (_origin_url). Sub-resource / redirect egress is
+    # contained by the capture proxy's egress guard, not here. Checked BEFORE the
+    # budget so a refused nav costs nothing.
+    if body.action == "navigate":
+        from urllib.parse import urlsplit
+        u = urlsplit(str(body.url or ""))
+        nav_host = u.hostname
+        nav_port = u.port if u.port is not None else _DEFAULT_PORT.get(u.scheme)
+        pin_port = origin_port if origin_port is not None else _DEFAULT_PORT.get(origin_scheme)
+        if (not nav_host or nav_host != origin_host
+                or u.scheme != origin_scheme or nav_port != pin_port):
+            return JSONResponse(status_code=400, content={
+                "error": (f"browser host pin violated (navigation "
+                          f"{u.scheme}://{nav_host}:{nav_port} != pinned "
+                          f"{origin_scheme}://{origin_host}:{pin_port})")})
+    elif body.action not in ("open", "interact", "eval"):
+        return JSONResponse(status_code=400, content={"error": f"unknown browser action {body.action!r}"})
+
+    # Per-session action budget. EVERY action costs one unit, INCLUDING `open`:
+    # each open launches a real chromium, so an unbudgeted open would let a loop
+    # spawn unbounded browsers and OOM the shared kali container. The get and set
+    # have no await between them (single worker), so no lock is needed.
+    budget = _browser_budget()
+    bkey = claims.get("session_id") or f"{claims['user_id']}:{claims['project_id']}"
+    used = _TRAFFIC_BROWSER_ACTIONS.get(bkey, 0)
+    if used + 1 > budget:
+        return JSONResponse(status_code=429, content={
+            "error": f"browser action budget exhausted for this session ({used}/{budget})"})
+    _TRAFFIC_BROWSER_ACTIONS[bkey] = used + 1
+
+    if body.action == "open":
+        # Sign ONE capture tag for the browser's lifetime. The browser stamps it
+        # as X-Redamon-Ctx so every re-captured row is attributed from the VERIFIED
+        # tag (tool=proxy_brain_browser), not from anything the target controls.
+        try:
+            from redamon_ctx import sign_tag
+            cap_tag = sign_tag({
+                "source": "agent",
+                "project_id": claims["project_id"],
+                "user_id": claims["user_id"],
+                "session_id": claims.get("session_id") or None,
+                "tool": "proxy_brain_browser",
+                "phase": phase,
+                "origin_id": str(body.origin_id),
+            }, os.environ.get("INTERNAL_API_KEY", ""))
+        except Exception:  # noqa: BLE001
+            cap_tag = ""
+        return JSONResponse(content={
+            "origin_host": origin_host,
+            "scheme": origin_scheme,
+            "port": origin_port,
+            "ctx": cap_tag,
+        })
+
+    return JSONResponse(content={"ok": True})
+
+
 # =============================================================================
 # KALI TERMINAL — WebSocket PTY proxy to kali-sandbox terminal server
 # =============================================================================

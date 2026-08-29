@@ -88,8 +88,9 @@ If HTTP Traffic Capture is enabled, source and drive this from the recorded hist
 - Token-strictness via `redamon.replay` on a captured state-change request: `dropHeaders:["X-CSRF-Token"]`, or a body edit emptying the `_csrf` field, checking the action still succeeds (200 / state changed).
 - The same request with `headers:{"X-HTTP-Method-Override":"DELETE"}` or `headers:{"Content-Type":"text/plain"}` tests the method-override and JSON-as-form bypasses.
 - Auth-context swap (`dropHeaders` plus a different session `cookie`) proves cross-user / cross-session token reuse.
+- If the anti-CSRF token is **minted in client JS** (never in the raw HTML), `redamon.replay` alone cannot post the form. Read the token with the browser, then hand it to replay, all in one proxy_brain block: `b = redamon.browser(txn_id); b.goto("/account"); tok = b.eval("document.querySelector('input[name=csrf]').value"); b.close(); redamon.replay(txn_id, {"param": {"csrf": tok, "email": "attacker@evil.tld"}})`. Read `redamon.manual("browser")`.
 
-Caveat: redamon.replay is host-pinned same-origin, so it cannot prove the cross-origin SameSite / Origin property. That still needs `execute_playwright`.
+Caveat: the browser is host-pinned to the origin (host+port+scheme), so it proves the same-origin token flow but not the cross-origin SameSite / Origin property — that still needs `execute_playwright` with an attacker origin.
 
 ## Attack matrix
 

