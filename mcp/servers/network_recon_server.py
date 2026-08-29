@@ -659,6 +659,12 @@ def proxy_brain(code: str, _redamon_ctx: str = "") -> str:
     fixed tool vocabulary cannot express (blind-SQLi bisection, IDOR sweeps, JWT
     forging, race conditions, multi-step chains).
 
+    >>> READ THE MANUAL FIRST for anything beyond a basic search/replay:
+        print(redamon.manual())           # core: full SDK + Burp-capability map + section index
+        print(redamon.manual("jwt"))      # one deep technique section with copy-paste recipes
+        sections: recon intruder sqli authz jwt race smuggling cache injection
+                  decode sequencer flows report. Read the section right before the code that uses it.
+
     RUNTIME
     - Your code runs in the Kali sandbox with `redamon` pre-imported for you.
     - Tenant scope is enforced server-side; you cannot read another project.

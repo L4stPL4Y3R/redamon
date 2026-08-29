@@ -34,19 +34,42 @@ _registry_lock = threading.RLock()
 TOOL_REGISTRY = {
     # ===== Captured HTTP traffic — the "Burp history" (one code tool) =====
     "proxy_brain": {
-        "purpose": "Write Python to hunt + exploit over the captured HTTP corpus (DANGEROUS)",
-        "when_to_use": "Compose real oracles over captured traffic: blind-SQLi bisection, IDOR/BOLA sweeps, JWT forging, races, multi-step chains — anything the shaped tools cannot express",
-        "args_format": '"code": "python that imports redamon and calls redamon.search/replay/fuzz/jwt/decode/... (see the tool docstring for the full SDK + recipes)"',
+        "purpose": "Write Python to hunt + exploit over the captured HTTP corpus — your in-platform Burp Suite (DANGEROUS)",
+        "when_to_use": "Whenever HTTP traffic has been captured and you need to inspect, correlate, replay, fuzz, or confirm a web vuln. It is a code sandbox, not a fixed command: compose the `redamon` SDK into ANY capability Burp Suite has — blind-SQLi bisection, IDOR/BOLA sweeps, JWT forging, race conditions, request smuggling, cache poisoning, param mining, multi-step token flows — anything a shaped tool cannot express.",
+        "args_format": '"code": "Python. `redamon` is pre-imported. Read redamon.manual() FIRST for anything non-trivial, then write your attack."',
         "description": (
-            '**proxy_brain** (DANGEROUS — can emit live traffic) — ONE tool that replaces the\n'
-            'proxy_* family: write Python; `redamon` is pre-imported.\n'
-            '   - READ (no traffic): redamon.search(**f) get(id) sitemap() params() grep(p) diff(a,b) query(spec) to_curl(id)\n'
-            '   - DECODE: redamon.decode(v) ; redamon.jwt(tok).forge(alg_none=True|secret=..|claims=..)\n'
-            '   - ACTIVE (live): redamon.replay(id, mutate={...}) ; redamon.batch(id, muts) ; redamon.fuzz(id, point, payloads)\n'
-            '   - RESULT: redamon.finding(kind, id, evidence, severity) ; print(...)\n'
-            '   - mutate keys: method,path,query,param,headers,dropHeaders,cookie,body (host is PINNED)\n'
-            '   - Tenant-scoped for you; active sends are host-pinned, re-captured, exploitation-phase only.\n'
-            '   - Print only distilled results, never raw bodies (output is truncated).'
+            '**proxy_brain** (DANGEROUS — can emit live traffic) — your Burp Suite inside RedAmon.\n'
+            'You write Python; `redamon` is pre-imported and is your ONLY I/O to the captured\n'
+            'traffic and the live replay path. There is no fixed menu — it is a language: if\n'
+            'Burp can do it, you code it here by composing these primitives.\n'
+            '\n'
+            '  READ (no traffic, any phase): redamon.search({..}|**f) · get(id, part) · sitemap() ·\n'
+            '     params() · grep(pat) · diff(a,b) · query(spec) · to_curl(id)   (search rows have .id/.raw)\n'
+            '  DECODE (no traffic): redamon.decode(v) · redamon.jwt(tok).forge(alg_none=True|secret=..|claims=..)\n'
+            '  ACTIVE (LIVE, exploitation phase only): redamon.replay(id, mutate={..}) ·\n'
+            '     redamon.batch(id, muts, parallel=True) · redamon.fuzz(id, param, payloads)\n'
+            '  RESULT: redamon.finding(kind, txn_id, evidence, severity) · print(...)\n'
+            '  mutate keys: method,path,query,param,headers,dropHeaders,cookie,body — HOST IS PINNED\n'
+            '     (a replay can only ever hit the origin txn\'s host). Response: .status .headers .body .length\n'
+            '\n'
+            '  THE ORACLE PATTERN: send a variant, read ONE fact from the Response (.status / .length /\n'
+            '     a regex over .body / timing), compare to a baseline — that fact confirms the bug.\n'
+            '\n'
+            '  >>> READ THE MANUAL FIRST for anything beyond a basic search/replay. From your code:\n'
+            '        print(redamon.manual())          # core: full SDK + the Burp-capability map + section index\n'
+            '        print(redamon.manual("jwt"))     # one deep technique section, with copy-paste recipes\n'
+            '     Sections: recon, intruder, sqli, authz, jwt, race, smuggling, cache, injection,\n'
+            '     decode, sequencer, flows, report. Read the section RIGHT BEFORE the code that uses it.\n'
+            '\n'
+            '  LIMITS (enforced): host-pinned · per-session send budget (~1000) · 180s/run · output\n'
+            '     truncated (print DISTILLED lines, never raw bodies) · every send is re-captured.\n'
+            '  NOT available: OAST/Collaborator (no out-of-band callbacks) — confirm blind bugs via\n'
+            '     in-band signals (reflection, diff, timing, errors) or report the sink.\n'
+            '\n'
+            '  Example — confirm reflected XSS in 3 lines:\n'
+            '     t = redamon.search(reflected=True)[0]\n'
+            '     r = redamon.replay(t.id, {"param": {"q": "rdmn<svg/onload=1>"}})\n'
+            '     if "rdmn<svg/onload=1>" in r.body: redamon.finding("xss", t.id, evidence=r, severity="high")'
         ),
     },
     "query_graph": {

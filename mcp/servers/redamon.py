@@ -276,12 +276,28 @@ def replay(id: str, mutate: Optional[Dict[str, Any]] = None) -> Response:
 
 
 def batch(id: str, mutations: List[Dict[str, Any]], parallel: bool = False) -> List[Response]:
-    """Replay one origin request once per mutation. `parallel` fires them
-    concurrently (race-condition testing). Each is host-pinned + re-captured."""
-    out: List[Response] = []
+    """Replay one origin request once per mutation. With parallel=True the curls
+    are fired CONCURRENTLY (real race-condition window: limit-overrun, double-spend,
+    coupon/voucher reuse) — the agent prepares every request first, then releases
+    them together. Each send is host-pinned + egress-guarded + re-captured."""
+    if not parallel:
+        return [replay(id, m) for m in mutations]
+    # Prepare all requests (host-pinned curls) up front, then release the curls at
+    # once so they collide in the same server-side window.
+    prepared = []
     for m in mutations:
-        out.append(replay(id, m))
-    return out
+        data = _post("/traffic/replay", {"op": "replay", "id": id, "mutate": m or {}})
+        sends = data.get("sends") or []
+        if sends:
+            prepared.append((sends[0]["curl_args"], data.get("ctx", "")))
+    import concurrent.futures
+    results: List[Optional[Response]] = [None] * len(prepared)
+    workers = min(30, len(prepared) or 1)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = {ex.submit(_run, ca, ctx): i for i, (ca, ctx) in enumerate(prepared)}
+        for fut in concurrent.futures.as_completed(futs):
+            results[futs[fut]] = fut.result()
+    return [r for r in results if r is not None]
 
 
 def fuzz(id: str, insertion_point: str, payloads: List[str]) -> List[Response]:
@@ -357,3 +373,52 @@ def finding(kind: str, txn_id: str, evidence: Any = None, severity: str = "mediu
 def emit(text: str) -> None:
     """Print a line into the run output (what returns to the agent)."""
     print(text)
+
+
+# --------------------------------------------------------------------------
+# MANUAL — the on-demand cookbook. Read a section right before writing complex
+# code so it stays in your context window.
+# --------------------------------------------------------------------------
+_MANUAL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "proxy_brain_manual.md")
+
+
+def _manual_sections() -> Dict[str, str]:
+    """Parse the manual into {slug: text}. '' is the core preamble (everything
+    before the first '## '); each '## Title' becomes slug 'title' (lowercased,
+    first word). Fixed file path only — the section arg is a KEY, never a path."""
+    try:
+        with open(_MANUAL_PATH, "r", encoding="utf-8") as fh:
+            raw = fh.read()
+    except OSError:
+        return {}
+    out: Dict[str, str] = {}
+    cur_slug, buf = "", []
+    for line in raw.splitlines():
+        if line.startswith("## "):
+            out[cur_slug] = "\n".join(buf).strip()
+            title = line[3:].strip()
+            cur_slug = title.split()[0].lower().strip("#:()") if title else title.lower()
+            buf = [line]
+        else:
+            buf.append(line)
+    out[cur_slug] = "\n".join(buf).strip()
+    return out
+
+
+def manual(section: Optional[str] = None) -> str:
+    """The proxy_brain cookbook. `redamon.manual()` returns the core (SDK
+    reference + the Burp-capability map + the section index); `redamon.manual("jwt")`
+    returns one deep section (recipes for that technique). Read the section you
+    need RIGHT BEFORE writing the code that uses it — output is truncated, so keep
+    reads scoped. Call with no arg first to see the section index."""
+    secs = _manual_sections()
+    if not secs:
+        return ("[proxy_brain_manual.md not found next to the SDK — the inline tool "
+                "description lists the full redamon.* API; proceed from that.]")
+    if section:
+        key = str(section).split()[0].lower().strip("#:()")
+        if key in secs and key:
+            return secs[key]
+        avail = ", ".join(s for s in secs if s)
+        return f"[no section '{section}'. Available sections: {avail}]"
+    return secs.get("", "")
