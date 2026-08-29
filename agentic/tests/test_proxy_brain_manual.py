@@ -76,7 +76,8 @@ def test_section_retrieval_and_index_consistency():
     # every section named in the index resolves to real content
     for name in ("recon", "intruder", "sqli", "authz", "jwt", "race",
                  "smuggling", "cache", "injection", "decode", "sequencer",
-                 "flows", "report"):
+                 "flows", "report", "nosql", "graphql", "lfi", "cmdi",
+                 "cors", "xxe", "auth"):
         assert name in secs, f"index lists '{name}' but no such section"
         body = redamon.manual(name)
         assert len(body) > 50 and "no section" not in body
