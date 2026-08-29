@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.12.0] - 2026-08-29
+
+### Added
+
+- **`proxy_brain`: the agent's Burp Suite in code.** A single code-as-action tool replaces the ten former `proxy_*` traffic tools. Instead of a fixed menu of narrow commands, the agent writes Python against a pre-imported `redamon` SDK and composes the attack itself (loops, conditionals, crypto, oracles), so anything Burp does (Repeater, Intruder, Comparer, Sequencer, Decoder, JWT Editor, Autorize, Turbo Intruder) is a few lines over the captured [TrafficMind](docs/readmes/README.TRAFFIC.md) corpus. It runs in the kali-sandbox but holds **no database credential**: it reaches the corpus only through the agent's `/traffic/exec` (read) and `/traffic/replay` (active PREPARE) endpoints, the same broker pattern the graph terminal uses, so a foothold in the sandbox cannot touch the store directly ([8096c72a], [2420322d]).
+- **The `redamon` SDK.** Read ops (`search`, `get`, `sitemap`, `params`, `grep`, `diff`, `to_curl`, `query`) in any phase, pure crypto (`decode`, `jwt(tok).forge(...)`), and active ops (`replay`, `batch(parallel=True)`, `fuzz`) gated to the exploitation phases. `batch(parallel=True)` fires prepared sends concurrently over a real thread pool, a genuine race-condition window (limit overrun, double-spend, coupon reuse) ([4c844d93]).
+- **An on-demand operator's manual the agent reads from its own code** via `redamon.manual()` (core map, under 8k) and `redamon.manual("<technique>")` (one deep section), so the cookbook never bloats the prompt. Twenty technique sections ship: recon, intruder, sqli, authz, jwt, race, smuggling, cache, injection, decode, sequencer, flows, report, nosql, graphql, lfi, cmdi, cors, xxe, auth ([4c844d93], [90f232fc]).
+- **A deliberately vulnerable practice target, `testing/guinea_pigs/proxy_brain_target/`** (`pbtarget`), with one endpoint per technique (IDOR, SQLi, reflected XSS, a JWT weak-secret flag, a single-use coupon race, open redirect, CORS, command injection) for end-to-end validation ([ab2708f0]).
+- **Explicit domain-vs-IP targeting in the project form** ([#179](https://github.com/samugit83/redamon/issues/179)). Target mode is now a two-card selector (Domain / Hostname vs IP / CIDR) that separates how a target is named from where it lives, with private/RFC1918 detection warnings and an in-form note on which recon steps are domain-only and skipped in IP mode ([96e3a51a]).
+- **An "Internal Network & Active Directory" recon preset:** IP mode, AD / internal-service ports, Nmap NSE, LAN-safe masscan rate, and public-only tools (OSINT, subdomain enumeration, WHOIS) turned off. Every preset is now tagged with a `targetProfile` + `environment`, the preset picker gains a target-type filter (All / Domain / External IP / Local network) with classification chips, and applying a preset drives the `ipMode` toggle from its profile (create mode only, non-destructive) ([96e3a51a]).
+
+### Changed
+
+- **Security invariants on active sends are enforced in code on the agent side**, so a compromised sandbox cannot bypass them by editing its own script: replays are host-pinned to the origin transaction (`_origin_url` forces a rooted path and asserts the rebuilt netloc matches, else refuses), the `/traffic/replay` endpoint gates sends to the exploitation phases from the verified tag, a per-session send budget (`TRAFFIC_REPLAY_BUDGET`, default 1000) caps one confirmed run, and stealth mode holds back fuzz / batch / rapid replay ([902bef59]).
+- **Tenant isolation travels as an HMAC-signed tag** the agent mints and the endpoint verifies against `INTERNAL_API_KEY` (which the kali worker does not hold), failing closed on a missing key or claim; every read still hard-injects the project + user filter and the `query` op remains a constrained builder with no raw-SQL surface ([8096c72a], [902bef59]).
+- **The agent tool registry, phase map, dangerous-tools set, prompts, and all built-in and community skills** now reference the single `proxy_brain` tool and its SDK instead of the removed `proxy_*` names ([0b41c9d4]). The README, `README.TRAFFIC.md` (section 13 rewritten to the broker architecture), `README.AGENTIC_SYSTEM.md`, and the wiki are updated to match, with a new dedicated Proxy Brain wiki page.
+
+### Fixed
+
+- **`proxy_brain` now pre-imports the `redamon` SDK into the child interpreter**, fixing a live-session `NameError: name 'redamon' is not defined` when agent code used the SDK without importing it; a source-AST regression test guards the wrapper contract ([533285e5], [b9822170]).
+- **Manual recipes corrected after a deep review:** the authz recipe compared against a replay baseline (not formatted `get()` text that never matches), the request-smuggling recipe was rewritten as find-candidates plus a `kali_shell` confirm (curl and the proxy normalise CL/TE framing), JWT forging uses the public `jwt().forge()` rather than a private helper, and GraphQL alias payloads use `json.dumps` ([be19c83b]).
+- **`redamon.search` accepts both a filters dict and keyword arguments**, so `search({...})` and `search(host=...)` both work ([0b41c9d4]).
+
+### Removed
+
+- **The ten `proxy_*` agent tools** (`proxy_search`, `proxy_get`, `proxy_sitemap`, `proxy_params`, `proxy_grep`, `proxy_diff`, `proxy_to_curl`, `proxy_query`, `proxy_replay`, `proxy_fuzz`) and their in-process dispatch (`_run_active_proxy` and the executor intercepts), fully superseded by `proxy_brain` ([2420322d]).
+
 ## [6.11.6] - 2026-08-27
 
 ### Added
