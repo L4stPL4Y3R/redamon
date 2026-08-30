@@ -75,7 +75,13 @@ export function TargetSection({ data, updateField, mode = 'create' }: TargetSect
   // Domain batch: group the pasted hostnames with the SAME helper the server uses
   // to persist them, so the preview cannot promise a grouping the scan won't run.
   const batchHosts = useMemo(() => data.domainBatchHosts || [], [data.domainBatchHosts])
-  const displayBatchHosts = useMemo(() => batchHosts.join('\n'), [batchHosts])
+  // The textarea keeps the operator's RAW text while they type. Deriving its value
+  // from the parsed array instead re-rendered "a.com\n" back as "a.com", so every
+  // separator was stripped the instant it was typed and a second host could never
+  // be entered by hand. The parsed array stays authoritative for the preview, the
+  // validation and what is saved; this only preserves the keystrokes in between.
+  const [batchHostDraft, setBatchHostDraft] = useState<string | null>(null)
+  const displayBatchHosts = batchHostDraft ?? batchHosts.join('\n')
   const batchResult = useMemo(
     () => (batchMode ? validateDomainBatch(batchHosts) : null),
     [batchMode, batchHosts]
@@ -165,7 +171,10 @@ export function TargetSection({ data, updateField, mode = 'create' }: TargetSect
       updateField('subdomainList', [])
     }
     if (next !== 'ip') updateField('targetIps', [])
-    if (next !== 'batch') updateField('domainBatchHosts', [])
+    if (next !== 'batch') {
+      setBatchHostDraft(null)
+      updateField('domainBatchHosts', [])
+    }
   }
 
   const handleIpsChange = (text: string) => {
@@ -173,6 +182,7 @@ export function TargetSection({ data, updateField, mode = 'create' }: TargetSect
   }
 
   const handleBatchHostsChange = (text: string) => {
+    setBatchHostDraft(text)
     updateField('domainBatchHosts', parseHostList(text))
   }
 
@@ -378,7 +388,7 @@ export function TargetSection({ data, updateField, mode = 'create' }: TargetSect
                 />
                 {!isLocked && (
                   <FileImportButton
-                    onImport={(values) => updateField('domainBatchHosts', values)}
+                    onImport={(values) => { setBatchHostDraft(null); updateField('domainBatchHosts', values) }}
                     variant="textarea"
                     fieldName="hostnames"
                   />
