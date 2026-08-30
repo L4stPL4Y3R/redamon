@@ -136,6 +136,24 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       updateData.targetIps = updateData.targetIps.map((s: string) => s.trim()).filter(Boolean)
     }
 
+    // Domain batch: the derived groups are the project's SCOPE (the hard guardrail,
+    // the agent and the pipeline all read them), so they are recomputed here from
+    // the raw host list and a client-supplied domainBatchGroups is always discarded.
+    // Without this a direct PUT could set a scope the operator never approved.
+    if ('domainBatchHosts' in updateData || 'domainBatchGroups' in updateData) {
+      const { validateDomainBatch } = await import('@/lib/domainBatch')
+      const raw = updateData.domainBatchHosts
+      const hosts: string[] = Array.isArray(raw)
+        ? raw.filter((h: unknown): h is string => typeof h === 'string')
+        : typeof raw === 'string' ? raw.split(',') : []
+      const batch = validateDomainBatch(hosts)
+      if (!batch.ok) {
+        return NextResponse.json({ error: batch.errors.join(' ') }, { status: 400 })
+      }
+      updateData.domainBatchHosts = batch.groups.flatMap(g => g.hosts)
+      updateData.domainBatchGroups = batch.groups
+    }
+
     // Supply-chain input: supplyChainRepoUrl becomes a `git clone` argument in
     // the scan container, so it is validated server-side. The Other Scans UI
     // validates too, but a direct PUT bypasses it.

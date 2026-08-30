@@ -162,6 +162,12 @@ PHASE_PATTERNS = [
 ]
 
 
+# Domain batch: the outer progress. The pipeline prints exactly this line when it
+# starts a group (see run_domain_batch in recon/main.py), and the phase patterns
+# above then cycle 1..6 again inside it.
+BATCH_GROUP_PATTERN = re.compile(r"\[Batch\]\s+Group\s+(\d+)/(\d+):\s*(\S+)")
+
+
 # GVM phase patterns to detect from logs
 GVM_PHASE_PATTERNS = [
     (r"Loading recon data", "Loading Recon Data", 1),
@@ -1592,6 +1598,10 @@ class ContainerManager:
                     is_phase_start = True
                 break
 
+        # Domain batch: the OUTER progress. Checked after the phase patterns so a
+        # group marker never masks a phase change on the same line.
+        group_match = BATCH_GROUP_PATTERN.search(line)
+
         return ReconLogEvent(
             log=line.rstrip(),
             timestamp=timestamp,
@@ -1599,6 +1609,10 @@ class ContainerManager:
             phase_number=phase_num,
             is_phase_start=is_phase_start,
             level=level,
+            group_number=int(group_match.group(1)) if group_match else None,
+            total_groups=int(group_match.group(2)) if group_match else None,
+            current_group=group_match.group(3) if group_match else None,
+            is_group_start=bool(group_match),
         )
 
     async def stream_logs(self, project_id: str) -> AsyncGenerator[ReconLogEvent, None]:
@@ -1709,6 +1723,15 @@ class ContainerManager:
                             if project_id in self.running_states:
                                 self.running_states[project_id].current_phase = current_phase
                                 self.running_states[project_id].phase_number = current_phase_num
+
+                        # Domain batch: the outer progress. Phases restart at 1 for
+                        # every group, so without this the UI cannot tell a second
+                        # group beginning from the first one looping.
+                        if event.is_group_start and project_id in self.running_states:
+                            state = self.running_states[project_id]
+                            state.current_group = event.current_group
+                            state.group_number = event.group_number
+                            state.total_groups = event.total_groups
 
                         yield event
 

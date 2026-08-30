@@ -7,6 +7,7 @@ Otherwise, falls back to DEFAULT_SETTINGS for CLI usage.
 """
 import os
 import logging
+import re
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,11 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     'SUBDOMAIN_LIST': [],
     'IP_MODE': False,
     'TARGET_IPS': [],
+    # Domain batch: the third targeting mode. DOMAIN_BATCH_GROUPS is the derived,
+    # operator-approved run order: [{'rootDomain': str, 'prefixes': [str], 'hosts': [str]}].
+    # The webapp derives it; the pipeline never re-derives, so both agree on scope.
+    'DOMAIN_BATCH_MODE': False,
+    'DOMAIN_BATCH_GROUPS': [],
     'VERIFY_DOMAIN_OWNERSHIP': False,
     'OWNERSHIP_TOKEN': 'your-secret-token-here',
     'OWNERSHIP_TXT_PREFIX': '_redamon-verify',
@@ -868,6 +874,48 @@ def _fetch_urlscan_api_key(user_id: str, webapp_url: str) -> str:
     return _fetch_user_api_key(user_id, webapp_url, 'urlscanApiKey')
 
 
+_BATCH_HOST_CHARSET = re.compile(r'^[a-z0-9.-]+$')
+
+
+def _parse_domain_batch_groups(raw: Any) -> list[dict[str, Any]]:
+    """Parse and RE-VALIDATE the webapp's derived domain-batch groups.
+
+    The webapp already validates the operator's hostname list, but these strings
+    end up as scan targets and as a component of an output filename, so they cross
+    a trust boundary a second time here. Re-checking the charset is what stops a
+    row edited directly in the database (the PUT route does not lock target fields)
+    from reaching a path or a tool argument.
+
+    Malformed entries are DROPPED rather than repaired: a repaired hostname would
+    scan something the operator never approved in the preview. A group that loses
+    every prefix is dropped whole.
+    """
+    if not isinstance(raw, list):
+        return []
+
+    groups: list[dict[str, Any]] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        root = str(entry.get('rootDomain') or '').strip().lower()
+        if not root or not _BATCH_HOST_CHARSET.match(root) or '..' in root:
+            continue
+        prefixes = [
+            p.strip().lower() for p in (entry.get('prefixes') or [])
+            if isinstance(p, str) and p.strip()
+        ]
+        # '.' is the sentinel for "the root domain itself" (see parse_target).
+        prefixes = [
+            p for p in prefixes
+            if p == '.' or (_BATCH_HOST_CHARSET.match(p) and '..' not in p)
+        ]
+        if not prefixes:
+            continue
+        groups.append({'rootDomain': root, 'prefixes': prefixes})
+
+    return groups
+
+
 def fetch_project_settings(project_id: str, webapp_url: str) -> dict[str, Any]:
     """
     Fetch project settings from webapp API.
@@ -903,6 +951,10 @@ def fetch_project_settings(project_id: str, webapp_url: str) -> dict[str, Any]:
     settings['IP_MODE'] = project.get('ipMode', DEFAULT_SETTINGS['IP_MODE'])
     raw_ips = project.get('targetIps', DEFAULT_SETTINGS['TARGET_IPS'])
     settings['TARGET_IPS'] = [ip.strip() for ip in raw_ips if ip.strip()]
+    settings['DOMAIN_BATCH_MODE'] = project.get(
+        'domainBatchMode', DEFAULT_SETTINGS['DOMAIN_BATCH_MODE'])
+    settings['DOMAIN_BATCH_GROUPS'] = _parse_domain_batch_groups(
+        project.get('domainBatchGroups'))
     settings['VERIFY_DOMAIN_OWNERSHIP'] = project.get('verifyDomainOwnership', DEFAULT_SETTINGS['VERIFY_DOMAIN_OWNERSHIP'])
     settings['OWNERSHIP_TOKEN'] = project.get('ownershipToken', DEFAULT_SETTINGS['OWNERSHIP_TOKEN'])
     settings['OWNERSHIP_TXT_PREFIX'] = project.get('ownershipTxtPrefix', DEFAULT_SETTINGS['OWNERSHIP_TXT_PREFIX'])
@@ -1381,6 +1433,14 @@ def fetch_project_settings(project_id: str, webapp_url: str) -> dict[str, Any]:
 
     # Subdomain Discovery Tool Toggles
     settings['SUBDOMAIN_DISCOVERY_ENABLED'] = project.get('subdomainDiscoveryEnabled', DEFAULT_SETTINGS['SUBDOMAIN_DISCOVERY_ENABLED'])
+    if settings['DOMAIN_BATCH_MODE'] and settings['DOMAIN_BATCH_GROUPS']:
+        # Domain batch scans EXACTLY the uploaded hostnames. This is not a nicety:
+        # a group made of one bare root domain yields prefixes ['.'], and
+        # parse_target() treats a '.'-only list as NOT filtered mode, which would
+        # silently start full subdomain enumeration for that domain. Forcing the
+        # toggle off here (rather than in main.py) keeps every reader agreeing,
+        # including modules that call get_settings() again mid-run.
+        settings['SUBDOMAIN_DISCOVERY_ENABLED'] = False
     settings['DOMAIN_RECON_AI_TXT_HINT_ENABLED'] = project.get('domainReconAiTxtHintEnabled', DEFAULT_SETTINGS['DOMAIN_RECON_AI_TXT_HINT_ENABLED'])
     settings['DOMAIN_RECON_AI_NS_HINT_ENABLED'] = project.get('domainReconAiNsHintEnabled', DEFAULT_SETTINGS['DOMAIN_RECON_AI_NS_HINT_ENABLED'])
     settings['CRTSH_ENABLED'] = project.get('crtshEnabled', DEFAULT_SETTINGS['CRTSH_ENABLED'])

@@ -5,6 +5,7 @@ import prisma from '@/lib/prisma'
 import { getGraphSession } from '@/app/api/graph/neo4j'
 import { isBlankModelField } from '@/components/projects/ProjectForm/projectLlmGate.logic'
 import { requireEffectiveUser, ownerScope } from '@/lib/access'
+import { validateDomainBatch } from '@/lib/domainBatch'
 
 const AGENT_API_URL = process.env.AGENT_API_URL || 'http://localhost:8080'
 
@@ -80,14 +81,33 @@ export async function POST(request: NextRequest) {
       body = await request.json()
     }
 
-    const { userId: _bodyUserId, name, targetDomain, ipMode, id: clientId, ...optionalParams } = body as {
+    const { userId: _bodyUserId, name, targetDomain, ipMode, domainBatchMode,
+      id: clientId, ...optionalParams } = body as {
       userId: string
       name: string
       targetDomain?: string
       ipMode?: boolean
+      domainBatchMode?: boolean
       id?: string
       [key: string]: unknown
     }
+
+    // Domain batch: the groups are ALWAYS re-derived here from the raw host list.
+    // A client-supplied domainBatchGroups is discarded, so the list the operator
+    // approved in the preview is the only thing that can define scope.
+    // Read BEFORE the STRING_ARRAY_FIELDS sanitizer runs (it is further down), so
+    // accept the comma-separated string form an LLM-parsed body can carry.
+    const rawBatchHosts = optionalParams.domainBatchHosts
+    const batchHosts = Array.isArray(rawBatchHosts)
+      ? (rawBatchHosts as unknown[]).filter((h): h is string => typeof h === 'string')
+      : typeof rawBatchHosts === 'string'
+        ? rawBatchHosts.split(',')
+        : []
+    const batch = domainBatchMode ? validateDomainBatch(batchHosts) : null
+    if (batch && !batch.ok) {
+      return NextResponse.json({ error: batch.errors.join(' ') }, { status: 400 })
+    }
+    const batchRoots = batch ? batch.groups.map(g => g.rootDomain) : []
 
     // Owner is the effective user, never the client-supplied body value.
     const userId = eff.userId
@@ -100,10 +120,17 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // targetDomain is required only when not in IP mode
-    if (!ipMode && !targetDomain) {
+    // targetDomain is required only when the target is a single domain: IP mode
+    // carries targetIps, Domain batch carries its host list (validated above).
+    if (!ipMode && !domainBatchMode && !targetDomain) {
       return NextResponse.json(
         { error: 'targetDomain is required when not in IP mode' },
+        { status: 400 }
+      )
+    }
+    if (ipMode && domainBatchMode) {
+      return NextResponse.json(
+        { error: 'A project cannot be in both IP mode and Domain batch mode.' },
         { status: 400 }
       )
     }
@@ -117,15 +144,19 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Hard guardrail: deterministic, non-disableable - always blocks government/public domains
-    if (!ipMode && targetDomain) {
+    // Hard guardrail: deterministic, non-disableable - always blocks government/public domains.
+    // Checks EVERY domain the project would scan, so a batch cannot smuggle one in.
+    const guardedDomains = domainBatchMode ? batchRoots : (!ipMode && targetDomain ? [targetDomain] : [])
+    if (guardedDomains.length > 0) {
       const { isHardBlockedDomain } = await import('@/lib/hard-guardrail')
-      const hardCheck = isHardBlockedDomain(targetDomain)
-      if (hardCheck.blocked) {
-        return NextResponse.json(
-          { error: `Target permanently blocked: ${hardCheck.reason}` },
-          { status: 403 }
-        )
+      for (const domain of guardedDomains) {
+        const hardCheck = isHardBlockedDomain(domain)
+        if (hardCheck.blocked) {
+          return NextResponse.json(
+            { error: `Target permanently blocked: ${domain}: ${hardCheck.reason}` },
+            { status: 403 }
+          )
+        }
       }
     }
 
@@ -136,7 +167,9 @@ export async function POST(request: NextRequest) {
           method: 'POST',
           headers: internalKeyHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({
-            target_domain: ipMode ? '' : (targetDomain || ''),
+            // Batch mode has no single targetDomain; send its derived roots or the
+            // soft guardrail would be asked to approve an empty string.
+            target_domain: ipMode ? '' : (domainBatchMode ? batchRoots.join(', ') : (targetDomain || '')),
             target_ips: ipMode ? (optionalParams.targetIps || []) : [],
             user_id: userId,
           }),
@@ -167,7 +200,7 @@ export async function POST(request: NextRequest) {
     // Sanitize array fields - LLM parsing may return strings instead of arrays
     // String[] fields: split comma-separated strings into arrays
     const STRING_ARRAY_FIELDS = [
-      'subdomainList', 'targetIps', 'scanModules', 'nucleiSeverity',
+      'subdomainList', 'targetIps', 'domainBatchHosts', 'scanModules', 'nucleiSeverity',
       'nucleiTemplates', 'nucleiExcludeTemplates', 'nucleiCustomTemplates',
       'nucleiTags', 'nucleiExcludeTags',
       'httpxPaths', 'httpxCustomHeaders', 'httpxMatchCodes', 'httpxFilterCodes',
@@ -260,22 +293,31 @@ export async function POST(request: NextRequest) {
         ...(clientId ? { id: clientId } : {}),
         userId,
         name: name.trim(),
-        targetDomain: ipMode ? '' : (targetDomain || '').trim(),
+        targetDomain: (ipMode || domainBatchMode) ? '' : (targetDomain || '').trim(),
         ipMode: ipMode || false,
-        ...sanitizedParams
+        ...sanitizedParams,
+        // After sanitizedParams so a client-supplied domainBatchGroups cannot win.
+        domainBatchMode: domainBatchMode || false,
+        ...(batch ? { domainBatchHosts: batch.groups.flatMap(g => g.hosts),
+                      domainBatchGroups: batch.groups as unknown as Prisma.InputJsonValue } : {}),
       }
     })
 
-    // Create Domain node in Neo4j so it's visible in the graph immediately
-    if (!ipMode && project.targetDomain) {
+    // Create Domain nodes in Neo4j so the target is visible in the graph immediately.
+    // Batch mode has one per group; the MERGE key carries user_id + project_id so a
+    // shared domain name can never merge one project's node into another's.
+    const seedDomains = domainBatchMode ? batchRoots : (!ipMode && project.targetDomain ? [project.targetDomain] : [])
+    if (seedDomains.length > 0) {
       try {
         const session = getGraphSession()
         try {
-          await session.run(
-            `MERGE (d:Domain {name: $name, user_id: $userId, project_id: $projectId})
-             ON CREATE SET d.source = 'project_creation', d.updated_at = datetime()`,
-            { name: project.targetDomain, userId: project.userId, projectId: project.id }
-          )
+          for (const name of seedDomains) {
+            await session.run(
+              `MERGE (d:Domain {name: $name, user_id: $userId, project_id: $projectId})
+               ON CREATE SET d.source = 'project_creation', d.updated_at = datetime()`,
+              { name, userId: project.userId, projectId: project.id }
+            )
+          }
         } finally {
           await session.close()
         }

@@ -369,6 +369,9 @@ export default function GraphPage() {
     logs: reconLogs,
     currentPhase,
     currentPhaseNumber,
+    currentGroup,
+    groupNumber,
+    totalGroups,
     clearLogs,
   } = useReconSSE({
     projectId,
@@ -1746,6 +1749,9 @@ export default function GraphPage() {
         logs={reconLogs}
         currentPhase={currentPhase}
         currentPhaseNumber={currentPhaseNumber}
+        currentGroup={currentGroup}
+        groupNumber={groupNumber}
+        totalGroups={totalGroups}
         status={reconState?.status || 'idle'}
         errorMessage={reconState?.error}
         onClearLogs={clearLogs}
@@ -1874,6 +1880,7 @@ export default function GraphPage() {
         targetDomain={currentProject?.targetDomain || 'Unknown'}
         ipMode={currentProject?.ipMode}
         targetIps={currentProject?.targetIps}
+        batchDomains={currentProject?.domainBatchDomains}
         stats={graphStats}
         isLoading={isReconLoading}
         currentVersionLabel={activeVersion?.label ?? null}
