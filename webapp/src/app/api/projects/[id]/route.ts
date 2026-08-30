@@ -138,9 +138,20 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 
     // Domain batch: the derived groups are the project's SCOPE (the hard guardrail,
     // the agent and the pipeline all read them), so they are recomputed here from
-    // the raw host list and a client-supplied domainBatchGroups is always discarded.
-    // Without this a direct PUT could set a scope the operator never approved.
-    if ('domainBatchHosts' in updateData || 'domainBatchGroups' in updateData) {
+    // the raw host list and a client-supplied domainBatchGroups is NEVER trusted.
+    //
+    // Keyed on the project actually BEING a batch, not on the key being present in
+    // the body: the project form PUTs the whole row, so `domainBatchHosts: []` is
+    // present on every single-domain and IP project too. Validating on presence
+    // rejected all of those with "Domain batch mode needs at least one hostname"
+    // and made every project edit fail.
+    const willBeBatch = 'domainBatchMode' in updateData
+      ? updateData.domainBatchMode === true
+      : (await prisma.project.findUnique({
+          where: { id }, select: { domainBatchMode: true },
+        }))?.domainBatchMode === true
+
+    if (willBeBatch) {
       const { validateDomainBatch } = await import('@/lib/domainBatch')
       const raw = updateData.domainBatchHosts
       const hosts: string[] = Array.isArray(raw)
@@ -152,6 +163,20 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       }
       updateData.domainBatchHosts = batch.groups.flatMap(g => g.hosts)
       updateData.domainBatchGroups = batch.groups
+    } else if ('domainBatchGroups' in updateData) {
+      // Not a batch project: the client has no business setting a scope at all.
+      delete updateData.domainBatchGroups
+    }
+
+    // Mutually exclusive modes, enforced on update as well as create: recon checks
+    // IP_MODE first, so a project flagged both ways silently never runs its batch.
+    const nextIpMode = 'ipMode' in updateData ? updateData.ipMode === true : undefined
+    const nextBatchMode = 'domainBatchMode' in updateData ? updateData.domainBatchMode === true : undefined
+    if (nextIpMode && nextBatchMode) {
+      return NextResponse.json(
+        { error: 'A project cannot be in both IP mode and Domain batch mode.' },
+        { status: 400 },
+      )
     }
 
     // Supply-chain input: supplyChainRepoUrl becomes a `git clone` argument in

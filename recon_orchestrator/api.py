@@ -189,20 +189,33 @@ def _recon_output_files(output_dir, project_id: str) -> list:
     """Every recon JSON this project owns: the canonical file plus each
     Domain-batch group file (`recon_<id>__<domain>.json`).
 
-    Deleting only the canonical name leaks one file per domain per batch run. The
-    glob is anchored on the project id and the result is filtered back to
-    `output_dir`, so a crafted project id cannot reach outside it.
+    Deleting only the canonical name leaks one file per domain per batch run.
+
+    Group files are matched by LITERAL PREFIX, never by glob. A project id is
+    client-suppliable at creation and is interpolated straight into this URL's
+    path, so a glob built from it lets an id of `*` (or `[a-z]*`) select every
+    OTHER project's group files - and this function's callers DELETE what it
+    returns. startswith/endswith has no metacharacters to abuse. The parent-dir
+    check stays as a second line of defence against a traversing id.
     """
     from pathlib import Path
     output_dir = Path(output_dir)
+    prefix = f"recon_{project_id}__"
+
     candidates = [output_dir / f"recon_{project_id}.json"]
-    candidates.extend(sorted(output_dir.glob(f"recon_{project_id}__*.json")))
+    try:
+        candidates.extend(sorted(
+            p for p in output_dir.iterdir()
+            if p.name.startswith(prefix) and p.name.endswith(".json")
+        ))
+    except OSError:
+        pass
 
     resolved_dir = output_dir.resolve()
     files = []
     for path in candidates:
         try:
-            if path.exists() and path.resolve().parent == resolved_dir:
+            if path.is_file() and path.resolve().parent == resolved_dir:
                 files.append(path)
         except OSError:
             continue

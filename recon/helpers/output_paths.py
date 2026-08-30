@@ -51,9 +51,24 @@ def recon_output_file(output_dir: Path, project_id: str,
 
 
 def batch_output_files(output_dir: Path, project_id: str) -> list[Path]:
-    """Every per-group file for this project, in a stable order."""
-    pattern = f"recon_{project_id}{BATCH_SEPARATOR}*.json"
-    return sorted(Path(output_dir).glob(pattern))
+    """Every per-group file for this project, in a stable order.
+
+    Matches by LITERAL PREFIX, never by glob. A project id is client-suppliable
+    at creation, so a glob pattern built from it lets an id of `*` (or `[a-z]*`)
+    match every OTHER project's group files - which this function feeds to both
+    the merge (cross-project read) and the delete (cross-project destruction).
+    startswith/endswith has no metacharacters to abuse.
+    """
+    prefix = f"recon_{project_id}{BATCH_SEPARATOR}"
+    directory = Path(output_dir)
+    try:
+        names = list(directory.iterdir())
+    except OSError:
+        return []
+    return sorted(
+        p for p in names
+        if p.name.startswith(prefix) and p.name.endswith(".json") and p.is_file()
+    )
 
 
 def clear_batch_outputs(output_dir: Path, project_id: str) -> int:
@@ -71,6 +86,50 @@ def clear_batch_outputs(output_dir: Path, project_id: str) -> int:
         except OSError as e:
             print(f"[!][batch] could not remove stale group output {path.name}: {e}")
     return removed
+
+
+# Keys that describe ONE target and must never be folded across groups.
+#
+# `dns.domain` is a single dict (has_records / ips / records) for the run's root
+# domain, and the top-level `domain` is that root's name. Merging them key-by-key
+# across groups produced a chimera: domain1.com claiming domain2.it's A records,
+# with has_records taken from whichever group merged first. Every consumer of the
+# canonical file then read one domain's name attached to several domains' data.
+#
+# Instead each group's root is RE-FILED into dns.subdomains under its own
+# hostname, which is a dict keyed by name and therefore merges losslessly, and
+# the single-target keys are left empty in the merged file.
+_SINGLE_TARGET_TOP_KEYS = ('domain',)
+
+
+def _relocate_group_root(data: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of one group's result with its root-domain block moved into
+    dns.subdomains, so the merge has no single-target key left to conflate."""
+    out = dict(data)
+    dns = out.get('dns')
+    if not isinstance(dns, dict):
+        return out
+
+    dns = dict(dns)
+    out['dns'] = dns
+    root_block = dns.get('domain')
+    root_name = (
+        (out.get('metadata') or {}).get('root_domain')
+        or out.get('domain')
+        or ''
+    )
+    if isinstance(root_block, dict) and root_block and isinstance(root_name, str) and root_name:
+        subs = dict(dns.get('subdomains') or {})
+        # A group that already discovered its own root as a subdomain wins: that
+        # entry came from the same scan and is at least as complete.
+        subs.setdefault(root_name, root_block)
+        dns['subdomains'] = subs
+    dns['domain'] = {}
+
+    for key in _SINGLE_TARGET_TOP_KEYS:
+        if key in out:
+            out[key] = ''
+    return out
 
 
 def _merge_group_into(merged: dict[str, Any], group: dict[str, Any]) -> None:
@@ -124,7 +183,7 @@ def merge_batch_outputs(output_dir: Path, project_id: str) -> Optional[Path]:
             continue
         root = (data.get('metadata') or {}).get('root_domain') or path.stem
         groups_covered.append(str(root))
-        _merge_group_into(merged, data)
+        _merge_group_into(merged, _relocate_group_root(data))
 
     if not merged:
         return None
@@ -135,7 +194,12 @@ def merge_batch_outputs(output_dir: Path, project_id: str) -> Optional[Path]:
     metadata['domain_batch'] = True
     metadata['domain_batch_groups'] = groups_covered
     metadata['target'] = ', '.join(groups_covered)
-    metadata['root_domain'] = ', '.join(groups_covered)
+    # root_domain names ONE domain by contract, and consumers use it that way:
+    # gvm_scanner does `hostnames.add(metadata['root_domain'])`, so a joined
+    # string became a literal scan target of "a.com, b.com". A batch has no single
+    # root, so the field is emptied and every root lives in dns.subdomains
+    # instead; the batch's scope is in domain_batch_groups.
+    metadata['root_domain'] = ''
 
     canonical = canonical_output_file(output_dir, project_id)
     try:
@@ -146,4 +210,43 @@ def merge_batch_outputs(output_dir: Path, project_id: str) -> Optional[Path]:
         print(f"[!][batch] could not write merged recon file: {e}")
         return None
 
+    return canonical
+
+
+def initialize_batch_canonical(output_dir: Path, project_id: str,
+                               roots: list[str]) -> Optional[Path]:
+    """Overwrite the canonical file with an empty in-progress placeholder.
+
+    Called right after the per-group files are cleared and BEFORE the first group
+    runs. Without it the canonical file keeps describing the PREVIOUS run for the
+    whole duration of group 1 - potentially an hour - while the graph has already
+    been wiped. Anything that reads the file in that window (a GVM start only
+    checks that it exists) would scan the previous run's target set.
+
+    An empty dns block means "no live targets", which the downstream readers
+    already handle, so the window fails closed instead of failing stale.
+    """
+    canonical = canonical_output_file(output_dir, project_id)
+    payload = {
+        "metadata": {
+            "scan_type": "domain_batch",
+            "domain_batch": True,
+            "domain_batch_groups": list(roots),
+            "domain_batch_in_progress": True,
+            "target": ", ".join(roots),
+            "root_domain": "",
+            "project_id": project_id,
+        },
+        "domain": "",
+        "dns": {"domain": {}, "subdomains": {}},
+        "subdomains": [],
+        "subdomain_count": 0,
+    }
+    try:
+        canonical.parent.mkdir(parents=True, exist_ok=True)
+        with open(canonical, 'w') as f:
+            json.dump(payload, f, indent=2)
+    except OSError as e:
+        print(f"[!][batch] could not initialize the canonical recon file: {e}")
+        return None
     return canonical

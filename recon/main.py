@@ -90,6 +90,7 @@ from helpers.output_paths import (  # noqa: E402 - after the sys.path setup abov
     recon_output_file,
     clear_batch_outputs,
     merge_batch_outputs,
+    initialize_batch_canonical,
 )
 
 DOMAIN_BATCH_MODE = _settings.get('DOMAIN_BATCH_MODE', False)
@@ -1731,7 +1732,14 @@ def run_domain_batch(groups: list, start_time) -> int:
     # canonical output, resurrecting a domain the operator has since removed.
     removed = clear_batch_outputs(OUTPUT_DIR, PROJECT_ID)
     if removed:
-        print(f"[*][Batch] Removed {removed} stale group output file(s) from a previous run\n")
+        print(f"[*][Batch] Removed {removed} stale group output file(s) from a previous run")
+    # Replace the canonical file NOW. Until the first group finishes and the merge
+    # runs, it would otherwise still describe the PREVIOUS run while the graph has
+    # already been cleared, so anything reading it in that window (a GVM start only
+    # checks the file exists) would scan the last run's targets.
+    initialize_batch_canonical(
+        OUTPUT_DIR, PROJECT_ID, [str(g.get('rootDomain') or '') for g in groups])
+    print()
 
     failed = []
     for idx, group in enumerate(groups, 1):

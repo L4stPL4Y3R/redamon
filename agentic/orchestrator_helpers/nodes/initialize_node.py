@@ -102,7 +102,11 @@ async def _run_scope_guardrail(llm, user_id, project_id, session_id) -> dict | N
     try:
         result = await check_target_allowed(
             llm,
-            target_domain='' if ip_mode else ", ".join(scope_domains),
+            # A LIST, never a joined string: the singular prompt would ask for one
+            # verdict on "a.com, b.com, c.com" and could allow the set despite one
+            # blocked member. check_target_allowed routes a list to the
+            # block-if-any prompt.
+            target_domains=[] if ip_mode else scope_domains,
             target_ips=target_ips if ip_mode else [],
         )
 

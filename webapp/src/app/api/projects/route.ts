@@ -120,6 +120,18 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // A client-supplied id becomes the project's primary key AND a path/pattern
+    // component downstream (recon output filenames, the orchestrator's
+    // /project/<id>/files URL, the JS-recon upload directories). Anything but a
+    // plain cuid-shaped token is refused here so no consumer has to defend
+    // against separators or match metacharacters in an id.
+    if (clientId !== undefined && !/^[a-z0-9]{20,32}$/.test(String(clientId))) {
+      return NextResponse.json(
+        { error: 'Invalid project id.' },
+        { status: 400 }
+      )
+    }
+
     // targetDomain is required only when the target is a single domain: IP mode
     // carries targetIps, Domain batch carries its host list (validated above).
     if (!ipMode && !domainBatchMode && !targetDomain) {
@@ -167,9 +179,11 @@ export async function POST(request: NextRequest) {
           method: 'POST',
           headers: internalKeyHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({
-            // Batch mode has no single targetDomain; send its derived roots or the
-            // soft guardrail would be asked to approve an empty string.
-            target_domain: ipMode ? '' : (domainBatchMode ? batchRoots.join(', ') : (targetDomain || '')),
+            // Batch mode has no single targetDomain. Send the roots as a LIST:
+            // joining them into target_domain feeds a singular prompt that can
+            // approve the set despite one blocked member.
+            target_domain: (ipMode || domainBatchMode) ? '' : (targetDomain || ''),
+            target_domains: domainBatchMode ? batchRoots : [],
             target_ips: ipMode ? (optionalParams.targetIps || []) : [],
             user_id: userId,
           }),
