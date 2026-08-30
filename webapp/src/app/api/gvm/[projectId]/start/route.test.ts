@@ -1,5 +1,5 @@
 /**
- * Strategy row 2 — GVM must accept a Domain-batch project.
+ * Strategy row 2: GVM must accept a Domain-batch project.
  *
  * The precondition was mode-aware for IP vs domain only: a batch project has an
  * empty targetDomain, so it fell into the domain branch and was rejected with

@@ -210,7 +210,7 @@ describe('history for every outcome', () => {
   })
 })
 
-// Strategy row 1 — a Domain-batch project must be able to start a scan.
+// Strategy row 1: a Domain-batch project must be able to start a scan.
 // Its scope lives in domainBatchGroups, not targetDomain (which is empty), so the
 // single-domain precondition would have refused every batch scan outright.
 describe('domain batch preconditions', () => {

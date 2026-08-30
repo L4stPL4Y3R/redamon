@@ -1,5 +1,5 @@
 /**
- * Domain batch F2 + F8 — PUT /api/projects/[id].
+ * Domain batch F2 + F8: PUT /api/projects/[id].
  *
  * F2, the regression this file exists for: the batch recompute was gated on the
  * KEY being present in the body. The project form PUTs the whole row and

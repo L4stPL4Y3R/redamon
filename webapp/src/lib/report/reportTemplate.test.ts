@@ -634,11 +634,11 @@ describe('Appendix Tools Table', () => {
   })
 })
 
-// Strategy row 4 — the Scope section of a Domain-batch report.
+// Strategy row 4: the Scope section of a Domain-batch report.
 // A batch project has NO targetDomain: its scope is the derived group roots. The
 // template read targetDomain directly, so the client-facing deliverable stated
 // its scope as "N/A" and its mode as plain "Domain".
-describe('Scope section — Domain batch', () => {
+describe('Scope section: Domain batch', () => {
   const batchData = (groups: unknown) => makeReportData({
     project: {
       id: 'p1', name: 'Batch Project', targetDomain: '', userId: 'u1',

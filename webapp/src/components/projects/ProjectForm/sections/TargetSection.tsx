@@ -221,8 +221,8 @@ export function TargetSection({ data, updateField, mode = 'create' }: TargetSect
                   accent: '#60a5fa',
                   accentBg: 'rgba(96, 165, 250, 0.12)',
                   icon: <Globe size={20} />,
-                  title: 'Domain / Hostname',
-                  subtitle: 'A domain or hostname — public or internal (incl. AD)',
+                  title: 'Single Domain',
+                  subtitle: 'One domain or hostname, public or internal (incl. AD)',
                 },
                 {
                   mode: 'ip' as TargetMode,
@@ -230,7 +230,7 @@ export function TargetSection({ data, updateField, mode = 'create' }: TargetSect
                   accentBg: 'rgba(167, 139, 250, 0.12)',
                   icon: <Network size={20} />,
                   title: 'IP / CIDR',
-                  subtitle: 'IP addresses or ranges — public or internal',
+                  subtitle: 'IP addresses or ranges, public or internal',
                 },
                 {
                   mode: 'batch' as TargetMode,
@@ -238,7 +238,7 @@ export function TargetSection({ data, updateField, mode = 'create' }: TargetSect
                   accentBg: 'rgba(52, 211, 153, 0.12)',
                   icon: <Layers size={20} />,
                   title: 'Domain batch',
-                  subtitle: 'A list of hostnames — grouped by domain, scanned in turn',
+                  subtitle: 'A list of hostnames, grouped by domain and scanned in turn',
                 },
               ]).map((opt) => {
                 const active = opt.mode === targetMode

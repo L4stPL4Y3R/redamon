@@ -111,12 +111,12 @@ describe('resolveIpModeForPreset', () => {
   })
 })
 
-// Strategy row 5 — a preset must not wipe a Domain-batch project's host list.
+// Strategy row 5: a preset must not wipe a Domain-batch project's host list.
 // resolveIpModeForPreset is the ONE place a preset can change the target mode.
 // A 'domain' preset returning false would flip a batch project back to
 // single-domain targeting, silently discarding the operator's hostname list
 // (targetDomain is empty there, so the project would end up with no target).
-describe('resolveIpModeForPreset — Domain batch projects', () => {
+describe('resolveIpModeForPreset: Domain batch projects', () => {
   test('a domain preset leaves a batch project alone', () => {
     expect(resolveIpModeForPreset('domain', 'create', 'batch')).toBeUndefined()
   })

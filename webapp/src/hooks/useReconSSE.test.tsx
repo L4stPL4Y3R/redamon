@@ -1,5 +1,5 @@
 /**
- * Strategy row 8 — Domain batch group progress over the recon SSE stream.
+ * Strategy row 8: Domain batch group progress over the recon SSE stream.
  *
  * A batch runs the six pipeline phases once PER GROUP, so the phase counter
  * restarts at 1 every time a new domain begins. Without the outer group counter

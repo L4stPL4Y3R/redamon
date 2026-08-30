@@ -1,5 +1,5 @@
 /**
- * Domain batch, POST /api/projects — F1 (client-supplied project id) and F4
+ * Domain batch, POST /api/projects: F1 (client-supplied project id) and F4
  * (the soft guardrail must see every root).
  *
  * F1: the id a client may supply becomes the project's primary key AND a

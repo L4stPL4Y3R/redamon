@@ -1,5 +1,5 @@
 """
-Strategy row 3 — partial recon must not pick an arbitrary domain.
+Strategy row 3: partial recon must not pick an arbitrary domain.
 
 get_graph_inputs_for_tool backed the partial-recon input modal. Its
 SubdomainDiscovery query was `OPTIONAL MATCH (d:Domain {user_id, project_id})`

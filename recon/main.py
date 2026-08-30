@@ -1824,7 +1824,7 @@ def main():
     allowed, reason = _check_roe_time_window(_settings)
     if not allowed:
         print(f"\n[RoE] BLOCKED: {reason}")
-        print(f"[RoE] Reconnaissance aborted — outside Rules of Engagement time window.")
+        print(f"[RoE] Reconnaissance aborted: outside Rules of Engagement time window.")
         return 1
 
     # ONCE per run, before any group: this is what lets a batch's groups

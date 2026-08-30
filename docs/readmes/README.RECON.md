@@ -667,7 +667,7 @@ afterwards, and all three run the **same** pipeline.
 
 | Mode | Target | What differs |
 | --- | --- | --- |
-| **Domain / Hostname** | one root domain plus optional subdomain prefixes | the default; full OSINT and subdomain discovery are available |
+| **Single Domain** | one root domain plus optional subdomain prefixes | the default; full OSINT and subdomain discovery are available |
 | **IP / CIDR** | a list of addresses or ranges | skips domain ownership, subdomain enumeration and domain WHOIS; runs reverse DNS and IP WHOIS instead |
 | **Domain batch** | a list of hostnames spanning several domains | groups them by domain and scans each group in turn, in one run |
 

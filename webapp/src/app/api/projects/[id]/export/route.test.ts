@@ -1,5 +1,5 @@
 /**
- * Strategy row 9 — a project export must carry the Domain-batch per-group files.
+ * Strategy row 9: a project export must carry the Domain-batch per-group files.
  *
  * A batch writes recon_<id>__<domain>.json per group beside the canonical file.
  * The archive listed only the canonical name, so exporting a batch project

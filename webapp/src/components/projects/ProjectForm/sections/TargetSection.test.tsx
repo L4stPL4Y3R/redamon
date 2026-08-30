@@ -1,5 +1,5 @@
 /**
- * Strategy row 6 — the Domain batch group preview must agree with what is saved.
+ * Strategy row 6: the Domain batch group preview must agree with what is saved.
  *
  * The preview is the ONLY place the grouping rule (last two labels) is visible to
  * an operator, and it is what they approve before the scan runs. If it disagrees
