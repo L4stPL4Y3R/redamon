@@ -289,11 +289,10 @@ export function TargetSection({ data, updateField, mode = 'create' }: TargetSect
               {batchMode ? (
                 <>
                   Paste or upload a list of hostnames. They are grouped by domain
-                  (<strong>the last two labels</strong>, so{' '}
-                  <code>a.b.example.com</code> belongs to <code>example.com</code>) and each
-                  group is scanned in turn by a <strong>single</strong> recon run, writing to
-                  the graph as it finishes each one. Only the hostnames you list are scanned;
-                  no subdomain discovery is run.
+                  (<strong>the last two labels</strong>, so a.b.example.com belongs to
+                  example.com) and each group is scanned in turn by a <strong>single</strong>{' '}
+                  recon run, writing to the graph as it finishes each one. Only the hostnames
+                  you list are scanned; no subdomain discovery is run.
                 </>
               ) : ipMode ? (
                 <>
@@ -308,7 +307,7 @@ export function TargetSection({ data, updateField, mode = 'create' }: TargetSect
                 <>
                   Targets are a domain or hostname, <strong>public or internal</strong>. A
                   public domain gets full OSINT and subdomain discovery; for an internal
-                  hostname (e.g. <code>myinternal.com</code>) turn Subdomain Discovery off and
+                  hostname (e.g. myinternal.com) turn Subdomain Discovery off and
                   make sure this host can resolve the name. Choose <strong>IP / CIDR</strong>{' '}
                   instead when you only have addresses.
                 </>
@@ -434,7 +433,7 @@ export function TargetSection({ data, updateField, mode = 'create' }: TargetSect
                   <AlertTriangle size={14} style={{ color: '#ef4444' }} />
                   <span>
                     <strong>Not valid hostnames:</strong> {batchResult.invalid.join(', ')}. Each
-                    entry needs at least two labels (<code>example.com</code>) and may only
+                    entry needs at least two labels (example.com) and may only
                     contain letters, digits, dots and hyphens. Remove or correct them to continue.
                   </span>
                 </div>
