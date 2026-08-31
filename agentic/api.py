@@ -158,6 +158,10 @@ class GuardrailRequest(BaseModel):
     """Request model for target guardrail check."""
     target_domain: str = ""
     target_ips: list[str] = []
+    # Domain batch sends every in-scope root here. A joined string in
+    # target_domain would reach a SINGULAR prompt and invite one aggregate
+    # verdict, so a blocked domain among many could be allowed.
+    target_domains: list[str] = []
     project_id: str = ""
     user_id: str = ""
 
@@ -177,11 +181,14 @@ async def check_target_guardrail(body: GuardrailRequest):
     from orchestrator_helpers.guardrail import check_target_allowed
     from project_settings import DEFAULT_AGENT_SETTINGS
 
-    # Hard guardrail: deterministic, non-disableable
-    if body.target_domain:
-        blocked, reason = is_hard_blocked(body.target_domain)
+    # Hard guardrail: deterministic, non-disableable. Checks EVERY domain the
+    # caller named: a Domain-batch create sends its roots in target_domains and
+    # leaves target_domain empty, so a check on the single field alone would let
+    # a blocked root through the one control that cannot be switched off.
+    for _domain in ([body.target_domain] if body.target_domain else []) + list(body.target_domains or []):
+        blocked, reason = is_hard_blocked(_domain)
         if blocked:
-            return {"allowed": False, "reason": reason, "hard_blocked": True}
+            return {"allowed": False, "reason": f"{_domain}: {reason}", "hard_blocked": True}
 
     if not orchestrator or not orchestrator._initialized:
         return {"allowed": True, "reason": "Agent not initialized, guardrail skipped"}
@@ -251,6 +258,7 @@ async def check_target_guardrail(body: GuardrailRequest):
             orchestrator.llm,
             target_domain=body.target_domain,
             target_ips=body.target_ips,
+            target_domains=body.target_domains,
         )
         return result
     except Exception as e:

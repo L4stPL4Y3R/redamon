@@ -10,6 +10,7 @@ Mirrors the pattern from recon/project_settings.py.
 import os
 import logging
 import contextvars
+import re
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -564,6 +565,11 @@ def fetch_agent_settings(project_id: str, webapp_url: str) -> dict[str, Any]:
     settings['TARGET_DOMAIN'] = project.get('targetDomain', '')
     settings['IP_MODE'] = project.get('ipMode', False)
     settings['TARGET_IPS'] = project.get('targetIps', [])
+    # Domain batch has an EMPTY targetDomain: its scope is the derived group roots.
+    # Without these two the agent's guardrails see no target at all and skip
+    # themselves, which is the opposite of fail-closed. See target_scope_domains().
+    settings['DOMAIN_BATCH_MODE'] = project.get('domainBatchMode', False)
+    settings['DOMAIN_BATCH_GROUPS'] = project.get('domainBatchGroups') or []
 
     # Rules of Engagement
     settings['ROE_ENABLED'] = project.get('roeEnabled', DEFAULT_AGENT_SETTINGS['ROE_ENABLED'])
@@ -830,6 +836,43 @@ def get_setting(key: str, default: Any = None) -> Any:
         Setting value or default
     """
     return get_settings().get(key, default)
+
+
+_SCOPE_DOMAIN_CHARSET = re.compile(r'^[a-z0-9.-]+$')
+
+
+def target_scope_domains() -> list[str]:
+    """Every domain this project is authorized to touch, whatever its target mode.
+
+    Both agent guardrails used to read TARGET_DOMAIN alone. A Domain-batch project
+    leaves that empty and keeps its scope in DOMAIN_BATCH_GROUPS, so the soft
+    guardrail returned early ("nothing to check") and the hard guardrail's
+    `if not ip_mode and target_domain` was false: BOTH silently disarmed on exactly
+    the projects with the most targets. This is the single source of scope for them.
+
+    Returns [] only for a genuinely unconfigured project or IP mode. Callers must
+    treat an EMPTY list in batch mode as a refusal, never as "nothing to check".
+    """
+    if get_setting('IP_MODE', False):
+        return []
+
+    if get_setting('DOMAIN_BATCH_MODE', False):
+        groups = get_setting('DOMAIN_BATCH_GROUPS', []) or []
+        roots: list[str] = []
+        if isinstance(groups, list):
+            for entry in groups:
+                if not isinstance(entry, dict):
+                    continue
+                root = str(entry.get('rootDomain') or '').strip().lower()
+                # Same charset rule as the recon and orchestrator parsers: drop
+                # rather than repair, so a hand-edited row cannot smuggle a target.
+                if root and _SCOPE_DOMAIN_CHARSET.match(root) and '..' not in root:
+                    if root not in roots:
+                        roots.append(root)
+        return roots
+
+    domain = (get_setting('TARGET_DOMAIN', '') or '').strip()
+    return [domain] if domain else []
 
 
 def reload_settings(project_id: Optional[str] = None) -> dict[str, Any]:

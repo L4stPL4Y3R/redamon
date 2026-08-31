@@ -435,13 +435,60 @@ class TestBaseMixin(unittest.TestCase):
         self.assertFalse(client.verify_connection())
 
 
+
+class TestSubdomainEdgesArePaired(unittest.TestCase):
+    """Domain <-> Subdomain must be a symmetric pair.
+
+    Every place that MERGEs `(d)-[:HAS_SUBDOMAIN]->(s)` must also MERGE the reverse
+    `(s)-[:BELONGS_TO]->(d)` in the same query, and vice versa. The URLScan
+    discovery path in osint_mixin.py created only HAS_SUBDOMAIN, so 13
+    enrichment-discovered subdomains in a multi-domain scan had no BELONGS_TO edge
+    back to their domain - reachable one way, invisible to a Subdomain->Domain
+    traversal. This pins the invariant so a future write site cannot regress it.
+    """
+
+    _MIXINS = [
+        "graph_db/mixins/osint_mixin.py",
+        "graph_db/mixins/recon/domain_mixin.py",
+        "graph_db/mixins/recon/user_input_mixin.py",
+        "graph_db/mixins/recon/vhost_sni_mixin.py",
+    ]
+
+    _MERGE_HAS = re.compile(r"MERGE\s*\([^)]*\)\s*-\[:HAS_SUBDOMAIN")
+    _MERGE_BEL = re.compile(r"MERGE\s*\([^)]*\)\s*-\[:BELONGS_TO")
+
+    def test_has_subdomain_and_belongs_to_are_created_together(self):
+        unpaired = []
+        for rel in self._MIXINS:
+            src = open(os.path.join(_REPO, rel)).read()
+            # Each Cypher literal is a triple-quoted block; check per block so a
+            # HAS_SUBDOMAIN create and a BELONGS_TO create in DIFFERENT queries do
+            # not mask a genuinely one-directional write.
+            for block in re.findall(r'"""(.*?)"""', src, re.S):
+                has = self._MERGE_HAS.search(block) is not None
+                bel = self._MERGE_BEL.search(block) is not None
+                if has != bel:
+                    unpaired.append(f"{rel}: HAS_SUBDOMAIN={has} BELONGS_TO={bel}")
+        self.assertEqual(unpaired, [], "one-directional Domain/Subdomain write(s): " + "; ".join(unpaired))
+
+    def test_the_urlscan_discovery_path_creates_both_edges(self):
+        # The exact site that regressed: update_graph_from_urlscan_discovery.
+        src = open(os.path.join(_REPO, "graph_db/mixins/osint_mixin.py")).read()
+        start = src.index("def update_graph_from_urlscan_discovery")
+        end = src.index("\n    def ", start + 1)
+        body = src[start:end]
+        self.assertIn("HAS_SUBDOMAIN", body)
+        self.assertIn("BELONGS_TO", body)
+
+
 # ─── MAIN ─────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     loader = unittest.TestLoader()
     suite  = unittest.TestSuite()
     for cls in [TestSyntax, TestMethodPresence, TestNeo4jClientOrchestrator,
-                TestCpeResolver, TestSchema, TestBaseMixin]:
+                TestCpeResolver, TestSchema, TestBaseMixin,
+                TestSubdomainEdgesArePaired]:
         suite.addTests(loader.loadTestsFromTestCase(cls))
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(suite)

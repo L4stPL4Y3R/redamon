@@ -360,6 +360,16 @@ model Project {
   subdomainList               String[] @default([]) @map("subdomain_list")
   ipMode                      Boolean  @default(false) @map("ip_mode")
   targetIps                   String[] @default([]) @map("target_ips")
+  /// Domain batch: the third targeting mode. Mutually exclusive with ipMode.
+  /// One full recon walks the derived groups in order, appending to one graph.
+  domainBatchMode             Boolean  @default(false) @map("domain_batch_mode")
+  /// Raw hostname list as entered or uploaded. What the operator edits.
+  domainBatchHosts            String[] @default([]) @map("domain_batch_hosts")
+  /// Groups derived from the list at save time: [{ rootDomain, prefixes[], hosts[] }].
+  /// Persisted rather than re-derived so the grouping rule has exactly ONE
+  /// implementation, and so what the operator approved in the preview is literally
+  /// what the pipeline runs. Always recomputed server-side; never trusted from a body.
+  domainBatchGroups           Json?    @map("domain_batch_groups")
   verifyDomainOwnership       Boolean  @default(false) @map("verify_domain_ownership")
   ownershipToken              String   @default("your-secret-token-here") @map("ownership_token")
   ownershipTxtPrefix          String   @default("_redamon-verify") @map("ownership_txt_prefix")

@@ -1541,7 +1541,7 @@ ensure_sca_intel() {
     # on failure, and a bare `|| warn` cannot catch an exit - it would abort the
     # whole install/update. A missing catalog must degrade to "did not run",
     # never stop the stack coming up.
-    ( cmd_sca_intel_sync ) || warn "Incident catalog sync incomplete; supply-chain findings will carry no incident context until './redamon.sh sca-intel-sync' succeeds"
+    ( cmd_sca_intel_sync ) || warn "Incident catalog sync incomplete; supply-chain findings will carry no incident context until './redamon.sh sca-intel-sync' succeeds. This is not a problem: RedAmon runs normally with the sync off, you just won't see incident context on supply-chain findings."
 }
 
 ensure_osv_db() {

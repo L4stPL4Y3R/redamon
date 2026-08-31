@@ -46,9 +46,18 @@ export function matchesTargetFilter(preset: ReconPreset, filter: TargetFilter): 
  */
 export function resolveIpModeForPreset(
   targetProfile: PresetTargetProfile,
-  mode: 'create' | 'edit'
+  mode: 'create' | 'edit',
+  /** The project's current target mode. A Domain batch is a domain target, so a
+   *  'domain' preset must NOT force it back to single-domain mode: that would
+   *  silently discard the operator's hostname list. */
+  currentMode: 'domain' | 'ip' | 'batch' = 'domain'
 ): boolean | undefined {
   if (mode !== 'create') return undefined
+  if (currentMode === 'batch') {
+    // Only an explicitly IP-targeted preset may pull a batch out of domain
+    // targeting; everything else leaves the batch alone.
+    return targetProfile === 'ip' ? true : undefined
+  }
   if (targetProfile === 'ip') return true
   if (targetProfile === 'domain') return false
   return undefined

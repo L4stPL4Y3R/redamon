@@ -7,6 +7,7 @@ import dynamic from 'next/dynamic'
 import type { Project } from '@prisma/client'
 import { validateProjectForm } from '@/lib/validation'
 import { isHardBlockedDomain } from '@/lib/hard-guardrail'
+import { validateDomainBatch } from '@/lib/domainBatch'
 import { tabForAnchor } from '@/lib/projectSettingsLinks'
 import { graphScanHref, type ScanModal } from '@/lib/scanModalLink'
 import { useProject } from '@/providers/ProjectProvider'
@@ -163,7 +164,39 @@ const MINIMAL_DEFAULTS: Partial<ProjectFormData> = {
   subdomainList: [],
   ipMode: false,
   targetIps: [],
+  domainBatchMode: false,
+  domainBatchHosts: [],
   scanModules: ['domain_discovery', 'port_scan', 'http_probe', 'resource_enum', 'vuln_scan'],
+}
+
+/** The target requirement per mode, shared by Save and Save-and-stay so the two
+ *  can never disagree about what a valid target is. Returns a message or null. */
+function validateTargetForMode(formData: ProjectFormData): string | null {
+  if (formData.domainBatchMode) {
+    const result = validateDomainBatch(formData.domainBatchHosts || [])
+    return result.ok ? null : result.errors.join('\n')
+  }
+  if (!formData.ipMode && !formData.targetDomain.trim()) {
+    return 'Target domain is required'
+  }
+  return null
+}
+
+/** The first target this project would scan that is permanently blocked, whatever
+ *  the mode. A batch must be checked group by group: one blocked domain in a list
+ *  of twenty is still a blocked scan. */
+function firstHardBlockedTarget(
+  formData: ProjectFormData
+): { domain: string; reason: string } | null {
+  const domains = formData.domainBatchMode
+    ? validateDomainBatch(formData.domainBatchHosts || []).groups.map(g => g.rootDomain)
+    : (!formData.ipMode && formData.targetDomain ? [formData.targetDomain] : [])
+
+  for (const domain of domains) {
+    const check = isHardBlockedDomain(domain)
+    if (check.blocked) return { domain, reason: check.reason }
+  }
+  return null
 }
 
 // Fetch defaults from the recon backend (single source of truth)
@@ -511,8 +544,14 @@ export function ProjectForm({
       // Non-destructive: the now-hidden side (targetDomain / targetIps) is left
       // intact so switching back does not lose what the user typed. resolve()
       // returns undefined (leave as-is) in edit mode and for 'both' presets.
-      const resolvedIpMode = resolveIpModeForPreset(preset.targetProfile, mode)
-      if (resolvedIpMode !== undefined) next.ipMode = resolvedIpMode
+      const currentTargetMode = prev.ipMode ? 'ip' : prev.domainBatchMode ? 'batch' : 'domain'
+      const resolvedIpMode = resolveIpModeForPreset(preset.targetProfile, mode, currentTargetMode)
+      if (resolvedIpMode !== undefined) {
+        next.ipMode = resolvedIpMode
+        // Switching to IP targeting cannot leave a batch flagged as well, or the
+        // project would claim two mutually exclusive modes.
+        if (resolvedIpMode) next.domainBatchMode = false
+      }
       return next as ProjectFormData
     })
     setAppliedPreset(preset)
@@ -567,8 +606,9 @@ export function ProjectForm({
       return
     }
 
-    if (!formData.ipMode && !formData.targetDomain.trim()) {
-      alertWarning('Target domain is required')
+    const targetError = validateTargetForMode(formData)
+    if (targetError) {
+      alertWarning(targetError)
       return
     }
 
@@ -580,12 +620,10 @@ export function ProjectForm({
     }
 
     // Hard guardrail: block government/public domains before hitting API
-    if (!formData.ipMode && formData.targetDomain) {
-      const hardCheck = isHardBlockedDomain(formData.targetDomain)
-      if (hardCheck.blocked) {
-        setGuardrailError(hardCheck.reason)
-        return
-      }
+    const blockedTarget = firstHardBlockedTarget(formData)
+    if (blockedTarget) {
+      setGuardrailError(blockedTarget.reason)
+      return
     }
 
     // No LLM provider configured -> ask to set one up, don't open the model picker.
@@ -624,38 +662,49 @@ export function ProjectForm({
   }
 
   /** `after` runs only once the save actually succeeded - it is how the section
-   *  headers hand off to the graph page without navigating past a failed save. */
-  const handleSaveAndStay = async (after?: () => void) => {
-    if (!onSaveAndStay) return
+   *  headers hand off to the graph page without navigating past a failed save.
+   *
+   *  Returns TRUE only when the project was actually written. Every early return
+   *  below is a validation refusal, and a caller that treats "resolved" as
+   *  "saved" will act on a save that never happened: the workflow node modal did
+   *  exactly that and closed itself on a validation error, dropping the operator
+   *  back to the graph with their unsaved input and only a transient alert to
+   *  explain it. */
+  const handleSaveAndStay = async (after?: () => void): Promise<boolean> => {
+    if (!onSaveAndStay) return false
 
     if (!formData.name.trim()) {
+      // Jump to the tab that owns the offending field, so the operator is not
+      // told "required" about something the current view does not show.
+      setActiveTab('target')
       alertWarning('Project name is required')
-      return
+      return false
     }
-    if (!formData.ipMode && !formData.targetDomain.trim()) {
-      alertWarning('Target domain is required')
-      return
+    const targetError = validateTargetForMode(formData)
+    if (targetError) {
+      setActiveTab('target')
+      alertWarning(targetError)
+      return false
     }
     const validationErrors = validateProjectForm(formData as unknown as Record<string, unknown>)
     if (validationErrors.length > 0) {
       alertWarning('Validation errors:\n' + validationErrors.map(e => `- ${e.message}`).join('\n'))
-      return
+      return false
     }
-    if (!formData.ipMode && formData.targetDomain) {
-      const hardCheck = isHardBlockedDomain(formData.targetDomain)
-      if (hardCheck.blocked) {
-        setGuardrailError(hardCheck.reason)
-        return
-      }
+    const blockedTarget = firstHardBlockedTarget(formData)
+    if (blockedTarget) {
+      setActiveTab('target')
+      setGuardrailError(blockedTarget.reason)
+      return false
     }
     // No LLM provider configured -> ask to set one up, don't open the model picker.
-    if (!(await ensureProviderConfigured())) return
+    if (!(await ensureProviderConfigured())) return false
 
     // Force explicit LLM model selection on create (agent + AI recon pipeline)
     if (needsModelGate(mode, formData.agentOpenaiModel, formData.aiPipelineModel)) {
       setPendingSaveAction('stay')
       setShowModelGate(true)
-      return
+      return false
     }
     try {
       const submitData = {
@@ -668,6 +717,7 @@ export function ProjectForm({
       setBaseline(formData)
       toast.success('Project saved')
       after?.()
+      return true
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to save project'
       if (message.toLowerCase().includes('guardrail') || message.toLowerCase().includes('permanently blocked')) {
@@ -678,6 +728,7 @@ export function ProjectForm({
       } else {
         alertError(message)
       }
+      return false
     }
   }
 

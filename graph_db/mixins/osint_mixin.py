@@ -431,6 +431,7 @@ class OsintMixin:
                                 ON CREATE SET s.discovered_by = 'urlscan', s.status = 'resolved',
                                               s.updated_at = datetime()
                                 MERGE (d)-[:HAS_SUBDOMAIN]->(s)
+                                MERGE (s)-[:BELONGS_TO]->(d)
                                 """,
                                 domain=domain, subdomain=subdomain,
                                 uid=user_id, pid=project_id

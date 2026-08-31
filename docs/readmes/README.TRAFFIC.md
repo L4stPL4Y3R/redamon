@@ -831,6 +831,151 @@ pre-imports the SDK, runs the code, and returns its `print(...)` output; the SDK
 hands back is attacker-controlled, so the tool output is wrapped as untrusted before
 it reaches the LLM.
 
+### The mechanism explained simply
+
+Before the detailed subsections below, here is the whole thing in plain words. The
+sections that follow re-tell the same story with the exact endpoints, line numbers
+and enforcement code.
+
+**The one idea.** `proxy_brain` lets the agent write a little Python program and run
+it, with a ready-made toolbox called `redamon` already imported. That toolbox is not
+a database client and holds no real credential: it is a thin phone line back to the
+trusted agent. The agent is the only side that knows *who* the traffic belongs to and
+is the only side allowed to say *where* a live request may go. The sandbox does the
+risky work but cannot choose the target or the tenant. That split is the entire
+security design.
+
+#### Which container runs the SDK, and who it talks to
+
+The SDK runs inside **`redamon-kali`** (the kali sandbox), the least-trusted box,
+because that is where attacker-facing traffic and LLM-written code execute. From
+there it talks to two other containers: the **`redamon-agent`** for every decision
+and every piece of data, and the **`redamon-capture-proxy`** whenever it actually
+sends live traffic to a target.
+
+```mermaid
+flowchart LR
+    subgraph kali["redamon-kali (kali-sandbox) — least trusted"]
+      PB["proxy_brain tool<br/>runs the agent's Python"] --> RS["redamon SDK<br/>(pre-imported)"]
+    end
+    subgraph agentc["redamon-agent — trusted brain"]
+      EP["/traffic/exec · /traffic/replay · /traffic/browser"]
+      SEC["holds INTERNAL_API_KEY<br/>+ DATABASE_URL"]
+    end
+    CP["redamon-capture-proxy<br/>egress guard + re-capture"]
+    TGT["target host"]
+    RS -->|"HTTP: signed ctx tag + SCANNER_API_KEY header"| EP
+    EP -->|"data / curl recipe / allow-or-deny"| RS
+    RS -->|"live curl routed via -x proxy"| CP --> TGT
+    TGT -->|response| CP --> RS
+```
+
+The kali box is given only the **scoped** `SCANNER_API_KEY` (transport auth: "I am an
+allowed caller") and the agent's URL. It is deliberately **not** given
+`INTERNAL_API_KEY` or any database URL, so a foothold there cannot forge a tenant or
+read the store directly.
+
+#### Two hops: the agent triggers, then the code calls back
+
+The confusing part is that the agent triggers the tool, yet it is *kali* that sends
+the request in the diagrams. The reason is that there are **two separate hops**, and
+the code runs in kali, not in the agent.
+
+- **Hop 1 (agent -> kali):** the agent invokes the `proxy_brain` MCP tool, handing it
+  the Python code and a freshly minted `REDAMON_CTX` tag. This is the trigger. The
+  agent now steps back and waits.
+- **Hop 2 (kali -> agent):** kali is now *executing that code*. Every time a line like
+  `redamon.replay(...)` runs, the SDK needs something it does not have locally, so it
+  opens a **new** request back to the agent, using the tag as its ID badge.
+
+Think of the agent as a manager who hands a worker a sealed task sheet and an ID
+badge, then leaves. The worker goes to a separate room and, whenever it needs a file,
+walks to the archive window and asks, showing the badge. The manager is not standing
+there fetching files; the worker asks, and the clerk checks the badge first.
+
+```mermaid
+sequenceDiagram
+    participant A as redamon-agent (brain)
+    participant K as redamon-kali (SDK runs here)
+    participant T as target
+    A->>K: HOP 1 — run this Python + your REDAMON_CTX tag
+    Note over K: the code executes INSIDE kali
+    K->>A: HOP 2 — redamon.search(...)  {op, args, ctx}
+    A-->>K: tenant-scoped rows (agent did the query)
+    K->>A: HOP 2 — redamon.replay(...) {op, id, mutate, ctx}
+    A-->>K: host-pinned curl_args + signed replay tag
+    K->>T: kali runs the curl (through the capture proxy)
+    T-->>K: the real response (the agent never sees it)
+    K-->>A: printed output = the tool result
+```
+
+Hops 3 to 5 (the middle rows) can repeat many times inside a single run, because the
+code loops. Each repeat is kali initiating, because the code lives in kali.
+
+#### The key twist: the agent hands out permits, it does not fetch
+
+For **read** operations the agent does the work itself (the corpus lives on its side)
+and returns the answer. But for **live** operations the agent **never contacts the
+target**. It returns *instructions*:
+
+- **`/traffic/replay` and `/traffic/fuzz`** reply with a ready-to-run, **host-pinned**
+  `curl_args` string plus a signed lineage tag. Kali then runs that curl itself,
+  through the capture proxy, and the target's response comes back **to kali**, not
+  through the agent.
+- **`/traffic/browser`** replies with the host to pin to and an allow-or-deny for each
+  step. The real Chromium runs in kali, through the capture proxy.
+
+So the agent is a **broker that issues permits**, not a proxy that fetches things. It
+keeps the trust (identity, host-pinning, phase and budget checks) but stays off the
+traffic path, while kali does the sending but can only run the exact permit it was
+handed. That is what stops a compromised sandbox from becoming an SSRF pivot or a
+cross-tenant leak.
+
+| Operation | What the agent returns | Who contacts the target |
+|---|---|---|
+| read (`search`, `get`, `grep`, `diff`, `query`, …) | the actual data | nobody |
+| active (`replay`, `fuzz`, `batch`) | a host-pinned `curl_args` + signed tag | **kali**, via the capture proxy |
+| browser (`goto`, `click`, `eval`, …) | pin info + per-step allow/deny | **kali's** Chromium, via the capture proxy |
+
+#### The auth tag: how `REDAMON_CTX` is made and checked
+
+Identity travels as a small **signed JSON token** — the same idea as a JWT, but
+home-rolled in pure stdlib ([`redamon_ctx.py`](../../agentic/redamon_ctx.py)). The
+agent mints it fresh on every `proxy_brain` call and the `/traffic/*` endpoint
+verifies it. The token is **not secret** (anyone can base64-decode the claims); it is
+**tamper-proof** (nobody without `INTERNAL_API_KEY` can forge or alter it).
+
+```mermaid
+flowchart TD
+    subgraph mint["MINT — agent side, per proxy_brain call (_build_redamon_ctx)"]
+      C1["gather claims from TRUSTED ContextVars:<br/>source=agent, user_id, project_id, session, phase, tool"]
+      C2["canonical JSON<br/>(whitelisted fields, sorted keys, compact)"]
+      C3["HMAC-SHA256 over the bytes, keyed with INTERNAL_API_KEY"]
+      C4["token = b64url(claims) + '.' + b64url(sig)"]
+      C1 --> C2 --> C3 --> C4
+    end
+    C4 -->|"injected as REDAMON_CTX on the CHILD process only"| K["kali runs the code"]
+    K -->|"every /traffic/* call carries the tag verbatim"| V1
+    subgraph verify["VERIFY — agent side, on each call (_verify_traffic_ctx)"]
+      V1["read 'source' only to PICK the key<br/>(agent -> INTERNAL_API_KEY, recon -> SCANNER_API_KEY)"]
+      V2["recompute HMAC, constant-time compare"]
+      V3["re-canonicalize claims == original bytes?"]
+      V1 --> V2 --> V3
+      V3 -->|"no · missing key · key=changeme · no tenant"| F["401 — fail closed"]
+      V3 -->|yes| OK["bind tenant from the SIGNED claims<br/>(never from the request body)"]
+    end
+```
+
+Practically, the mint is four steps: **gather claims -> canonical JSON -> HMAC-SHA256
+with the agent's private key -> base64url both halves and join with a dot.** Two
+things make it safe:
+
+1. The claims come from the agent's own request context, **never from the code the LLM
+   wrote**, so the sandbox cannot name a different tenant.
+2. The signing key never leaves the agent. Kali carries the finished token but cannot
+   read past it or produce a new one, and the endpoint re-derives the tenant from the
+   *verified* claims and hard-injects it into every SQL `WHERE`.
+
 ### The broker pattern (why kali never touches the database)
 
 `proxy_brain` runs in the **least-trusted** container (the Kali sandbox, which talks

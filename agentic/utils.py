@@ -342,6 +342,18 @@ def get_session_config_prompt() -> str:
             2. **BIND** (you connect to target):
                - Requires: Bind port on target (e.g. 4444)""")
 
+        lines += _section("""\
+            **⚠️ WHICH IP IS LHOST — DO NOT GUESS OR AUTO-DETECT IT.**
+            Your tools run inside the kali-sandbox container, whose own address
+            is a private `172.x` Docker IP that the target CANNOT reach. Reading
+            it (`ip addr` / `ifconfig` / `hostname -I`) gives the WRONG LHOST.
+            The correct LHOST is the **host machine's LAN IP** (e.g. your Kali
+            VM's `192.168.x.x`); the reverse handler's port 4444 is forwarded
+            from the host into the container, so the target connects to
+            `host-LAN-IP:LPORT`. You cannot discover the host's LAN IP from
+            inside the container — ASK THE USER for it, do not run a command to
+            find it.""")
+
     lines += _section("Replace `<os>/<arch>` with target OS (e.g., `linux/x64`, `windows/x64`).")
 
     return "\n".join(lines)
