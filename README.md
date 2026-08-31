@@ -19,35 +19,25 @@
   <a href="https://www.redamon.org/"><img height="34" src="https://img.shields.io/badge/🌐_Website-redamon.org-A01025?style=for-the-badge&labelColor=000000" alt="RedAmon Website"/></a>
   <a href="https://discord.com/invite/dxSrH2gaC"><img height="34" src="https://img.shields.io/badge/Discord-Join_Community-5865F2?style=for-the-badge&logo=discord&logoColor=white&labelColor=000000" alt="Discord Community"/></a>
   <a href="https://t.me/redamon_ai"><img height="34" src="https://img.shields.io/badge/Telegram-Join_Channel-26A5E4?style=for-the-badge&logo=telegram&logoColor=white&labelColor=000000" alt="Telegram Channel"/></a>
+  <a href="https://youtu.be/XJyQHa4RTbI"><img height="34" src="https://img.shields.io/badge/YouTube-Platform_Tour-FF0000?style=for-the-badge&logo=youtube&logoColor=white&labelColor=000000" alt="RedAmon Platform Tour"/></a>
 </p>
 
 <p align="center">
   <a href="https://github.com/samugit83/redamon/stargazers"><img height="24" src="https://img.shields.io/github/stars/samugit83/redamon?style=flat&color=2E8B57&label=Stars" alt="GitHub Stars"/></a>
-  <img height="24" src="https://img.shields.io/badge/v6.12.0-release-2E8B57?style=flat" alt="Version 6.12.0"/>
+  <img height="24" src="https://img.shields.io/badge/v6.13.0-release-2E8B57?style=flat" alt="Version 6.13.0"/>
   <img height="24" src="https://img.shields.io/badge/WARNING-SECURITY%20TOOL-B22222?style=flat" alt="Security Tool Warning"/>
   <img height="24" src="https://img.shields.io/badge/LICENSE-MIT-4169A1?style=flat" alt="MIT License"/>
-  <a href="docs/readmes/README.SECURITY_POSTURE.md"><img height="24" src="https://img.shields.io/badge/SECURE%20BY%20DESIGN-STRIDE%20THREAT%20MODELED-2E7D32?style=flat&logo=shield&logoColor=white" alt="Secure by Design, STRIDE Threat Modeled"/></a>
-  <img height="24" src="https://img.shields.io/badge/END--TO--END-PIPELINE-A01025?style=flat" alt="End-to-End Pipeline"/>
   <img height="24" src="https://img.shields.io/badge/AI-AUTONOMOUS%20AGENT-6A5ACD?style=flat&logo=openai&logoColor=white" alt="AI Powered"/>
   <a href="https://github.com/samugit83/redamon/wiki/AI-Gauntlet"><img height="24" src="https://img.shields.io/badge/%F0%9F%86%95%20AI%20GAUNTLET-OFFENSIVE%20AI%20TESTING-FF6B35?style=flat" alt="AI Gauntlet — Offensive AI Testing"/></a>
   <a href="https://github.com/samugit83/redamon/wiki/Fireteam-Parallel-Specialists"><img height="24" src="https://img.shields.io/badge/%F0%9F%94%A5%20FIRETEAM-PARALLEL%20MULTI--AGENT-7C3AED?style=flat" alt="Fireteam Parallel Multi-Agent"/></a>
   <a href="redamon.wiki/Deploying-to-a-Server.md"><img height="24" src="https://img.shields.io/badge/%F0%9F%9A%80%20ONE%20COMMAND-DEPLOY%20ON%20SERVER-CC7722?style=flat" alt="One Command Deploy on Server"/></a>
-  <img height="24" src="https://img.shields.io/badge/Kali-Powered-466A7A?style=flat&logo=kalilinux&logoColor=white" alt="Kali Powered"/>
-  <img height="24" src="https://img.shields.io/badge/Docker-Compose-1A7EC2?style=flat&logo=docker&logoColor=white" alt="Docker"/>
   <a href="https://github.com/samugit83/redamon/wiki/TrafficMind"><img height="24" src="https://img.shields.io/badge/%F0%9F%95%B8%EF%B8%8F%20TRAFFICMIND-mitmproxy%20CAPTURE-1F6FEB?style=flat" alt="TrafficMind mitmproxy HTTP Capture"/></a>
   <img height="24" src="https://img.shields.io/badge/100+-SECURITY%20TOOLS-CC8F00?style=flat&logo=hack-the-box&logoColor=white" alt="100+ Security Tools"/>
   <img height="24" src="https://img.shields.io/badge/185,000+-DETECTION%20RULES-8B1142?style=flat" alt="185,000+ Detection Rules"/>
-  <img height="24" src="https://img.shields.io/badge/500+-PROJECT%20SETTINGS-00899B?style=flat" alt="500+ Settings"/>
   <img height="24" src="https://img.shields.io/badge/400+-AI%20MODELS-04A878?style=flat&logo=huggingface&logoColor=white" alt="400+ AI Models"/>
-  <img height="24" src="https://img.shields.io/badge/%F0%9F%96%A5%EF%B8%8F_LOCAL%20MODELS-OLLAMA%20%7C%20vLLM%20%7C%20LM%20Studio-B85C00?style=flat" alt="Local Models Support"/>
   <img height="24" src="https://img.shields.io/badge/Metasploit-Framework-1A6DAA?style=flat" alt="Metasploit Framework"/>
   <img height="24" src="https://img.shields.io/badge/OpenVAS-Scanner-66B245?style=flat" alt="OpenVAS Scanner"/>
-  <img height="24" src="https://img.shields.io/badge/Nmap-Scanner-4682B4?style=flat" alt="Nmap Scanner"/>
-  <img height="24" src="https://img.shields.io/badge/Nuclei-Scanner-7B42BC?style=flat" alt="Nuclei Scanner"/>
-  <img height="24" src="https://img.shields.io/badge/Hydra-Credential%20Testing-E67E22?style=flat" alt="Hydra Credential Testing"/>
   <img height="24" src="https://img.shields.io/badge/CypherFix-Auto%20Remediation-00B894?style=flat" alt="CypherFix Auto Remediation"/>
-  <img height="24" src="https://img.shields.io/badge/AI-PENTEST%20REPORTS-8B5CF6?style=flat" alt="AI Pentest Reports"/>
-  <img height="24" src="https://img.shields.io/badge/RoE-Guardrails-3B82F6?style=flat" alt="RoE Guardrails"/>
   <a href="https://github.com/samugit83/redamon/wiki"><img height="24" src="https://img.shields.io/badge/📖_WIKI-FULL%20DOCUMENTATION-1A73E8?style=flat" alt="Wiki Documentation"/></a>
 </p>
 
@@ -57,10 +47,9 @@
   <img src="docs/assets/agent.gif" alt="RedAmon Agent Demo" width="100%"/>
 </p>
 <p align="center">
-  <a href="https://youtu.be/afViJUit0xE"><img height="24" src="https://img.shields.io/badge/▶_WATCH_DEMO-3_Parallel_Agents-FF0000?style=flat&logo=youtube&logoColor=white" alt="Watch Demo"/></a>
-</p>
-<p align="center">
-  <em>Three AI agents test in parallel: one validates credential policies via Hydra, one verifies a CVE exploit path through privilege escalation, one maps XSS vulnerabilities across the frontend.</em>
+  <a href="https://www.youtube.com/playlist?list=PLKBUWnoi9aaA"><img height="24" src="https://img.shields.io/badge/YouTube-Demos-FF0000?style=flat&logo=youtube&logoColor=white" alt="YouTube - Demos"/></a>
+  <a href="https://www.youtube.com/playlist?list=PLXp03AyYNPWE"><img height="24" src="https://img.shields.io/badge/YouTube-XBOW_Bench-FF0000?style=flat&logo=youtube&logoColor=white" alt="YouTube - XBOW Bench"/></a>
+  <a href="https://www.youtube.com/playlist?list=PL_HcrMfo9rCc7HaWIGk-J1YZRPQXSfPIi"><img height="24" src="https://img.shields.io/badge/YouTube-Hacklab-FF0000?style=flat&logo=youtube&logoColor=white" alt="YouTube - Hacklab"/></a>
 </p>
 
 <br/>
@@ -231,6 +220,8 @@ All settings are stored per-user in the database. See the **[AI Model Providers]
 Go to **http://localhost:3000** -- create a project, configure your target, and start scanning.
 
 > For a detailed walkthrough of every feature, check the **[Wiki](https://github.com/samugit83/redamon/wiki)**.
+>
+> Prefer video? Watch the **[Product Demos playlist](https://www.youtube.com/playlist?list=PLKBUWnoi9aaA)** on YouTube for step-by-step tutorials.
 >
 > Having issues? See the **[Troubleshooting](docs/readmes/TROUBLESHOOTING.md)** guide or the **[Wiki Troubleshooting](https://github.com/samugit83/redamon/wiki/Troubleshooting)** page.
 
