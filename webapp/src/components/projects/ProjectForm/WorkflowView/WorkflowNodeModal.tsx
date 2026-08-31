@@ -43,7 +43,9 @@ type FormData = Omit<Project, 'id' | 'userId' | 'createdAt' | 'updatedAt' | 'use
 interface WorkflowNodeModalProps {
   toolId: string | null
   onClose: () => void
-  onSave?: () => Promise<void>
+  /** Resolves TRUE only when the project was actually saved; FALSE means a
+   *  validation refusal, and the modal must stay open. */
+  onSave?: () => Promise<boolean>
   data: FormData
   updateField: <K extends keyof FormData>(field: K, value: FormData[K]) => void
   projectId?: string
@@ -65,8 +67,13 @@ export function WorkflowNodeModal({
     if (!onSave || isSaving) return
     setIsSaving(true)
     try {
-      await onSave()
-      onClose()
+      // Close ONLY on a real save. onSave resolves normally when it refuses on a
+      // validation error (missing project name, no batch hostnames, a blocked
+      // target), so closing on "resolved" dismissed the operator's settings and
+      // their unsaved input, leaving them on the workflow graph with nothing but
+      // a transient alert to explain why. Staying open keeps the offending field
+      // on screen to fix.
+      if (await onSave()) onClose()
     } catch {
       // errors handled by onSave caller
     } finally {

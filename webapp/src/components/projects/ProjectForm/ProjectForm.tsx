@@ -662,37 +662,49 @@ export function ProjectForm({
   }
 
   /** `after` runs only once the save actually succeeded - it is how the section
-   *  headers hand off to the graph page without navigating past a failed save. */
-  const handleSaveAndStay = async (after?: () => void) => {
-    if (!onSaveAndStay) return
+   *  headers hand off to the graph page without navigating past a failed save.
+   *
+   *  Returns TRUE only when the project was actually written. Every early return
+   *  below is a validation refusal, and a caller that treats "resolved" as
+   *  "saved" will act on a save that never happened: the workflow node modal did
+   *  exactly that and closed itself on a validation error, dropping the operator
+   *  back to the graph with their unsaved input and only a transient alert to
+   *  explain it. */
+  const handleSaveAndStay = async (after?: () => void): Promise<boolean> => {
+    if (!onSaveAndStay) return false
 
     if (!formData.name.trim()) {
+      // Jump to the tab that owns the offending field, so the operator is not
+      // told "required" about something the current view does not show.
+      setActiveTab('target')
       alertWarning('Project name is required')
-      return
+      return false
     }
     const targetError = validateTargetForMode(formData)
     if (targetError) {
+      setActiveTab('target')
       alertWarning(targetError)
-      return
+      return false
     }
     const validationErrors = validateProjectForm(formData as unknown as Record<string, unknown>)
     if (validationErrors.length > 0) {
       alertWarning('Validation errors:\n' + validationErrors.map(e => `- ${e.message}`).join('\n'))
-      return
+      return false
     }
     const blockedTarget = firstHardBlockedTarget(formData)
     if (blockedTarget) {
+      setActiveTab('target')
       setGuardrailError(blockedTarget.reason)
-      return
+      return false
     }
     // No LLM provider configured -> ask to set one up, don't open the model picker.
-    if (!(await ensureProviderConfigured())) return
+    if (!(await ensureProviderConfigured())) return false
 
     // Force explicit LLM model selection on create (agent + AI recon pipeline)
     if (needsModelGate(mode, formData.agentOpenaiModel, formData.aiPipelineModel)) {
       setPendingSaveAction('stay')
       setShowModelGate(true)
-      return
+      return false
     }
     try {
       const submitData = {
@@ -705,6 +717,7 @@ export function ProjectForm({
       setBaseline(formData)
       toast.success('Project saved')
       after?.()
+      return true
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to save project'
       if (message.toLowerCase().includes('guardrail') || message.toLowerCase().includes('permanently blocked')) {
@@ -715,6 +728,7 @@ export function ProjectForm({
       } else {
         alertError(message)
       }
+      return false
     }
   }
 
