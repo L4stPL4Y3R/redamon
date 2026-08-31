@@ -78,6 +78,14 @@ describe('detected host IP suggestion (issue #180)', () => {
     expect(screen.queryByText(/Detected \(default route\)/)).toBeNull()
   })
 
+  test('rendering the suggestion does NOT touch LHOST until clicked (never enters save payload)', () => {
+    // Row 6: the value rides a prop, not formData. It must mutate state only on
+    // an explicit click, so it can never reach the PUT payload on its own.
+    const { updateField } = renderSection({}, '192.168.1.50')
+    expect(screen.getByText(/Detected \(default route\): 192\.168\.1\.50/)).toBeTruthy()
+    expect(updateField).not.toHaveBeenCalled()
+  })
+
   test('suppressed under a tunnel (LHOST field is hidden)', () => {
     renderSection({ agentNgrokTunnelEnabled: true }, '192.168.1.50')
     expect(screen.queryByText(/Detected \(default route\)/)).toBeNull()

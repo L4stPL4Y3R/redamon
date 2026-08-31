@@ -55,6 +55,12 @@ IP_OUT=""
 HOSTNAME_OUT="fe80::1 dead:beef::2"          # v6 only -> no IPv4 anywhere
 assert_eq "v6-only result yields empty (webapp validates IPv4)" "$(detect_host_lan_ip)" ""
 
+reset_case
+# The ip-branch grep 'src [0-9.]+' is loose: a malformed/partial dotted string
+# must be rejected by the final quad check, not returned as a bad LHOST.
+IP_OUT="1.1.1.1 dev eth0 src 10.0.0 uid 0"
+assert_eq "malformed partial src (3 octets) is rejected" "$(detect_host_lan_ip)" ""
+
 # ---------------------------------------------------------------------------
 section "export_host_lan_ip pin precedence"
 
