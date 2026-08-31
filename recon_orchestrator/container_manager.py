@@ -893,16 +893,12 @@ class ContainerManager:
         # Memory admission (Part 1): reserve this scan's RAM envelope or reject.
         await self._admit_scan("full_recon", project_id, user_id=user_id)
 
-        # Lazy-on-scan OSV DB refresh for the L2 supply-chain module (GROUP 5.5).
-        # TTL-guarded, so this is a ~1s no-op unless the feed is >24h old, and
-        # best-effort so a refresh failure never blocks recon. Runs unconditionally
-        # rather than gating on supplyChainReconEnabled: the check is nearly free
-        # and keeps the spawn path decoupled from a webapp settings fetch.
-        await self.ensure_osv_db_fresh_async()
-        # Same contract for the incident intel: TTL-guarded, best-effort, and it
-        # can never block the spawn. Kept beside the OSV call so the two cannot
-        # drift apart.
-        await self.ensure_sca_intel_fresh_async()
+        # Lazy-on-scan OSV DB + incident-intel refresh for the L2 supply-chain
+        # module (GROUP 5.5). Fired in the BACKGROUND so a >24h-old feed's delta
+        # sync (~30s) does not hold the /start response open past the webapp's
+        # orchestrator timeout. TTL-guarded and best-effort; the L2 module that
+        # reads them runs late enough that a background refresh has long finished.
+        self._warm_feeds_in_background()
 
         # Mint a run id for this full-recon scan. Full recon had no run id (unlike
         # partial/ai-attack); the HTTP traffic-capture layer tags every captured
@@ -1948,8 +1944,7 @@ class ContainerManager:
         # other partial tools have nothing to do with the OSV feed. TTL-guarded +
         # best-effort (see ensure_osv_db_fresh).
         if tool_id == "SupplyChainRecon":
-            await self.ensure_osv_db_fresh_async()
-            await self.ensure_sca_intel_fresh_async()
+            self._warm_feeds_in_background()
 
         state = PartialReconState(
             project_id=project_id,
@@ -4229,6 +4224,39 @@ exit $RC
                     container.remove(force=True)
                 except APIError:
                     pass
+
+    def _warm_feeds_in_background(self) -> None:
+        """Kick off the OSV + incident-intel refreshes WITHOUT blocking the spawn.
+
+        Both refreshes are TTL-guarded, internally serialized, and best-effort, so
+        firing them and returning immediately is exactly the "can never block the
+        spawn" contract their call sites already document. Awaiting them did block
+        it: a >24h-old feed makes the OSV delta-sync take ~30s, which pushed the
+        /recon/{id}/start response past the webapp's 30s orchestrator timeout and
+        surfaced as "operation aborted due to timeout" even though the container
+        had spawned and the scan was running. The supply-chain L2 module that
+        reads these feeds does not run until late in the pipeline, long after a
+        background refresh finishes.
+        """
+        async def _run(coro, label):
+            try:
+                await coro
+            except Exception as e:  # noqa: BLE001 - best-effort; never touches the scan
+                logger.warning("[%s] background refresh failed (ignored): %s", label, e)
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return  # no loop (e.g. a unit test calling start_* synchronously)
+        # Keep a reference so the task is not garbage-collected mid-flight.
+        self._feed_warm_tasks = getattr(self, "_feed_warm_tasks", set())
+        for coro, label in (
+            (self.ensure_osv_db_fresh_async(), "osv-db"),
+            (self.ensure_sca_intel_fresh_async(), "sca-intel"),
+        ):
+            t = loop.create_task(_run(coro, label))
+            self._feed_warm_tasks.add(t)
+            t.add_done_callback(self._feed_warm_tasks.discard)
 
     async def ensure_osv_db_fresh_async(self, ecosystems=None) -> dict:
         """Async wrapper: runs the (blocking) refresh off the event loop."""
