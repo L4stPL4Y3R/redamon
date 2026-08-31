@@ -31,7 +31,7 @@
   <a href="https://github.com/samugit83/redamon/wiki/AI-Gauntlet"><img height="24" src="https://img.shields.io/badge/%F0%9F%86%95%20AI%20GAUNTLET-OFFENSIVE%20AI%20TESTING-FF6B35?style=flat" alt="AI Gauntlet — Offensive AI Testing"/></a>
   <a href="https://github.com/samugit83/redamon/wiki/Fireteam-Parallel-Specialists"><img height="24" src="https://img.shields.io/badge/%F0%9F%94%A5%20FIRETEAM-PARALLEL%20MULTI--AGENT-7C3AED?style=flat" alt="Fireteam Parallel Multi-Agent"/></a>
   <a href="redamon.wiki/Deploying-to-a-Server.md"><img height="24" src="https://img.shields.io/badge/%F0%9F%9A%80%20ONE%20COMMAND-DEPLOY%20ON%20SERVER-CC7722?style=flat" alt="One Command Deploy on Server"/></a>
-  <a href="https://github.com/samugit83/redamon/wiki/TrafficMind"><img height="24" src="https://img.shields.io/badge/%F0%9F%95%B8%EF%B8%8F%20TRAFFICMIND-mitmproxy%20CAPTURE-1F6FEB?style=flat" alt="TrafficMind mitmproxy HTTP Capture"/></a>
+  <a href="https://github.com/samugit83/redamon/wiki/TrafficMind"><img height="24" src="https://img.shields.io/badge/%F0%9F%95%B8%20TRAFFICMIND-mitmproxy%20CAPTURE-1F6FEB?style=flat" alt="TrafficMind mitmproxy HTTP Capture"/></a>
   <img height="24" src="https://img.shields.io/badge/100+-SECURITY%20TOOLS-CC8F00?style=flat&logo=hack-the-box&logoColor=white" alt="100+ Security Tools"/>
   <img height="24" src="https://img.shields.io/badge/185,000+-DETECTION%20RULES-8B1142?style=flat" alt="185,000+ Detection Rules"/>
   <img height="24" src="https://img.shields.io/badge/400+-AI%20MODELS-04A878?style=flat&logo=huggingface&logoColor=white" alt="400+ AI Models"/>
