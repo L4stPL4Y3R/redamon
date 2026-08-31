@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.13.0] - 2026-09-01
+
+### Added
+
+- **The agent auto-detects and suggests the reverse-shell LHOST** ([#180](https://github.com/samugit83/redamon/issues/180)). `redamon.sh` detects the Docker host's LAN IP on every `install`/`update`/`up` and passes it to the agent, which now proposes it when LHOST is unset -- in chat, and as a **"Detected (default route) -- Use this"** one-click fill in the Agent Behaviour settings (project form and the in-graph settings drawer) -- instead of guessing the unreachable `172.x` sandbox address. The value is IPv4-only, never persisted (so it re-detects on a network change), and overridable with `HOST_LAN_IP=<ip>` in `.env` for VPN / multi-homed hosts. Served by a new read-only agent endpoint `GET /host-ip` behind the JWT-gated webapp proxy ([b8e11cbf]).
+
+### Fixed
+
+- **Reverse-shell LHOST guidance no longer points at the wrong address** ([#180](https://github.com/samugit83/redamon/issues/180)). The agent's tools run inside `kali-sandbox` on a private `172.x` bridge a target cannot reach; the reachable address is the host's LAN IP, with port `4444` forwarded host->container. The settings hint, the agent's own prompt, and the docs now say so (previously a hint suggested a `172.x` container address), and `iproute2` is installed in the sandbox so the agent's `ip addr` probe no longer fails with "command not found" ([b8e11cbf]).
+
 ## [6.12.0] - 2026-08-29
 
 ### Added

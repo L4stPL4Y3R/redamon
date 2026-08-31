@@ -857,6 +857,11 @@ services:
       AGENT_WS_TICKET_SECRET: "${AGENT_WS_TICKET_SECRET:-}"
       # Webapp API (internal docker network)
       WEBAPP_API_URL: http://webapp:3000
+      # Docker host's LAN IP, detected by redamon.sh (export_host_lan_ip). The
+      # agent suggests it as the reverse-shell LHOST since it cannot discover the
+      # host's routable address from inside the 172.x sandbox (issue #180). Empty
+      # when detection fails -> the agent asks the operator instead.
+      HOST_LAN_IP: ${HOST_LAN_IP:-}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-changeme}
       SCANNER_API_KEY: ${SCANNER_API_KEY:-changeme}  # S3/E6 scoped scanner token
       # Knowledge Base

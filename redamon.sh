@@ -896,6 +896,51 @@ export_cpu_caps() {
     _export_cpu_cap DOCKER_BROKER_CPUS 2
 }
 
+# The Docker host's LAN IP, exported so the agent can SUGGEST it as the reverse-
+# shell LHOST (issue #180). The tools run inside kali-sandbox on a private 172.x
+# bridge that a real target cannot reach; the reachable address is the host's own
+# LAN IP, and port 4444 is forwarded host->container. A container cannot discover
+# this itself, so it is detected here on the host and passed in via env.
+#
+# IPv4 only: the webapp validates agentLhost against an IPv4 regex, so a v6/zoned
+# value would produce a suggestion the form then refuses to save. Best-effort:
+# on any failure it stays empty and the agent falls back to asking the operator.
+detect_host_lan_ip() {
+    local ip=""
+    # `ip route get` reveals the src address of the default route -- the interface
+    # that reaches off-box. `-4` forces IPv4. On a VPN/multi-homed host this may be
+    # the wrong NIC; the operator overrides with a HOST_LAN_IP pin (see export).
+    if command -v ip >/dev/null 2>&1; then
+        ip="$(ip -4 route get 1.1.1.1 2>/dev/null | grep -oE 'src [0-9.]+' | awk '{print $2}' | head -n1)"
+    fi
+    # Fallback: first IPv4 that `hostname -I` lists (skips v6 tokens).
+    if [[ -z "$ip" ]] && command -v hostname >/dev/null 2>&1; then
+        ip="$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -n1)"
+    fi
+    # Reject anything that is not a bare IPv4 dotted quad.
+    [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || ip=""
+    printf '%s' "$ip"
+}
+
+# Export HOST_LAN_IP for the agent container. Mirrors _export_cpu_cap's pin
+# precedence (shell env, then .env) with ONE deviation: a .env pin must carry a
+# NON-EMPTY value. `.env.example` ships a bare `HOST_LAN_IP=` placeholder, and a
+# plain `grep var=` (as _export_cpu_cap uses) would read that empty line as a pin
+# and suppress detection for anyone who seeds .env from the example. Never
+# persisted into the managed .env block: a saved IP becomes a stale pin the moment
+# the operator switches networks, so it is recomputed every run.
+export_host_lan_ip() {
+    [[ -n "${HOST_LAN_IP:-}" ]] && return 0        # shell/env override wins
+    [[ -r "$SCRIPT_DIR/.env" ]] && grep -qE "^[[:space:]]*HOST_LAN_IP=[^[:space:]]" "$SCRIPT_DIR/.env" && return 0
+    local detected
+    detected="$(detect_host_lan_ip)"
+    if [[ -z "$detected" ]]; then
+        warn "could not detect the host LAN IP -- the agent will ask for LHOST instead of suggesting it (set HOST_LAN_IP=<ip> to override)"
+        return 0
+    fi
+    export HOST_LAN_IP="$detected"
+}
+
 # Every var the allocator owns. Used by the migration and the managed block.
 _mem_managed_vars() {
     local spec name
@@ -1015,6 +1060,7 @@ export_resource_caps() {
     # CPU caps first: unlike the memory caps they do not depend on RAM
     # detection, so they must be applied before the undetectable-RAM bail-out.
     export_cpu_caps
+    export_host_lan_ip
     _mem_migrate_legacy_pins
     allocate_memory || true
     persist_memory_env

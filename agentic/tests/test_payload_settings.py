@@ -32,10 +32,16 @@ def _fake_settings(values: dict):
 
 
 class AskBranchGuidanceTests(unittest.TestCase):
-    """All-empty settings -> ASK branch must steer the agent to the host LAN IP."""
+    """All-empty settings -> ASK branch must steer the agent to the host LAN IP.
+
+    HOST_LAN_IP is cleared so these assert the no-detection fallback deterministically
+    regardless of the ambient environment; the suggestion path is covered separately.
+    """
 
     def _render(self, values):
-        with patch.object(utils, "get_setting", _fake_settings(values)):
+        with patch.object(utils, "get_setting", _fake_settings(values)), \
+             patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("HOST_LAN_IP", None)
             return utils.get_session_config_prompt()
 
     def test_ask_branch_triggers_when_nothing_configured(self):
@@ -60,6 +66,45 @@ class AskBranchGuidanceTests(unittest.TestCase):
         out = self._render({})
         self.assertIn("4444", out)
         self.assertIn("host-LAN-IP:LPORT", out)
+
+
+class DetectedHostIpSuggestionTests(unittest.TestCase):
+    """HOST_LAN_IP (issue #180): the ask-branch suggests the host's LAN IP, but
+    only when no tunnel is configured."""
+
+    def _render(self, values, env):
+        with patch.object(utils, "get_setting", _fake_settings(values)), \
+             patch.dict(os.environ, env, clear=False):
+            return utils.get_session_config_prompt()
+
+    def test_detected_ip_is_suggested_when_set_and_no_tunnel(self):
+        out = self._render({}, {"HOST_LAN_IP": "192.168.1.50"})
+        self.assertIn("192.168.1.50", out)
+        self.assertIn("detected LAN IP", out)
+        # Still forbids self-detection from inside the container.
+        self.assertIn("DO NOT GUESS OR AUTO-DETECT", out)
+        # And no longer the bare "ASK THE USER" fallback line.
+        self.assertNotIn("ASK THE USER for it", out)
+
+    def test_no_suggestion_when_env_unset(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("HOST_LAN_IP", None)
+            with patch.object(utils, "get_setting", _fake_settings({})):
+                out = utils.get_session_config_prompt()
+        self.assertIn("ASK THE USER for it", out)
+
+    def test_suppressed_when_ngrok_tunnel_enabled(self):
+        # Tunnel enabled -> the ask-branch is a broken-tunnel state; a LAN-IP
+        # suggestion would contradict the "fix your tunnel" guidance.
+        out = self._render({"NGROK_TUNNEL_ENABLED": True},
+                           {"HOST_LAN_IP": "192.168.1.50"})
+        self.assertNotIn("192.168.1.50", out)
+        self.assertIn("ASK THE USER for it", out)
+
+    def test_suppressed_when_chisel_tunnel_enabled(self):
+        out = self._render({"CHISEL_TUNNEL_ENABLED": True},
+                           {"HOST_LAN_IP": "192.168.1.50"})
+        self.assertNotIn("192.168.1.50", out)
 
 
 class ModeRegressionTests(unittest.TestCase):
