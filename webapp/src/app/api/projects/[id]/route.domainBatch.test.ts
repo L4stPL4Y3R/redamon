@@ -110,6 +110,42 @@ describe('F2: a non-batch project can still be edited', () => {
   })
 })
 
+describe('a partial save on a batch project does not touch the scope', () => {
+  // The reported bug: toggling a module in the workflow view auto-saves ONE
+  // field, e.g. { katanaEnabled: false }. That body has no domainBatchHosts, and
+  // the recompute treated the absent list as empty, so every toggle 400'd with
+  // "needs at least one hostname".
+  test('a single-field toggle succeeds and never re-derives the groups', async () => {
+    mockFindUnique.mockResolvedValue({ id: PROJECT_ID, userId: 'u1', domainBatchMode: true })
+    const res = await put({ katanaEnabled: false })
+
+    expect(res.status).toBe(200)
+    const data = mockUpdate.mock.calls[0][0].data
+    expect(data).not.toHaveProperty('domainBatchHosts')
+    expect(data).not.toHaveProperty('domainBatchGroups')
+    expect(data.katanaEnabled).toBe(false)
+  })
+
+  test('a partial save cannot smuggle a scope in via domainBatchGroups', async () => {
+    mockFindUnique.mockResolvedValue({ id: PROJECT_ID, userId: 'u1', domainBatchMode: true })
+    const res = await put({
+      katanaEnabled: false,
+      domainBatchGroups: [{ rootDomain: 'attacker.com', prefixes: ['.'], hosts: ['attacker.com'] }],
+    })
+
+    expect(res.status).toBe(200)
+    // The untrusted grouping is stripped, and nothing is re-derived from an empty
+    // host list, so the stored scope is left exactly as it was.
+    expect(mockUpdate.mock.calls[0][0].data).not.toHaveProperty('domainBatchGroups')
+  })
+
+  test('a save that DOES change the host list still validates', async () => {
+    mockFindUnique.mockResolvedValue({ id: PROJECT_ID, userId: 'u1', domainBatchMode: true })
+    const res = await put({ domainBatchHosts: [] })
+    expect(res.status).toBe(400)
+  })
+})
+
 describe('F2: a batch project is still validated and normalized', () => {
   test('a valid host list is grouped and persisted', async () => {
     const res = await put(fullFormBody({

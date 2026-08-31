@@ -151,7 +151,16 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
           where: { id }, select: { domainBatchMode: true },
         }))?.domainBatchMode === true
 
-    if (willBeBatch) {
+    // A client-supplied grouping is never trusted; it is always re-derived below.
+    if ('domainBatchGroups' in updateData) delete updateData.domainBatchGroups
+
+    // Re-derive the scope ONLY when this update actually changes the host list or
+    // flips the mode. A partial save - a single module toggle auto-saving
+    // `{ katanaEnabled: false }` - carries neither, so the stored groups are left
+    // untouched. Without this guard the absent domainBatchHosts read as empty and
+    // every field toggle on a batch project 400'd with "needs at least one hostname".
+    const touchesBatchScope = 'domainBatchHosts' in updateData || 'domainBatchMode' in updateData
+    if (willBeBatch && touchesBatchScope) {
       const { validateDomainBatch } = await import('@/lib/domainBatch')
       const raw = updateData.domainBatchHosts
       const hosts: string[] = Array.isArray(raw)
@@ -163,9 +172,6 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       }
       updateData.domainBatchHosts = batch.groups.flatMap(g => g.hosts)
       updateData.domainBatchGroups = batch.groups
-    } else if ('domainBatchGroups' in updateData) {
-      // Not a batch project: the client has no business setting a scope at all.
-      delete updateData.domainBatchGroups
     }
 
     // Mutually exclusive modes, enforced on update as well as create: recon checks
