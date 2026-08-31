@@ -1153,6 +1153,19 @@ async def health():
     )
 
 
+@app.get("/host-ip", tags=["System"])
+async def get_host_ip():
+    """The Docker host's LAN IP, for the UI to suggest as the reverse-shell LHOST.
+
+    Detected on the host by redamon.sh (export_host_lan_ip) and passed in via the
+    HOST_LAN_IP env var, because a container cannot discover the host's routable
+    address from inside the 172.x sandbox (issue #180). Empty string when
+    detection failed or a HOST_LAN_IP override is unset; the caller then simply
+    shows no suggestion. Read-only, no parameters, no secrets.
+    """
+    return {"detectedHostIp": os.getenv("HOST_LAN_IP", "").strip()}
+
+
 def _setup_llm_for_endpoint(model_name: str) -> "BaseChatModel":
     """Set up an LLM for non-agent endpoints (RoE parse, report summarizer).
 

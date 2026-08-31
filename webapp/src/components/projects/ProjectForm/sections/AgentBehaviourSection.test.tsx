@@ -9,7 +9,7 @@
  * Run: npx vitest run src/components/projects/ProjectForm/sections/AgentBehaviourSection.test.tsx
  */
 import { describe, test, expect, vi, afterEach } from 'vitest'
-import { render, screen, cleanup } from '@testing-library/react'
+import { render, screen, cleanup, fireEvent } from '@testing-library/react'
 import { AgentBehaviourSection } from './AgentBehaviourSection'
 
 vi.mock('@/components/shared/ModelPicker', () => ({ ModelPicker: () => null }))
@@ -31,11 +31,13 @@ const BASE = {
   agentPayloadUseHttps: false,
 } as Record<string, unknown>
 
-function renderSection(initial: Record<string, unknown> = {}) {
+function renderSection(initial: Record<string, unknown> = {}, detectedHostIp?: string) {
   const data = { ...BASE, ...initial }
-  return render(
-    <AgentBehaviourSection data={data as never} updateField={vi.fn() as never} />,
+  const updateField = vi.fn()
+  const view = render(
+    <AgentBehaviourSection data={data as never} updateField={updateField as never} detectedHostIp={detectedHostIp} />,
   )
+  return { ...view, updateField }
 }
 
 describe('LHOST field guides to the host LAN IP, not the container IP', () => {
@@ -50,5 +52,34 @@ describe('LHOST field guides to the host LAN IP, not the container IP', () => {
     renderSection()
     expect(screen.getByText(/host machine's LAN IP/i)).toBeTruthy()
     expect(screen.getByText(/not the container's 172\.x/i)).toBeTruthy()
+  })
+})
+
+describe('detected host IP suggestion (issue #180)', () => {
+  test('shows the suggestion and "Use this" fills LHOST on click', () => {
+    const { updateField } = renderSection({}, '192.168.1.50')
+    expect(screen.getByText(/Detected \(default route\): 192\.168\.1\.50/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /use this/i }))
+    expect(updateField).toHaveBeenCalledWith('agentLhost', '192.168.1.50')
+  })
+
+  test('no suggestion when the prop is empty', () => {
+    renderSection({}, '')
+    expect(screen.queryByText(/Detected \(default route\)/)).toBeNull()
+  })
+
+  test('no suggestion when it equals the current LHOST', () => {
+    renderSection({ agentLhost: '192.168.1.50' }, '192.168.1.50')
+    expect(screen.queryByText(/Detected \(default route\)/)).toBeNull()
+  })
+
+  test('no suggestion for a non-IPv4 value', () => {
+    renderSection({}, 'not-an-ip')
+    expect(screen.queryByText(/Detected \(default route\)/)).toBeNull()
+  })
+
+  test('suppressed under a tunnel (LHOST field is hidden)', () => {
+    renderSection({ agentNgrokTunnelEnabled: true }, '192.168.1.50')
+    expect(screen.queryByText(/Detected \(default route\)/)).toBeNull()
   })
 })

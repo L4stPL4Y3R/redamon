@@ -20,6 +20,7 @@ import { useScanStartFailure } from '@/hooks/useScanStartFailure'
 import { useMultiPartialReconSSE } from '@/hooks/useMultiPartialReconSSE'
 import { useDirtyState } from '@/hooks/useDirtyState'
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard'
+import { useDetectedHostIp } from '@/hooks/useDetectedHostIp'
 import { useAlertModal, useToast, WikiInfoButton } from '@/components/ui'
 import type { PartialReconParams, PartialReconState } from '@/lib/recon-types'
 import { PARTIAL_RECON_PHASE_MAP } from '@/lib/recon-types'
@@ -350,6 +351,10 @@ export function ProjectForm({
 
   // Track recon status in edit mode to reflect running state on the Start Recon button
   const { state: reconState } = useReconStatus({ projectId: mode === 'edit' ? (projectId ?? null) : null, enabled: mode === 'edit' })
+  // Host LAN IP suggested for the LHOST field (issue #180). Fetched in both create
+  // and edit mode; it is a separate signal, never merged into formData, so it never
+  // reaches the save payload.
+  const detectedHostIp = useDetectedHostIp()
   // The same scan cluster the graph toolbar shows. Only polls in edit mode with
   // a saved project: a create form has nothing to scan.
   const scans = useScanControls({
@@ -1135,7 +1140,7 @@ export function ProjectForm({
         )}
 
         {activeTab === 'agent' && (
-          <AgentBehaviourSection data={formData} updateField={updateField} />
+          <AgentBehaviourSection data={formData} updateField={updateField} detectedHostIp={detectedHostIp} />
         )}
 
         {activeTab === 'toolmatrix' && (
