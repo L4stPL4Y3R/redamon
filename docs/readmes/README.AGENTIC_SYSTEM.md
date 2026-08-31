@@ -4995,7 +4995,7 @@ flowchart LR
 | `REQUIRE_TOOL_CONFIRMATION` | `true` | Require user confirmation before executing dangerous tools (nmap, nuclei, metasploit, hydra, kali_shell, etc.) |
 | `ACTIVATE_POST_EXPL_PHASE` | `true` | Enable post-exploitation phase |
 | `POST_EXPL_PHASE_TYPE` | `"statefull"` | `"stateless"` or `"statefull"` session mode |
-| `LHOST` | `""` | Attacker IP for reverse payloads (empty = bind mode) |
+| `LHOST` | `""` | Attacker IP for reverse payloads: the **host machine's LAN IP** the target can reach (not the sandbox container's `172.x`); empty = bind mode |
 | `LPORT` | `null` | Attacker port for reverse payloads |
 | `BIND_PORT_ON_TARGET` | `4444` | Port opened on target for bind payloads |
 | `PAYLOAD_USE_HTTPS` | `false` | Use HTTPS for staged payloads |

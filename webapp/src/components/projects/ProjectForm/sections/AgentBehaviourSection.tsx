@@ -155,9 +155,9 @@ export function AgentBehaviourSection({ data, updateField }: AgentBehaviourSecti
                     className="textInput"
                     value={data.agentLhost}
                     onChange={(e) => updateField('agentLhost', e.target.value)}
-                    placeholder="e.g. 172.28.0.2"
+                    placeholder="e.g. 192.168.1.50"
                   />
-                  <span className={styles.fieldHint}>Leave empty for bind mode</span>
+                  <span className={styles.fieldHint}>Your host machine&apos;s LAN IP that the target can reach (not the container&apos;s 172.x address). Leave empty for bind mode.</span>
                 </div>
                 <div className={styles.fieldGroup}>
                   <label className={styles.fieldLabel}>LPORT</label>

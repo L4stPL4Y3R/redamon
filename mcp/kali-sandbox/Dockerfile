@@ -43,8 +43,12 @@ RUN apt-get update && apt-get install -y --fix-missing \
     nmap \
     # Metasploit framework
     metasploit-framework \
-    # Network utilities
+    # Network utilities. iproute2 supplies `ip` (net-tools only ships the
+    # deprecated ifconfig/route); the agent reaches for `ip addr` to read its
+    # own interfaces during exploitation, so its absence surfaced as a hard
+    # "ip: command not found" (issue #180).
     net-tools \
+    iproute2 \
     iputils-ping \
     dnsutils \
     netcat-traditional \
